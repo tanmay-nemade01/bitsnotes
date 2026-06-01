@@ -1,0 +1,191 @@
+---
+import BaseLayout from '../../layouts/BaseLayout.astro';
+import { env } from 'cloudflare:workers';
+
+const { subject } = Astro.params;
+if (!subject) {
+  return Astro.redirect('/');
+}
+
+const decodedSubject = decodeURIComponent(subject);
+const bucket = env?.BUCKET;
+let lectures: string[] = [];
+let errorMsg = '';
+let isDemoMode = false;
+
+if (bucket) {
+  try {
+    // List with prefix = "SubjectName/" and delimiter "/" to get sub-folders (lectures)
+    const prefix = `${decodedSubject}/`;
+    const listed = await (bucket as any).list({ prefix, delimiter: '/' });
+    lectures = (listed.delimitedPrefixes || [])
+      .map((p: string) => {
+        // Strip the subject prefix and trailing slash: "Subject/Lecture 1/" -> "Lecture 1"
+        return p.replace(prefix, '').replace(/\/$/, '');
+      })
+      .filter((l: string) => l.length > 0)
+      .sort((a: string, b: string) => a.localeCompare(b, undefined, { numeric: true, sensitivity: 'base' }));
+  } catch (error: any) {
+    errorMsg = `Failed to list lectures: ${error.message || error}`;
+    isDemoMode = true;
+  }
+} else {
+  isDemoMode = true;
+  lectures = ['Lecture 1', 'Lecture 2', 'Lecture 3', 'Lecture 4', 'Lecture 5'];
+}
+---
+
+<BaseLayout
+  title={`${decodedSubject} Lectures | BitsNotes`}
+  description={`Browse all lecture notes for ${decodedSubject}. Access secure, view-only study materials for each lecture.`}
+  theme="light"
+>
+  <main class="flex-grow max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-10 w-full">
+
+    <!-- Breadcrumb -->
+    <nav class="flex items-center gap-2 text-xs font-semibold text-slate-500 mb-8 select-none">
+      <a href="/" class="hover:text-indigo-600 transition-colors">Home</a>
+      <svg class="w-3 h-3 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M9 5l7 7-7 7"></path>
+      </svg>
+      <span class="text-indigo-600 truncate">{decodedSubject}</span>
+    </nav>
+
+    <!-- Header Card -->
+    <div class="relative bg-white rounded-3xl border border-slate-100 p-8 md:p-10 shadow-xl shadow-slate-100/50 overflow-hidden mb-10">
+      <!-- Decorative Backdrop Gradients -->
+      <div class="absolute right-0 top-0 -mt-12 -mr-12 w-64 h-64 bg-indigo-100/40 rounded-full blur-3xl pointer-events-none"></div>
+      <div class="absolute left-1/3 bottom-0 -mb-16 w-80 h-80 bg-violet-100/30 rounded-full blur-3xl pointer-events-none"></div>
+
+      <div class="relative z-10 max-w-2xl">
+        <span class="inline-block text-xs font-bold text-indigo-600 uppercase tracking-widest bg-indigo-50 px-3 py-1.5 rounded-lg mb-4">Subject</span>
+        <h1 class="text-3xl md:text-4xl font-extrabold text-slate-900 tracking-tight leading-tight">
+          {decodedSubject}
+        </h1>
+        <p class="mt-3 text-slate-600 leading-relaxed text-base md:text-lg">
+          Select a lecture below to open its study notes. All documents are view-only.
+        </p>
+
+        <!-- Search -->
+        <div class="mt-8 relative max-w-lg">
+          <div class="absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none">
+            <svg class="h-5 w-5 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"></path>
+            </svg>
+          </div>
+          <input
+            type="text"
+            id="search-input"
+            placeholder="Search lectures..."
+            class="block w-full pl-11 pr-4 py-3.5 border border-slate-200 rounded-2xl bg-slate-50/50 text-slate-900 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 focus:bg-white transition-all shadow-inner text-sm"
+          />
+        </div>
+      </div>
+    </div>
+
+    <!-- Error Alert -->
+    {errorMsg && (
+      <div class="mb-10 bg-rose-50 border border-rose-200 rounded-2xl p-5 text-rose-800 flex items-start gap-3.5 shadow-sm">
+        <svg class="w-6 h-6 text-rose-600 shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"></path>
+        </svg>
+        <div>
+          <h3 class="font-bold text-rose-900 text-sm">Error Loading Lectures</h3>
+          <p class="text-xs text-rose-700 mt-1 leading-relaxed">{errorMsg}</p>
+        </div>
+      </div>
+    )}
+
+    <!-- Lectures Section Header -->
+    <div class="mb-6 flex items-center justify-between">
+      <h2 class="text-lg font-bold text-slate-900 flex items-center gap-2">
+        Lectures
+        <span id="lecture-count" class="text-xs px-2.5 py-1 bg-indigo-50 text-indigo-700 border border-indigo-100 rounded-full font-bold">{lectures.length}</span>
+      </h2>
+      <span class="text-xs text-slate-400 font-medium">Sorted alphabetically</span>
+    </div>
+
+    <!-- Grid of Lectures -->
+    {lectures.length === 0 ? (
+      <div class="text-center py-16 bg-white rounded-3xl border border-slate-100 shadow-sm">
+        <svg class="mx-auto h-12 w-12 text-slate-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M20 13V6a2 2 0 00-2-2H6a2 2 0 00-2 2v7m16 0v5a2 2 0 01-2 2H6a2 2 0 01-2-2v-5m16 0h-2.586a1 1 0 00-.707.293l-2.414 2.414a1 1 0 01-.707.293h-3.172a1 1 0 01-.707-.293l-2.414-2.414A1 1 0 006.586 13H4"></path>
+        </svg>
+        <h3 class="mt-4 text-sm font-bold text-slate-900">No lectures found</h3>
+        <p class="mt-1.5 text-xs text-slate-500">Upload PDFs into a subject subfolder using the uploader script.</p>
+      </div>
+    ) : (
+      <div id="lectures-grid" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
+        {lectures.map((lectureName, idx) => {
+          const viewPath = `/view/${encodeURIComponent(decodedSubject)}/${encodeURIComponent(lectureName)}`;
+          return (
+            <a
+              href={isDemoMode ? '#' : viewPath}
+              target="_blank"
+              rel="noopener noreferrer"
+              data-lecture-name={lectureName.toLowerCase()}
+              class="lecture-card group bg-white rounded-2xl border border-slate-150 p-6 shadow-sm hover:shadow-xl hover:border-indigo-200 hover:-translate-y-1 transition-all duration-300 flex flex-col h-full relative overflow-hidden"
+            >
+              <!-- Top Glow -->
+              <div class="absolute -right-6 -top-6 w-20 h-20 bg-indigo-500/5 rounded-full group-hover:bg-indigo-500/10 group-hover:scale-125 transition-all duration-300"></div>
+
+              <div class="flex items-start gap-4 mb-4">
+                <!-- Lecture Number Badge -->
+                <div class="w-12 h-12 bg-indigo-50 rounded-xl flex items-center justify-center text-indigo-600 font-extrabold text-lg shrink-0 group-hover:bg-indigo-600 group-hover:text-white transition-all duration-300">
+                  {idx + 1}
+                </div>
+                <div class="flex-grow">
+                  <h3 class="font-bold text-slate-800 leading-snug group-hover:text-indigo-600 transition-colors line-clamp-2">
+                    {lectureName}
+                  </h3>
+                  <p class="text-xs text-slate-400 mt-1 font-medium flex items-center gap-1">
+                    <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path>
+                    </svg>
+                    {decodedSubject}
+                  </p>
+                </div>
+              </div>
+
+              <div class="mt-auto pt-4 border-t border-slate-100 flex items-center justify-between text-xs text-indigo-600 font-bold">
+                <span class="flex items-center gap-1">
+                  <svg class="w-3.5 h-3.5 text-indigo-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"></path>
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"></path>
+                  </svg>
+                  Open in New Tab
+                </span>
+                <svg class="w-4 h-4 transform group-hover:translate-x-1 transition-transform" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"></path>
+                </svg>
+              </div>
+            </a>
+          );
+        })}
+      </div>
+    )}
+  </main>
+</BaseLayout>
+
+<script is:inline>
+  const searchInput = document.getElementById('search-input');
+  const cards = document.querySelectorAll('.lecture-card');
+  const lectureCount = document.getElementById('lecture-count');
+
+  if (searchInput) {
+    searchInput.addEventListener('input', (e) => {
+      const term = e.target.value.toLowerCase().trim();
+      let visible = 0;
+      cards.forEach((card) => {
+        const name = card.getAttribute('data-lecture-name') || '';
+        if (name.includes(term)) {
+          card.style.display = 'flex';
+          visible++;
+        } else {
+          card.style.display = 'none';
+        }
+      });
+      if (lectureCount) lectureCount.textContent = visible;
+    });
+  }
+</script>

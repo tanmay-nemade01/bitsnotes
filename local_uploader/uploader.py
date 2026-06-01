@@ -134,9 +134,9 @@ def process_pdf(pdf_path):
         time.sleep(1)
         retries += 1
 
-    # Form unique document identifier for R2 to prevent conflicts across subjects
-    r2_doc_id = f"{subject_name} - {doc_name}"
-    print(f"[*] Processing document as R2 ID: '{r2_doc_id}'")
+    # Form unique document path in R2 as a two-level folder: Subject/LectureName
+    r2_doc_id = f"{subject_name}/{doc_name}"
+    print(f"[*] Processing document as R2 path: '{r2_doc_id}/'")
     
     try:
         # 2. Handle Companion JSON Metadata
