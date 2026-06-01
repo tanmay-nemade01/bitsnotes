@@ -91,13 +91,17 @@ Now, let's configure the Python script using the keys you just copied.
    ```
 6. The script will start and print a message: `[*] Active. Drop PDF files into 'watch_folder' subdirectories to upload them.`
 
-### How to use the Subject Folders & Companion JSON Workflow:
-To organize your files and prepare unique study text:
-* **Subject Folders**: Inside `watch_folder`, create subfolders for your subjects (e.g. `watch_folder/Maths`, `watch_folder/Biology`).
-* **Drop PDF and JSON**: Drop your PDF (e.g. `lecture1.pdf`) into `watch_folder/Maths/`.
-  * **Option A**: If you also drop `lecture1.json` in the same `Maths` folder, the script will upload your custom study guide.
-  * **Option B**: If you don't drop a JSON, the script will upload default metadata, and automatically write a template `lecture1.json` inside the `watch_folder/Maths` directory for you to customize later.
-* **Filing**: Once processed, the uploader moves files to `processed_folder/Maths/` (or whichever subject folder it belonged to).
+### How to use the Subject / Lecture Folders & Companion JSON Workflow:
+Organize files in R2 as **Subject → Lecture → pages** (e.g. `Deep Reinforcement Learning/Lecture 1/page_001.webp`).
+
+* **Subject folder**: Inside `watch_folder`, create a folder per subject (e.g. `watch_folder/Deep Reinforcement Learning/`).
+* **Lecture folder**: Inside each subject, create a folder per lecture (e.g. `watch_folder/Deep Reinforcement Learning/Lecture 1/`).
+* **Drop PDF (and optional JSON)**: Place `notes.pdf` (and optionally `Lecture 1.json` or `notes.json`) inside the lecture folder.
+  * **Option A**: Custom `Lecture 1.json` in the same folder → uploads your study guide metadata.
+  * **Option B**: No JSON → the script generates a template JSON in that lecture folder for you to edit and re-upload later.
+* **Alternative**: You may also drop `lecture1.pdf` directly under the subject folder (`watch_folder/Maths/lecture1.pdf`); the PDF filename (without `.pdf`) becomes the lecture name.
+* **Filing**: Processed files are moved under `processed_folder/` with the same folder structure.
+* **Re-upload after restructuring**: Run `python uploader.py --reupload` to clear R2 and rebuild from `processed_folder` once you have moved PDFs into the new layout.
 
 #### 🤖 AI Prompt Template to Generate Companion JSON:
 ```text

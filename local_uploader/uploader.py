@@ -97,20 +97,24 @@ def process_pdf(pdf_path):
     _processing_files.add(pdf_path)
     raw_filename = os.path.basename(pdf_path)
     
-    # 1. Parse Subject Name from relative directory structure
+    # 1. Parse Subject / Lecture from relative directory structure
+    # Expected: watch_folder/Subject/Lecture N/notes.pdf  OR  watch_folder/Subject/lecture1.pdf
     rel_path = os.path.relpath(pdf_path, WATCH_DIR)
     parts = rel_path.split(os.sep)
-    
-    if len(parts) >= 2:
-        # PDF is in a subject subfolder (e.g. watch_folder/Maths/lecture1.pdf)
+    filename = parts[-1]
+    doc_name, ext = os.path.splitext(filename)
+
+    if len(parts) >= 3:
+        # Subject/Lecture/file.pdf — lecture folder name is the R2 lecture key
         subject_name = parts[0]
-        filename = parts[-1]
-        doc_name, ext = os.path.splitext(filename)
+        lecture_name = parts[1]
+        doc_name = lecture_name
+    elif len(parts) == 2:
+        # Subject/file.pdf — lecture name from PDF filename
+        subject_name = parts[0]
     else:
-        # PDF is directly in watch_folder
+        # PDF is directly in watch_folder root (discouraged)
         subject_name = "General"
-        filename = parts[0]
-        doc_name, ext = os.path.splitext(filename)
 
     if ext.lower() != ".pdf":
         return
@@ -265,8 +269,13 @@ def process_pdf(pdf_path):
         doc.close()
         print(f"[+] All pages successfully uploaded to R2 under folder '{r2_doc_id}/'")
         
-        # 4. Move files to a structured processed subfolder by subject
-        dest_subfolder = os.path.join(PROCESSED_DIR, subject_name) if subject_name != "General" else PROCESSED_DIR
+        # 4. Move files to processed_folder mirroring watch_folder layout
+        rel_for_processed = os.path.relpath(os.path.dirname(pdf_path), WATCH_DIR)
+        dest_subfolder = (
+            os.path.join(PROCESSED_DIR, rel_for_processed)
+            if rel_for_processed != "."
+            else (os.path.join(PROCESSED_DIR, subject_name) if subject_name != "General" else PROCESSED_DIR)
+        )
         os.makedirs(dest_subfolder, exist_ok=True)
 
         dest_pdf_path = os.path.join(dest_subfolder, filename)

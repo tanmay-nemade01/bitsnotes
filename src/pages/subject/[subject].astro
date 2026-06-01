@@ -1,6 +1,7 @@
 ---
 import BaseLayout from '../../layouts/BaseLayout.astro';
 import { env } from 'cloudflare:workers';
+import { listLectures, type LectureSummary } from '../../utils/r2Structure';
 
 const { subject } = Astro.params;
 if (!subject) {
@@ -9,29 +10,23 @@ if (!subject) {
 
 const decodedSubject = decodeURIComponent(subject);
 const bucket = env?.BUCKET;
-let lectures: string[] = [];
+let lectures: LectureSummary[] = [];
 let errorMsg = '';
 let isDemoMode = false;
 
 if (bucket) {
   try {
-    // List with prefix = "SubjectName/" and delimiter "/" to get sub-folders (lectures)
-    const prefix = `${decodedSubject}/`;
-    const listed = await (bucket as any).list({ prefix, delimiter: '/' });
-    lectures = (listed.delimitedPrefixes || [])
-      .map((p: string) => {
-        // Strip the subject prefix and trailing slash: "Subject/Lecture 1/" -> "Lecture 1"
-        return p.replace(prefix, '').replace(/\/$/, '');
-      })
-      .filter((l: string) => l.length > 0)
-      .sort((a: string, b: string) => a.localeCompare(b, undefined, { numeric: true, sensitivity: 'base' }));
+    lectures = await listLectures(bucket as any, decodedSubject);
   } catch (error: any) {
     errorMsg = `Failed to list lectures: ${error.message || error}`;
     isDemoMode = true;
   }
 } else {
   isDemoMode = true;
-  lectures = ['Lecture 1', 'Lecture 2', 'Lecture 3', 'Lecture 4', 'Lecture 5'];
+  lectures = ['Lecture 1', 'Lecture 2', 'Lecture 3', 'Lecture 4', 'Lecture 5'].map((name) => ({
+    name,
+    r2Prefix: `${decodedSubject}/${name}`,
+  }));
 }
 ---
 
@@ -116,11 +111,11 @@ if (bucket) {
       </div>
     ) : (
       <div id="lectures-grid" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
-        {lectures.map((lectureName, idx) => {
+        {lectures.map(({ name: lectureName }, idx) => {
           const viewPath = `/view/${encodeURIComponent(decodedSubject)}/${encodeURIComponent(lectureName)}`;
           return (
             <a
-              href={isDemoMode ? '#' : viewPath}
+              href={isDemoMode && errorMsg ? '#' : viewPath}
               target="_blank"
               rel="noopener noreferrer"
               data-lecture-name={lectureName.toLowerCase()}
