@@ -13,9 +13,9 @@ Google AdSense uses automated crawling bots to screen websites. Because your not
 To solve this, this website implements a **"Summary + Interactive Study Guide"** model:
 1. **The Watch Folder**: You drop a PDF into a subject folder inside the watch folder (e.g., `watch_folder/Maths/lecture1.pdf` or `watch_folder/Biology/lecture1.pdf`).
 2. **Preventing Name Conflicts**: If different subjects use the same name (like `lecture1.pdf`), the system automatically separates them by prefixing the subject (e.g., `Maths - lecture1` and `Biology - lecture1`). Each page on the site gets its own independent URL, design, and search indexing, allowing google search console to index each lecture page individually.
-3. **The Companion JSON File**: You can place a text file named `lecture1.json` alongside the PDF inside the same subject folder containing a detailed summary, learning objectives, and a practice quiz. If you don't provide one, **the script automatically generates a default template JSON for you in that folder**!
-4. **The Python Script**: The uploader script processes the PDF into high-res WebP images, reads the JSON metadata, uploads everything to Cloudflare R2 (your secure database), and moves the local files to a structured subfolder inside `processed_folder` (e.g. `processed_folder/Maths/lecture1.pdf`).
-5. **The Website**: When a student (or an AdSense bot) visits a page, the website reads the metadata and displays a rich, crawlable HTML study guide (summary, objectives, quiz) alongside the secure, right-click disabled image viewer. The bot gets the text it wants for approval, while your actual lecture notes remain completely locked and protected.
+3. **The Companion JSON File**: You can place a text file named `lecture1.json` alongside the PDF inside the same subject folder containing a detailed summary, learning objectives, and a practice quiz. If you don't provide one, the website will gracefully fall back to a default study guide template for that page.
+4. **The Python Script**: The uploader script processes the PDF into high-res WebP images, reads the companion JSON metadata if present, uploads everything to Cloudflare R2 (your secure database), and moves the local files to a structured subfolder inside `processed_folder` (e.g. `processed_folder/Maths/lecture1.pdf`).
+5. **The Website**: When a student (or an AdSense bot) visits a page, the website reads the custom metadata (or uses the fallback template) and displays a rich, crawlable HTML study guide (summary, objectives, quiz) alongside the secure, right-click disabled image viewer. The bot gets the text it wants for approval, while your actual lecture notes remain completely locked and protected.
 
 ---
 
@@ -32,7 +32,7 @@ We need Python to run the automation script that converts your PDFs to images an
 3. **Install the Libraries**:
    Copy and paste this command into your terminal and press **Enter**:
    ```bash
-   pip install pymupdf watchdog boto3 python-dotenv
+   pip install pymupdf boto3 python-dotenv
    ```
 
 ---
@@ -89,7 +89,7 @@ Now, let's configure the Python script using the keys you just copied.
    ```bash
    python uploader.py
    ```
-6. The script will start and print a message: `[*] Active. Drop PDF files into 'watch_folder' subdirectories to upload them.`
+6. The script will scan the watch folder, process and upload any found PDFs (along with their companion JSON files if present) to R2, and then exit.
 
 ### How to use the Subject / Lecture Folders & Companion JSON Workflow:
 Organize files in R2 as **Subject → Lecture → pages** (e.g. `Deep Reinforcement Learning/Lecture 1/page_001.webp`).
@@ -98,10 +98,10 @@ Organize files in R2 as **Subject → Lecture → pages** (e.g. `Deep Reinforcem
 * **Lecture folder**: Inside each subject, create a folder per lecture (e.g. `watch_folder/Deep Reinforcement Learning/Lecture 1/`).
 * **Drop PDF (and optional JSON)**: Place `notes.pdf` (and optionally `Lecture 1.json` or `notes.json`) inside the lecture folder.
   * **Option A**: Custom `Lecture 1.json` in the same folder → uploads your study guide metadata.
-  * **Option B**: No JSON → the script generates a template JSON in that lecture folder for you to edit and re-upload later.
+  * **Option B**: No JSON → the website will use a fallback study guide template on the page.
 * **Alternative**: You may also drop `lecture1.pdf` directly under the subject folder (`watch_folder/Maths/lecture1.pdf`); the PDF filename (without `.pdf`) becomes the lecture name.
 * **Filing**: Processed files are moved under `processed_folder/` with the same folder structure.
-* **Re-upload after restructuring**: Run `python uploader.py --reupload` to clear R2 and rebuild from `processed_folder` once you have moved PDFs into the new layout.
+* **Re-run / Re-upload**: Run `python uploader.py --reupload` to clear R2 and rebuild from `processed_folder` once you have moved PDFs into the new layout.
 
 #### 🤖 AI Prompt Template to Generate Companion JSON:
 ```text

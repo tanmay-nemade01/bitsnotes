@@ -1,17 +1,17 @@
 import type { APIRoute } from 'astro';
+import { env } from 'cloudflare:workers';
+import { listSubjects, listLectures } from '../utils/r2Structure';
 
 /**
  * Dynamic SSR sitemap endpoint.
- * Lists all static, indexable public pages.
- * Dynamic routes like /subject/[subject] and /view/[...path] are intentionally
- * excluded — subject pages could be added here once subjects are known at
- * build-time via a data source.
+ * Lists all static and dynamic indexable public pages.
  */
-export const GET: APIRoute = ({ url }) => {
+export const GET: APIRoute = async ({ url }) => {
   const baseUrl = `${url.protocol}//${url.host}`;
+  const bucket = env?.BUCKET;
 
-  // Static pages to include in sitemap
-  const staticPages = [
+  // Pages to include in sitemap
+  const pages = [
     { path: '/',        changefreq: 'weekly',  priority: '1.0' },
     { path: '/about',   changefreq: 'monthly', priority: '0.7' },
     { path: '/contact', changefreq: 'monthly', priority: '0.6' },
@@ -19,9 +19,60 @@ export const GET: APIRoute = ({ url }) => {
     { path: '/terms',   changefreq: 'yearly',  priority: '0.4' },
   ];
 
+  if (bucket) {
+    try {
+      const subjects = await listSubjects(bucket as any);
+      for (const subject of subjects) {
+        const subjectParam = encodeURIComponent(subject.name);
+        pages.push({
+          path: `/subject/${subjectParam}`,
+          changefreq: 'weekly',
+          priority: '0.8',
+        });
+
+        const lectures = await listLectures(bucket as any, subject.name);
+        for (const lecture of lectures) {
+          const viewPath = `/view/${subjectParam}/${encodeURIComponent(lecture.name)}`;
+          pages.push({
+            path: viewPath,
+            changefreq: 'weekly',
+            priority: '0.8',
+          });
+        }
+      }
+    } catch (error) {
+      console.error('Failed to list subjects/lectures for sitemap:', error);
+    }
+  } else {
+    // Fallback/Demo Mode if Cloudflare R2 binding is not available (e.g. local dev)
+    const demoSubjects = [
+      { name: 'Deep Reinforcement Learning', lectures: ['Lecture 1', 'Lecture 2', 'Lecture 3', 'Lecture 4', 'Lecture 5'] },
+      { name: 'Machine Learning', lectures: ['Lecture 1', 'Lecture 2', 'Lecture 3', 'Lecture 4', 'Lecture 5'] },
+      { name: 'Computer Networks', lectures: ['Lecture 1', 'Lecture 2', 'Lecture 3', 'Lecture 4', 'Lecture 5'] },
+    ];
+
+    for (const subject of demoSubjects) {
+      const subjectParam = encodeURIComponent(subject.name);
+      pages.push({
+        path: `/subject/${subjectParam}`,
+        changefreq: 'weekly',
+        priority: '0.8',
+      });
+
+      for (const lectureName of subject.lectures) {
+        const viewPath = `/view/${subjectParam}/${encodeURIComponent(lectureName)}`;
+        pages.push({
+          path: viewPath,
+          changefreq: 'weekly',
+          priority: '0.8',
+        });
+      }
+    }
+  }
+
   const lastmod = new Date().toISOString().split('T')[0]; // YYYY-MM-DD
 
-  const urls = staticPages
+  const urls = pages
     .map(
       ({ path, changefreq, priority }) => `
   <url>

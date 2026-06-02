@@ -12,8 +12,6 @@ import urllib.error
 import io
 from PIL import Image
 from dotenv import load_dotenv
-from watchdog.observers import Observer
-from watchdog.events import FileSystemEventHandler
 
 # Load environment variables from the .env file
 load_dotenv()
@@ -146,90 +144,22 @@ def process_pdf(pdf_path):
         # 2. Handle Companion JSON Metadata
         json_path = os.path.join(os.path.dirname(pdf_path), f"{doc_name}.json")
         metadata = None
-        has_custom_json = False
         
         if os.path.exists(json_path):
             try:
                 with open(json_path, 'r', encoding='utf-8') as f:
                     metadata = json.load(f)
-                has_custom_json = True
                 print(f"[+] Found custom companion JSON: '{os.path.basename(json_path)}'")
             except Exception as e:
-                print(f"[!] Error reading custom JSON, will generate default: {e}")
-                metadata = None
-
-        if metadata is None:
-            # Generate AdSense-compliant default metadata template
-            date_str = datetime.date.today().strftime("%B %d, %Y")
-            
-            metadata = {
-                "title": doc_name,
-                "subject": subject_name,
-                "gradeLevel": "High School / College",
-                "datePublished": date_str,
-                "targetAudience": f"Students studying {doc_name} under the {subject_name} curriculum who want a comprehensive overview and practice questions.",
-                "summary": f"This study guide covers key topics from the {subject_name} notes '{doc_name}'. It provides a thorough abstract of the central curriculum elements, helping students review important formulas, conceptual diagrams, and theoretical models. Reading this material will clarify complex topics, detail common classroom homework questions, and serve as an excellent study reference for midterms and final exams in {subject_name}.",
-                "keyConcepts": [
-                  f"Master the core definitions and vocabulary of {doc_name} in {subject_name}.",
-                  "Learn to solve standard practice questions and application exercises.",
-                  "Analyze the relationship between theoretical concepts and step-by-step proofs."
-                ],
-                "sections": [
-                  { "title": "Section 1: Introduction and Core Definitions", "pages": "Pages 1-2", "description": f"Introduction to basic {subject_name} principles and vocabulary." },
-                  { "title": "Section 2: Key Methodology and Theory", "pages": "Pages 3-5", "description": "Deep-dive analysis of formulas, equations, or structural details." },
-                  { "title": "Section 3: Practical Applications and Review", "pages": "Pages 6+", "description": "Practice problems and step-by-step mathematical examples." }
-                ],
-                "quiz": [
-                  {
-                    "question": f"What is the main topic covered in the '{doc_name}' study guide for {subject_name}?",
-                    "options": [
-                      "An introduction and analysis of the core lecture themes",
-                      "Unrelated historical facts",
-                      "Programming in an unrelated language",
-                      "General school guidelines"
-                    ],
-                    "answerIndex": 0,
-                    "explanation": f"The main focus of this document is to analyze and review the core themes of '{doc_name}' within {subject_name}."
-                  },
-                  {
-                    "question": "What is the recommended approach to master the learning objectives of this lecture?",
-                    "options": [
-                      "Memorizing the summary without studying the visual notes",
-                      "Reviewing the concepts sequentially, tracing the formulas, and answering the practice questions",
-                      "Printing the document pages to share offline",
-                      "Skipping the interactive quiz"
-                    ],
-                    "answerIndex": 1,
-                    "explanation": "Active recall by going through the study breakdown and answering practice questions is the most effective approach."
-                  },
-                  {
-                    "question": "How are the practice examples in Section 3 structured?",
-                    "options": [
-                      "They are left as exercises without solutions",
-                      "They feature detailed, step-by-step applications of the theories",
-                      "They are multiple-choice questions only",
-                      "They are omitted from the text breakdown"
-                    ],
-                    "answerIndex": 1,
-                    "explanation": "Section 3 features detailed, step-by-step applications of the core lecture theories to support learning."
-                  }
-                ]
-            }
-            
-            # Save the template JSON locally in the subject watch folder so the user can see and modify it
-            try:
-                with open(json_path, 'w', encoding='utf-8') as f:
-                    json.dump(metadata, f, indent=2)
-                print(f"[+] Generated default companion JSON metadata template: '{os.path.basename(json_path)}'")
-            except Exception as e:
-                print(f"[!] Warning: Could not write local template JSON: {e}")
+                print(f"[!] Error reading custom companion JSON: {e}")
 
         # 3. Upload images and metadata to R2 under the unique key prefix
-        # Upload the metadata JSON file to R2
-        metadata_key = f"{r2_doc_id}/metadata.json"
-        metadata_json_bytes = json.dumps(metadata, indent=2).encode('utf-8')
-        upload_to_r2(metadata_key, metadata_json_bytes, "application/json")
-        print(f"[+] Uploaded metadata JSON to R2: '{metadata_key}'")
+        # Upload the metadata JSON file to R2 if it exists
+        if metadata is not None:
+            metadata_key = f"{r2_doc_id}/metadata.json"
+            metadata_json_bytes = json.dumps(metadata, indent=2).encode('utf-8')
+            upload_to_r2(metadata_key, metadata_json_bytes, "application/json")
+            print(f"[+] Uploaded metadata JSON to R2: '{metadata_key}'")
 
         # Open PDF using PyMuPDF
         doc = fitz.open(pdf_path)
@@ -311,11 +241,7 @@ def process_pdf(pdf_path):
     finally:
         _processing_files.discard(pdf_path)
 
-class PDFHandler(FileSystemEventHandler):
-    """Watches for file creation events inside the watch_folder recursively."""
-    def on_created(self, event):
-        if not event.is_directory and os.path.normpath(event.src_path).lower().endswith(".pdf"):
-            process_pdf(event.src_path)
+# PDFHandler class removed because background folder watching is disabled.
 
 def clear_r2_bucket():
     """Deletes ALL objects in the R2 bucket using the S3 API directly (not via HTTP upload endpoint)."""
@@ -399,7 +325,7 @@ def reupload_all():
 
 if __name__ == "__main__":
     print("==========================================================")
-    print("     Cloudflare R2 Secure PDF Auto-Uploader (PyMuPDF)     ")
+    print("        Cloudflare R2 Secure PDF Uploader (PyMuPDF)       ")
     print("==========================================================")
     
     # Check for --reupload flag: clear R2 and reprocess all PDFs from processed_folder
@@ -413,29 +339,21 @@ if __name__ == "__main__":
         print("[!] Please open 'local_uploader/.env' and fill in your Cloudflare details.")
         exit(1)
         
-    # Process any PDFs that are already in watch_folder on startup recursively
-    print(f"[*] Scanning watch folder recursively for any existing PDFs...")
+    # Process any PDFs that are already in watch_folder recursively
+    print(f"[*] Scanning watch folder recursively for PDFs to upload...")
+    found_pdfs = []
     for root, dirs, files in os.walk(WATCH_DIR):
         if ".venv" in root or ".git" in root:
             continue
         for filename in files:
             if filename.lower().endswith(".pdf"):
-                process_pdf(os.path.join(root, filename))
+                found_pdfs.append(os.path.join(root, filename))
+    
+    if not found_pdfs:
+        print("[*] No PDFs found in the watch folder.")
+    else:
+        print(f"[*] Found {len(found_pdfs)} PDF(s) to process.")
+        for pdf_path in found_pdfs:
+            process_pdf(pdf_path)
             
-    print(f"[*] Starting folder watcher recursively on: '{WATCH_DIR}'")
-    event_handler = PDFHandler()
-    observer = Observer()
-    observer.schedule(event_handler, WATCH_DIR, recursive=True)
-    observer.start()
-    
-    print("[*] Active. Drop PDF files into 'watch_folder' subdirectories to upload them.")
-    print("[*] Press Ctrl+C to exit.")
-    
-    try:
-        while True:
-            time.sleep(1)
-    except KeyboardInterrupt:
-        print("\n[*] Stopping folder watcher...")
-        observer.stop()
-    observer.join()
-    print("[*] Uploader script stopped.")
+    print("\n[+] Processing finished. Uploader script stopped.")
