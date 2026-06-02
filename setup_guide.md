@@ -74,7 +74,7 @@ Now, let's configure the Python script using the keys you just copied.
 3. Replace the placeholder text with your actual details:
    ```ini
    # --- Option A: HTTP Uploader (Recommended - Bypasses S3 API ISP Blocks) ---
-   # Set to your live worker URL (e.g. https://bitsnotes.YOUR_USERNAME.workers.dev) or http://localhost:8787 for local testing
+   # Set to your live worker URL (e.g. https://bitsnotes.com) or http://localhost:8787 for local testing
    WEBSITE_URL=http://localhost:8787
    UPLOAD_SECRET=06e4a4d27de21fadad0624ff6732410f0ab9c509bae0a4fc77d1fc97fd31d577
 
@@ -174,7 +174,7 @@ Now, let's put your website on the internet so students can access it and AdSens
    ```bash
    npx wrangler deploy
    ```
-3. Wrangler will upload your project and print a live URL (e.g., `https://bitsnotes.<your-username>.workers.dev`).
+3. Wrangler will upload your project and route it to your custom domain (e.g., `https://bitsnotes.com`).
 
 ---
 
