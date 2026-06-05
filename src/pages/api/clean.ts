@@ -1,5 +1,6 @@
 import type { APIRoute } from 'astro';
 import { env } from 'cloudflare:workers';
+import { invalidateAllCaches } from '../../utils/r2Structure';
 
 export const POST: APIRoute = async ({ request }) => {
   try {
@@ -50,6 +51,13 @@ export const POST: APIRoute = async ({ request }) => {
     }
 
     console.log(`[Clean API] Cleanup complete. Deleted ${count} objects.`);
+
+    // Invalidate all cached lists in KV since the bucket is now empty
+    const kv = env.SESSION;
+    if (kv) {
+      await invalidateAllCaches(kv);
+    }
+
 
     return new Response(
       JSON.stringify({ success: true, deletedCount: count }),

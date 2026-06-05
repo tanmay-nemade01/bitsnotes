@@ -25,17 +25,31 @@ let isDemoMode = false;
 let customMetadata = null;
 
 const bucket = env?.BUCKET;
+const kv = env?.SESSION;
 let r2Prefix = `${subjectName}/${lectureName}`;
 
 if (bucket) {
   try {
-    const resolved = await resolveLecturePrefix(bucket as any, subjectName, lectureName);
-    if (resolved) {
-      r2Prefix = resolved;
+    // 1. Try standard layout prefix first (Subject/Lecture)
+    let resolvedPrefix = `${subjectName}/${lectureName}`;
+    let listed = await (bucket as any).list({ prefix: `${resolvedPrefix}/` });
+
+    // 2. Try legacy layout prefix if standard has no objects (Subject - Lecture)
+    if (!listed.objects || listed.objects.length === 0) {
+      resolvedPrefix = `${subjectName} - ${lectureName}`;
+      listed = await (bucket as any).list({ prefix: `${resolvedPrefix}/` });
     }
 
-    const prefix = `${r2Prefix}/`;
-    const listed = await (bucket as any).list({ prefix });
+    // 3. Fallback to resolution helper if still not found
+    if (!listed.objects || listed.objects.length === 0) {
+      const resolved = await resolveLecturePrefix(bucket as any, subjectName, lectureName, kv as any);
+      if (resolved) {
+        resolvedPrefix = resolved;
+        listed = await (bucket as any).list({ prefix: `${resolvedPrefix}/` });
+      }
+    }
+
+    r2Prefix = resolvedPrefix;
 
     // Extract object keys for image files only
     pages = (listed.objects || [])
@@ -57,11 +71,17 @@ if (bucket) {
     }
 
     if (pages.length === 0) {
-      errorMsg = `No images found in folder: "${r2Prefix}/". Please check if your PDF uploader ran successfully.`;
+      if (import.meta.env.DEV) {
+        isDemoMode = true;
+        pages = ['page_001.webp', 'page_002.webp', 'page_003.webp', 'page_004.webp'];
+      } else {
+        errorMsg = `No images found in folder: "${r2Prefix}/". Please check if your PDF uploader ran successfully.`;
+      }
     }
   } catch (error: any) {
     errorMsg = `Failed to retrieve document pages from R2: ${error.message || error}`;
     isDemoMode = true;
+    pages = ['page_001.webp', 'page_002.webp', 'page_003.webp', 'page_004.webp'];
   }
 } else {
   isDemoMode = true;
@@ -69,58 +89,134 @@ if (bucket) {
   pages = ['page_001.webp', 'page_002.webp', 'page_003.webp', 'page_004.webp'];
 }
 
-const metadata = customMetadata || getFallbackMetadata(lectureName);
+const metadata = customMetadata || getFallbackMetadata(lectureName, subjectName);
+
+// Setup dynamic keywords and descriptions
+const seoDescription = metadata.summary 
+  ? (metadata.summary.length > 155 ? metadata.summary.slice(0, 152) + "..." : metadata.summary)
+  : `Access secure study notes and resources for ${lectureName} in ${subjectName} on BitsNotes.`;
+
+const seoKeywords = [
+  metadata.title,
+  subjectName,
+  lectureName,
+  "lecture notes",
+  "study guide",
+  "practice quiz",
+  ...(metadata.keyConcepts || []).map(k => k.split(' ').slice(0, 3).join(' ').replace(/[^\w\s]/g, '')),
+].filter(Boolean).join(", ");
+
+// Generate JSON-LD Schema.org markup
+const learningResourceSchema = {
+  "@context": "https://schema.org",
+  "@type": "LearningResource",
+  "name": `${metadata.title} | ${subjectName} Lecture Notes`,
+  "description": metadata.summary,
+  "learningResourceType": "Lecture Notes",
+  "educationalLevel": metadata.gradeLevel,
+  "teaches": metadata.keyConcepts?.join(", ") || "",
+  "audience": {
+    "@type": "Audience",
+    "audienceType": metadata.targetAudience
+  },
+  "datePublished": metadata.datePublished,
+  "inLanguage": "en",
+  "author": {
+    "@type": "Organization",
+    "name": "BitsNotes"
+  },
+  "publisher": {
+    "@type": "Organization",
+    "name": "BitsNotes"
+  }
+};
+
+const quizSchema = metadata.quiz && metadata.quiz.length > 0 ? {
+  "@context": "https://schema.org",
+  "@type": "Quiz",
+  "name": `${metadata.title} Practice Quiz`,
+  "description": `Interactive practice quiz covering ${metadata.title} concepts.`,
+  "about": {
+    "@type": "Thing",
+    "name": metadata.title
+  },
+  "hasPart": metadata.quiz.map((q, index) => ({
+    "@type": "Question",
+    "name": `Question ${index + 1}`,
+    "text": q.question,
+    "suggestedAnswer": q.options.map((opt, optIndex) => ({
+      "@type": "Answer",
+      "text": opt,
+      "position": optIndex + 1
+    })),
+    "acceptedAnswer": {
+      "@type": "Answer",
+      "text": q.options[q.answerIndex]
+    }
+  }))
+} : null;
+
+const learningResourceJson = JSON.stringify(learningResourceSchema);
+const quizJson = quizSchema ? JSON.stringify(quizSchema) : null;
 ---
 
 <BaseLayout
   title={`${metadata.title} | ${subjectName} | BitsNotes`}
-  description={metadata.summary.slice(0, 155) + "..."}
-  theme="dark"
+  description={seoDescription}
+  keywords={seoKeywords}
+  ogType="article"
+  theme="light"
   isSecure={true}
 >
-  <main class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 w-full flex-grow flex flex-col gap-6">
+  <Fragment slot="head">
+    <script type="application/ld+json" set:html={learningResourceJson} />
+    {quizJson && <script type="application/ld+json" set:html={quizJson} />}
+  </Fragment>
+
+  <main class="flex-grow max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-10 w-full flex flex-col gap-8">
 
     <!-- Top Breadcrumbs & Header Section -->
-    <section class="bg-slate-900 border border-slate-800 rounded-3xl p-6 md:p-8 shadow-xl relative overflow-hidden">
-      <!-- Background Glow -->
-      <div class="absolute right-0 top-0 -mt-8 -mr-8 w-48 h-48 bg-indigo-500/5 rounded-full blur-3xl pointer-events-none"></div>
+    <section class="relative bg-white rounded-3xl border border-slate-100 p-8 md:p-10 shadow-xl shadow-slate-100/50 overflow-hidden">
+      <!-- Decorative Backdrop Gradients -->
+      <div class="absolute right-0 top-0 -mt-12 -mr-12 w-64 h-64 bg-indigo-100/40 rounded-full blur-3xl pointer-events-none"></div>
+      <div class="absolute left-1/3 bottom-0 -mb-16 w-80 h-80 bg-violet-100/30 rounded-full blur-3xl pointer-events-none"></div>
 
       <!-- Breadcrumbs -->
-      <nav class="flex items-center gap-2 text-xs font-semibold text-slate-500 mb-4 select-none flex-wrap">
-        <a href="/" class="hover:text-indigo-400 transition-colors">Home</a>
-        <svg class="w-3 h-3 text-slate-700" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+      <nav class="flex items-center gap-2 text-xs font-semibold text-slate-500 mb-4 select-none flex-wrap relative z-10">
+        <a href="/" class="hover:text-indigo-600 transition-colors">Home</a>
+        <svg class="w-3 h-3 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
           <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M9 5l7 7-7 7"></path>
         </svg>
-        <a href={`/subject/${encodeURIComponent(subjectName)}`} class="hover:text-indigo-400 transition-colors truncate max-w-[120px] sm:max-w-none">{subjectName}</a>
-        <svg class="w-3 h-3 text-slate-700" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <a href={`/subject/${encodeURIComponent(subjectName)}`} class="hover:text-indigo-600 transition-colors truncate max-w-[120px] sm:max-w-none">{subjectName}</a>
+        <svg class="w-3 h-3 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
           <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M9 5l7 7-7 7"></path>
         </svg>
-        <span class="text-indigo-400 truncate max-w-[150px] sm:max-w-none">{lectureName}</span>
+        <span class="text-indigo-600 truncate max-w-[150px] sm:max-w-none">{lectureName}</span>
       </nav>
 
       <!-- Document Metadata Header -->
-      <div class="flex flex-col md:flex-row md:items-center justify-between gap-4">
+      <div class="flex flex-col md:flex-row md:items-center justify-between gap-4 relative z-10">
         <div>
-          <span class="inline-block text-[10px] font-extrabold text-indigo-400 uppercase tracking-widest bg-indigo-500/10 border border-indigo-500/20 px-2.5 py-1 rounded-md mb-2">
+          <span class="inline-block text-[10px] font-extrabold text-indigo-600 uppercase tracking-widest bg-indigo-50 border border-indigo-100 px-2.5 py-1 rounded-md mb-2">
             {subjectName}
           </span>
-          <h1 class="text-2xl sm:text-3xl font-extrabold text-white tracking-tight leading-tight">
+          <h1 class="text-2xl sm:text-3xl font-extrabold text-slate-900 tracking-tight leading-tight">
             {lectureName}
           </h1>
-          <p class="text-xs text-slate-400 mt-2 font-medium flex items-center gap-4 flex-wrap">
+          <p class="text-xs text-slate-500 mt-2 font-medium flex items-center gap-4 flex-wrap">
             <span class="flex items-center gap-1">
-              <svg class="w-3.5 h-3.5 text-slate-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <svg class="w-3.5 h-3.5 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253"></path>
               </svg>
               Level: {metadata.gradeLevel}
             </span>
             <span class="flex items-center gap-1">
-              <svg class="w-3.5 h-3.5 text-slate-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <svg class="w-3.5 h-3.5 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"></path>
               </svg>
               Published: {metadata.datePublished}
             </span>
-            <span class="flex items-center gap-1 bg-slate-800 border border-slate-700 px-2 py-0.5 rounded text-[10px] font-bold text-slate-300">
+            <span class="flex items-center gap-1 bg-indigo-50 border border-indigo-100 px-2 py-0.5 rounded text-[10px] font-bold text-indigo-700">
               {pages.length} Pages
             </span>
           </p>
@@ -128,23 +224,23 @@ const metadata = customMetadata || getFallbackMetadata(lectureName);
 
         {isDemoMode && (
           <div class="flex flex-col items-start md:items-end shrink-0 select-none">
-            <span class="px-2.5 py-1 bg-amber-500/10 text-amber-400 border border-amber-500/20 text-xs font-bold rounded-lg mb-1">
+            <span class="px-2.5 py-1 bg-amber-50 text-amber-700 border border-amber-200 text-xs font-bold rounded-lg mb-1">
               Local Preview Mode
             </span>
-            <span class="text-[9px] text-amber-400/80 font-medium">Cloudflare R2 is disconnected</span>
+            <span class="text-[9px] text-amber-600 font-medium">Cloudflare R2 is disconnected</span>
           </div>
         )}
       </div>
     </section>
 
     {errorMsg && isDemoMode && (
-      <div class="bg-amber-500/10 border border-amber-500/20 rounded-2xl p-4 text-amber-300 text-xs flex gap-3 shadow-md select-none print-disabled">
-        <svg class="w-5 h-5 shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+      <div class="bg-amber-50 border border-amber-200 rounded-2xl p-5 text-amber-800 text-xs flex items-start gap-3.5 shadow-sm select-none print-disabled">
+        <svg class="w-5 h-5 shrink-0 mt-0.5 text-amber-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
           <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path>
         </svg>
         <div>
-          <h4 class="font-bold text-amber-200">Local Preview Mode Active</h4>
-          <p class="mt-1 leading-relaxed">
+          <h4 class="font-bold text-amber-900">Local Preview Mode Active</h4>
+          <p class="mt-1 leading-relaxed text-amber-700">
             This page is rendering mock content because Astro is running locally. Once deployed, your actual uploaded document pages will stream securely from Cloudflare R2.
           </p>
         </div>
@@ -156,33 +252,33 @@ const metadata = customMetadata || getFallbackMetadata(lectureName);
 
       <!-- Left Column: Study Guide -->
       <aside class="lg:col-span-4 space-y-6 flex flex-col">
-        <article class="bg-slate-900 border border-slate-800 rounded-3xl p-6 shadow-xl space-y-5">
+        <article class="bg-white border border-slate-100 rounded-3xl p-6 shadow-xl shadow-slate-100/40 space-y-5">
           <div>
-            <h2 class="text-sm font-extrabold uppercase tracking-widest text-indigo-400 mb-1">Study Guide</h2>
-            <h3 class="text-lg font-bold text-white">Lecture Overview</h3>
+            <h2 class="text-sm font-extrabold uppercase tracking-widest text-indigo-600 mb-1">Study Guide</h2>
+            <h3 class="text-lg font-bold text-slate-900">Lecture Overview</h3>
           </div>
 
-          <p class="text-xs sm:text-sm text-slate-300 leading-relaxed font-medium">
+          <p class="text-xs sm:text-sm text-slate-600 leading-relaxed font-medium">
             {metadata.summary}
           </p>
 
-          <hr class="border-slate-800" />
+          <hr class="border-slate-100" />
 
           <div class="space-y-2">
-            <h4 class="text-xs font-bold text-slate-400 uppercase tracking-wider">Target Audience</h4>
-            <p class="text-xs text-slate-400 leading-relaxed font-medium">
+            <h4 class="text-xs font-bold text-slate-500 uppercase tracking-wider">Target Audience</h4>
+            <p class="text-xs text-slate-500 leading-relaxed font-medium">
               {metadata.targetAudience}
             </p>
           </div>
 
-          <hr class="border-slate-800" />
+          <hr class="border-slate-100" />
 
           <div class="space-y-3">
-            <h4 class="text-xs font-bold text-slate-400 uppercase tracking-wider">Key Learning Objectives</h4>
-            <ul class="space-y-2.5 text-xs text-slate-300 font-semibold">
+            <h4 class="text-xs font-bold text-slate-500 uppercase tracking-wider">Key Learning Objectives</h4>
+            <ul class="space-y-2.5 text-xs text-slate-700 font-semibold">
               {metadata.keyConcepts.map((concept) => (
                 <li class="flex items-start gap-2.5 leading-relaxed">
-                  <span class="w-5 h-5 rounded-md bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 flex items-center justify-center shrink-0 mt-0.5">
+                  <span class="w-5 h-5 rounded-md bg-emerald-50 text-emerald-600 border border-emerald-200 flex items-center justify-center shrink-0 mt-0.5">
                     <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                       <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M5 13l4 4L19 7"></path>
                     </svg>
@@ -193,18 +289,18 @@ const metadata = customMetadata || getFallbackMetadata(lectureName);
             </ul>
           </div>
 
-          <hr class="border-slate-800" />
+          <hr class="border-slate-100" />
 
           <div class="space-y-4">
-            <h4 class="text-xs font-bold text-slate-400 uppercase tracking-wider">Document Roadmap</h4>
+            <h4 class="text-xs font-bold text-slate-500 uppercase tracking-wider">Document Roadmap</h4>
             <div class="space-y-3">
               {metadata.sections.map((section, idx) => (
-                <div class="p-3 bg-slate-950 border border-slate-800 rounded-xl flex items-start justify-between gap-3">
+                <div class="p-3 bg-slate-50 border border-slate-100 rounded-xl flex items-start justify-between gap-3">
                   <div>
-                    <h5 class="text-xs font-bold text-slate-200">{section.title}</h5>
+                    <h5 class="text-xs font-bold text-slate-800">{section.title}</h5>
                     <p class="text-[10px] text-slate-500 mt-1 leading-relaxed">{section.description}</p>
                   </div>
-                  <span class="text-[9px] font-bold text-indigo-400 bg-indigo-500/5 border border-indigo-500/10 px-2 py-0.5 rounded shrink-0 select-none">
+                  <span class="text-[9px] font-bold text-indigo-600 bg-indigo-50 border border-indigo-100 px-2 py-0.5 rounded shrink-0 select-none">
                     {section.pages}
                   </span>
                 </div>
@@ -231,78 +327,51 @@ const metadata = customMetadata || getFallbackMetadata(lectureName);
               .map((segment) => encodeURIComponent(segment))
               .join('/');
             const pageSrc = isDemoMode
-              ? `https://images.unsplash.com/photo-1544716278-ca5e3f4abd8c?auto=format&fit=crop&q=80&w=1000`
+              ? `/placeholder_notes/${encodeURIComponent(pageFileName)}`
               : `/api/document/${documentApiPath}/${encodeURIComponent(pageFileName)}`;
+
+            const pageTranscript = metadata.pageTranscripts?.[index] || '';
+            const altText = pageTranscript
+              ? `${lectureName} - Page ${index + 1}: ${pageTranscript.slice(0, 100)}...`
+              : `${lectureName} - Page ${index + 1}`;
 
             return (
               <div
-                class="page-card bg-slate-950 rounded-2xl shadow-2xl border border-slate-800/80 overflow-hidden relative transition-all duration-300 flex flex-col justify-between shrink-0"
+                class="page-card bg-white rounded-2xl shadow-xl shadow-slate-200/60 border border-slate-200 overflow-hidden relative transition-all duration-300 flex flex-col justify-between shrink-0"
                 style="width: var(--page-width); max-width: 100%; aspect-ratio: 1 / 1.414;"
                 data-page-index={index + 1}
               >
                 {/* Page Overlay Shadow to prevent capture */}
-                <div class="absolute inset-0 bg-slate-950/0 pointer-events-none z-10"></div>
+                <div class="absolute inset-0 bg-white/0 pointer-events-none z-10"></div>
 
-                {isDemoMode ? (
-                  <!-- Local Demo Content -->
-                  <div class="flex-grow flex flex-col justify-between p-8 sm:p-12 text-slate-300 bg-gradient-to-br from-slate-900 to-slate-950 border border-slate-800 rounded-2xl">
-                    <div class="flex justify-between items-start border-b border-slate-800 pb-4">
-                      <div>
-                        <h3 class="font-extrabold text-lg sm:text-xl tracking-tight text-indigo-400">{lectureName}</h3>
-                        <p class="text-[10px] text-slate-500 font-semibold mt-1">{subjectName}</p>
-                      </div>
-                      <span class="text-[10px] bg-indigo-500/10 text-indigo-400 border border-indigo-500/20 px-2.5 py-1 rounded-full font-bold">
-                        Page {index + 1}
-                      </span>
-                    </div>
-
-                    <div class="my-8 flex-grow flex flex-col justify-center space-y-4">
-                      <div class="w-1/3 h-4 bg-indigo-500/10 rounded-md"></div>
-                      <div class="w-full h-3 bg-slate-800/40 rounded-md"></div>
-                      <div class="w-5/6 h-3 bg-slate-800/40 rounded-md"></div>
-                      <div class="w-4/5 h-3 bg-slate-800/40 rounded-md"></div>
-                      <div class="w-full h-3 bg-slate-800/40 rounded-md"></div>
-
-                      <div class="pt-6 flex items-center justify-center">
-                        <div class="text-center p-6 border border-dashed border-slate-800 bg-slate-900/30 rounded-2xl max-w-sm">
-                          <svg class="w-8 h-8 mx-auto text-indigo-500/70 mb-2 animate-pulse" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"></path>
-                          </svg>
-                          <h4 class="text-xs font-bold text-slate-200">Secure Page View</h4>
-                          <p class="text-[10px] text-slate-500 mt-1 leading-relaxed">
-                            WebP flat image rendering is active. Students can read notes but cannot save, print or select text.
-                          </p>
-                        </div>
-                      </div>
-                    </div>
-
-                    <div class="border-t border-slate-800 pt-4 flex justify-between text-[10px] text-slate-500 font-bold tracking-wider uppercase">
-                      <span>View-Only Portal</span>
-                      <span>BitsNotes Server</span>
-                    </div>
+                {/* Screen-reader transcript for SEO & accessibility */}
+                {pageTranscript && (
+                  <div id={`page-transcript-${index + 1}`} class="sr-only">
+                    {pageTranscript}
                   </div>
-                ) : (
-                  <!-- Real Secured Flat Image Page -->
-                  <img
-                    src={pageSrc}
-                    alt={`${lectureName} - Page ${index + 1}`}
-                    class="secure-image w-full h-full object-contain bg-slate-950"
-                    loading={index < 2 ? "eager" : "lazy"}
-                    decoding="async"
-                  />
                 )}
+
+                {/* Real Secured Flat Image Page */}
+                <img
+                  src={pageSrc}
+                  alt={altText}
+                  aria-describedby={pageTranscript ? `page-transcript-${index + 1}` : undefined}
+                  class="secure-image w-full h-full object-contain bg-white"
+                  loading={index < 2 ? "eager" : "lazy"}
+                  decoding="async"
+                />
               </div>
             );
           })}
         </div>
 
         <!-- Inline Zoom Controls -->
-        <div class="bg-slate-950/90 border border-slate-800 backdrop-blur-md px-6 py-3.5 rounded-2xl shadow-2xl flex items-center gap-6 shrink-0 transition-transform duration-300 hover:scale-102 select-none print-disabled">
+        <div class="bg-white/90 border border-slate-200 backdrop-blur-md px-6 py-3.5 rounded-2xl shadow-lg flex items-center gap-6 shrink-0 transition-transform duration-300 hover:scale-102 select-none print-disabled">
           <!-- Zoom Out -->
           <button
             type="button"
             id="zoom-out-btn"
-            class="p-2 rounded-xl bg-slate-900 hover:bg-slate-850 border border-slate-800 hover:border-slate-700 text-slate-300 hover:text-white transition-all focus:outline-none cursor-pointer"
+            class="p-2 rounded-xl bg-slate-50 hover:bg-slate-100 border border-slate-200 hover:border-slate-300 text-slate-600 hover:text-slate-900 transition-all focus:outline-none cursor-pointer"
             title="Zoom Out"
           >
             <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -311,7 +380,7 @@ const metadata = customMetadata || getFallbackMetadata(lectureName);
           </button>
 
           <!-- Zoom Value -->
-          <span id="zoom-indicator" class="text-xs font-bold text-slate-300 w-12 text-center select-none">
+          <span id="zoom-indicator" class="text-xs font-bold text-slate-700 w-12 text-center select-none">
             100%
           </span>
 
@@ -319,7 +388,7 @@ const metadata = customMetadata || getFallbackMetadata(lectureName);
           <button
             type="button"
             id="zoom-in-btn"
-            class="p-2 rounded-xl bg-slate-900 hover:bg-slate-850 border border-slate-800 hover:border-slate-700 text-slate-300 hover:text-white transition-all focus:outline-none cursor-pointer"
+            class="p-2 rounded-xl bg-slate-50 hover:bg-slate-100 border border-slate-200 hover:border-slate-300 text-slate-600 hover:text-slate-900 transition-all focus:outline-none cursor-pointer"
             title="Zoom In"
           >
             <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -328,13 +397,13 @@ const metadata = customMetadata || getFallbackMetadata(lectureName);
           </button>
 
           <!-- Divider -->
-          <div class="h-6 w-[1px] bg-slate-800"></div>
+          <div class="h-6 w-[1px] bg-slate-200"></div>
 
           <!-- Fit to Width -->
           <button
             type="button"
             id="fit-width-btn"
-            class="px-3.5 py-2 rounded-xl bg-slate-900 hover:bg-slate-850 border border-slate-800 hover:border-slate-700 text-xs font-bold text-slate-300 hover:text-white transition-all flex items-center gap-1.5 focus:outline-none cursor-pointer"
+            class="px-3.5 py-2 rounded-xl bg-slate-50 hover:bg-slate-100 border border-slate-200 hover:border-slate-300 text-xs font-bold text-slate-600 hover:text-slate-900 transition-all flex items-center gap-1.5 focus:outline-none cursor-pointer"
             title="Fit Viewer to Window Width"
           >
             <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -348,16 +417,16 @@ const metadata = customMetadata || getFallbackMetadata(lectureName);
     </div>
 
     <!-- Bottom Section: Interactive Practice Quiz -->
-    <section class="mt-8 bg-slate-900 border border-slate-800 rounded-3xl p-6 md:p-8 shadow-xl">
+    <section class="bg-white border border-slate-100 rounded-3xl p-6 md:p-8 shadow-xl shadow-slate-100/40">
       <div class="flex items-center gap-3.5 mb-6">
-        <div class="w-10 h-10 bg-indigo-500/10 text-indigo-400 border border-indigo-500/20 rounded-xl flex items-center justify-center shrink-0">
+        <div class="w-10 h-10 bg-indigo-50 text-indigo-600 border border-indigo-100 rounded-xl flex items-center justify-center shrink-0">
           <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8.228 9c.549-1.165 2.03-2 3.772-2 2.21 0 4 1.343 4 3 0 1.4-1.278 2.575-3.006 2.907-.542.104-.994.54-.994 1.093m0 3h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path>
           </svg>
         </div>
         <div>
-          <h2 class="text-sm font-extrabold uppercase tracking-widest text-indigo-400 mb-0.5">Active Study Aids</h2>
-          <h3 class="text-xl font-bold text-white">Interactive Practice Quiz</h3>
+          <h2 class="text-sm font-extrabold uppercase tracking-widest text-indigo-600 mb-0.5">Active Study Aids</h2>
+          <h3 class="text-xl font-bold text-slate-900">Interactive Practice Quiz</h3>
         </div>
       </div>
 
@@ -365,17 +434,17 @@ const metadata = customMetadata || getFallbackMetadata(lectureName);
       <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
         {metadata.quiz.map((q, qIndex) => (
           <div
-            class="quiz-card p-5 bg-slate-950 border border-slate-800/80 rounded-2xl flex flex-col gap-4 relative overflow-hidden transition-all duration-300"
+            class="quiz-card p-5 bg-slate-50 border border-slate-100 rounded-2xl flex flex-col gap-4 relative overflow-hidden transition-all duration-300"
             data-question-index={qIndex}
             data-correct-index={q.answerIndex}
           >
             <div class="flex justify-between items-start gap-3">
-              <span class="text-[10px] bg-slate-800 text-slate-400 font-bold px-2 py-0.5 rounded select-none">
+              <span class="text-[10px] bg-indigo-50 text-indigo-600 font-bold px-2 py-0.5 rounded select-none">
                 Question {qIndex + 1}
               </span>
             </div>
 
-            <h4 class="text-sm font-bold text-slate-100 leading-relaxed">
+            <h4 class="text-sm font-bold text-slate-800 leading-relaxed">
               {q.question}
             </h4>
 
@@ -383,20 +452,20 @@ const metadata = customMetadata || getFallbackMetadata(lectureName);
               {q.options.map((opt, optIndex) => (
                 <button
                   type="button"
-                  class="option-btn w-full p-3 bg-slate-900 hover:bg-slate-850 active:scale-[0.99] border border-slate-800 hover:border-slate-700 text-left text-xs font-semibold text-slate-300 rounded-xl transition-all flex items-center justify-between cursor-pointer"
+                  class="option-btn w-full p-3 bg-white hover:bg-slate-50 active:scale-[0.99] border border-slate-200 hover:border-slate-300 text-left text-xs font-semibold text-slate-700 rounded-xl transition-all flex items-center justify-between cursor-pointer"
                   data-option-index={optIndex}
                 >
                   <span>{opt}</span>
-                  <span class="option-indicator w-4 h-4 rounded-full border border-slate-700 flex items-center justify-center shrink-0 ml-3"></span>
+                  <span class="option-indicator w-4 h-4 rounded-full border border-slate-300 flex items-center justify-center shrink-0 ml-3"></span>
                 </button>
               ))}
             </div>
 
-            <div class="explanation-box hidden p-4 bg-slate-900 border border-slate-800/60 rounded-xl text-xs space-y-2 animate-fadeIn">
+            <div class="explanation-box hidden p-4 bg-slate-50 border border-slate-200 rounded-xl text-xs space-y-2 animate-fadeIn">
               <div class="flex items-center gap-1.5 font-bold">
                 <span class="result-label"></span>
               </div>
-              <p class="text-slate-400 leading-relaxed font-medium">
+              <p class="text-slate-500 leading-relaxed font-medium">
                 {q.explanation}
               </p>
             </div>
@@ -404,6 +473,44 @@ const metadata = customMetadata || getFallbackMetadata(lectureName);
         ))}
       </div>
     </section>
+
+    <!-- Collapsible Full Lecture Transcript Section (SEO & Accessibility) -->
+    {metadata.pageTranscripts && metadata.pageTranscripts.length > 0 && (
+      <section class="bg-white border border-slate-100 rounded-3xl p-6 md:p-8 shadow-xl shadow-slate-100/40">
+        <details class="group">
+          <summary class="flex items-center justify-between cursor-pointer list-none select-none focus:outline-none">
+            <div class="flex items-center gap-3.5">
+              <div class="w-10 h-10 bg-indigo-50 text-indigo-600 border border-indigo-100 rounded-xl flex items-center justify-center shrink-0">
+                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path>
+                </svg>
+              </div>
+              <div class="text-left">
+                <h2 class="text-[10px] font-extrabold uppercase tracking-widest text-indigo-600 mb-0.5">Study Text</h2>
+                <h3 class="text-base sm:text-lg font-bold text-slate-900">Full Lecture Transcript</h3>
+              </div>
+            </div>
+            <span class="text-slate-400 group-open:rotate-180 transition-transform duration-300">
+              <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M19 9l-7 7-7-7"></path>
+              </svg>
+            </span>
+          </summary>
+          <div class="mt-6 space-y-6 pt-6 border-t border-slate-100">
+            {metadata.pageTranscripts.map((text, idx) => (
+              text.trim() && (
+                <div class="space-y-2">
+                  <h4 class="text-xs font-bold text-slate-500 uppercase tracking-wider">Page {idx + 1}</h4>
+                  <p class="text-xs sm:text-sm text-slate-600 leading-relaxed whitespace-pre-line bg-slate-50 p-4 border border-slate-100 rounded-xl font-medium">
+                    {text}
+                  </p>
+                </div>
+              )
+            ))}
+          </div>
+        </details>
+      </section>
+    )}
 
   </main>
 </BaseLayout>
@@ -471,20 +578,20 @@ const metadata = customMetadata || getFallbackMetadata(lectureName);
 
         optionBtns.forEach((b, idx) => {
           const indicator = b.querySelector('.option-indicator');
-          b.classList.remove('hover:bg-slate-850', 'hover:border-slate-700');
+          b.classList.remove('hover:bg-slate-50', 'hover:border-slate-300');
           b.style.cursor = 'default';
 
           if (idx === correctIdx) {
-            b.classList.add('bg-emerald-500/10', 'border-emerald-500/40', 'text-emerald-300');
+            b.classList.add('bg-emerald-50', 'border-emerald-500/40', 'text-emerald-800');
             if (indicator) {
-              indicator.classList.add('bg-emerald-500/20', 'border-emerald-400');
-              indicator.innerHTML = `<svg class="w-3 h-3 text-emerald-400" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clip-rule="evenodd"></path></svg>`;
+              indicator.classList.add('bg-emerald-50', 'border-emerald-500/40');
+              indicator.innerHTML = `<svg class="w-3 h-3 text-emerald-600" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clip-rule="evenodd"></path></svg>`;
             }
           } else if (idx === selectedIdx && !isCorrect) {
-            b.classList.add('bg-rose-500/10', 'border-rose-500/40', 'text-rose-300');
+            b.classList.add('bg-rose-50', 'border-rose-500/40', 'text-rose-800');
             if (indicator) {
-              indicator.classList.add('bg-rose-500/20', 'border-rose-400');
-              indicator.innerHTML = `<svg class="w-3 h-3 text-rose-400" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z" clip-rule="evenodd"></path></svg>`;
+              indicator.classList.add('bg-rose-50', 'border-rose-500/40');
+              indicator.innerHTML = `<svg class="w-3 h-3 text-rose-600" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z" clip-rule="evenodd"></path></svg>`;
             }
           }
         });
@@ -493,12 +600,12 @@ const metadata = customMetadata || getFallbackMetadata(lectureName);
           explanationBox.classList.remove('hidden');
           if (isCorrect) {
             resultLabel.textContent = "Correct! Well done.";
-            resultLabel.className = "result-label text-emerald-400 text-xs flex items-center gap-1";
-            explanationBox.classList.add('border-emerald-500/20', 'bg-emerald-950/10');
+            resultLabel.className = "result-label text-emerald-700 text-xs flex items-center gap-1 font-bold";
+            explanationBox.classList.add('border-emerald-500/25', 'bg-emerald-50');
           } else {
             resultLabel.textContent = "Incorrect. Review explanation:";
-            resultLabel.className = "result-label text-rose-400 text-xs flex items-center gap-1";
-            explanationBox.classList.add('border-rose-500/20', 'bg-rose-950/10');
+            resultLabel.className = "result-label text-rose-700 text-xs flex items-center gap-1 font-bold";
+            explanationBox.classList.add('border-rose-500/25', 'bg-rose-50');
           }
         }
       });

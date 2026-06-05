@@ -1,5 +1,6 @@
 import type { APIRoute } from 'astro';
 import { env } from 'cloudflare:workers';
+import { invalidateCache } from '../../utils/r2Structure';
 
 export const PUT: APIRoute = async ({ request, url }) => {
   try {
@@ -41,6 +42,13 @@ export const PUT: APIRoute = async ({ request, url }) => {
     await (bucket as any).put(key, body, {
       httpMetadata: { contentType }
     });
+
+    // Invalidate cached lists in KV to reflect the new uploads
+    const kv = env.SESSION;
+    if (kv) {
+      await invalidateCache(kv, key);
+    }
+
 
     return new Response(
       JSON.stringify({ success: true, key }),

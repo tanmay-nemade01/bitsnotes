@@ -9,6 +9,7 @@ import { listSubjects, listLectures } from '../utils/r2Structure';
 export const GET: APIRoute = async ({ url }) => {
   const baseUrl = `${url.protocol}//${url.host}`;
   const bucket = env?.BUCKET;
+  const kv = env?.SESSION;
 
   // Pages to include in sitemap
   const pages = [
@@ -21,7 +22,7 @@ export const GET: APIRoute = async ({ url }) => {
 
   if (bucket) {
     try {
-      const subjects = await listSubjects(bucket as any);
+      const subjects = await listSubjects(bucket as any, kv as any);
       for (const subject of subjects) {
         const subjectParam = encodeURIComponent(subject.name);
         pages.push({
@@ -30,7 +31,7 @@ export const GET: APIRoute = async ({ url }) => {
           priority: '0.8',
         });
 
-        const lectures = await listLectures(bucket as any, subject.name);
+        const lectures = await listLectures(bucket as any, subject.name, kv as any);
         for (const lecture of lectures) {
           const viewPath = `/view/${subjectParam}/${encodeURIComponent(lecture.name)}`;
           pages.push({

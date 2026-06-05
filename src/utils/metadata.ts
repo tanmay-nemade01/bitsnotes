@@ -21,6 +21,7 @@ export interface DocumentMetadata {
   keyConcepts: string[];
   sections: SectionBreakdown[];
   quiz: QuizQuestion[];
+  pageTranscripts?: string[];
 }
 
 const drlLecturesMetadata: Record<string, Omit<DocumentMetadata, 'title'>> = {
@@ -381,30 +382,30 @@ const drlLecturesMetadata: Record<string, Omit<DocumentMetadata, 'title'>> = {
   }
 };
 
-export function getFallbackMetadata(docId: string): DocumentMetadata {
-  const normalizedId = docId.toLowerCase().trim();
+export function getFallbackMetadata(lectureName: string, subjectName?: string): DocumentMetadata {
+  const normalizedId = lectureName.toLowerCase().trim();
   
   // Try to match DRL lectures first
   if (drlLecturesMetadata[normalizedId]) {
     return {
-      title: docId,
+      title: lectureName,
       ...drlLecturesMetadata[normalizedId]
     };
   }
 
   // Parse structured document ID: "Subject - DocumentName"
-  let subject = "General Course Notes";
-  let displayTitle = docId;
+  let subject = subjectName || "General Course Notes";
+  let displayTitle = lectureName;
   
-  const parts = docId.split(" - ");
+  const parts = lectureName.split(" - ");
   if (parts.length >= 2) {
     subject = parts[0].trim();
     displayTitle = parts.slice(1).join(" - ").trim();
   }
 
-  // Capitalize displayTitle nicely if it matches "lectureX" or "lecture_X"
+  // Capitalize displayTitle nicely if it matches "lectureX" or "lecture_X" or "lecture-X"
   let readableTitle = displayTitle;
-  if (/^lecture\s*\d+$/i.test(displayTitle)) {
+  if (/^lecture[\s_-]*\d+$/i.test(displayTitle)) {
     const num = displayTitle.match(/\d+/)?.[0];
     readableTitle = `Lecture ${num}`;
   } else {
@@ -482,6 +483,7 @@ export function getFallbackMetadata(docId: string): DocumentMetadata {
         answerIndex: 2,
         explanation: "The best learning outcome is achieved by reading the summary context, focusing on the core learning objectives, and using the practice quiz at the bottom for active recall."
       }
-    ]
+    ],
+    pageTranscripts: []
   };
 }

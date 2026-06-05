@@ -141,8 +141,24 @@ def process_pdf(pdf_path):
     print(f"[*] Processing document as R2 path: '{r2_doc_id}/'")
     
     try:
+        # Open PDF using PyMuPDF
+        doc = fitz.open(pdf_path)
+        total_pages = len(doc)
+        print(f"[*] Found {total_pages} pages in document.")
+
+        # Extract text from all pages for SEO and accessibility
+        page_transcripts = []
+        for i in range(total_pages):
+            page = doc.load_page(i)
+            # Extract plain text
+            raw_text = page.get_text("text") or ""
+            # Clean consecutive whitespace and newlines
+            clean_text = " ".join(raw_text.split()).strip()
+            page_transcripts.append(clean_text)
+
         # 2. Handle Companion JSON Metadata
-        json_path = os.path.join(os.path.dirname(pdf_path), f"{doc_name}.json")
+        pdf_base, _ = os.path.splitext(filename)
+        json_path = os.path.join(os.path.dirname(pdf_path), f"{pdf_base}.json")
         metadata = None
         
         if os.path.exists(json_path):
@@ -153,19 +169,58 @@ def process_pdf(pdf_path):
             except Exception as e:
                 print(f"[!] Error reading custom companion JSON: {e}")
 
-        # 3. Upload images and metadata to R2 under the unique key prefix
-        # Upload the metadata JSON file to R2 if it exists
-        if metadata is not None:
-            metadata_key = f"{r2_doc_id}/metadata.json"
-            metadata_json_bytes = json.dumps(metadata, indent=2).encode('utf-8')
-            upload_to_r2(metadata_key, metadata_json_bytes, "application/json")
-            print(f"[+] Uploaded metadata JSON to R2: '{metadata_key}'")
+        if metadata is None:
+            # Generate default skeleton metadata for future uploads without a JSON file
+            metadata = {
+                "title": doc_name.replace("_", " ").replace("-", " ").strip().title(),
+                "subject": subject_name,
+                "gradeLevel": "Undergraduate",
+                "datePublished": datetime.date.today().strftime("%Y-%m-%d"),
+                "targetAudience": f"Students studying {subject_name}.",
+                "summary": f"Lecture notes and study guide for {doc_name} under the {subject_name} course.",
+                "keyConcepts": [
+                    f"Understand the core concepts of {doc_name}.",
+                    f"Analyze key methodologies discussed in the {subject_name} lecture."
+                ],
+                "sections": [
+                    {
+                        "title": "Introduction",
+                        "pages": "Page 1",
+                        "description": "Foundational topics and introductory content."
+                    }
+                ],
+                "quiz": [
+                    {
+                        "question": f"What is the primary topic of this {subject_name} lecture?",
+                        "options": [
+                            doc_name.replace("_", " ").title(),
+                            "An unrelated introductory topic",
+                            "None of the above"
+                        ],
+                        "answerIndex": 0,
+                        "explanation": f"This lecture focuses specifically on {doc_name}."
+                    }
+                ]
+            }
 
-        # Open PDF using PyMuPDF
-        doc = fitz.open(pdf_path)
-        total_pages = len(doc)
-        print(f"[*] Found {total_pages} pages in document.")
-        
+        # Update metadata with page transcripts
+        metadata["pageTranscripts"] = page_transcripts
+
+        # Save metadata JSON file locally (updating existing or creating new)
+        try:
+            with open(json_path, 'w', encoding='utf-8') as f:
+                json.dump(metadata, f, indent=2, ensure_ascii=False)
+            print(f"[+] Saved/Updated local companion JSON: '{os.path.basename(json_path)}'")
+        except Exception as e:
+            print(f"[!] Failed to save local companion JSON: {e}")
+
+        # 3. Upload metadata to R2 under the unique key prefix
+        metadata_key = f"{r2_doc_id}/metadata.json"
+        metadata_json_bytes = json.dumps(metadata, indent=2, ensure_ascii=False).encode('utf-8')
+        upload_to_r2(metadata_key, metadata_json_bytes, "application/json")
+        print(f"[+] Uploaded metadata JSON to R2: '{metadata_key}'")
+
+        # 4. Render pages to WebP and upload
         for i in range(total_pages):
             page_num = i + 1
             print(f"    -> Rendering page {page_num}/{total_pages}...")
@@ -243,6 +298,7 @@ def process_pdf(pdf_path):
 
 # PDFHandler class removed because background folder watching is disabled.
 
+
 def clear_r2_bucket():
     """Deletes ALL objects in the R2 bucket using the S3 API directly (not via HTTP upload endpoint)."""
     print(f"[*] Connecting to R2 to clear all objects in bucket '{R2_BUCKET_NAME}'...")
@@ -286,6 +342,7 @@ def reupload_all():
     
     # Step 1: Clear R2 bucket
     clear_r2_bucket()
+
     
     # Step 2: Move all PDFs from processed_folder back to watch_folder to reprocess
     print(f"[*] Moving PDFs from processed_folder back to watch_folder for reprocessing...")
