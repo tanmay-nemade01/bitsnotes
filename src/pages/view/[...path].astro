@@ -19,10 +19,11 @@ if (segments.length < 2) {
 const subjectName = segments[0];
 const lectureName = segments[1];
 
-let pages: string[] = [];
 let errorMsg = '';
 let isDemoMode = false;
 let customMetadata = null;
+let htmlContent = '';
+let hasHtmlContent = false;
 
 const bucket = env?.BUCKET;
 const kv = env?.SESSION;
@@ -51,14 +52,23 @@ if (bucket) {
 
     r2Prefix = resolvedPrefix;
 
-    // Extract object keys for image files only
-    pages = (listed.objects || [])
-      .map((obj: any) => obj.key)
-      .filter((key: string) => {
-        const lk = key.toLowerCase();
-        return lk.endsWith('.webp') || lk.endsWith('.png') || lk.endsWith('.jpg') || lk.endsWith('.jpeg');
-      })
-      .sort((a: string, b: string) => a.localeCompare(b));
+    // Check if there is an HTML content file in the bucket (e.g. content.html or notes.html)
+    const htmlFile = (listed.objects || []).find((obj: any) => {
+      const lk = obj.key.toLowerCase();
+      return lk.endsWith('/content.html') || lk.endsWith('/notes.html');
+    });
+
+    if (htmlFile) {
+      try {
+        const htmlObj = await (bucket as any).get(htmlFile.key);
+        if (htmlObj) {
+          htmlContent = await htmlObj.text();
+          hasHtmlContent = true;
+        }
+      } catch (err: any) {
+        console.error('Failed to fetch HTML content from R2:', err);
+      }
+    }
 
     // Try loading companion metadata.json
     try {
@@ -70,23 +80,112 @@ if (bucket) {
       console.warn('metadata.json not found or failed to parse.');
     }
 
-    if (pages.length === 0) {
+    // Fallback: Try extracting metadata from the embedded script tag in the HTML content
+    if (!customMetadata && htmlContent) {
+      const match = htmlContent.match(/<script\s+type=["']application\/json["']\s+id=["']lecture-metadata["']\s*>(.*?)<\/script>/s);
+      if (match) {
+        try {
+          customMetadata = JSON.parse(match[1].trim());
+        } catch (err) {
+          console.warn('Failed to parse metadata from HTML script tag:', err);
+        }
+      }
+    }
+
+    if (!hasHtmlContent) {
       if (import.meta.env.DEV) {
         isDemoMode = true;
-        pages = ['page_001.webp', 'page_002.webp', 'page_003.webp', 'page_004.webp'];
       } else {
-        errorMsg = `No images found in folder: "${r2Prefix}/". Please check if your PDF uploader ran successfully.`;
+        errorMsg = `No notes HTML content found in folder: "${r2Prefix}/". Please check if your HTML uploader ran successfully.`;
       }
     }
   } catch (error: any) {
     errorMsg = `Failed to retrieve document pages from R2: ${error.message || error}`;
     isDemoMode = true;
-    pages = ['page_001.webp', 'page_002.webp', 'page_003.webp', 'page_004.webp'];
   }
 } else {
   isDemoMode = true;
   errorMsg = 'Cloudflare R2 Bucket binding is not configured. Running in Demo Mode.';
-  pages = ['page_001.webp', 'page_002.webp', 'page_003.webp', 'page_004.webp'];
+}
+
+// In DEV/Demo Mode, return mock HTML note content if the route specifies a calculus or html notes page
+if (isDemoMode) {
+  htmlContent = `
+    <!DOCTYPE html>
+    <html>
+    <head>
+      <title>Introduction to Calculus (Demo)</title>
+      <style>
+        body {
+          color: #334155;
+          line-height: 1.6;
+          font-family: system-ui, -apple-system, sans-serif;
+        }
+        h1 {
+          color: #1e3a8a;
+          border-bottom: 2px solid #e2e8f0;
+          padding-bottom: 8px;
+          font-size: 1.8rem;
+        }
+        p {
+          margin: 12px 0;
+        }
+        .concept {
+          background: #f8fafc;
+          border-left: 4px solid #3b82f6;
+          padding: 16px;
+          margin: 20px 0;
+          border-radius: 8px;
+          box-shadow: 0 1px 3px rgba(0,0,0,0.02);
+        }
+        .concept strong {
+          color: #1e40af;
+          font-size: 1.1rem;
+          display: block;
+          margin-bottom: 6px;
+        }
+      </style>
+    </head>
+    <body>
+      <h1>Introduction to Calculus (Demo Mode)</h1>
+      <p>This is a simulated preview of your HTML-based lecture notes running in Demo Mode. In production, this HTML and integrated CSS content will stream securely from your Cloudflare R2 bucket.</p>
+      
+      <div class="concept">
+        <strong>Key Concept: The Limit</strong>
+        <p>The limit of a function is a fundamental concept in calculus and analysis concerning the behavior of that function near a particular input.</p>
+      </div>
+      
+      <div class="concept">
+        <strong>Key Concept: The Derivative</strong>
+        <p>The derivative of a function of a real variable measures the sensitivity to change of the function value with respect to a change in its argument.</p>
+      </div>
+    </body>
+    </html>
+  `;
+  hasHtmlContent = true;
+  customMetadata = {
+    title: "Introduction to Calculus (Demo)",
+    subject: "Maths",
+    gradeLevel: "Undergraduate",
+    datePublished: "2026-06-06",
+    targetAudience: "Students studying Maths.",
+    summary: "Simulated calculus notes for testing the new HTML note rendering system.",
+    keyConcepts: [
+      "Understand limits and continuity",
+      "Compute derivatives of basic functions"
+    ],
+    sections: [
+      { title: "Introduction to Limits", pages: "HTML Note", description: "Learn about the concept of a limit." }
+    ],
+    quiz: [
+      {
+        question: "What does the derivative measure?",
+        options: ["Area under a curve", "Rate of change", "Total sum", "None of the above"],
+        answerIndex: 1,
+        explanation: "The derivative measures the instantaneous rate of change of a function."
+      }
+    ]
+  };
 }
 
 const metadata = customMetadata || getFallbackMetadata(lectureName, subjectName);
@@ -173,442 +272,80 @@ const quizJson = quizSchema ? JSON.stringify(quizSchema) : null;
     {quizJson && <script type="application/ld+json" set:html={quizJson} />}
   </Fragment>
 
-  <main class="flex-grow max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-10 w-full flex flex-col gap-8">
+  <main class="flex-grow w-full flex flex-col">
 
-    <!-- Top Breadcrumbs & Header Section -->
-    <section class="relative bg-white rounded-3xl border border-slate-100 p-8 md:p-10 shadow-xl shadow-slate-100/50 overflow-hidden">
-      <!-- Decorative Backdrop Gradients -->
-      <div class="absolute right-0 top-0 -mt-12 -mr-12 w-64 h-64 bg-indigo-100/40 rounded-full blur-3xl pointer-events-none"></div>
-      <div class="absolute left-1/3 bottom-0 -mb-16 w-80 h-80 bg-violet-100/30 rounded-full blur-3xl pointer-events-none"></div>
-
-      <!-- Breadcrumbs -->
-      <nav class="flex items-center gap-2 text-xs font-semibold text-slate-500 mb-4 select-none flex-wrap relative z-10">
-        <a href="/" class="hover:text-indigo-600 transition-colors">Home</a>
-        <svg class="w-3 h-3 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M9 5l7 7-7 7"></path>
-        </svg>
-        <a href={`/subject/${encodeURIComponent(subjectName)}`} class="hover:text-indigo-600 transition-colors truncate max-w-[120px] sm:max-w-none">{subjectName}</a>
-        <svg class="w-3 h-3 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M9 5l7 7-7 7"></path>
-        </svg>
-        <span class="text-indigo-600 truncate max-w-[150px] sm:max-w-none">{lectureName}</span>
-      </nav>
-
-      <!-- Document Metadata Header -->
-      <div class="flex flex-col md:flex-row md:items-center justify-between gap-4 relative z-10">
-        <div>
-          <span class="inline-block text-[10px] font-extrabold text-indigo-600 uppercase tracking-widest bg-indigo-50 border border-indigo-100 px-2.5 py-1 rounded-md mb-2">
-            {subjectName}
-          </span>
-          <h1 class="text-2xl sm:text-3xl font-extrabold text-slate-900 tracking-tight leading-tight">
-            {lectureName}
-          </h1>
-          <p class="text-xs text-slate-500 mt-2 font-medium flex items-center gap-4 flex-wrap">
-            <span class="flex items-center gap-1">
-              <svg class="w-3.5 h-3.5 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253"></path>
-              </svg>
-              Level: {metadata.gradeLevel}
-            </span>
-            <span class="flex items-center gap-1">
-              <svg class="w-3.5 h-3.5 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"></path>
-              </svg>
-              Published: {metadata.datePublished}
-            </span>
-            <span class="flex items-center gap-1 bg-indigo-50 border border-indigo-100 px-2 py-0.5 rounded text-[10px] font-bold text-indigo-700">
-              {pages.length} Pages
-            </span>
-          </p>
-        </div>
-
-        {isDemoMode && (
-          <div class="flex flex-col items-start md:items-end shrink-0 select-none">
-            <span class="px-2.5 py-1 bg-amber-50 text-amber-700 border border-amber-200 text-xs font-bold rounded-lg mb-1">
-              Local Preview Mode
-            </span>
-            <span class="text-[9px] text-amber-600 font-medium">Cloudflare R2 is disconnected</span>
+    {errorMsg && (
+      <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 w-full">
+        <div class="bg-rose-50 border border-rose-200 rounded-2xl p-5 text-rose-800 flex items-start gap-3.5 shadow-sm">
+          <svg class="w-6 h-6 text-rose-600 shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"></path>
+          </svg>
+          <div>
+            <h3 class="font-bold text-rose-900 text-sm">Error Loading Lecture Notes</h3>
+            <p class="text-xs text-rose-700 mt-1 leading-relaxed">{errorMsg}</p>
           </div>
-        )}
-      </div>
-    </section>
-
-    {errorMsg && isDemoMode && (
-      <div class="bg-amber-50 border border-amber-200 rounded-2xl p-5 text-amber-800 text-xs flex items-start gap-3.5 shadow-sm select-none print-disabled">
-        <svg class="w-5 h-5 shrink-0 mt-0.5 text-amber-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path>
-        </svg>
-        <div>
-          <h4 class="font-bold text-amber-900">Local Preview Mode Active</h4>
-          <p class="mt-1 leading-relaxed text-amber-700">
-            This page is rendering mock content because Astro is running locally. Once deployed, your actual uploaded document pages will stream securely from Cloudflare R2.
-          </p>
         </div>
       </div>
     )}
 
-    <!-- Two Column Layout: Sidebar & Main Viewer -->
-    <div class="grid grid-cols-1 lg:grid-cols-12 gap-8 items-start">
-
-      <!-- Left Column: Study Guide -->
-      <aside class="lg:col-span-4 space-y-6 flex flex-col">
-        <article class="bg-white border border-slate-100 rounded-3xl p-6 shadow-xl shadow-slate-100/40 space-y-5">
-          <div>
-            <h2 class="text-sm font-extrabold uppercase tracking-widest text-indigo-600 mb-1">Study Guide</h2>
-            <h3 class="text-lg font-bold text-slate-900">Lecture Overview</h3>
-          </div>
-
-          <p class="text-xs sm:text-sm text-slate-600 leading-relaxed font-medium">
-            {metadata.summary}
-          </p>
-
-          <hr class="border-slate-100" />
-
-          <div class="space-y-2">
-            <h4 class="text-xs font-bold text-slate-500 uppercase tracking-wider">Target Audience</h4>
-            <p class="text-xs text-slate-500 leading-relaxed font-medium">
-              {metadata.targetAudience}
-            </p>
-          </div>
-
-          <hr class="border-slate-100" />
-
-          <div class="space-y-3">
-            <h4 class="text-xs font-bold text-slate-500 uppercase tracking-wider">Key Learning Objectives</h4>
-            <ul class="space-y-2.5 text-xs text-slate-700 font-semibold">
-              {metadata.keyConcepts.map((concept) => (
-                <li class="flex items-start gap-2.5 leading-relaxed">
-                  <span class="w-5 h-5 rounded-md bg-emerald-50 text-emerald-600 border border-emerald-200 flex items-center justify-center shrink-0 mt-0.5">
-                    <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M5 13l4 4L19 7"></path>
-                    </svg>
-                  </span>
-                  <span>{concept}</span>
-                </li>
-              ))}
-            </ul>
-          </div>
-
-          <hr class="border-slate-100" />
-
-          <div class="space-y-4">
-            <h4 class="text-xs font-bold text-slate-500 uppercase tracking-wider">Document Roadmap</h4>
-            <div class="space-y-3">
-              {metadata.sections.map((section, idx) => (
-                <div class="p-3 bg-slate-50 border border-slate-100 rounded-xl flex items-start justify-between gap-3">
-                  <div>
-                    <h5 class="text-xs font-bold text-slate-800">{section.title}</h5>
-                    <p class="text-[10px] text-slate-500 mt-1 leading-relaxed">{section.description}</p>
-                  </div>
-                  <span class="text-[9px] font-bold text-indigo-600 bg-indigo-50 border border-indigo-100 px-2 py-0.5 rounded shrink-0 select-none">
-                    {section.pages}
-                  </span>
-                </div>
-              ))}
-            </div>
-          </div>
-        </article>
-      </aside>
-
-      <!-- Right Column: Secure Document Viewer -->
-      <section class="lg:col-span-8 flex flex-col items-center gap-6">
-
-        <!-- Viewer Container -->
-        <div
-          id="pages-viewport"
-          class="w-full flex flex-col items-center gap-6"
-          style="--page-width: 800px;"
-        >
-          {pages.map((pageName, index) => {
-            // Extract just the filename from the full R2 key
-            const pageFileName = pageName.split('/').pop() || '';
-            const documentApiPath = r2Prefix
-              .split('/')
-              .map((segment) => encodeURIComponent(segment))
-              .join('/');
-            const pageSrc = isDemoMode
-              ? `/placeholder_notes/${encodeURIComponent(pageFileName)}`
-              : `/api/document/${documentApiPath}/${encodeURIComponent(pageFileName)}`;
-
-            const pageTranscript = metadata.pageTranscripts?.[index] || '';
-            const altText = pageTranscript
-              ? `${lectureName} - Page ${index + 1}: ${pageTranscript.slice(0, 100)}...`
-              : `${lectureName} - Page ${index + 1}`;
-
-            return (
-              <div
-                class="page-card bg-white rounded-2xl shadow-xl shadow-slate-200/60 border border-slate-200 overflow-hidden relative transition-all duration-300 flex flex-col justify-between shrink-0"
-                style="width: var(--page-width); max-width: 100%; aspect-ratio: 1 / 1.414;"
-                data-page-index={index + 1}
-              >
-                {/* Page Overlay Shadow to prevent capture */}
-                <div class="absolute inset-0 bg-white/0 pointer-events-none z-10"></div>
-
-                {/* Screen-reader transcript for SEO & accessibility */}
-                {pageTranscript && (
-                  <div id={`page-transcript-${index + 1}`} class="sr-only">
-                    {pageTranscript}
-                  </div>
-                )}
-
-                {/* Real Secured Flat Image Page */}
-                <img
-                  src={pageSrc}
-                  alt={altText}
-                  aria-describedby={pageTranscript ? `page-transcript-${index + 1}` : undefined}
-                  class="secure-image w-full h-full object-contain bg-white"
-                  loading={index < 2 ? "eager" : "lazy"}
-                  decoding="async"
-                />
-              </div>
-            );
-          })}
-        </div>
-
-        <!-- Inline Zoom Controls -->
-        <div class="bg-white/90 border border-slate-200 backdrop-blur-md px-6 py-3.5 rounded-2xl shadow-lg flex items-center gap-6 shrink-0 transition-transform duration-300 hover:scale-102 select-none print-disabled">
-          <!-- Zoom Out -->
-          <button
-            type="button"
-            id="zoom-out-btn"
-            class="p-2 rounded-xl bg-slate-50 hover:bg-slate-100 border border-slate-200 hover:border-slate-300 text-slate-600 hover:text-slate-900 transition-all focus:outline-none cursor-pointer"
-            title="Zoom Out"
-          >
-            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M20 12H4"></path>
-            </svg>
-          </button>
-
-          <!-- Zoom Value -->
-          <span id="zoom-indicator" class="text-xs font-bold text-slate-700 w-12 text-center select-none">
-            100%
-          </span>
-
-          <!-- Zoom In -->
-          <button
-            type="button"
-            id="zoom-in-btn"
-            class="p-2 rounded-xl bg-slate-50 hover:bg-slate-100 border border-slate-200 hover:border-slate-300 text-slate-600 hover:text-slate-900 transition-all focus:outline-none cursor-pointer"
-            title="Zoom In"
-          >
-            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M12 4v16m8-8H4"></path>
-            </svg>
-          </button>
-
-          <!-- Divider -->
-          <div class="h-6 w-[1px] bg-slate-200"></div>
-
-          <!-- Fit to Width -->
-          <button
-            type="button"
-            id="fit-width-btn"
-            class="px-3.5 py-2 rounded-xl bg-slate-50 hover:bg-slate-100 border border-slate-200 hover:border-slate-300 text-xs font-bold text-slate-600 hover:text-slate-900 transition-all flex items-center gap-1.5 focus:outline-none cursor-pointer"
-            title="Fit Viewer to Window Width"
-          >
-            <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 8V4m0 0h4M4 4l5 5m11-1V4m0 0h-4m4 0l-5 5M4 16v4m0 0h4m-4 0l-5-5m11 5v-4m0 4h-4m4 0l-5-5"></path>
-            </svg>
-            Fit Width
-          </button>
-        </div>
-
-      </section>
-    </div>
-
-    <!-- Bottom Section: Interactive Practice Quiz -->
-    <section class="bg-white border border-slate-100 rounded-3xl p-6 md:p-8 shadow-xl shadow-slate-100/40">
-      <div class="flex items-center gap-3.5 mb-6">
-        <div class="w-10 h-10 bg-indigo-50 text-indigo-600 border border-indigo-100 rounded-xl flex items-center justify-center shrink-0">
-          <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8.228 9c.549-1.165 2.03-2 3.772-2 2.21 0 4 1.343 4 3 0 1.4-1.278 2.575-3.006 2.907-.542.104-.994.54-.994 1.093m0 3h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path>
-          </svg>
-        </div>
-        <div>
-          <h2 class="text-sm font-extrabold uppercase tracking-widest text-indigo-600 mb-0.5">Active Study Aids</h2>
-          <h3 class="text-xl font-bold text-slate-900">Interactive Practice Quiz</h3>
-        </div>
+    {hasHtmlContent && (
+      <div class="w-full flex-grow flex flex-col">
+        {(() => {
+          const injectedScript = `
+            <style id="zoom-styles">
+              body {
+                font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, "Noto Sans", sans-serif, "Apple Color Emoji", "Segoe UI Emoji", "Segoe UI Symbol", "Noto Color Emoji" !important;
+                margin: 0 !important;
+                padding: 0 !important;
+              }
+            </style>
+            <script>
+              function sendHeight() {
+                const body = document.body;
+                const html = document.documentElement;
+                // Use body scroll/offset height to avoid infinite viewport height growth loops
+                const height = body ? Math.max(body.scrollHeight, body.offsetHeight) : html.scrollHeight;
+                window.parent.postMessage({ type: 'resize-iframe', height: height }, '*');
+              }
+              window.addEventListener('load', sendHeight);
+              window.addEventListener('resize', sendHeight);
+              if (window.ResizeObserver) {
+                const ro = new ResizeObserver(sendHeight);
+                ro.observe(document.body || document.documentElement);
+              }
+            </script>
+          `;
+          const processedHtmlContent = htmlContent.includes('</body>') 
+            ? htmlContent.replace('</body>', `${injectedScript}</body>`) 
+            : `${htmlContent}${injectedScript}`;
+          
+          return (
+            <iframe
+              srcdoc={processedHtmlContent}
+              id="html-iframe"
+              class="w-full border-none flex-grow"
+              style="min-height: 85vh; width: 100%; display: block;"
+              scrolling="no"
+            ></iframe>
+          );
+        })()}
       </div>
-
-      <!-- Quiz Questions Grid -->
-      <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
-        {metadata.quiz.map((q, qIndex) => (
-          <div
-            class="quiz-card p-5 bg-slate-50 border border-slate-100 rounded-2xl flex flex-col gap-4 relative overflow-hidden transition-all duration-300"
-            data-question-index={qIndex}
-            data-correct-index={q.answerIndex}
-          >
-            <div class="flex justify-between items-start gap-3">
-              <span class="text-[10px] bg-indigo-50 text-indigo-600 font-bold px-2 py-0.5 rounded select-none">
-                Question {qIndex + 1}
-              </span>
-            </div>
-
-            <h4 class="text-sm font-bold text-slate-800 leading-relaxed">
-              {q.question}
-            </h4>
-
-            <div class="space-y-2 mt-2">
-              {q.options.map((opt, optIndex) => (
-                <button
-                  type="button"
-                  class="option-btn w-full p-3 bg-white hover:bg-slate-50 active:scale-[0.99] border border-slate-200 hover:border-slate-300 text-left text-xs font-semibold text-slate-700 rounded-xl transition-all flex items-center justify-between cursor-pointer"
-                  data-option-index={optIndex}
-                >
-                  <span>{opt}</span>
-                  <span class="option-indicator w-4 h-4 rounded-full border border-slate-300 flex items-center justify-center shrink-0 ml-3"></span>
-                </button>
-              ))}
-            </div>
-
-            <div class="explanation-box hidden p-4 bg-slate-50 border border-slate-200 rounded-xl text-xs space-y-2 animate-fadeIn">
-              <div class="flex items-center gap-1.5 font-bold">
-                <span class="result-label"></span>
-              </div>
-              <p class="text-slate-500 leading-relaxed font-medium">
-                {q.explanation}
-              </p>
-            </div>
-          </div>
-        ))}
-      </div>
-    </section>
-
-    <!-- Collapsible Full Lecture Transcript Section (SEO & Accessibility) -->
-    {metadata.pageTranscripts && metadata.pageTranscripts.length > 0 && (
-      <section class="bg-white border border-slate-100 rounded-3xl p-6 md:p-8 shadow-xl shadow-slate-100/40">
-        <details class="group">
-          <summary class="flex items-center justify-between cursor-pointer list-none select-none focus:outline-none">
-            <div class="flex items-center gap-3.5">
-              <div class="w-10 h-10 bg-indigo-50 text-indigo-600 border border-indigo-100 rounded-xl flex items-center justify-center shrink-0">
-                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path>
-                </svg>
-              </div>
-              <div class="text-left">
-                <h2 class="text-[10px] font-extrabold uppercase tracking-widest text-indigo-600 mb-0.5">Study Text</h2>
-                <h3 class="text-base sm:text-lg font-bold text-slate-900">Full Lecture Transcript</h3>
-              </div>
-            </div>
-            <span class="text-slate-400 group-open:rotate-180 transition-transform duration-300">
-              <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M19 9l-7 7-7-7"></path>
-              </svg>
-            </span>
-          </summary>
-          <div class="mt-6 space-y-6 pt-6 border-t border-slate-100">
-            {metadata.pageTranscripts.map((text, idx) => (
-              text.trim() && (
-                <div class="space-y-2">
-                  <h4 class="text-xs font-bold text-slate-500 uppercase tracking-wider">Page {idx + 1}</h4>
-                  <p class="text-xs sm:text-sm text-slate-600 leading-relaxed whitespace-pre-line bg-slate-50 p-4 border border-slate-100 rounded-xl font-medium">
-                    {text}
-                  </p>
-                </div>
-              )
-            ))}
-          </div>
-        </details>
-      </section>
     )}
 
   </main>
 </BaseLayout>
 
 <script is:inline>
-  // CLIENT SIDE INTERACTIVE ZOOM LOGIC
-  const viewport = document.getElementById('pages-viewport');
-  const zoomInBtn = document.getElementById('zoom-in-btn');
-  const zoomOutBtn = document.getElementById('zoom-out-btn');
-  const zoomIndicator = document.getElementById('zoom-indicator');
-  const fitWidthBtn = document.getElementById('fit-width-btn');
-
-  const MIN_WIDTH = 400;
-  const MAX_WIDTH = 1200;
-  const STEP = 100;
-  const DEFAULT_WIDTH = 800;
-
-  let currentWidth = DEFAULT_WIDTH;
-
-  const updateZoomUI = () => {
-    if (viewport && zoomIndicator) {
-      viewport.style.setProperty('--page-width', `${currentWidth}px`);
-      const percentage = Math.round((currentWidth / DEFAULT_WIDTH) * 100);
-      zoomIndicator.textContent = `${percentage}%`;
-    }
-  };
-
-  if (zoomInBtn) {
-    zoomInBtn.addEventListener('click', () => {
-      if (currentWidth < MAX_WIDTH) { currentWidth += STEP; updateZoomUI(); }
-    });
-  }
-  if (zoomOutBtn) {
-    zoomOutBtn.addEventListener('click', () => {
-      if (currentWidth > MIN_WIDTH) { currentWidth -= STEP; updateZoomUI(); }
-    });
-  }
-  if (fitWidthBtn) {
-    fitWidthBtn.addEventListener('click', () => {
-      const targetWidth = Math.min(MAX_WIDTH, Math.max(MIN_WIDTH, window.innerWidth - 48));
-      currentWidth = targetWidth;
-      updateZoomUI();
-    });
-  }
-
-  updateZoomUI();
-
-  // CLIENT SIDE INTERACTIVE QUIZ LOGIC
-  const quizCards = document.querySelectorAll('.quiz-card');
-
-  quizCards.forEach((card) => {
-    const correctIdx = parseInt(card.getAttribute('data-correct-index') || '0', 10);
-    const optionBtns = card.querySelectorAll('.option-btn');
-    const explanationBox = card.querySelector('.explanation-box');
-    const resultLabel = card.querySelector('.result-label');
-    let hasAnswered = false;
-
-    optionBtns.forEach((btn) => {
-      btn.addEventListener('click', () => {
-        if (hasAnswered) return;
-        hasAnswered = true;
-
-        const selectedIdx = parseInt(btn.getAttribute('data-option-index') || '0', 10);
-        const isCorrect = selectedIdx === correctIdx;
-
-        optionBtns.forEach((b, idx) => {
-          const indicator = b.querySelector('.option-indicator');
-          b.classList.remove('hover:bg-slate-50', 'hover:border-slate-300');
-          b.style.cursor = 'default';
-
-          if (idx === correctIdx) {
-            b.classList.add('bg-emerald-50', 'border-emerald-500/40', 'text-emerald-800');
-            if (indicator) {
-              indicator.classList.add('bg-emerald-50', 'border-emerald-500/40');
-              indicator.innerHTML = `<svg class="w-3 h-3 text-emerald-600" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clip-rule="evenodd"></path></svg>`;
-            }
-          } else if (idx === selectedIdx && !isCorrect) {
-            b.classList.add('bg-rose-50', 'border-rose-500/40', 'text-rose-800');
-            if (indicator) {
-              indicator.classList.add('bg-rose-50', 'border-rose-500/40');
-              indicator.innerHTML = `<svg class="w-3 h-3 text-rose-600" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z" clip-rule="evenodd"></path></svg>`;
-            }
-          }
-        });
-
-        if (explanationBox && resultLabel) {
-          explanationBox.classList.remove('hidden');
-          if (isCorrect) {
-            resultLabel.textContent = "Correct! Well done.";
-            resultLabel.className = "result-label text-emerald-700 text-xs flex items-center gap-1 font-bold";
-            explanationBox.classList.add('border-emerald-500/25', 'bg-emerald-50');
-          } else {
-            resultLabel.textContent = "Incorrect. Review explanation:";
-            resultLabel.className = "result-label text-rose-700 text-xs flex items-center gap-1 font-bold";
-            explanationBox.classList.add('border-rose-500/25', 'bg-rose-50');
-          }
+  // Add the iframe height listener to adjust heights dynamically
+  window.addEventListener('message', (event) => {
+    if (event.data && event.data.type === 'resize-iframe') {
+      const iframe = document.getElementById('html-iframe');
+      if (iframe) {
+        const newHeight = `${event.data.height + 20}px`;
+        if (iframe.style.height !== newHeight) {
+          iframe.style.height = newHeight;
         }
-      });
-    });
+      }
+    }
   });
 </script>

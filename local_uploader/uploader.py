@@ -4,14 +4,43 @@ import time
 import shutil
 import json
 import datetime
-import fitz  # PyMuPDF
 import boto3
 import urllib.request
 import urllib.parse
 import urllib.error
 import io
-from PIL import Image
 from dotenv import load_dotenv
+from html.parser import HTMLParser
+
+class HTMLTextExtractor(HTMLParser):
+    def __init__(self):
+        super().__init__()
+        self.text = []
+        self.title = ""
+        self.in_ignored_tag = False
+        self.in_title = False
+        self.ignored_tags = {"style", "script", "head"}
+        
+    def handle_starttag(self, tag, attrs):
+        if tag.lower() == "title":
+            self.in_title = True
+        elif tag.lower() in self.ignored_tags:
+            self.in_ignored_tag = True
+            
+    def handle_endtag(self, tag):
+        if tag.lower() == "title":
+            self.in_title = False
+        elif tag.lower() in self.ignored_tags:
+            self.in_ignored_tag = False
+            
+    def handle_data(self, data):
+        if self.in_title:
+            self.title = data.strip()
+        elif not self.in_ignored_tag:
+            self.text.append(data)
+            
+    def get_text(self):
+        return " ".join("".join(self.text).split())
 
 # Load environment variables from the .env file
 load_dotenv()
@@ -86,38 +115,40 @@ def get_r2_client():
         region_name="auto"  # R2 expects region_name to be 'auto'
     )
 
-def process_pdf(pdf_path):
-    """Converts a PDF file's pages into WebP images and uploads them to R2, alongside its companion metadata JSON."""
+
+
+def process_html(html_path):
+    """Processes an HTML file's content and uploads it to R2, alongside its companion metadata JSON."""
     # Normalise path and skip if already being processed (prevents watchdog double-processing)
-    pdf_path = os.path.normpath(pdf_path)
-    if pdf_path in _processing_files:
+    html_path = os.path.normpath(html_path)
+    if html_path in _processing_files:
         return
-    _processing_files.add(pdf_path)
-    raw_filename = os.path.basename(pdf_path)
+    _processing_files.add(html_path)
+    raw_filename = os.path.basename(html_path)
     
     # 1. Parse Subject / Lecture from relative directory structure
-    # Expected: watch_folder/Subject/Lecture N/notes.pdf  OR  watch_folder/Subject/lecture1.pdf
-    rel_path = os.path.relpath(pdf_path, WATCH_DIR)
+    # Expected: watch_folder/Subject/Lecture N/notes.html  OR  watch_folder/Subject/lecture1.html
+    rel_path = os.path.relpath(html_path, WATCH_DIR)
     parts = rel_path.split(os.sep)
     filename = parts[-1]
     doc_name, ext = os.path.splitext(filename)
 
     if len(parts) >= 3:
-        # Subject/Lecture/file.pdf — lecture folder name is the R2 lecture key
+        # Subject/Lecture/file.html — lecture folder name is the R2 lecture key
         subject_name = parts[0]
         lecture_name = parts[1]
         doc_name = lecture_name
     elif len(parts) == 2:
-        # Subject/file.pdf — lecture name from PDF filename
+        # Subject/file.html — lecture name from HTML filename
         subject_name = parts[0]
     else:
-        # PDF is directly in watch_folder root (discouraged)
+        # HTML is directly in watch_folder root (discouraged)
         subject_name = "General"
 
-    if ext.lower() != ".pdf":
+    if ext.lower() not in (".html", ".htm"):
         return
 
-    print(f"\n[*] New PDF detected in subject '{subject_name}': '{filename}'")
+    print(f"\n[*] New HTML detected in subject '{subject_name}': '{filename}'")
     print(f"[*] Waiting for the file to finish writing to disk...")
     
     # Wait for file to copy/write fully
@@ -125,40 +156,37 @@ def process_pdf(pdf_path):
     retries = 0
     while retries < 30:
         try:
-            curr_size = os.path.getsize(pdf_path)
+            curr_size = os.path.getsize(html_path)
             if curr_size == prev_size and curr_size > 0:
                 # File size is stable, check if it can be opened
-                with open(pdf_path, 'rb+'):
+                with open(html_path, 'r', encoding='utf-8') as f:
                     break
             prev_size = curr_size
-        except OSError:
+        except (OSError, UnicodeDecodeError):
             pass
         time.sleep(1)
         retries += 1
 
     # Form unique document path in R2 as a two-level folder: Subject/LectureName
     r2_doc_id = f"{subject_name}/{doc_name}"
-    print(f"[*] Processing document as R2 path: '{r2_doc_id}/'")
+    print(f"[*] Processing HTML document as R2 path: '{r2_doc_id}/'")
     
     try:
-        # Open PDF using PyMuPDF
-        doc = fitz.open(pdf_path)
-        total_pages = len(doc)
-        print(f"[*] Found {total_pages} pages in document.")
+        # Read HTML content
+        with open(html_path, 'r', encoding='utf-8') as f:
+            html_content = f.read()
 
-        # Extract text from all pages for SEO and accessibility
-        page_transcripts = []
-        for i in range(total_pages):
-            page = doc.load_page(i)
-            # Extract plain text
-            raw_text = page.get_text("text") or ""
-            # Clean consecutive whitespace and newlines
-            clean_text = " ".join(raw_text.split()).strip()
-            page_transcripts.append(clean_text)
+        # Parse text and title using HTMLTextExtractor
+        parser = HTMLTextExtractor()
+        parser.feed(html_content)
+        extracted_text = parser.get_text()
+        parsed_title = parser.title
+
+        page_transcripts = [extracted_text]
 
         # 2. Handle Companion JSON Metadata
-        pdf_base, _ = os.path.splitext(filename)
-        json_path = os.path.join(os.path.dirname(pdf_path), f"{pdf_base}.json")
+        html_base, _ = os.path.splitext(filename)
+        json_path = os.path.join(os.path.dirname(html_path), f"{html_base}.json")
         metadata = None
         
         if os.path.exists(json_path):
@@ -171,13 +199,21 @@ def process_pdf(pdf_path):
 
         if metadata is None:
             # Generate default skeleton metadata for future uploads without a JSON file
+            default_title = parsed_title if parsed_title else doc_name.replace("_", " ").replace("-", " ").strip().title()
+            
+            # Use the first 200 chars of extracted plain text as dynamic description/summary
+            clean_snippet = extracted_text[:200].strip()
+            if len(extracted_text) > 200:
+                clean_snippet += "..."
+            default_summary = clean_snippet if clean_snippet else f"Lecture notes and study guide for {doc_name} under the {subject_name} course."
+
             metadata = {
-                "title": doc_name.replace("_", " ").replace("-", " ").strip().title(),
+                "title": default_title,
                 "subject": subject_name,
                 "gradeLevel": "Undergraduate",
                 "datePublished": datetime.date.today().strftime("%Y-%m-%d"),
                 "targetAudience": f"Students studying {subject_name}.",
-                "summary": f"Lecture notes and study guide for {doc_name} under the {subject_name} course.",
+                "summary": default_summary,
                 "keyConcepts": [
                     f"Understand the core concepts of {doc_name}.",
                     f"Analyze key methodologies discussed in the {subject_name} lecture."
@@ -185,7 +221,7 @@ def process_pdf(pdf_path):
                 "sections": [
                     {
                         "title": "Introduction",
-                        "pages": "Page 1",
+                        "pages": "HTML Note",
                         "description": "Foundational topics and introductory content."
                     }
                 ],
@@ -204,7 +240,7 @@ def process_pdf(pdf_path):
             }
 
         # Update metadata with page transcripts
-        metadata["pageTranscripts"] = page_transcripts
+        metadata["pageTranscripts"] = []
 
         # Save metadata JSON file locally (updating existing or creating new)
         try:
@@ -220,42 +256,14 @@ def process_pdf(pdf_path):
         upload_to_r2(metadata_key, metadata_json_bytes, "application/json")
         print(f"[+] Uploaded metadata JSON to R2: '{metadata_key}'")
 
-        # 4. Render pages to WebP and upload
-        for i in range(total_pages):
-            page_num = i + 1
-            print(f"    -> Rendering page {page_num}/{total_pages}...")
-            
-            # Load page
-            page = doc.load_page(i)
-            
-            # Use a zoom factor of 1.5x (108 DPI) for a balance of crisp readability and small file size.
-            zoom = 1.5
-            mat = fitz.Matrix(zoom, zoom)
-            pix = page.get_pixmap(matrix=mat)
-            
-            # Convert page to WebP bytes. Use Pillow to convert from PNG to WebP to avoid 
-            # PyMuPDF compilation environments missing direct WebP support.
-            try:
-                png_bytes = pix.tobytes("png")
-                img = Image.open(io.BytesIO(png_bytes))
-                webp_io = io.BytesIO()
-                img.save(webp_io, format="webp", quality=60)
-                img_bytes = webp_io.getvalue()
-            except Exception as e:
-                # Fallback to direct WebP rendering if PIL/Pillow fails
-                img_bytes = pix.tobytes("webp")
-            
-            # Pad page numbers to 3 digits
-            page_key = f"{r2_doc_id}/page_{page_num:03d}.webp"
-            
-            # Upload WebP image directly to Cloudflare R2
-            upload_to_r2(page_key, img_bytes, "image/webp")
-            
-        doc.close()
-        print(f"[+] All pages successfully uploaded to R2 under folder '{r2_doc_id}/'")
+        # 4. Upload HTML file to R2 directly
+        html_key = f"{r2_doc_id}/content.html"
+        html_bytes = html_content.encode('utf-8')
+        upload_to_r2(html_key, html_bytes, "text/html")
+        print(f"[+] Uploaded HTML content to R2: '{html_key}'")
         
-        # 4. Move files to processed_folder mirroring watch_folder layout
-        rel_for_processed = os.path.relpath(os.path.dirname(pdf_path), WATCH_DIR)
+        # 5. Move files to processed_folder mirroring watch_folder layout
+        rel_for_processed = os.path.relpath(os.path.dirname(html_path), WATCH_DIR)
         dest_subfolder = (
             os.path.join(PROCESSED_DIR, rel_for_processed)
             if rel_for_processed != "."
@@ -263,30 +271,30 @@ def process_pdf(pdf_path):
         )
         os.makedirs(dest_subfolder, exist_ok=True)
 
-        dest_pdf_path = os.path.join(dest_subfolder, filename)
-        if os.path.exists(dest_pdf_path):
-            base, ext = os.path.splitext(filename)
-            dest_pdf_path = os.path.join(dest_subfolder, f"{base}_{int(time.time())}{ext}")
+        dest_html_path = os.path.join(dest_subfolder, filename)
+        if os.path.exists(dest_html_path):
+            base, ext_part = os.path.splitext(filename)
+            dest_html_path = os.path.join(dest_subfolder, f"{base}_{int(time.time())}{ext_part}")
         
         # Retry move to handle transient WinError 32 file locks (Windows keeps file open briefly)
         for attempt in range(5):
             try:
-                shutil.move(pdf_path, dest_pdf_path)
+                shutil.move(html_path, dest_html_path)
                 break
             except OSError:
                 if attempt < 4:
                     time.sleep(1)
                 else:
                     raise
-        print(f"[+] Moved source PDF to processed folder: '{os.path.relpath(dest_pdf_path, PROCESSED_DIR)}'")    
+        print(f"[+] Moved source HTML to processed folder: '{os.path.relpath(dest_html_path, PROCESSED_DIR)}'")    
         
         # Move companion JSON
         if os.path.exists(json_path):
             json_filename = os.path.basename(json_path)
             dest_json_path = os.path.join(dest_subfolder, json_filename)
             if os.path.exists(dest_json_path):
-                base, ext = os.path.splitext(json_filename)
-                dest_json_path = os.path.join(dest_subfolder, f"{base}_{int(time.time())}{ext}")
+                base, ext_part = os.path.splitext(json_filename)
+                dest_json_path = os.path.join(dest_subfolder, f"{base}_{int(time.time())}{ext_part}")
             shutil.move(json_path, dest_json_path)
             print(f"[+] Moved companion JSON to processed folder: '{os.path.relpath(dest_json_path, PROCESSED_DIR)}'")
             
@@ -294,7 +302,7 @@ def process_pdf(pdf_path):
         print(f"[!] Error processing '{raw_filename}': {e}")
         print("[!] File left in watch folder. Please resolve the issue and the script will retry.")
     finally:
-        _processing_files.discard(pdf_path)
+        _processing_files.discard(html_path)
 
 # PDFHandler class removed because background folder watching is disabled.
 
@@ -331,9 +339,9 @@ def clear_r2_bucket():
 
 
 def reupload_all():
-    """Clears the R2 bucket and re-processes all PDFs found in the processed_folder."""
+    """Clears the R2 bucket and re-processes all HTML files found in the processed_folder."""
     print("==========================================================")
-    print("     BitsNotes R2 Re-Upload Mode (Reprocess All PDFs)     ")
+    print("      BitsNotes R2 Re-Upload Mode (Reprocess HTMLs)       ")
     print("==========================================================")
     
     if not all([CLOUDFLARE_ACCOUNT_ID, R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY, R2_BUCKET_NAME]):
@@ -344,20 +352,21 @@ def reupload_all():
     clear_r2_bucket()
 
     
-    # Step 2: Move all PDFs from processed_folder back to watch_folder to reprocess
-    print(f"[*] Moving PDFs from processed_folder back to watch_folder for reprocessing...")
+    # Step 2: Move all HTMLs from processed_folder back to watch_folder to reprocess
+    print(f"[*] Moving HTML files from processed_folder back to watch_folder for reprocessing...")
     moved = 0
     for root, dirs, files in os.walk(PROCESSED_DIR):
         for filename in files:
-            if filename.lower().endswith(".pdf"):
-                src_pdf = os.path.join(root, filename)
+            ext = os.path.splitext(filename)[1].lower()
+            if ext in (".html", ".htm"):
+                src_file = os.path.join(root, filename)
                 # Preserve subfolder structure relative to PROCESSED_DIR
                 rel = os.path.relpath(root, PROCESSED_DIR)
                 dest_dir = os.path.join(WATCH_DIR, rel) if rel != "." else WATCH_DIR
                 os.makedirs(dest_dir, exist_ok=True)
-                dest_pdf = os.path.join(dest_dir, filename)
-                shutil.move(src_pdf, dest_pdf)
-                print(f"    -> Moved: {os.path.relpath(src_pdf, PROCESSED_DIR)} -> watch_folder")
+                dest_file = os.path.join(dest_dir, filename)
+                shutil.move(src_file, dest_file)
+                print(f"    -> Moved: {os.path.relpath(src_file, PROCESSED_DIR)} -> watch_folder")
                 moved += 1
                 
                 # Also move companion JSON if present
@@ -367,25 +376,26 @@ def reupload_all():
                     dest_json = os.path.join(dest_dir, f"{base}.json")
                     shutil.move(src_json, dest_json)
     
-    print(f"[*] Moved {moved} PDF(s) back to watch_folder. Starting reprocess...")
+    print(f"[*] Moved {moved} HTML document(s) back to watch_folder. Starting reprocess...")
     
-    # Step 3: Process all PDFs now in watch_folder
+    # Step 3: Process all HTML documents now in watch_folder
     for root, dirs, files in os.walk(WATCH_DIR):
         if ".venv" in root or ".git" in root:
             continue
         for filename in files:
-            if filename.lower().endswith(".pdf"):
-                process_pdf(os.path.join(root, filename))
+            ext = os.path.splitext(filename)[1].lower()
+            if ext in (".html", ".htm"):
+                process_html(os.path.join(root, filename))
     
     print("\n[+] Re-upload complete!")
 
 
 if __name__ == "__main__":
     print("==========================================================")
-    print("        Cloudflare R2 Secure PDF Uploader (PyMuPDF)       ")
+    print("         Cloudflare R2 Secure HTML Uploader               ")
     print("==========================================================")
     
-    # Check for --reupload flag: clear R2 and reprocess all PDFs from processed_folder
+    # Check for --reupload flag: clear R2 and reprocess all HTML documents from processed_folder
     if "--reupload" in sys.argv:
         reupload_all()
         exit(0)
@@ -396,21 +406,22 @@ if __name__ == "__main__":
         print("[!] Please open 'local_uploader/.env' and fill in your Cloudflare details.")
         exit(1)
         
-    # Process any PDFs that are already in watch_folder recursively
-    print(f"[*] Scanning watch folder recursively for PDFs to upload...")
-    found_pdfs = []
+    # Process any HTML documents that are already in watch_folder recursively
+    print(f"[*] Scanning watch folder recursively for HTMLs to upload...")
+    found_docs = []
     for root, dirs, files in os.walk(WATCH_DIR):
         if ".venv" in root or ".git" in root:
             continue
         for filename in files:
-            if filename.lower().endswith(".pdf"):
-                found_pdfs.append(os.path.join(root, filename))
+            ext = os.path.splitext(filename)[1].lower()
+            if ext in (".html", ".htm"):
+                found_docs.append(os.path.join(root, filename))
     
-    if not found_pdfs:
-        print("[*] No PDFs found in the watch folder.")
+    if not found_docs:
+        print("[*] No HTML notes found in the watch folder.")
     else:
-        print(f"[*] Found {len(found_pdfs)} PDF(s) to process.")
-        for pdf_path in found_pdfs:
-            process_pdf(pdf_path)
+        print(f"[*] Found {len(found_docs)} HTML document(s) to process.")
+        for doc_path in found_docs:
+            process_html(doc_path)
             
     print("\n[+] Processing finished. Uploader script stopped.")
