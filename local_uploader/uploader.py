@@ -1,3 +1,8 @@
+import socket
+# Force IPv4 DNS lookups to bypass slow IPv6 (AAAA) resolution timeouts
+orig_getaddrinfo = socket.getaddrinfo
+socket.getaddrinfo = lambda host, port, family=0, type=0, proto=0, flags=0: orig_getaddrinfo(host, port, socket.AF_INET, type, proto, flags)
+
 import os
 import sys
 import time
@@ -8,7 +13,7 @@ import boto3
 import urllib.request
 import urllib.parse
 import urllib.error
-import io
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dotenv import load_dotenv
 from html.parser import HTMLParser
 
@@ -52,36 +57,43 @@ R2_BUCKET_NAME = os.getenv("R2_BUCKET_NAME")
 UPLOAD_SECRET = os.getenv("UPLOAD_SECRET")
 WEBSITE_URL = os.getenv("WEBSITE_URL")
 
-# Local directories for watching and moving files
+# Local directories
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-WATCH_DIR = os.path.join(BASE_DIR, "watch_folder")
-PROCESSED_DIR = os.path.join(BASE_DIR, "processed_folder")
+NOTES_DIR = os.path.join(BASE_DIR, "notes")
+MANIFEST_PATH = os.path.join(BASE_DIR, ".sync_manifest.json")
 
-# Ensure the watch and processed directories exist
-os.makedirs(WATCH_DIR, exist_ok=True)
-os.makedirs(PROCESSED_DIR, exist_ok=True)
+# Ensure the notes directory exists
+os.makedirs(NOTES_DIR, exist_ok=True)
 
-# Global set of file paths currently being processed to prevent watchdog double-processing
-_processing_files: set = set()
+def get_r2_client():
+    """Initializes the S3-compatible client for Cloudflare R2."""
+    return boto3.client(
+        service_name="s3",
+        endpoint_url=f"https://{CLOUDFLARE_ACCOUNT_ID}.r2.cloudflarestorage.com",
+        aws_access_key_id=R2_ACCESS_KEY_ID,
+        aws_secret_access_key=R2_SECRET_ACCESS_KEY,
+        region_name="auto"
+    )
 
 def upload_to_r2(key, body, content_type):
     """Uploads a file to R2. Uses HTTP API upload if WEBSITE_URL & UPLOAD_SECRET are set,
     otherwise falls back to S3 API via boto3."""
     if WEBSITE_URL and UPLOAD_SECRET:
-        # Use HTTP API
         target_url = f"{WEBSITE_URL.rstrip('/')}/api/upload?key={urllib.parse.quote(key)}"
+        origin = WEBSITE_URL.rstrip('/')
         req = urllib.request.Request(
             target_url,
             data=body,
             headers={
                 "Authorization": f"Bearer {UPLOAD_SECRET}",
                 "Content-Type": content_type,
+                "Origin": origin,
                 "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
             },
             method="PUT"
         )
         try:
-            with urllib.request.urlopen(req, timeout=30) as response:
+            with urllib.request.urlopen(req, timeout=60) as response:
                 if response.status == 200:
                     return True
                 else:
@@ -95,7 +107,6 @@ def upload_to_r2(key, body, content_type):
         except Exception as e:
             raise Exception(f"HTTP Upload failed: {e}")
     else:
-        # Use standard S3 client
         s3_client = get_r2_client()
         s3_client.put_object(
             Bucket=R2_BUCKET_NAME,
@@ -105,71 +116,126 @@ def upload_to_r2(key, body, content_type):
         )
         return True
 
-def get_r2_client():
-    """Initializes the S3-compatible client for Cloudflare R2."""
-    return boto3.client(
-        service_name="s3",
-        endpoint_url=f"https://{CLOUDFLARE_ACCOUNT_ID}.r2.cloudflarestorage.com",
-        aws_access_key_id=R2_ACCESS_KEY_ID,
-        aws_secret_access_key=R2_SECRET_ACCESS_KEY,
-        region_name="auto"  # R2 expects region_name to be 'auto'
-    )
+def delete_from_r2(key):
+    """Deletes a file from R2. Uses HTTP API delete if WEBSITE_URL & UPLOAD_SECRET are set,
+    otherwise falls back to S3 API via boto3."""
+    if WEBSITE_URL and UPLOAD_SECRET:
+        target_url = f"{WEBSITE_URL.rstrip('/')}/api/upload?key={urllib.parse.quote(key)}"
+        origin = WEBSITE_URL.rstrip('/')
+        req = urllib.request.Request(
+            target_url,
+            headers={
+                "Authorization": f"Bearer {UPLOAD_SECRET}",
+                "Origin": origin,
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+            },
+            method="DELETE"
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=60) as response:
+                if response.status == 200:
+                    return True
+                else:
+                    raise Exception(f"HTTP Status {response.status}")
+        except urllib.error.HTTPError as e:
+            try:
+                err_body = e.read().decode('utf-8')
+            except Exception:
+                err_body = ""
+            raise Exception(f"HTTP Delete failed with status {e.code}: {err_body}")
+        except Exception as e:
+            raise Exception(f"HTTP Delete failed: {e}")
+    else:
+        s3_client = get_r2_client()
+        s3_client.delete_object(
+            Bucket=R2_BUCKET_NAME,
+            Key=key
+        )
+        return True
+
+def get_file_mtime_iso(filepath):
+    """Returns the modification time of a file as a human-readable ISO 8601 string."""
+    mtime = os.path.getmtime(filepath)
+    return datetime.datetime.fromtimestamp(mtime).isoformat()
+
+def load_manifest():
+    """Loads the synchronization state manifest."""
+    if os.path.exists(MANIFEST_PATH):
+        try:
+            with open(MANIFEST_PATH, 'r', encoding='utf-8') as f:
+                return json.load(f)
+        except Exception as e:
+            print(f"[!] Error reading manifest: {e}. Starting fresh.")
+    return {"files": {}}
+
+def save_manifest(manifest):
+    """Saves the synchronization state manifest."""
+    try:
+        with open(MANIFEST_PATH, 'w', encoding='utf-8') as f:
+            json.dump(manifest, f, indent=2, ensure_ascii=False)
+    except Exception as e:
+        print(f"[!] Failed to save manifest: {e}")
 
 
+def should_process(html_path, manifest, force=False):
+    """Checks whether the file (or its companion JSON) has changed since last sync."""
+    if force:
+        return True
+        
+    rel_key = os.path.relpath(html_path, NOTES_DIR).replace(os.sep, '/')
+    
+    current_html_mtime = get_file_mtime_iso(html_path)
+    
+    html_base, _ = os.path.splitext(html_path)
+    json_path = f"{html_base}.json"
+    current_json_mtime = get_file_mtime_iso(json_path) if os.path.exists(json_path) else None
+    
+    entry = manifest.get("files", {}).get(rel_key)
+    if not entry:
+        return True
+        
+    recorded_html_mtime = entry.get("html_mtime")
+    if recorded_html_mtime is None or current_html_mtime > recorded_html_mtime:
+        return True
+        
+    recorded_json_mtime = entry.get("json_mtime")
+    if current_json_mtime is not None:
+        if recorded_json_mtime is None or current_json_mtime > recorded_json_mtime:
+            return True
+    elif recorded_json_mtime is not None:
+        # Companion JSON was deleted, so we should reprocess metadata.json fallback
+        return True
+        
+    return False
 
 def process_html(html_path):
-    """Processes an HTML file's content and uploads it to R2, alongside its companion metadata JSON."""
-    # Normalise path and skip if already being processed (prevents watchdog double-processing)
+    """Processes an HTML file's content and uploads it to R2.
+    Returns metadata dict for manifest if successful, otherwise None."""
     html_path = os.path.normpath(html_path)
-    if html_path in _processing_files:
-        return
-    _processing_files.add(html_path)
     raw_filename = os.path.basename(html_path)
     
     # 1. Parse Subject / Lecture from relative directory structure
-    # Expected: watch_folder/Subject/Lecture N/notes.html  OR  watch_folder/Subject/lecture1.html
-    rel_path = os.path.relpath(html_path, WATCH_DIR)
+    rel_path = os.path.relpath(html_path, NOTES_DIR)
     parts = rel_path.split(os.sep)
     filename = parts[-1]
     doc_name, ext = os.path.splitext(filename)
 
     if len(parts) >= 3:
-        # Subject/Lecture/file.html — lecture folder name is the R2 lecture key
+        # Subject/Lecture/file.html
         subject_name = parts[0]
         lecture_name = parts[1]
         doc_name = lecture_name
     elif len(parts) == 2:
-        # Subject/file.html — lecture name from HTML filename
+        # Subject/file.html
         subject_name = parts[0]
     else:
-        # HTML is directly in watch_folder root (discouraged)
+        # HTML directly in notes root (discouraged)
         subject_name = "General"
 
     if ext.lower() not in (".html", ".htm"):
-        return
+        return None
 
-    print(f"\n[*] New HTML detected in subject '{subject_name}': '{filename}'")
-    print(f"[*] Waiting for the file to finish writing to disk...")
-    
-    # Wait for file to copy/write fully
-    prev_size = -1
-    retries = 0
-    while retries < 30:
-        try:
-            curr_size = os.path.getsize(html_path)
-            if curr_size == prev_size and curr_size > 0:
-                # File size is stable, check if it can be opened
-                with open(html_path, 'r', encoding='utf-8') as f:
-                    break
-            prev_size = curr_size
-        except (OSError, UnicodeDecodeError):
-            pass
-        time.sleep(1)
-        retries += 1
-
-    # Form unique document path in R2 as a two-level folder: Subject/LectureName
     r2_doc_id = f"{subject_name}/{doc_name}"
-    print(f"[*] Processing HTML document as R2 path: '{r2_doc_id}/'")
     
     try:
         # Read HTML content
@@ -193,9 +259,8 @@ def process_html(html_path):
             try:
                 with open(json_path, 'r', encoding='utf-8') as f:
                     metadata = json.load(f)
-                print(f"[+] Found custom companion JSON: '{os.path.basename(json_path)}'")
             except Exception as e:
-                print(f"[!] Error reading custom companion JSON: {e}")
+                print(f"[!] Error reading custom companion JSON for '{filename}': {e}")
         else:
             # Fallback: Extract from the embedded script tag in the HTML content
             import re
@@ -203,15 +268,13 @@ def process_html(html_path):
             if match:
                 try:
                     metadata = json.loads(match.group(1).strip())
-                    print("[+] Extracted custom metadata from HTML embedded script tag.")
                 except Exception as e:
-                    print(f"[!] Found embedded metadata script but failed to parse: {e}")
+                    print(f"[!] Found embedded metadata script but failed to parse for '{filename}': {e}")
 
         if metadata is None:
             # Generate default skeleton metadata for future uploads without a JSON file
             default_title = parsed_title if parsed_title else doc_name.replace("_", " ").replace("-", " ").strip().title()
             
-            # Use the first 200 chars of extracted plain text as dynamic description/summary
             clean_snippet = extracted_text[:200].strip()
             if len(extracted_text) > 200:
                 clean_snippet += "..."
@@ -249,77 +312,44 @@ def process_html(html_path):
                 ]
             }
 
-        # Update metadata with page transcripts
-        metadata["pageTranscripts"] = []
+        # Update metadata with page transcripts if not already present
+        if "pageTranscripts" not in metadata or not metadata["pageTranscripts"]:
+            metadata["pageTranscripts"] = page_transcripts
 
         # Save metadata JSON file locally ONLY if a companion JSON file already exists on disk
         if os.path.exists(json_path):
             try:
                 with open(json_path, 'w', encoding='utf-8') as f:
                     json.dump(metadata, f, indent=2, ensure_ascii=False)
-                print(f"[+] Saved/Updated local companion JSON: '{os.path.basename(json_path)}'")
             except Exception as e:
-                print(f"[!] Failed to save local companion JSON: {e}")
+                print(f"[!] Failed to save local companion JSON for '{filename}': {e}")
 
-        # 3. Upload metadata to R2 under the unique key prefix
+        # 3. Upload metadata to R2
         metadata_key = f"{r2_doc_id}/metadata.json"
         metadata_json_bytes = json.dumps(metadata, indent=2, ensure_ascii=False).encode('utf-8')
         upload_to_r2(metadata_key, metadata_json_bytes, "application/json")
-        print(f"[+] Uploaded metadata JSON to R2: '{metadata_key}'")
 
-        # 4. Upload HTML file to R2 directly
+        # 4. Upload HTML file to R2
         html_key = f"{r2_doc_id}/content.html"
         html_bytes = html_content.encode('utf-8')
         upload_to_r2(html_key, html_bytes, "text/html")
-        print(f"[+] Uploaded HTML content to R2: '{html_key}'")
         
-        # 5. Move files to processed_folder mirroring watch_folder layout
-        rel_for_processed = os.path.relpath(os.path.dirname(html_path), WATCH_DIR)
-        dest_subfolder = (
-            os.path.join(PROCESSED_DIR, rel_for_processed)
-            if rel_for_processed != "."
-            else (os.path.join(PROCESSED_DIR, subject_name) if subject_name != "General" else PROCESSED_DIR)
-        )
-        os.makedirs(dest_subfolder, exist_ok=True)
-
-        dest_html_path = os.path.join(dest_subfolder, filename)
-        if os.path.exists(dest_html_path):
-            base, ext_part = os.path.splitext(filename)
-            dest_html_path = os.path.join(dest_subfolder, f"{base}_{int(time.time())}{ext_part}")
+        print(f"[+] Successfully synced and uploaded: '{r2_doc_id}'")
         
-        # Retry move to handle transient WinError 32 file locks (Windows keeps file open briefly)
-        for attempt in range(5):
-            try:
-                shutil.move(html_path, dest_html_path)
-                break
-            except OSError:
-                if attempt < 4:
-                    time.sleep(1)
-                else:
-                    raise
-        print(f"[+] Moved source HTML to processed folder: '{os.path.relpath(dest_html_path, PROCESSED_DIR)}'")    
+        rel_key = os.path.relpath(html_path, NOTES_DIR).replace(os.sep, '/')
+        return {
+            "rel_key": rel_key,
+            "html_mtime": get_file_mtime_iso(html_path),
+            "json_mtime": get_file_mtime_iso(json_path) if os.path.exists(json_path) else None,
+            "last_uploaded": datetime.datetime.now().isoformat()
+        }
         
-        # Move companion JSON
-        if os.path.exists(json_path):
-            json_filename = os.path.basename(json_path)
-            dest_json_path = os.path.join(dest_subfolder, json_filename)
-            if os.path.exists(dest_json_path):
-                base, ext_part = os.path.splitext(json_filename)
-                dest_json_path = os.path.join(dest_subfolder, f"{base}_{int(time.time())}{ext_part}")
-            shutil.move(json_path, dest_json_path)
-            print(f"[+] Moved companion JSON to processed folder: '{os.path.relpath(dest_json_path, PROCESSED_DIR)}'")
-            
     except Exception as e:
         print(f"[!] Error processing '{raw_filename}': {e}")
-        print("[!] File left in watch folder. Please resolve the issue and the script will retry.")
-    finally:
-        _processing_files.discard(html_path)
-
-# PDFHandler class removed because background folder watching is disabled.
-
+        return None
 
 def clear_r2_bucket():
-    """Deletes ALL objects in the R2 bucket using the S3 API directly (not via HTTP upload endpoint)."""
+    """Deletes ALL objects in the R2 bucket using the S3 API directly."""
     print(f"[*] Connecting to R2 to clear all objects in bucket '{R2_BUCKET_NAME}'...")
     s3 = get_r2_client()
     
@@ -348,79 +378,143 @@ def clear_r2_bucket():
     
     print(f"[+] Bucket cleared. Total objects deleted: {deleted_count}")
 
+def prune_deleted_files(manifest):
+    """Identifies entries in the manifest that no longer exist on disk and deletes them from R2 in parallel."""
+    pruning_candidates = []
+    
+    for rel_path, entry in list(manifest.get("files", {}).items()):
+        local_path = os.path.join(NOTES_DIR, rel_path.replace('/', os.sep))
+        if not os.path.exists(local_path):
+            pruning_candidates.append(rel_path)
+            
+    if not pruning_candidates:
+        return
+        
+    print(f"[*] Detected {len(pruning_candidates)} deleted note(s) to prune from R2...")
+    
+    def prune_worker(rel_path):
+        parts = rel_path.split('/')
+        filename = parts[-1]
+        doc_name, _ = os.path.splitext(filename)
+        if len(parts) >= 3:
+            subject_name = parts[0]
+            doc_name = parts[1]
+        elif len(parts) == 2:
+            subject_name = parts[0]
+        else:
+            subject_name = "General"
+            
+        r2_doc_id = f"{subject_name}/{doc_name}"
+        html_key = f"{r2_doc_id}/content.html"
+        metadata_key = f"{r2_doc_id}/metadata.json"
+        
+        try:
+            delete_from_r2(html_key)
+            delete_from_r2(metadata_key)
+            print(f"    [-] Pruned from R2: '{r2_doc_id}'")
+            return rel_path
+        except Exception as e:
+            print(f"    [!] Error pruning '{r2_doc_id}' from R2: {e}")
+            return None
+
+    pruned_files = []
+    with ThreadPoolExecutor(max_workers=5) as executor:
+        futures = {executor.submit(prune_worker, p): p for p in pruning_candidates}
+        for future in as_completed(futures):
+            res = future.result()
+            if res:
+                pruned_files.append(res)
+                
+    for rel_path in pruned_files:
+        manifest["files"].pop(rel_path, None)
+        
+    if pruned_files:
+        save_manifest(manifest)
+        print(f"[+] Pruning complete. Removed {len(pruned_files)} note(s) from R2 and manifest.")
 
 def reupload_all():
-    """Clears the R2 bucket and re-processes all HTML files found in the processed_folder."""
+    """Clears the R2 bucket, resets the sync manifest, and force-uploads all notes."""
     print("==========================================================")
     print("      BitsNotes R2 Re-Upload Mode (Reprocess HTMLs)       ")
     print("==========================================================")
     
-    if not all([CLOUDFLARE_ACCOUNT_ID, R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY, R2_BUCKET_NAME]):
+    has_r2_creds = all([CLOUDFLARE_ACCOUNT_ID, R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY, R2_BUCKET_NAME])
+    has_http_creds = WEBSITE_URL and UPLOAD_SECRET
+    
+    if not (has_r2_creds or has_http_creds):
         print("[!] ERROR: Cloudflare R2 Credentials missing in local_uploader/.env file.")
         exit(1)
     
-    # Step 1: Clear R2 bucket
-    clear_r2_bucket()
-
+    if has_r2_creds:
+        clear_r2_bucket()
+    else:
+        print("[!] Warning: Direct S3 credentials not found, skipping R2 bucket clear.")
+        print("[!] Sync will overwrite existing files but will not delete untracked files in R2.")
+        
+    if os.path.exists(MANIFEST_PATH):
+        try:
+            os.remove(MANIFEST_PATH)
+            print("[+] Cleared sync manifest.")
+        except OSError as e:
+            print(f"[!] Error clearing manifest: {e}")
+            
+    manifest = {"files": {}}
     
-    # Step 2: Move all HTMLs from processed_folder back to watch_folder to reprocess
-    print(f"[*] Moving HTML files from processed_folder back to watch_folder for reprocessing...")
-    moved = 0
-    for root, dirs, files in os.walk(PROCESSED_DIR):
-        for filename in files:
-            ext = os.path.splitext(filename)[1].lower()
-            if ext in (".html", ".htm"):
-                src_file = os.path.join(root, filename)
-                # Preserve subfolder structure relative to PROCESSED_DIR
-                rel = os.path.relpath(root, PROCESSED_DIR)
-                dest_dir = os.path.join(WATCH_DIR, rel) if rel != "." else WATCH_DIR
-                os.makedirs(dest_dir, exist_ok=True)
-                dest_file = os.path.join(dest_dir, filename)
-                shutil.move(src_file, dest_file)
-                print(f"    -> Moved: {os.path.relpath(src_file, PROCESSED_DIR)} -> watch_folder")
-                moved += 1
-                
-                # Also move companion JSON if present
-                base = os.path.splitext(filename)[0]
-                src_json = os.path.join(root, f"{base}.json")
-                if os.path.exists(src_json):
-                    dest_json = os.path.join(dest_dir, f"{base}.json")
-                    shutil.move(src_json, dest_json)
-    
-    print(f"[*] Moved {moved} HTML document(s) back to watch_folder. Starting reprocess...")
-    
-    # Step 3: Process all HTML documents now in watch_folder
-    for root, dirs, files in os.walk(WATCH_DIR):
+    found_docs = []
+    for root, dirs, files in os.walk(NOTES_DIR):
         if ".venv" in root or ".git" in root:
             continue
         for filename in files:
             ext = os.path.splitext(filename)[1].lower()
             if ext in (".html", ".htm"):
-                process_html(os.path.join(root, filename))
-    
+                found_docs.append(os.path.join(root, filename))
+                
+    if not found_docs:
+        print("[*] No HTML notes found in the notes folder.")
+    else:
+        print(f"[*] Found {len(found_docs)} HTML document(s) to process in parallel...")
+        with ThreadPoolExecutor(max_workers=5) as executor:
+            futures = {executor.submit(process_html, doc_path): doc_path for doc_path in found_docs}
+            for future in as_completed(futures):
+                result = future.result()
+                if result:
+                    rel_key = result["rel_key"]
+                    manifest["files"][rel_key] = {
+                        "html_mtime": result["html_mtime"],
+                        "json_mtime": result["json_mtime"],
+                        "last_uploaded": result["last_uploaded"]
+                    }
+        save_manifest(manifest)
+            
     print("\n[+] Re-upload complete!")
 
 
 if __name__ == "__main__":
     print("==========================================================")
-    print("         Cloudflare R2 Secure HTML Uploader               ")
+    print("         Cloudflare R2 Secure Sync HTML Uploader          ")
     print("==========================================================")
     
-    # Check for --reupload flag: clear R2 and reprocess all HTML documents from processed_folder
-    if "--reupload" in sys.argv:
+    force_sync = "--force" in sys.argv
+    prune_sync = "--prune" in sys.argv
+    reupload = "--reupload" in sys.argv
+    
+    if reupload:
         reupload_all()
         exit(0)
     
-    # Simple configuration check
-    if not all([CLOUDFLARE_ACCOUNT_ID, R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY, R2_BUCKET_NAME]):
+    has_r2_creds = all([CLOUDFLARE_ACCOUNT_ID, R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY, R2_BUCKET_NAME])
+    has_http_creds = WEBSITE_URL and UPLOAD_SECRET
+    
+    if not (has_r2_creds or has_http_creds):
         print("[!] ERROR: Cloudflare R2 Credentials missing in local_uploader/.env file.")
         print("[!] Please open 'local_uploader/.env' and fill in your Cloudflare details.")
         exit(1)
         
-    # Process any HTML documents that are already in watch_folder recursively
-    print(f"[*] Scanning watch folder recursively for HTMLs to upload...")
+    manifest = load_manifest()
+    
+    print(f"[*] Scanning notes folder recursively for HTMLs to sync...")
     found_docs = []
-    for root, dirs, files in os.walk(WATCH_DIR):
+    for root, dirs, files in os.walk(NOTES_DIR):
         if ".venv" in root or ".git" in root:
             continue
         for filename in files:
@@ -429,10 +523,33 @@ if __name__ == "__main__":
                 found_docs.append(os.path.join(root, filename))
     
     if not found_docs:
-        print("[*] No HTML notes found in the watch folder.")
+        print("[*] No HTML notes found in the notes folder.")
     else:
-        print(f"[*] Found {len(found_docs)} HTML document(s) to process.")
-        for doc_path in found_docs:
-            process_html(doc_path)
+        docs_to_process = [d for d in found_docs if should_process(d, manifest, force_sync)]
+        
+        if not docs_to_process:
+            print("[+] All files are up-to-date. Nothing to upload.")
+        else:
+            print(f"[*] Found {len(found_docs)} HTML document(s) in total.")
+            print(f"[*] Processing {len(docs_to_process)} new or modified HTML document(s) in parallel (max 5 threads)...")
             
+            uploaded_count = 0
+            with ThreadPoolExecutor(max_workers=5) as executor:
+                futures = {executor.submit(process_html, doc_path): doc_path for doc_path in docs_to_process}
+                for future in as_completed(futures):
+                    result = future.result()
+                    if result:
+                        rel_key = result["rel_key"]
+                        manifest["files"][rel_key] = {
+                            "html_mtime": result["html_mtime"],
+                            "json_mtime": result["json_mtime"],
+                            "last_uploaded": result["last_uploaded"]
+                        }
+                        uploaded_count += 1
+            save_manifest(manifest)
+            print(f"[+] Sync finished. Uploaded/updated {uploaded_count} note(s).")
+            
+    if prune_sync:
+        prune_deleted_files(manifest)
+    
     print("\n[+] Processing finished. Uploader script stopped.")

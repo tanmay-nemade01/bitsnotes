@@ -11,11 +11,12 @@ Even if you have never written code before, don't worry! Just follow these steps
 Google AdSense uses automated crawling bots to screen websites. Because your notes are stored as secure, non-downloadable images, AdSense bots cannot "read" the text inside them. To the bot, your site looks like a series of blank pages, triggering a **"Low Value Content"** or **"Thin Content"** rejection.
 
 To solve this, this website implements a **"Summary + Interactive Study Guide"** model:
-1. **The Watch Folder**: You drop a PDF into a subject folder inside the watch folder (e.g., `watch_folder/Maths/lecture1.pdf` or `watch_folder/Biology/lecture1.pdf`).
-2. **Preventing Name Conflicts**: If different subjects use the same name (like `lecture1.pdf`), the system automatically separates them by prefixing the subject (e.g., `Maths - lecture1` and `Biology - lecture1`). Each page on the site gets its own independent URL, design, and search indexing, allowing google search console to index each lecture page individually.
-3. **The Companion JSON File**: You can place a text file named `lecture1.json` alongside the PDF inside the same subject folder containing a detailed summary, learning objectives, and a practice quiz. If you don't provide one, the website will gracefully fall back to a default study guide template for that page.
-4. **The Python Script**: The uploader script processes the PDF into high-res WebP images, reads the companion JSON metadata if present, uploads everything to Cloudflare R2 (your secure database), and moves the local files to a structured subfolder inside `processed_folder` (e.g. `processed_folder/Maths/lecture1.pdf`).
-5. **The Website**: When a student (or an AdSense bot) visits a page, the website reads the custom metadata (or uses the fallback template) and displays a rich, crawlable HTML study guide (summary, objectives, quiz) alongside the secure, right-click disabled image viewer. The bot gets the text it wants for approval, while your actual lecture notes remain completely locked and protected.
+1. **The Notes Folder**: You place your notes HTML files directly into subject and lecture folders inside the unified notes folder (e.g., `notes/Maths/Lecture 1/notes.html`).
+2. **Preventing Name Conflicts**: If different subjects use the same folder name, they are kept separate and isolated. Each note page gets its own independent URL, design, and search indexing.
+3. **The Companion JSON File**: You can place a JSON file named `notes.json` alongside the HTML file inside the same folder containing a detailed summary, learning objectives, and a practice quiz.
+4. **The Python Sync Script**: The uploader script scans the `notes/` directory recursively. It reads the HTML file and its companion JSON metadata (if present), uploads them to Cloudflare R2, and tracks the upload status in a local `.sync_manifest.json` file.
+5. **Smart Syncing**: The script compares file modification times against the manifest, so running `python uploader.py` will only upload files that are new or have been edited since the last run. No files are moved or deleted locally.
+6. **The Website**: When a student (or an AdSense bot) visits a page, the website reads the custom metadata (or uses the fallback template) and displays a rich, crawlable HTML study guide (summary, objectives, quiz) alongside the secure, right-click disabled viewer. The bot gets the text it wants for approval, while your actual lecture notes remain completely locked and protected.
 
 ---
 
@@ -92,16 +93,18 @@ Now, let's configure the Python script using the keys you just copied.
 6. The script will scan the watch folder, process and upload any found PDFs (along with their companion JSON files if present) to R2, and then exit.
 
 ### How to use the Subject / Lecture Folders & Companion JSON Workflow:
-Organize files in R2 as **Subject → Lecture → pages** (e.g. `Deep Reinforcement Learning/Lecture 1/page_001.webp`).
+Organize files locally and in R2 as **Subject → Lecture → files** (e.g. `Deep Reinforcement Learning/Lecture 1/notes.html`).
 
-* **Subject folder**: Inside `watch_folder`, create a folder per subject (e.g. `watch_folder/Deep Reinforcement Learning/`).
-* **Lecture folder**: Inside each subject, create a folder per lecture (e.g. `watch_folder/Deep Reinforcement Learning/Lecture 1/`).
-* **Drop PDF (and optional JSON)**: Place `notes.pdf` (and optionally `Lecture 1.json` or `notes.json`) inside the lecture folder.
-  * **Option A**: Custom `Lecture 1.json` in the same folder → uploads your study guide metadata.
-  * **Option B**: No JSON → the website will use a fallback study guide template on the page.
-* **Alternative**: You may also drop `lecture1.pdf` directly under the subject folder (`watch_folder/Maths/lecture1.pdf`); the PDF filename (without `.pdf`) becomes the lecture name.
-* **Filing**: Processed files are moved under `processed_folder/` with the same folder structure.
-* **Re-run / Re-upload**: Run `python uploader.py --reupload` to clear R2 and rebuild from `processed_folder` once you have moved PDFs into the new layout.
+* **Subject folder**: Inside the `notes` directory, create a folder per subject (e.g. `notes/Deep Reinforcement Learning/`).
+* **Lecture folder**: Inside each subject, create a folder per lecture (e.g. `notes/Deep Reinforcement Learning/Lecture 1/`).
+* **HTML and Companion JSON**: Place your HTML note file (e.g. `notes.html`) and optionally a companion JSON file (e.g. `notes.json`) inside the lecture folder.
+  * **Option A**: Custom JSON (e.g., `notes.json`) in the same folder → uploads your study guide metadata.
+  * **Option B**: Embedded Script → Embed a `<script type="application/json" id="lecture-metadata">` tag directly inside your HTML note file.
+  * **Option C**: No JSON/Script → the website will use a fallback study guide template on the page.
+* **Syncing**: Run `python uploader.py` to synchronize any new or modified notes. Unchanged notes are skipped automatically.
+* **Pruning deleted notes**: Run `python uploader.py --prune` to automatically delete any notes from Cloudflare R2 that you have deleted locally from your `notes/` directory.
+* **Forcing re-upload**: Run `python uploader.py --force` to upload all notes regardless of whether they have changed.
+* **Re-run / Re-upload**: Run `python uploader.py --reupload` to clear the R2 bucket entirely and re-sync all notes.
 
 #### 🤖 AI Prompt Template to Generate Companion JSON:
 ```text

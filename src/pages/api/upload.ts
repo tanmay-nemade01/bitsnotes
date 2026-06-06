@@ -62,3 +62,54 @@ export const PUT: APIRoute = async ({ request, url }) => {
     return new Response(`Upload error: ${error.message || error}`, { status: 500 });
   }
 };
+
+export const DELETE: APIRoute = async ({ request, url }) => {
+  try {
+    const authorization = request.headers.get('Authorization');
+    const expectedSecret = env.UPLOAD_SECRET;
+
+    if (!expectedSecret) {
+      console.error("[Upload API] UPLOAD_SECRET is not set in wrangler environment variables.");
+      return new Response('Server configuration error: UPLOAD_SECRET is not set', { status: 500 });
+    }
+
+    if (authorization !== `Bearer ${expectedSecret}`) {
+      console.warn("[Upload API] Unauthorized delete attempt.");
+      return new Response('Unauthorized', { status: 401 });
+    }
+
+    const key = url.searchParams.get('key');
+    if (!key) {
+      return new Response('Missing "key" query parameter', { status: 400 });
+    }
+
+    const bucket = env.BUCKET;
+    if (!bucket) {
+      console.error("[Upload API] R2 BUCKET binding is missing.");
+      return new Response('Cloudflare R2 BUCKET binding not configured', { status: 500 });
+    }
+
+    console.log(`[Upload API] Deleting key: "${key}"`);
+
+    // Delete object from R2 bucket using internal binding
+    await (bucket as any).delete(key);
+
+    // Invalidate cached lists in KV to reflect deletion
+    const kv = env.SESSION;
+    if (kv) {
+      await invalidateCache(kv, key);
+    }
+
+    return new Response(
+      JSON.stringify({ success: true, key }),
+      {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' }
+      }
+    );
+  } catch (error: any) {
+    console.error(`[Upload API] Internal delete error: ${error.message || error}`);
+    return new Response(`Delete error: ${error.message || error}`, { status: 500 });
+  }
+};
+
