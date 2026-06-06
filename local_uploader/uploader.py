@@ -196,6 +196,16 @@ def process_html(html_path):
                 print(f"[+] Found custom companion JSON: '{os.path.basename(json_path)}'")
             except Exception as e:
                 print(f"[!] Error reading custom companion JSON: {e}")
+        else:
+            # Fallback: Extract from the embedded script tag in the HTML content
+            import re
+            match = re.search(r'<script\s+type=["\']application\/json["\']\s+id=["\']lecture-metadata["\']\s*>(.*?)</script>', html_content, re.DOTALL)
+            if match:
+                try:
+                    metadata = json.loads(match.group(1).strip())
+                    print("[+] Extracted custom metadata from HTML embedded script tag.")
+                except Exception as e:
+                    print(f"[!] Found embedded metadata script but failed to parse: {e}")
 
         if metadata is None:
             # Generate default skeleton metadata for future uploads without a JSON file
@@ -242,13 +252,14 @@ def process_html(html_path):
         # Update metadata with page transcripts
         metadata["pageTranscripts"] = []
 
-        # Save metadata JSON file locally (updating existing or creating new)
-        try:
-            with open(json_path, 'w', encoding='utf-8') as f:
-                json.dump(metadata, f, indent=2, ensure_ascii=False)
-            print(f"[+] Saved/Updated local companion JSON: '{os.path.basename(json_path)}'")
-        except Exception as e:
-            print(f"[!] Failed to save local companion JSON: {e}")
+        # Save metadata JSON file locally ONLY if a companion JSON file already exists on disk
+        if os.path.exists(json_path):
+            try:
+                with open(json_path, 'w', encoding='utf-8') as f:
+                    json.dump(metadata, f, indent=2, ensure_ascii=False)
+                print(f"[+] Saved/Updated local companion JSON: '{os.path.basename(json_path)}'")
+            except Exception as e:
+                print(f"[!] Failed to save local companion JSON: {e}")
 
         # 3. Upload metadata to R2 under the unique key prefix
         metadata_key = f"{r2_doc_id}/metadata.json"
