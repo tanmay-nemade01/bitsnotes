@@ -15,6 +15,9 @@ export default defineConfig({
 
   vite: {
     plugins: [tailwindcss()],
+    ssr: {
+      external: ['cloudflare:email']
+    },
     server: {
       watch: {
         ignored: ['**/local_uploader/**']
