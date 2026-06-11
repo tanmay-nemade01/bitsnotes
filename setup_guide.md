@@ -169,15 +169,11 @@ Now, let's put your website on the internet so students can access it and AdSens
 3. A browser window will automatically open. Log into your Cloudflare account and click the blue **Allow** button.
 
 ### C. Build and Deploy
-1. Compile your website files by running:
+1. Build and deploy your website to Cloudflare Workers by running:
    ```bash
-   npm run build
+   npm run deploy
    ```
-2. Deploy your website to Cloudflare Workers by running:
-   ```bash
-   npx wrangler deploy
-   ```
-3. Wrangler will upload your project and route it to your custom domain (e.g., `https://bitsnotes.com`).
+2. Wrangler will compile your website, upload your project, and route it to your custom domain (e.g., `https://bitsnotes.com`).
 
 ---
 
