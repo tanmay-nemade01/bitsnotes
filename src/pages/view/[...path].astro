@@ -1,7 +1,7 @@
 ---
 import BaseLayout from '../../layouts/BaseLayout.astro';
 import { getFallbackMetadata } from '../../utils/metadata';
-import { resolveLecturePrefix } from '../../utils/r2Structure';
+import { resolveLecturePrefix, listSubjects, listLectures, type LectureSummary } from '../../utils/r2Structure';
 import { env } from 'cloudflare:workers';
 
 // path is an array of segments: ["SubjectName", "LectureName"]
@@ -229,6 +229,112 @@ if (hasHtmlContent) {
 
 const metadata = customMetadata || getFallbackMetadata(lectureName, subjectName);
 
+// Fetch all subjects to get list of subjects and order
+let subjects: { name: string; lectureCount: number }[] = [];
+if (bucket) {
+  try {
+    subjects = await listSubjects(bucket as any, kv as any);
+  } catch (err) {
+    console.error('Failed to list subjects in viewer:', err);
+  }
+}
+if (subjects.length === 0 && (isDemoMode || import.meta.env.DEV)) {
+  subjects = [
+    { name: 'Deep Reinforcement Learning', lectureCount: 5 },
+    { name: 'Machine Learning', lectureCount: 8 },
+    { name: 'Computer Networks', lectureCount: 6 },
+  ];
+}
+
+// Fetch all lectures of current subject
+let lectures: LectureSummary[] = [];
+if (bucket) {
+  try {
+    lectures = await listLectures(bucket as any, subjectName, kv as any);
+  } catch (err) {
+    console.error('Failed to list lectures in viewer:', err);
+  }
+}
+if (lectures.length === 0 && (isDemoMode || import.meta.env.DEV)) {
+  const match = subjects.find(s => s.name === subjectName);
+  const count = match ? match.lectureCount : 5;
+  lectures = Array.from({ length: count }, (_, i) => ({
+    name: `Lecture ${i + 1}`,
+    r2Prefix: `${subjectName}/Lecture ${i + 1}`
+  }));
+}
+
+// Previous and next lecture navigation logic
+let prevUrl = '';
+let prevLabel = '';
+let nextUrl = '';
+let nextLabel = '';
+
+const currentLectureIndex = lectures.findIndex(l => l.name === lectureName);
+const currentSubjectIndex = subjects.findIndex(s => s.name === subjectName);
+
+if (currentLectureIndex !== -1 && currentSubjectIndex !== -1) {
+  // Previous lecture calculation
+  if (currentLectureIndex > 0) {
+    const prevLecture = lectures[currentLectureIndex - 1];
+    prevUrl = `/view/${encodeURIComponent(subjectName)}/${encodeURIComponent(prevLecture.name)}`;
+    prevLabel = prevLecture.name;
+  } else {
+    // Current is first lecture. Previous goes to last lecture of previous subject.
+    const prevSubjectIndex = (currentSubjectIndex - 1 + subjects.length) % subjects.length;
+    const prevSubject = subjects[prevSubjectIndex];
+    let prevSubjectLectures: LectureSummary[] = [];
+    if (bucket) {
+      try {
+        prevSubjectLectures = await listLectures(bucket as any, prevSubject.name, kv as any);
+      } catch (err) {
+        console.error('Failed to list lectures for previous subject:', err);
+      }
+    }
+    if (prevSubjectLectures.length === 0 && (isDemoMode || import.meta.env.DEV)) {
+      prevSubjectLectures = Array.from({ length: prevSubject.lectureCount }, (_, i) => ({
+        name: `Lecture ${i + 1}`,
+        r2Prefix: `${prevSubject.name}/Lecture ${i + 1}`
+      }));
+    }
+    if (prevSubjectLectures.length > 0) {
+      const lastLecture = prevSubjectLectures[prevSubjectLectures.length - 1];
+      prevUrl = `/view/${encodeURIComponent(prevSubject.name)}/${encodeURIComponent(lastLecture.name)}`;
+      prevLabel = `${prevSubject.name} - ${lastLecture.name}`;
+    }
+  }
+
+  // Next lecture calculation
+  if (currentLectureIndex < lectures.length - 1) {
+    const nextLecture = lectures[currentLectureIndex + 1];
+    nextUrl = `/view/${encodeURIComponent(subjectName)}/${encodeURIComponent(nextLecture.name)}`;
+    nextLabel = nextLecture.name;
+  } else {
+    // Current is last lecture. Next goes to first lecture of next subject.
+    const nextSubjectIndex = (currentSubjectIndex + 1) % subjects.length;
+    const nextSubject = subjects[nextSubjectIndex];
+    let nextSubjectLectures: LectureSummary[] = [];
+    if (bucket) {
+      try {
+        nextSubjectLectures = await listLectures(bucket as any, nextSubject.name, kv as any);
+      } catch (err) {
+        console.error('Failed to list lectures for next subject:', err);
+      }
+    }
+    if (nextSubjectLectures.length === 0 && (isDemoMode || import.meta.env.DEV)) {
+      nextSubjectLectures = Array.from({ length: nextSubject.lectureCount }, (_, i) => ({
+        name: `Lecture ${i + 1}`,
+        r2Prefix: `${nextSubject.name}/Lecture ${i + 1}`
+      }));
+    }
+    if (nextSubjectLectures.length > 0) {
+      const firstLecture = nextSubjectLectures[0];
+      nextUrl = `/view/${encodeURIComponent(nextSubject.name)}/${encodeURIComponent(firstLecture.name)}`;
+      nextLabel = `${nextSubject.name} - ${firstLecture.name}`;
+    }
+  }
+}
+
 // Setup dynamic keywords and descriptions
 const seoDescription = metadata.summary 
   ? (metadata.summary.length > 155 ? metadata.summary.slice(0, 152) + "..." : metadata.summary)
@@ -316,7 +422,7 @@ const quizJson = quizSchema ? JSON.stringify(quizSchema) : null;
     <script async src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js?client=ca-pub-2602136383267308" crossorigin="anonymous"></script>
   </Fragment>
 
-  <main class="flex-grow w-full flex flex-col">
+  <main class="flex-grow w-full flex flex-col bg-slate-50">
 
     {errorMsg && (
       <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 w-full">
@@ -333,10 +439,82 @@ const quizJson = quizSchema ? JSON.stringify(quizSchema) : null;
     )}
 
     {hasHtmlContent && (
-      <div class="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-6 w-full flex-grow flex flex-col">
-        {/* Note content wrapper */}
-        <div class="lecture-notes-wrapper w-full bg-white rounded-2xl border border-slate-200/80 shadow-sm overflow-hidden">
-          <Fragment set:html={bodyContent} />
+      <div class="viewer-layout max-w-[1440px] mx-auto w-full px-4 sm:px-6 lg:px-8 py-8 flex-grow flex gap-8 relative">
+        <!-- Sidebar Drawer Toggle for Mobile -->
+        <button id="sidebar-toggle" class="sidebar-toggle-btn lg:hidden shadow-lg" aria-label="Toggle Lecture List">
+          <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.2" d="M4 6h16M4 12h16M4 18h16"></path>
+          </svg>
+        </button>
+
+        <!-- Sidebar Overlay for Mobile -->
+        <div id="sidebar-overlay" class="sidebar-overlay hidden lg:hidden"></div>
+
+        <!-- Sidebar Panel -->
+        <aside id="lecture-sidebar" class="lecture-sidebar">
+          <div class="sidebar-header">
+            <span class="sidebar-subject-badge">Subject</span>
+            <h2 class="sidebar-subject-title">{subjectName}</h2>
+          </div>
+          
+          <nav class="sidebar-nav">
+            {lectures.map((lec, idx) => {
+              const isActive = lec.name === lectureName;
+              const viewUrl = `/view/${encodeURIComponent(subjectName)}/${encodeURIComponent(lec.name)}`;
+              return (
+                <a 
+                  href={isActive ? '#' : viewUrl} 
+                  class={`sidebar-item ${isActive ? 'active' : ''}`}
+                >
+                  <span class="sidebar-item-number">{idx + 1}</span>
+                  <span class="sidebar-item-name">{lec.name}</span>
+                </a>
+              );
+            })}
+          </nav>
+        </aside>
+
+        <!-- Content Panel -->
+        <div class="viewer-content flex-grow max-w-4xl flex flex-col min-w-0">
+          {/* Note content wrapper */}
+          <div class="lecture-notes-wrapper w-full bg-white rounded-3xl border border-slate-200/80 shadow-md overflow-hidden flex-grow">
+            <Fragment set:html={bodyContent} />
+          </div>
+
+          <!-- Dynamic Navigation Buttons -->
+          <div class="navigation-footer flex flex-col sm:flex-row items-center justify-between gap-4 mt-8 pt-4 pb-6">
+            {prevUrl ? (
+              <a href={prevUrl} class="nav-btn prev-btn flex items-center gap-4 w-full sm:w-auto">
+                <div class="nav-btn-icon flex items-center justify-center shrink-0">
+                  <svg class="w-5 h-5 transition-transform duration-250" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M15 19l-7-7 7-7"></path>
+                  </svg>
+                </div>
+                <div class="text-left min-w-0">
+                  <span class="nav-btn-hint text-[10px] block text-slate-400 uppercase tracking-widest font-bold">Previous</span>
+                  <span class="nav-btn-title text-sm block font-bold text-slate-700 line-clamp-1">{prevLabel}</span>
+                </div>
+              </a>
+            ) : (
+              <div class="w-full sm:w-auto invisible"></div>
+            )}
+
+            {nextUrl ? (
+              <a href={nextUrl} class="nav-btn next-btn flex items-center justify-between gap-4 w-full sm:w-auto text-right">
+                <div class="text-right min-w-0">
+                  <span class="nav-btn-hint text-[10px] block text-slate-400 uppercase tracking-widest font-bold">Next</span>
+                  <span class="nav-btn-title text-sm block font-bold text-slate-700 line-clamp-1">{nextLabel}</span>
+                </div>
+                <div class="nav-btn-icon flex items-center justify-center shrink-0">
+                  <svg class="w-5 h-5 transition-transform duration-250" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M9 5l7 7-7 7"></path>
+                  </svg>
+                </div>
+              </a>
+            ) : (
+              <div class="w-full sm:w-auto invisible"></div>
+            )}
+          </div>
         </div>
       </div>
     )}
@@ -363,6 +541,24 @@ const quizJson = quizSchema ? JSON.stringify(quizSchema) : null;
       explanation.classList.add('fade-in');
     }
   };
+
+  // Mobile sidebar toggle handlers
+  const toggleBtn = document.getElementById('sidebar-toggle');
+  const sidebar = document.getElementById('lecture-sidebar');
+  const overlay = document.getElementById('sidebar-overlay');
+
+  if (toggleBtn && sidebar && overlay) {
+    const toggleSidebar = () => {
+      if (window.innerWidth < 1024) {
+        sidebar.classList.toggle('open');
+        overlay.classList.toggle('hidden');
+        document.body.classList.toggle('overflow-hidden');
+      }
+    };
+
+    toggleBtn.addEventListener('click', toggleSidebar);
+    overlay.addEventListener('click', toggleSidebar);
+  }
 
   // Dynamically inject MathJax if math markup is present
   if (!document.getElementById('MathJax-script') && !window.MathJax) {
