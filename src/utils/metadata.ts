@@ -11,6 +11,15 @@ export interface SectionBreakdown {
   description: string;
 }
 
+export interface ExamRevisionItem {
+  topic: string;
+  mustKnow: string;
+  keyFormula?: string;
+  commonPitfall?: string;
+  quickCheck?: string;
+  connections?: string[];
+}
+
 export interface DocumentMetadata {
   title: string;
   subject: string;
@@ -21,6 +30,7 @@ export interface DocumentMetadata {
   keyConcepts: string[];
   sections: SectionBreakdown[];
   quiz: QuizQuestion[];
+  examRevisionNotes?: ExamRevisionItem[];
   pageTranscripts?: string[];
 }
 
