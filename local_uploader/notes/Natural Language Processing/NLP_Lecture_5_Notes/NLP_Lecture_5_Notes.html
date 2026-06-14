@@ -1,0 +1,1658 @@
+﻿used to make this tractable.</p>
+
+<p>An even more efficient approach is <strong>Noise Contrastive Estimation (NCE)</strong>: train the model to distinguish real training examples from artificially generated noise (e.g., random words from a unigram distribution), rather than computing the full softmax over the entire vocabulary. During training, NCE only computes scores for the correct word and a small set of noise words â€” no need to normalize over all V outputs. This produces a <em>self-normalizing</em> model whose raw scores can be used as approximate probabilities without the expensive normalization step.</p>
+
+<p>Formally, the NLM computes the hidden layer via concatenated word embeddings and the output distribution via softmax:</p>
+\[
+h = \tanh\left(b_h + \sum_j H_j\, C(w_j)\right), \qquad p_i = \text{softmax}(s_i, \vec{s}) = \frac{e^{s_i}}{\sum_j e^{s_j}}
+\]
+\[
+s = W h + \sum_j U\, C(w_j)
+\]
+<p>Where \(C(w_j)\) is the word embedding lookup for context word \(w_j\), and the direct connections \(U\, C(w_j)\) from context word embeddings to the output layer (residual/skip connections) speed up training. The training objective is to maximize the log-likelihood of the correct word:</p>
+\[
+\mathcal{L}(x, \vec{y}; W) = -\sum_k y_k \log p_k
+\]
+<p>Since only one \(y_k\) is 1 (one-hot target), this simplifies to maximizing the probability assigned to the correct next word.</p>
+
+</div>
+
+<div class="example-box"><strong>Visual Walkthrough: NLM Architecture in Detail</strong>-scale=1.0">
+  <meta name="description" content="This session bridges classical statistical language models and the evaluation techniques used to measure them. At its core, language modelling is about predicting what word comes next given the words before it. The lecture builds this idea through unigrams, bigrams, and trigrams. A major challenge with N-gram models is the zero probability problem: if a perfectly valid word sequence never appeared in the training data, the model assigns it zero probability — wiping out the entire sentence score. The lecture explores several solutions: Laplace smoothing (simple but can distort the probability distribution), interpolation (blending different N-gram models using learned weights), and back-off methods (falling back to lower-order N-grams when higher-order counts are missing). The second half focuses on how to evaluate language models. Extrinsic evaluation tests the model as part of a complete application (like machine translation) and measures end-to-end performance. Intrinsic evaluation isolates the model itself using Perplexity — a metric that measures how well the model predicts a test set. Lower perplexity means better predictions. Perplexity remains the standard benchmark from simple N-grams all the way to modern LLMs.">
+  <title>Language Modelling and Model Evaluation</title>
+  <link rel="stylesheet" href="/lecture-notes.css">
+  <script type="application/json" id="lecture-metadata">{
+  "title": "Language Modelling and Model Evaluation",
+  "subject": "Natural Language Processing",
+  "gradeLevel": "postgraduate",
+  "datePublished": "2026-06-02",
+  "targetAudience": "Postgraduate students learning how language models estimate word probabilities and how their quality is measured.",
+  "summary": "This session bridges classical statistical language models and the evaluation techniques used to measure them. At its core, language modelling is about predicting what word comes next given the words before it. The lecture builds this idea through unigrams, bigrams, and trigrams.\n\nA major challenge with N-gram models is the zero probability problem: if a perfectly valid word sequence never appeared in the training data, the model assigns it zero probability — wiping out the entire sentence score. The lecture explores several solutions: Laplace smoothing (simple but can distort the probability distribution), interpolation (blending different N-gram models using learned weights), and back-off methods (falling back to lower-order N-grams when higher-order counts are missing).\n\nThe second half focuses on how to evaluate language models. Extrinsic evaluation tests the model as part of a complete application (like machine translation) and measures end-to-end performance. Intrinsic evaluation isolates the model itself using Perplexity — a metric that measures how well the model predicts a test set. Lower perplexity means better predictions. Perplexity remains the standard benchmark from simple N-grams all the way to modern LLMs.",
+  "keyConcepts": [
+    "Formulate probabilities using unigram, bigram, and trigram N-gram models.",
+    "Address the zero probability problem using Laplace Smoothing, Interpolation, and Back-off.",
+    "Differentiate between intrinsic evaluation (Perplexity) and extrinsic evaluation approaches.",
+    "Apply language modelling principles that carry from statistical techniques to neural architectures."
+  ],
+  "sections": [
+    {
+      "title": "Foundations of Language Models",
+      "pages": "Pages 1",
+      "description": "The core objective of language modelling: predicting the next word in a sequence."
+    },
+    {
+      "title": "Zero Probabilities & Smoothing",
+      "pages": "Pages 1-2",
+      "description": "How unseen word sequences break N-grams and how smoothing, interpolation, and back-off fix it."
+    },
+    {
+      "title": "Model Evaluation",
+      "pages": "Pages 2",
+      "description": "Extrinsic (application-level) vs intrinsic (Perplexity-based) evaluation of language models."
+    }
+  ],
+  "quiz": [
+    {
+      "question": "What is the primary purpose of 'Back-off' in N-gram language modelling?",
+      "options": [
+        "To remove the lowest frequency words from the vocabulary.",
+        "To substitute high-gram predictions with lower-gram data when counts are zero.",
+        "To increase the computational performance of GPUs.",
+        "To inherently evaluate perplexity accurately."
+      ],
+      "answerIndex": 1,
+      "explanation": "When a higher-order N-gram (like a trigram) has zero occurrences, the model 'backs off' to check the bigram, and then the unigram probability instead."
+    }
+  ],
+  "pageTranscripts": [
+    "Natural Language Processing Lecture 5: Evaluation of Language Models & Neural Language Modeling Comprehensive Study Notes Based on the lecture by the Course Instructor  Compiled on June 2, 2026",
+    "NLP Lecture 5: Evaluation & Neural LM 2",
+    "Contents 1 Evaluation of Language Models 5 1.1 Why Evaluate Language Models? . . . . . . . . . . . . . . . . . . . . . . . . . . . 5 1.2 Intrinsic vs. Extrinsic Evaluation . . . . . . . . . . . . . . . . . . . . . . . . . . . 5 1.2.1 Intrinsic Evaluation . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 5 1.2.2 Extrinsic Evaluation . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 6 1.3 The Problem with Raw Probability . . . . . . . . . . . . . . . . . . . . . . . . . . 6 1.3.1 Why Not Use Probability Directly? . . . . . . . . . . . . . . . . . . . . . . 6 1.3.2 The Intuition: Normalize by Length . . . . . . . . . . . . . . . . . . . . . 6 1.4 Perplexity: The Standard Evaluation Metric . . . . . . . . . . . . . . . . . . . . . 6 1.4.1 Formal Deﬁnition . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 7 1.4.2 What Does Perplexity Actually Mean? . . . . . . . . . . . . . . . . . . . . 7 1.4.3 Worked Example 1: A Concrete Sentence . . . . . . . . . . . . . . . . . . 7 1.4.4 Worked Example 2: Uniform Probability (Worst Case) . . . . . . . . . . . 8 1.4.5 Why Perplexity Works: Length Normalization . . . . . . . . . . . . . . . 8 1.4.6 Relationship with Cross-Entropy . . . . . . . . . . . . . . . . . . . . . . . 9 1.4.7 The Eﬀect of n-gram Order on Perplexity . . . . . . . . . . . . . . . . . . 9 1.5 Perplexity in Practice . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 9 2 Neural Network Foundations for Language Modeling 11 2.1 Machine Learning vs. Deep Learning . . . . . . . . . . . . . . . . . . . . . . . . . 11 2.2 The Single Neuron (Perceptron) . . . . . . . . . . . . . . . . . . . . . . . . . . . . 12 2.2.1 Step-by-Step Computation . . . . . . . . . . . . . . . . . . . . . . . . . . 12 2.3 Activation Functions . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 12 2.3.1 Sigmoid (σ) . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 12 2.3.2 Softmax . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 13 2.3.3 ReLU (Rectiﬁed Linear Unit) . . . . . . . . . . . . . . . . . . . . . . . . . 13 2.3.4 Leaky ReLU . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 13 2.3.5 Tanh . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 13 2.3.6 Modern Variants: GELU and Swish . . . . . . . . . . . . . . . . . . . . . 14 2.4 Why Multiple Neurons? The XOR Problem . . . . . . . . . . . . . . . . . . . . . 14 2.5 Multi-Layer Perceptron (MLP) / Feedforward Network . . . . . . . . . . . . . . . 15 2.5.1 Architecture . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 15 2.5.2 Guidelines for Architecture Design (Andrew Ng) . . . . . . . . . . . . . . 15 2.6 Forward Propagation (Inference) . . . . . . . . . . . . . . . . . . . . . . . . . . . 15 2.7 Backpropagation (Training) . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 16 3 Neural Language Modeling 17 3.1 What is a Neural Language Model? . . . . . . . . . . . . . . . . . . . . . . . . . . 17 3",
+    "NLP Lecture 5: Evaluation & Neural LM CONTENTS 3.2 Architecture of a Neural Language Model . . . . . . . . . . . . . . . . . . . . . . 17 3.2.1 Step 1: Input Word Embeddings . . . . . . . . . . . . . . . . . . . . . . . 17 3.2.2 Step 2: Hidden Layers Dense Connections . . . . . . . . . . . . . . . . . 18 3.2.3 Step 3: Output Softmax over Vocabulary . . . . . . . . . . . . . . . . . . 18 3.3 Recurrent Generation: Predicting Multiple Words . . . . . . . . . . . . . . . . . 18 3.4 Handling Variable-Length Input . . . . . . . . . . . . . . . . . . . . . . . . . . . . 19 3.5 Sentence Embeddings: Representing Multi-Word Inputs . . . . . . . . . . . . . . 19 3.5.1 Method 1: Mean Pooling (Average) . . . . . . . . . . . . . . . . . . . . . . 19 3.5.2 Method 2: Max Pooling . . . . . . . . . . . . . . . . . . . . . . . . . . . . 19 3.6 Example Application: Sentiment Analysis . . . . . . . . . . . . . . . . . . . . . . 20 3.7 Training Data for Neural Language Models . . . . . . . . . . . . . . . . . . . . . 20 4 Comparison: n-gram vs. Neural Language Models 21 4.1 Summary Comparison Table . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 21 4.2 The Semantic Gap: Why Embeddings Matter . . . . . . . . . . . . . . . . . . . . 22 4.3 When to Use Which . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 22 5 Introduction to Large Language Models 23 5.1 What Makes an LM “Large”? . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 23 5.2 Key Characteristics of LLMs . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 23 5.3 Cost and Environmental Considerations . . . . . . . . . . . . . . . . . . . . . . . 24 5.4 Connection to Perplexity . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 24 5.5 Looking Ahead . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 24 Quick Reference: Key Formulas 25 4",
+    "Lecture Notes Evaluation of Language Models 1.1 Why Evaluate Language Models? A language model (LM) is fundamentally a system that assigns probabilities to sequences of words. Given a sequence w1, w2, . . . , wn−1, the model predicts the probability of the next word wn: P(wn | w1, w2, . . . , wn−1) (1.1) But how do we know if one model is better than another? How do we decide whether our model is “good enough” for deployment? This is where evaluation comes in. Key Concept: The same evaluation metrics (particularly perplexity) apply universally across all types of language models whether simple n-gram models, RNN/LSTM-based models, or modern Transformer-based LLMs like GPT-4. 1.2 Intrinsic vs. Extrinsic Evaluation There are two fundamentally diﬀerent approaches to evaluating language models: 1.2.1 Intrinsic Evaluation Intrinsic evaluation measures the internal quality of the language model itself, independent of any downstream application. It answers the question: How good is this model at modeling language? • Analogy: Like white-box testing in software engineering you examine the internal com- ponents. • Advantage: Fast, cheap to run, does not require building a complete application. • Metrics: Perplexity, log-likelihood, cross-entropy, entropy. • Most popular: Perplexity (discussed in detail below). 5",
+    "NLP Lecture 5: Evaluation & Neural LM CHAPTER 1. EVALUATION OF LANGUAGE MODELS 1.2.2 Extrinsic Evaluation Extrinsic evaluation measures how well the language model performs when plugged into a real- world application. It answers the question: Does using this LM improve my downstream system? • Analogy: Like black-box testing you only care about whether the system works for the user. • Examples: If you build a machine translation system using an LM, you evaluate the translation quality (BLEU score, human judgment). If you build a speech recognition system, you evaluate word error rate (WER). • Disadvantage: Slow, expensive you need to build the entire system ﬁrst; cannot isolate the LM’s contribution. Note: In practice, both evaluations are used. Intrinsic evaluation (perplexity) helps during model development and hyperparameter tuning. Extrinsic evaluation gives the ﬁnal verdict before production deployment. 1.3 The Problem with Raw Probability 1.3.1 Why Not Use Probability Directly? At ﬁrst glance, it seems natural to evaluate a language model by simply looking at the probability it assigns to a test sentence. A model that assigns higher probability to correct sentences should be better, right? Not quite. Consider two models: Example: Model A predicts the sentence “I like cats” with probability PA = 0.01. Model B predicts the sentence “I like cute cats very much” with probability PB = 0.0001. Both sentences are perfectly valid English. But PB is much smaller than PA not because Model B is worse, but simply because the second sentence has more words! Every additional word multiplies another probability ≤1 into the product, making longer sentences inherently have lower total probability. This is why raw probability cannot be used to compare models fairly when sentences have diﬀerent lengths. We need a length-normalized measure. 1.3.2 The Intuition: Normalize by Length The solution is to take the per-word average of the probability. But since probabilities mul- tiply (not add) across words, the correct “average” is the geometric mean, not the arithmetic mean. This leads to the deﬁnition of perplexity. 1.4 Perplexity: The Standard Evaluation Metric 6",
+    "CHAPTER 1. EVALUATION OF LANGUAGE MODELS NLP Lecture 5: Evaluation & Neural LM 1.4.1 Formal Deﬁnition Deﬁnition: Perplexity (often abbreviated PPL) of a language model on a test sequence W = (w1, w2, . . . , wN) is deﬁned as: PPL(W) = P(w1, w2, . . . , wN)−1 N = N √ 1 P(w1, w2, . . . , wN) (1.2) Equivalently, it can be written as: PPL(W) = N ∏ i=1 P(wi | w1, . . . , wi−1)−1 N (1.3) Where: • N is the total number of words (tokens) in the test sequence. • P(w1, . . . , wN) is the joint probability assigned by the model. • The exponent −1 N takes the N-th root of the inverse probability. Key Concept: Perplexity is the inverse of the geometric mean of the per-word probabilities. Lower perplexity ⇐⇒higher probability ⇐⇒better model. 1.4.2 What Does Perplexity Actually Mean? Perplexity has a very intuitive interpretation: A perplexity of k means the model is as confused as if it had to choose uniformly among k equally likely words at each position. • PPL = 1: Perfect model it is 100% certain of every next word (rarely desirable in practice, as it implies zero creativity/variation). • PPL = 210: Excellent the model has very little confusion. • PPL = 10100: Good to moderate typical range for well-trained neural LMs. • PPL = 100400: Moderate to poor the model struggles. • PPL > 400: Poor the model is barely better than random guessing. △Caution: Perplexity values are not bounded between 0 and 1 (unlike probability). Because we take the N-th root and invert, perplexity can be any positive real number. This is a common point of confusion. 1.4.3 Worked Example 1: A Concrete Sentence Let’s work through a concrete example to understand exactly how perplexity is computed. 7",
+    "NLP Lecture 5: Evaluation & Neural LM CHAPTER 1. EVALUATION OF LANGUAGE MODELS Example: Sentence: “I love NLP models” (4 words, so N = 4) Suppose the language model assigns the following conditional probabilities (using bigram, trigram, or any method): P(I | <s>) = 0.2 P(love | I) = 0.3 P(NLP | love) = 0.5 P(models | NLP) = 0.25 Step 1: Compute the joint probability of the entire sentence: P(I love NLP models) = 0.2 × 0.3 × 0.5 × 0.25 = 0.0075 Step 2: Apply the perplexity formula with N = 4: PPL = (0.0075)−1 4 = 4 √ 1 0.0075 = 4√ 133.3 ≈4.47 Interpretation: A perplexity of 4.47 means the model is uncertain among roughly 45 equally likely words at each position. The model has moderate conﬁdence reasonable but not excellent. 1.4.4 Worked Example 2: Uniform Probability (Worst Case) Example: Scenario: A “random” language model that assigns equal probability 1 V to every word in a vocabulary of size V , regardless of context. For a random digit generator (vocabulary = {0, 1, . . . , 9}, so V = 10), for any sequence of length N: P(any N-digit sequence) = ( 1 10 )N PPL = [( 1 10 )N]−1 N = ( 1 10 )−1 = 10 Interpretation: The model is confused among all 10 digits it cannot distinguish any digit as more likely than another. This is the worst-case perplexity for a 10-word vocab- ulary. Key insight: For a uniform model over V words, PPL = V . This is the upper bound no reasonable model should exceed this. 1.4.5 Why Perplexity Works: Length Normalization Let’s revisit our earlier example to see why perplexity solves the length problem: 8",
+    "CHAPTER 1. EVALUATION OF LANGUAGE MODELS NLP Lecture 5: Evaluation & Neural LM Example: Model A on “I like cats” (3 words, N = 3) with PA = 0.01: PPLA = (0.01)−1 3 ≈4.64 Model B on “I like cute cats very much” (6 words, N = 6) with PB = 0.0001: PPLB = (0.0001)−1 6 ≈4.64 Despite Model B’s raw probability being 100× smaller, both models have the same perplexity because the per-word prediction quality is the same. Perplexity enables fair, length-independent comparison. 1.4.6 Relationship with Cross-Entropy For completeness, perplexity is directly related to cross-entropy: PPL = 2H(P,Q) (1.4) Where H(P, Q) is the cross-entropy between the true distribution P and the model’s predicted distribution Q, measured in bits. An excellent model minimizes cross-entropy, which is equiva- lent to minimizing perplexity. 1.4.7 The Eﬀect of n-gram Order on Perplexity Key Concept: Higher-order n-gram models generally yield lower perplexity. • A bigram model sees only the immediate previous word limited context, higher perplex- ity. • A trigram model sees two previous words better context, lower perplexity. • A 5-gram model sees four previous words even more context, even lower perplexity. Why? More context words →better ability to disambiguate →more conﬁdent (higher proba- bility) predictions →lower perplexity. △Caution: However, higher-order n-grams face a data sparsity problem: as n in- creases, the number of possible n-gram combinations explodes, and most of them never appear in the training corpus. This is why the Markov assumption (limited context window) is both a blessing (tractability) and a curse (limited context). Note: The desire for more context without the data sparsity problem is precisely what motivated the development of neural language models, attention mechanisms, and ul- timately Transformers which can attend to arbitrarily long contexts through learned representations rather than counting exact n-gram matches. 1.5 Perplexity in Practice • Modern LLMs (GPT-4, Claude, etc.) are evaluated using perplexity on held-out test corpora. 9",
+    "NLP Lecture 5: Evaluation & Neural LM CHAPTER 1. EVALUATION OF LANGUAGE MODELS • Perplexity is computed automatically via libraries and APIs you don’t compute it man- ually; this is like using sklearn.metrics.accuracy_score instead of computing accuracy by hand. • When comparing two models, whichever has lower perplexity is the better model for that task/corpus. • Perplexity can be used to choose between competing models (e.g., OpenAI vs. Gemini) for your speciﬁc domain by evaluating on your own corpus. 10",
+    "Lecture Notes Neural Network Foundations for Language Modeling Before diving into neural language models, we must understand the building blocks: neural networks themselves. This chapter provides a concise recap of the essential concepts. Key Concept: Neural language models are simply neural networks applied to the language modeling task. The architecture (feedforward, RNN, LSTM, Transformer) may vary, but the underlying principles weighted sums, activation functions, forward propagation, and backpropagation remain the same. 2.1 Machine Learning vs. Deep Learning A crucial distinction: Machine Learning (Traditional) Deep Learning (Neural Networks) Requires manual feature engineering Learns features automatically from data You decide: “number_of_rooms, sq_ft, lo- cation” predict house price You feed raw text/images; the network dis- covers relevant patterns Examples: Linear Regression, SVM, Deci- sion Trees Examples: Feedforward NN, RNN, LSTM, Transformers Table 2.1: ML vs. DL: The key diﬀerence is automatic feature learning Example: ML Approach to Sentiment Analysis: You manually create features count positive words (“good”, “excellent”), count negative words (“bad”, “terrible”), check for negation patterns then feed these features to a classiﬁer. DL Approach: You feed the raw review text. The network learns word embeddings that capture sentiment patterns, identiﬁes negation automatically, and discovers features you might never have thought to engineer. 11",
+    "NLP Lecture 5: Evaluation & Neural LM CHAPTER 2. NEURAL NETWORK FOUNDATIONS FOR LANGUAGE MODELING 2.2 The Single Neuron (Perceptron) The fundamental computational unit of any neural network is the neuron (also called a per- ceptron or node). A Single Neuron Inputs: x1, x2, . . . , xn Weights: w1, w2, . . . , wn Bias: b z = n ∑ i=1 wixi + b (Weighted Sum / Sum of Products) a = f(z) (Output after activation function) Figure 2.1: The computation inside a single neuron 2.2.1 Step-by-Step Computation 1. Weighted Sum (Linear Combination): Each input xi is multiplied by its correspond- ing weight wi. All products are summed together with a bias term b. This is sometimes called SOP (Sum of Products). z = w1x1 + w2x2 + · · · + wnxn + b = n ∑ i=1 wixi + b (2.1) 2. Activation Function (Non-linearity): The weighted sum z is passed through a non- linear activation function f to produce the neuron’s output a: a = f(z) (2.2) Without this non-linearity, stacking many neurons would still just produce a linear func- tion no matter how deep the network, it would be equivalent to a single linear transfor- mation. 2.3 Activation Functions Activation functions introduce non-linearity, enabling neural networks to learn complex pat- terns. Here are the most important ones: 2.3.1 Sigmoid (σ) σ(z) = 1 1 + e−z (2.3) • Output range: (0, 1) ideal for representing probabilities. • Shape: S-shaped (smooth, monotonic). • Key property: Its derivative is elegant: σ′(z) = σ(z) · (1 −σ(z)) (2.4) This makes gradient computations in backpropagation very clean. • Primary use: Hidden layers (historically) and binary classiﬁcation output layers. 12",
+    "CHAPTER 2. NEURAL NETWORK FOUNDATIONS FOR LANGUAGE MODELING NLP Lecture 5: Evaluation & Neural LM 2.3.2 Softmax softmax(zi) = ezi V ∑ j=1 ezj (2.5) • Output: A probability distribution over V classes all outputs sum to 1. • Primary use: Multi-class classiﬁcation output layers. This is the function used at the output of language models, where we choose one word from a vocabulary of size V . • Why not sigmoid for multi-class? Sigmoid treats each output independently (prob- abilities don’t sum to 1). Softmax normalizes across all outputs, making them compete the word with highest probability wins. Key Concept: Softmax converts raw scores (logits) into a proper probability distribu- tion. The exponential ampliﬁes diﬀerences between scores, and the normalization ensures ∑ i P(wi) = 1. A higher logit zi gets a disproportionately higher probability. Example: Suppose the raw logits for three candidate words are z = [2.0, 1.0, 0.1]. softmax(2.0) = e2.0 e2.0 + e1.0 + e0.1 = 7.389 7.389 + 2.718 + 1.105 ≈0.659 softmax(1.0) = 2.718 11.212 ≈0.242 softmax(0.1) = 1.105 11.212 ≈0.099 The model would predict the ﬁrst word (65.9% conﬁdence). The probabilities sum to 1.0. 2.3.3 ReLU (Rectiﬁed Linear Unit) ReLU(z) = max(0, z) (2.6) • Output: 0 for any negative input; z itself for any positive input. • Advantage: Computationally cheap (just a max operation); avoids the “vanishing gra- dient” problem of sigmoid in deep networks. • Disadvantage: “Dying ReLU” neurons can get stuck outputting 0 for all inputs if weights drift into a region where z ≤0 always. 2.3.4 Leaky ReLU Leaky ReLU(z) = max(0.01z, z) (2.7) A small positive slope (α = 0.01) for negative inputs, preventing the “dying ReLU” problem. 2.3.5 Tanh tanh(z) = ez −e−z ez + e−z (2.8) Output range: (−1, 1) a zero-centered version of sigmoid. 13",
+    "NLP Lecture 5: Evaluation & Neural LM CHAPTER 2. NEURAL NETWORK FOUNDATIONS FOR LANGUAGE MODELING 2.3.6 Modern Variants: GELU and Swish In modern Transformers and LLMs, GELU (Gaussian Error Linear Unit) and Swish are commonly used in hidden layers. They combine the best of ReLU (non-saturating for positive values) and sigmoid (smoothness), but the mathematical details are beyond our current scope. Note: For this course, the critical ones to know are: Sigmoid (hidden layers, binary output), Softmax (multi-class output especially for language modeling), and ReLU/Leaky ReLU (hidden layers in deep networks). Function Range Primary Use Sigmoid (0, 1) Hidden layers, binary classiﬁcation output Softmax Probability simplex Multi-class output (language modeling!) ReLU [0, ∞) Hidden layers (deep networks) Leaky ReLU (−∞, ∞) Hidden layers (ﬁxes dying ReLU) Tanh (−1, 1) Hidden layers (zero-centered) Table 2.2: Summary of common activation functions 2.4 Why Multiple Neurons? The XOR Problem A single perceptron can only learn linearly separable functions. The classic counterexample is XOR: x1 x2 XOR 0 0 0 0 1 1 1 0 1 1 1 0 Table 2.3: XOR truth table not linearly separable No single straight line can separate the points (0, 1) and (1, 0) from (0, 0) and (1, 1). A single perceptron cannot solve XOR. Key Concept: Adding more neurons (a hidden layer) enables the network to learn non-linear decision boundaries. Each additional neuron learns a diﬀerent linear separation, and combining them (with non-linear activation functions) can represent any function this is the Universal Approximation Theorem. This is analogous to how SVM uses kernel functions to project data into higher dimensions where it becomes linearly separable. Here, the hidden layer performs a similar transformation through learned weights. Example: Intuitive Analogy: A single neuron is like a single judge making a yes/no decision based on a weighted checklist. A multi-layer network is like a panel of judges each judge (neuron) looks at the evidence diﬀerently, and their combined decision (through voting/weighting) can capture nuances that no single judge could. 14",
+    "CHAPTER 2. NEURAL NETWORK FOUNDATIONS FOR LANGUAGE MODELING NLP Lecture 5: Evaluation & Neural LM 2.5 Multi-Layer Perceptron (MLP) / Feedforward Network 2.5.1 Architecture A feedforward neural network consists of: • Input Layer: Receives the raw data (word embeddings, pixel values, etc.). Number of neurons = number of input features. • Hidden Layer(s): Intermediate layers that learn representations. Each hidden neuron is connected to every neuron in the previous layer. • Output Layer: Produces the ﬁnal prediction. Number of neurons = number of output classes (or 1 for regression/binary classiﬁcation). Deﬁnition: A Dense (or Fully Connected) network is one where every neuron in layer l is connected to every neuron in layer l + 1. All modern LLMs (GPT, Claude, Gemini) are built on dense Transformer architectures. 2.5.2 Guidelines for Architecture Design (Andrew Ng) 1. Number of hidden layers: Start with one hidden layer. If accuracy is insuﬃcient, add more. More layers = more capacity but also more computational cost and less inter- pretability. Stop when you reach satisfactory performance. 2. Number of neurons per hidden layer: Typically set to equal to or slightly more than the number of input neurons. Conveniently, powers of 2 (64, 128, 256, 512) are common due to hardware optimization. 3. Number of output neurons: • Binary classiﬁcation: 1 neuron with sigmoid. • Multi-class classiﬁcation (e.g., language modeling): V neurons with softmax, where V = vocabulary size. • Regression: 1 neuron with linear activation (or no activation). 4. Start simple, scale up only if needed. If 90%+ accuracy is achieved with one hidden layer, there’s no need to complicate the architecture. 2.6 Forward Propagation (Inference) Forward propagation is the process of computing the network’s output for a given input. At inference time, this is all that happens. Layer 1 (Input →Hidden): For each hidden neuron j: z[1] j = ∑ i w[1] ji xi + b[1] j , a[1] j = f(z[1] j ) Layer 2 (Hidden →Output): For each output neuron k: z[2] k = ∑ j w[2] kj a[1] j + b[2] k , a[2] k = f(z[2] k ) The superscript [l] denotes the layer number, and subscripts denote individual neurons within each layer. 15",
+    "NLP Lecture 5: Evaluation & Neural LM CHAPTER 2. NEURAL NETWORK FOUNDATIONS FOR LANGUAGE MODELING Key Concept: In dense networks, the weights between layers form a matrix, not a vector. If layer l has m neurons and layer l + 1 has n neurons, the weight matrix W [l] is of size n × m. This is why large neural networks require massive matrix multiplications and why GPUs/TPUs (optimized for matrix math) are essential. 2.7 Backpropagation (Training) Backpropagation is the algorithm that learns the weights from training data. 1. Initialize: All weights are randomly initialized (e.g., small random values from a normal distribution). 2. Forward Pass: Compute the network’s output ˆy for a training example. 3. Compute Loss: Compare ˆy with the true label y using a loss function (e.g., cross-entropy for classiﬁcation): L = − ∑ c yc log(ˆyc) (2.9) 4. Backward Pass: Compute the gradient of the loss with respect to every weight in the network using the chain rule: ∂L ∂w[l] ji = ∂L ∂a[L] · ∂a[L] ∂z[L] · · · ∂z[l] ∂w[l] ji (2.10) The error at the output is propagated backward through all layers, because the ﬁnal error is caused by all weights in the network. 5. Update Weights: Using gradient descent (or a variant like Adam): wnew = wold −η · ∂L ∂w (2.11) where η is the learning rate. Key Concept: The elegance of the sigmoid derivative (σ′ = σ(1 −σ)) makes back- propagation through sigmoid-activated layers computationally eﬃcient the derivative can be computed directly from the forward-pass output without any additional expensive operations. Note: The entire neural network boils down to just two operations repeated trillions of times: multiplication and addition. This is why specialized hardware (GPUs, TPUs) that excels at parallel matrix multiply-add operations has been the key enabler of modern deep learning. 16",
+    "Lecture Notes Neural Language Modeling 3.1 What is a Neural Language Model? A Neural Language Model is the fusion of three concepts we’ve studied: 1. Word Embeddings (Module 2): Dense vector representations of words that capture semantic similarity. Words with similar meanings have vectors that are close in vector space. 2. Neural Networks: The architecture (feedforward, RNN, LSTM, or Transformer) that processes sequences and learns patterns. 3. Language Modeling (Module 3): The task of predicting P(wt | w1, w2, . . . , wt−1) the probability of the next word given previous context. Deﬁnition: A Neural Language Model is a neural network that takes a sequence of words (represented as word embeddings) as input and outputs a probability distribution over the vocabulary for the next word, trained using backpropagation on a text corpus. 3.2 Architecture of a Neural Language Model Feedforward Neural Language Model Architecture Input Words → Word Embeddings → Hidden Layer(s) → Softmax Output (Lookup Table) (Dense, Sigmoid/ReLU) (P(wnext) over vocab) Input: wt−3, wt−2, wt−1 Output: ˆP(wt | wt−3, wt−2, wt−1) Figure 3.1: High-level pipeline of a neural language model Let’s walk through the architecture step by step: 3.2.1 Step 1: Input Word Embeddings Each input word is converted into a dense vector (embedding) of dimension d (typically 50300 for classic models; 7684096 for modern LLMs). 17",
+    "NLP Lecture 5: Evaluation & Neural LM CHAPTER 3. NEURAL LANGUAGE MODELING Example: Suppose we have a vocabulary of 50,000 words and embedding dimen- sion d = 100. Each word gets a 100-dimensional vector. The word “cat” might be [0.23, −0.45, 0.67, . . .]100, and “dog” would have a similar vector because they are se- mantically related (both are pets, animals, four-legged, etc.). These embeddings are typically learned jointly with the language modeling task the network updates both the embedding vectors and the prediction weights during training. 3.2.2 Step 2: Hidden Layers Dense Connections The concatenated embedding vectors are fed into one or more hidden layers. Each hidden layer is fully connected (dense): • Every input neuron is connected to every hidden neuron. • If we have k context words with embedding dimension d, input size = k × d. • Hidden layer size is typically slightly larger than input size (guideline from Section 2.6). • Activation: Sigmoid or ReLU in hidden layers. 3.2.3 Step 3: Output Softmax over Vocabulary The ﬁnal layer has V neurons (one per word in the vocabulary) with a softmax activation: P(wi | context) = ezi ∑V j=1 ezj (3.1) The word with the highest softmax probability is predicted as the next word. Note: This output layer is computationally expensive because V (vocabulary size) can be 50,000500,000+. Computing softmax over the entire vocabulary for every predic- tion is the bottleneck. Techniques like hierarchical softmax and negative sampling (which we saw in word2vec/SGNS) are used to make this tractable. 3.3 Recurrent Generation: Predicting Multiple Words A neural language model doesn’t just predict one word it can generate entire sequences: 1. Input: “The cat sat on the” 2. Model predicts: “mat” (highest softmax probability) 3. Now input becomes: “cat sat on the mat” 4. Model predicts: “and” 5. Input becomes: “sat on the mat and” 6. . . . and so on until an end-of-sequence token is generated. This is exactly how modern LLMs like ChatGPT generate text they repeatedly feed their own output back as input, one token at a time (autoregressive generation). Key Concept: What appears to be a model “typing” a response in real-time is actually a repeated process of: take current sequence →predict next token →append to sequence →repeat. Each step is a full forward pass through the network. 18",
+    "CHAPTER 3. NEURAL LANGUAGE MODELING NLP Lecture 5: Evaluation & Neural LM 3.4 Handling Variable-Length Input A practical challenge: sentences have diﬀerent lengths, but neural networks require ﬁxed-size input. Solution: Padding + Fixed Window 1. Determine the maximum sentence length in the training corpus (or set a reasonable limit, e.g., 128 tokens). 2. For sentences shorter than the maximum, pad with zeros (or a special <PAD> token em- bedding). 3. The network sees a ﬁxed-size input, with “inactive” slots ﬁlled with zeros. Example: Max length = 5 words. Sentence: “I love NLP” (3 words) Input: [embed(“I”), embed(“love”), embed(“NLP”), ⃗0, ⃗0] Sentence: “The cat sat on the mat” (6 words) →Truncated to: [embed(“The”), embed(“cat”), embed(“sat”), embed(“on”), em- bed(“the”)] 3.5 Sentence Embeddings: Representing Multi-Word Inputs When we need a single vector to represent an entire sentence (or phrase, or review), we can derive a sentence embedding from individual word embeddings. 3.5.1 Method 1: Mean Pooling (Average) Take the element-wise average of all word vectors in the sentence: sent_embed = 1 N N ∑ i=1 embed(wi) (3.2) 3.5.2 Method 2: Max Pooling Take the element-wise maximum across all word vectors: sent_embedj = N max i=1 (embed(wi)j) for each dimension j (3.3) Example: Sentence: “The dessert is good” Word Dim 1 Dim 2 the 1.0 0.0 dessert 0.5 1.0 is 1.1 0.1 good 0.1 0.9 Mean Pooling: (1.0 + 0.5 + 1.1 + 0.1)/4 = 0.675 (0.0 + 1.0 + 0.1 + 0.9)/4 = 0.5 Max Pooling: max(1.0, 0.5, 1.1, 0.1) = 1.1 max(0.0, 1.0, 0.1, 0.9) = 1.0 Result: Mean pooling gives [0.675, 0.5]; Max pooling gives [1.1, 1.0]. Max pooling is more commonly used in practice. 19",
+    "NLP Lecture 5: Evaluation & Neural LM CHAPTER 3. NEURAL LANGUAGE MODELING Note: In practice, libraries like HuggingFace’s sentence-transformers provide pre- trained models that produce high-quality sentence embeddings automatically you don’t implement pooling manually. Modern approaches use Transformer-based architectures (like BERT) where the [CLS] token embedding serves as the sentence representation. 3.6 Example Application: Sentiment Analysis Neural language models aren’t only for text generation they can be used for classiﬁcation tasks too. Example: Problem: Classify movie reviews as positive or negative. Neural Approach: 1. Convert each word in the review to its embedding vector. 2. Derive a sentence embedding for the entire review (via pooling). 3. Feed the sentence embedding through hidden layers. 4. Output layer: 1 neuron with sigmoid (binary classiﬁcation: P(positive)). 5. Train on labeled reviews using backpropagation. 6. At test time, feed a new review →get sentiment probability. Contrast with traditional ML: In logistic regression, you’d manually engineer features (count of positive words, presence of negation, etc.). The neural network learns which words and patterns indicate sentiment from the data. 3.7 Training Data for Neural Language Models Key Concept: Language modeling is fundamentally self-supervised: you don’t need manually labeled data. Any raw text corpus can be used the “label” for each position is simply the next word in the text. • n-gram training data: Wikipedia articles, newspaper corpora, books any large text collection. • Neural LM training data: Same types of corpora, but typically much larger Common Crawl, The Pile, C4, etc. • Google n-gram corpus: A famous resource containing n-gram counts from a massive web crawl, commonly used for n-gram language models. 20",
+    "Lecture Notes Comparison: n-gram vs. Neural Language Models 4.1 Summary Comparison Table Criterion n-gram Models Neural Language Models Representation Count-based (discrete sym- bols) Dense vector embeddings (capture semantics) Semantic similarity Cannot generalize “cat” and “dog” are unrelated symbols Can generalize similar words have similar embeddings Context length Limited (typically n ≤5) due to data sparsity Can handle long contexts (at- tention, RNN memory) Training data size Moderate (can work with smaller corpora) Large to massive (millions to trillions of tokens) Compute Low simple counting and di- vision High requires GPUs/TPUs Interpretability High you can inspect exact n- gram counts Low weights are opaque “black boxes” Accuracy Moderate limited by context and sparsity High captures complex pat- terns Deployment Easy lightweight, fast infer- ence Expensive heavy infrastruc- ture needed Carbon footprint Minimal Signiﬁcant (training large models can equal transatlantic ﬂight emissions) Best for Small-scale, fast, interpretable tasks Large-scale, production-ready, high-accuracy tasks Table 4.1: Head-to-head comparison of n-gram and neural language models 21",
+    "NLP Lecture 5: Evaluation & Neural LM CHAPTER 4. COMPARISON: N-GRAM VS. NEURAL LANGUAGE MODELS 4.2 The Semantic Gap: Why Embeddings Matter This is the single most important advantage of neural LMs over n-grams: Example: Training data contains: “I forgot to make sure that the cat gets fed.” Test data contains: “I forgot to make sure that the dog gets ___ .” • n-gram model: Never saw “dog gets fed” in training →zero probability (or backed-oﬀto unigram, losing context). Fails to ﬁll in the blank correctly. • Neural LM: The word embedding for “dog” is close to the embedding for “cat” in vector space (both are pets, animals, cared-for beings). The model generalizes: whatever follows “cat gets” likely also follows “dog gets” →predicts “fed” correctly. Key Concept: n-gram models treat words as discrete, unrelated symbols. Neural models represent words as continuous vectors where semantic similarity = vector prox- imity. This enables generalization the model transfers knowledge from seen patterns to unseen but similar patterns. 4.3 When to Use Which • Choose n-gram models when: – You need a quick, lightweight baseline. – Computational resources are very limited. – Interpretability matters (you want to inspect exact probabilities). – The domain is small and well-deﬁned. • Choose neural LMs when: – Accuracy is the primary concern. – You have access to GPUs/cloud compute. – The task requires understanding semantic similarity. – You need to handle long-range dependencies. – You’re building a production system. 22",
+    "Lecture Notes Introduction to Large Language Models Key Concept: Large Language Models (LLMs) are nothing but neural lan- guage models scaled up. They use deep learning architectures (Transformers, GPT, BERT), massive training corpora, and billions of parameters. The fundamental task is the same: predict P(next token | previous tokens). 5.1 What Makes an LM “Large”? 1. Scale of Data: Trained on trillions of tokens from the web, books, code, and curated datasets orders of magnitude more than traditional neural LMs. 2. Scale of Parameters: Billions (or even trillions) of learnable weights. GPT-3 has 175B parameters; GPT-4 is estimated to be in the trillion-parameter range. 3. Scale of Compute: Training requires thousands of GPUs/TPUs running for weeks or months. The cost can run into hundreds of millions of dollars. 4. Architecture: Based on the Transformer architecture with self-attention, enabling the model to attend to all positions in the input simultaneously no ﬁxed context window limitation. 5.2 Key Characteristics of LLMs • Dense (Fully Connected): Every neuron in layer l connects to every neuron in layer l + 1. This ensures no information is lost but makes the models enormous. (Future topics small language models, parameter-eﬃcient ﬁne-tuning explore how to reduce these connections.) • Autoregressive Generation: LLMs generate text one token at a time, feeding each prediction back as input for the next step (the same principle as the simple neural LM we studied, but at massive scale). • Context Window: Modern LLMs have context windows of 128K1M+ tokens (GPT-4 Turbo: 128K; Gemini 1.5 Pro: up to 2M). You “pay per token” for both input and output. 23",
+    "NLP Lecture 5: Evaluation & Neural LM CHAPTER 5. INTRODUCTION TO LARGE LANGUAGE MODELS • Multilingual: A single model can understand and generate text in dozens of languages because the embeddings capture cross-lingual semantic similarities. • Emergent Abilities: At suﬃcient scale, LLMs exhibit abilities not explicitly trained for reasoning, code generation, translation, summarization emerging purely from the next-token prediction objective. 5.3 Cost and Environmental Considerations △Caution: Training and running LLMs has signiﬁcant costs: • Financial: GPU clusters (NVIDIA H100 at ~&#36;30,000&#36;40,000 each; A100 at ~&#36;10,000&#36;12,000 each). Cloud API access via pay-as-you-go (~&#36;20/month for indi- vidual use; enterprise costs much higher). • Environmental: Training a large model can emit as much CO2 as multiple transat- lantic ﬂights. Inference (serving millions of users) is an ongoing energy drain. • Interpretability: Near-zero even the engineers who build these models cannot fully explain why a speciﬁc output was generated. Note: This is an active area of research: Green AI, Small Language Models (SLMs), quantization, distillation, and parameter-eﬃcient ﬁne-tuning (PEFT) all aim to reduce these costs while retaining performance. These will be explored in advanced NLP courses. 5.4 Connection to Perplexity LLMs are evaluated using the same perplexity metric we studied in Chapter 1. A well-trained LLM achieves very low perplexity on standard benchmarks: • Poor model: PPL ≈100400 • Traditional neural LM: PPL ≈3080 • State-of-the-art LLM: PPL ≈520 (on in-domain text) Key Concept: The journey from n-gram models (PPL ≈100400) to modern LLMs (PPL ≈520) represents decades of progress but all evaluated by the same metric: lower perplexity = better language modeling. 5.5 Looking Ahead In the post-midterm portion of this course, we will dive deeper into: • Contextual Word Embeddings: How words get diﬀerent embeddings depending on context (e.g., “bank” of a river vs. “bank” as a ﬁnancial institution). • The Transformer Architecture: Self-attention, multi-head attention, positional en- coding, the “Attention Is All You Need” paper. • BERT, GPT, and Beyond: How the two dominant paradigms (encoder-only vs. decoder-only) work. 24",
+    "Quick Reference: Key Formulas Concept Formula Language Model Probability (chain rule) P(w1, . . . , wN) = ∏N i=1 P(wi | w1, . . . , wi−1) Perplexity PPL = P(w1, . . . , wN)−1 N = N√ 1 P(w1,...,wN) Sigmoid σ(z) = 1 1 + e−z Sigmoid Derivative σ′(z) = σ(z)(1 −σ(z)) Softmax softmax(zi) = ezi ∑V j=1 ezj ReLU ReLU(z) = max(0, z) Weighted Sum (single neuron) z = ∑ i wixi + b Gradient Descent Update wnew = wold −η · ∂L ∂w Cross-Entropy Loss L = − ∑ c yc log(ˆyc) Mean Pooling (sentence embedding) sent = 1 N N ∑ i=1 embed(wi) Max Pooling (sentence embedding) sentj = N max i=1 embed(wi)j 25",
+    "NLP Lecture 5: Evaluation & Neural LM CHAPTER 5. INTRODUCTION TO LARGE LANGUAGE MODELS End of Lecture 5 Notes Topics covered: • Evaluation of Language Models (Perplexity) • Intrinsic vs. Extrinsic Evaluation • Neural Network Foundations (Recap) • Activation Functions (Sigmoid, Softmax, ReLU, Tanh) • Feedforward & Backpropagation • Neural Language Modeling Architecture • Sentence Embeddings (Mean & Max Pooling) • n-gram vs. Neural LM Comparison • Introduction to Large Language Models Next: Large Language Models in detail, Contextual Word Embeddings, and the Transformer architecture (post-midterm) 26"
+  ]
+}</script>
+  <style>
+    :root { --primary:#1e3a8a; --primary-light:#eff6ff; --primary-border:#bfdbfe; --text-main:#334155; --text-headings:#0f172a; --bg-main:#ffffff; --bg-concept:#f0f9ff; --border-concept:#0284c7; --bg-note:#fffbeb; --border-note:#d97706; --bg-example:#f0fdfa; --border-example:#0d9488; --bg-warning:#fff1f2; --border-warning:#e11d48; --bg-definition:#ebf0fc; --border-definition:#325aa0; }
+    body { font-family:'Inter',sans-serif; color:var(--text-main); line-height:1.75; background:var(--bg-main); margin:0; padding:40px 24px; -webkit-font-smoothing:antialiased; }
+    .container { max-width:820px; margin:0 auto; }
+    .hero-header { border-bottom:2px solid #f1f5f9; padding-bottom:32px; margin-bottom:40px; }
+    .subject-badge { display:inline-block; background:var(--primary-light); color:var(--primary); font-family:'Outfit',sans-serif; font-weight:600; font-size:0.85rem; padding:6px 14px; border-radius:9999px; margin-bottom:16px; text-transform:uppercase; letter-spacing:0.05em; }
+    .lecture-title { font-family:'Outfit',sans-serif; font-size:2.5rem; font-weight:700; color:var(--text-headings); margin:0 0 12px 0; line-height:1.2; }
+    .meta-info { display:flex; flex-wrap:wrap; gap:20px; font-size:0.9rem; color:#64748b; margin-bottom:24px; }
+    .meta-item { display:flex; align-items:center; gap:6px; }
+    .summary-card { background:linear-gradient(135deg,#f8fafc 0%,#f1f5f9 100%); border:1px solid #e2e8f0; border-radius:16px; padding:28px; margin-bottom:48px; }
+    .summary-card h3 { font-family:'Outfit',sans-serif; font-size:1.25rem; color:var(--text-headings); margin:0 0 12px 0; font-weight:600; }
+    .summary-text { font-size:0.95rem; color:#475569; margin-bottom:20px; text-align:justify; }
+    .key-concepts-list { margin:16px 0 0 0; padding:0; list-style:none; display:grid; gap:10px; }
+    .key-concepts-list li { position:relative; padding-left:28px; font-size:0.95rem; }
+    .key-concepts-list li::before { content:"✦"; position:absolute; left:4px; color:var(--primary); font-weight:bold; }
+    h1.chapter-title { font-family:'Outfit',sans-serif; font-size:1.85rem; color:var(--primary); border-bottom:2px solid var(--primary-border); padding-bottom:8px; margin-top:48px; margin-bottom:20px; }
+    h2.section-title { font-family:'Outfit',sans-serif; font-size:1.45rem; color:var(--text-headings); margin-top:36px; margin-bottom:16px; display:flex; align-items:center; }
+    h2.section-title::before { content:""; display:inline-block; width:4px; height:20px; background:var(--primary); margin-right:12px; border-radius:2px; }
+    h3.subsection-title { font-family:'Outfit',sans-serif; font-size:1.2rem; color:#1e293b; margin-top:28px; margin-bottom:12px; }
+    p { margin:0 0 20px 0; text-align:justify; }
+    .key-concept, .important-note, .example-box, .warning-box, .definition-box { border-left:5px solid; border-radius:8px; padding:20px; margin:28px 0; }
+    .key-concept { background:var(--bg-concept); border-color:var(--border-concept); }
+    .key-concept strong { color:var(--border-concept); }
+    .important-note { background:var(--bg-note); border-color:var(--border-note); }
+    .important-note strong { color:var(--border-note); }
+    .example-box { background:var(--bg-example); border-color:var(--border-example); }
+    .example-box strong { color:var(--border-example); }
+    .warning-box { background:var(--bg-warning); border-color:var(--border-warning); }
+    .warning-box strong { color:var(--border-warning); }
+    .definition-box { background:var(--bg-definition); border-color:var(--border-definition); }
+    .definition-box strong { color:var(--border-definition); }
+    ul, ol { margin:0 0 20px 0; padding-left:24px; }
+    li { margin-bottom:8px; }
+    pre { background:#0f172a; color:#e2e8f0; font-family:'Fira Code',monospace; font-size:0.9rem; padding:20px; border-radius:10px; overflow-x:auto; margin:24px 0; border:1px solid #334155; }
+    code { font-family:'Fira Code',monospace; font-size:0.9em; background:#f1f5f9; color:#0f172a; padding:2px 6px; border-radius:4px; }
+    pre code { background:transparent; color:inherit; padding:0; }
+    table { width:100%; border-collapse:collapse; margin:28px 0; font-size:0.95rem; }
+    th, td { padding:12px 16px; text-align:left; border-bottom:1px solid #e2e8f0; }
+    th { font-family:'Outfit',sans-serif; font-weight:600; color:var(--text-headings); border-top:2px solid #cbd5e1; border-bottom:2px solid #cbd5e1; }
+    tr:nth-child(even) { background:#f8fafc; }
+    .quiz-section { border-top:2px dashed #cbd5e1; padding-top:48px; margin-top:60px; }
+    .quiz-section h2 { font-family:'Outfit',sans-serif; font-size:1.8rem; color:var(--text-headings); margin-bottom:24px; }
+    .quiz-card { background:#fff; border:1px solid #e2e8f0; border-radius:16px; padding:24px; margin-bottom:24px; box-shadow:0 4px 6px -1px rgba(0,0,0,0.03); }
+    .quiz-question { font-family:'Outfit',sans-serif; font-size:1.15rem; font-weight:600; color:var(--text-headings); margin:0 0 20px 0; }
+    .quiz-options { display:grid; gap:12px; }
+    .quiz-option { background:#f8fafc; border:1px solid #e2e8f0; border-radius:8px; padding:14px 20px; text-align:left; font-size:0.95rem; color:var(--text-main); cursor:pointer; transition:all 0.2s; width:100%; box-sizing:border-box; }
+    .quiz-option:hover:not(:disabled) { background:#f1f5f9; border-color:#cbd5e1; transform:translateY(-1px); }
+    .quiz-option:disabled { cursor:not-allowed; }
+    .quiz-option.correct { background:#ecfdf5; border-color:#10b981; color:#065f46; font-weight:600; }
+    .quiz-option.incorrect { background:#fef2f2; border-color:#ef4444; color:#991b1b; }
+    .quiz-explanation { margin-top:20px; padding:16px; background:#f8fafc; border-left:4px solid var(--primary); border-radius:6px; font-size:0.95rem; color:#475569; }
+    .hidden { display:none; }
+    .fade-in { animation:fadeIn 0.4s ease forwards; }
+    @keyframes fadeIn { from { opacity:0; transform:translateY(4px); } to { opacity:1; transform:translateY(0); } }
+
+  
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+
+  
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+
+  </style>
+</head>
+<body>
+  <div class="container">
+    <header class="hero-header">
+      <span class="subject-badge">Natural Language Processing</span>
+      <h1 class="lecture-title">Language Modelling and Model Evaluation</h1>
+      <div class="meta-info">
+        <div class="meta-item">📅 <strong>Published:</strong> 2026-06-02</div>
+        <div class="meta-item">🎓 <strong>Level:</strong> postgraduate</div>
+        <div class="meta-item">👥 <strong>Audience:</strong> Postgraduate students learning how language models estimate word probabilities and how their quality is measured.</div>
+      </div>
+    </header>
+    <section class="summary-card">
+      <h3>Lecture Summary</h3>
+      <div class="summary-text">This session bridges classical statistical language models and the evaluation techniques used to measure them. At its core, language modelling is about predicting what word comes next given the words before it. The lecture builds this idea through unigrams, bigrams, and trigrams.<br/><br/>A major challenge with N-gram models is the zero probability problem: if a perfectly valid word sequence never appeared in the training data, the model assigns it zero probability — wiping out the entire sentence score. The lecture explores several solutions: Laplace smoothing (simple but can distort the probability distribution), interpolation (blending different N-gram models using learned weights), and back-off methods (falling back to lower-order N-grams when higher-order counts are missing).<br/><br/>The second half focuses on how to evaluate language models. Extrinsic evaluation tests the model as part of a complete application (like machine translation) and measures end-to-end performance. Intrinsic evaluation isolates the model itself using Perplexity — a metric that measures how well the model predicts a test set. Lower perplexity means better predictions. Perplexity remains the standard benchmark from simple N-grams all the way to modern LLMs.</div>
+      <h3 style="margin-top:24px; margin-bottom:8px;">Key Learning Objectives</h3>
+      <ul class="key-concepts-list"><li>Formulate probabilities using unigram, bigram, and trigram N-gram models.</li>
+<li>Address the zero probability problem using Laplace Smoothing, Interpolation, and Back-off.</li>
+<li>Differentiate between intrinsic evaluation (Perplexity) and extrinsic evaluation approaches.</li>
+<li>Apply language modelling principles that carry from statistical techniques to neural architectures.</li>
+</ul>
+    </section>
+    <main><h1 class="chapter-title">Evaluation of Language Models</h1>
+
+<h2 class="section-title">Why Evaluate Language Models?</h2>
+
+<p>A language model (LM) is fundamentally a system that assigns probabilities to sequences of words. Given a sequence \(w_1, w_2, \ldots, w_{n-1}\), the model predicts the probability of the next word \(w_n\):</p>
+
+\begin{equation}
+    P(w_n \mid w_1, w_2, \ldots, w_{n-1})
+\end{equation}
+
+<p>But how do we know if one model is <strong>better</strong> than another? How do we decide whether our model is "good enough" for deployment? This is where <strong>evaluation</strong> comes in.</p>
+
+<div class="key-concept"><strong>Key Concept:</strong>
+
+<p>The same evaluation metrics (particularly <strong>perplexity</strong>) apply universally across <em>all</em> types of language models — whether simple \(n\)-gram models, RNN/LSTM-based models, or modern Transformer-based LLMs like GPT-4.</p>
+
+</div>
+
+<h2 class="section-title">Intrinsic vs. Extrinsic Evaluation</h2>
+
+<p>There are two fundamentally different approaches to evaluating language models:</p>
+
+<h3 class="subsection-title">Intrinsic Evaluation</h3>
+
+<p>Intrinsic evaluation measures the <strong>internal quality</strong> of the language model itself, independent of any downstream application. It answers the question: <em>How good is this model at modeling language?</em></p>
+
+<ul>
+<li><strong>Analogy:</strong> Like <em>white-box</em> testing in software engineering — you examine the internal components.</li>
+<li><strong>Advantage:</strong> Fast, cheap to run, does not require building a complete application.</li>
+<li><strong>Metrics:</strong> Perplexity, log-likelihood, cross-entropy, entropy.</li>
+<li><strong>Most popular:</strong> <strong>Perplexity</strong> (discussed in detail below).</li>
+</ul>
+
+<h3 class="subsection-title">Extrinsic Evaluation</h3>
+
+<p>Extrinsic evaluation measures how well the language model performs when plugged into a <strong>real-world application</strong>. It answers the question: <em>Does using this LM improve my downstream system?</em></p>
+
+<ul>
+<li><strong>Analogy:</strong> Like <em>black-box</em> testing — you only care about whether the system works for the user.</li>
+<li><strong>Examples:</strong> If you build a machine translation system using an LM, you evaluate the translation quality (BLEU score, human judgment). If you build a speech recognition system, you evaluate word error rate (WER).</li>
+<li><strong>Disadvantage:</strong> Slow, expensive — you need to build the entire system first; cannot isolate the LM's contribution.</li>
+</ul>
+
+<div class="important-note"><strong>Note:</strong>
+
+<p>In practice, both evaluations are used. Intrinsic evaluation (perplexity) helps during model development and hyperparameter tuning. Extrinsic evaluation gives the final verdict before production deployment.</p>
+
+</div>
+
+<h2 class="section-title">The Problem with Raw Probability</h2>
+
+<h3 class="subsection-title">Why Not Use Probability Directly?</h3>
+
+<p>At first glance, it seems natural to evaluate a language model by simply looking at the probability it assigns to a test sentence. A model that assigns higher probability to correct sentences should be better, right?</p>
+
+<p><strong>Not quite.</strong> Consider two models:</p>
+
+<div class="example-box"><strong>Example:</strong>
+
+<p><strong>Model A</strong> predicts the sentence "I like cats" with probability \(P_A = 0.01\).</p>
+
+<p><strong>Model B</strong> predicts the sentence "I like cute cats very much" with probability \(P_B = 0.0001\).</p>
+
+<p>Both sentences are perfectly valid English. But \(P_B\) is much smaller than \(P_A\) — <strong>not because Model B is worse, but simply because the second sentence has more words!</strong></p>
+
+<p>Every additional word multiplies another probability \(\leq 1\) into the product, making longer sentences inherently have lower total probability.</p>
+
+</div>
+
+<p>This is why <strong>raw probability cannot be used to compare models fairly</strong> when sentences have different lengths. We need a <strong>length-normalized</strong> measure.</p>
+
+<h3 class="subsection-title">The Intuition: Normalize by Length</h3>
+
+<p>The solution is to take the <strong>per-word average</strong> of the probability. But since probabilities multiply (not add) across words, the correct "average" is the <strong>geometric mean</strong>, not the arithmetic mean. This leads to the definition of perplexity.</p>
+
+<h2 class="section-title">Perplexity: The Standard Evaluation Metric</h2>
+
+<h3 class="subsection-title">Formal Definition</h3>
+
+<div class="definition-box"><strong>Definition:</strong>
+
+<p><strong>Perplexity</strong> (often abbreviated <strong>PPL</strong>) of a language model on a test sequence \(W = (w_1, w_2, \ldots, w_N)\) is defined as:</p>
+
+\begin{equation}
+    \text{PPL}(W) = P(w_1, w_2, \ldots, w_N)^{-\frac{1}{N}}
+    = \sqrt[N]{\frac{1}{P(w_1, w_2, \ldots, w_N)}}
+\end{equation}
+
+<p>Equivalently, it can be written as:</p>
+
+\begin{equation}
+    \text{PPL}(W) = \prod_{i=1}^{N} P(w_i \mid w_1, \ldots, w_{i-1})^{-\frac{1}{N}}
+\end{equation}
+
+<p>Where:</p>
+
+<ul>
+<li>\(N\) is the total number of words (tokens) in the test sequence.</li>
+<li>\(P(w_1, \ldots, w_N)\) is the joint probability assigned by the model.</li>
+<li>The exponent \(-\frac{1}{N}\) takes the \(N\)-th root of the inverse probability.</li>
+</ul>
+
+</div>
+
+<div class="key-concept"><strong>Key Concept:</strong>
+
+<p>Perplexity is the <strong>inverse of the geometric mean of the per-word probabilities</strong>. Lower perplexity \(\iff\) higher probability \(\iff\) better model.</p>
+
+</div>
+
+<h3 class="subsection-title">What Does Perplexity Actually Mean?</h3>
+
+<p>Perplexity has a very intuitive interpretation:</p>
+
+<p>\begin{quote}
+<strong>A perplexity of \(k\) means the model is as confused as if it had to choose uniformly among \(k\) equally likely words at each position.</strong>
+\end{quote}</p>
+
+<ul>
+<li><strong>PPL = 1:</strong> Perfect model — it is 100% certain of every next word (rarely desirable in practice, as it implies zero creativity/variation).</li>
+<li><strong>PPL = 2–10:</strong> Excellent — the model has very little confusion.</li>
+<li><strong>PPL = 10–100:</strong> Good to moderate — typical range for well-trained neural LMs.</li>
+<li><strong>PPL = 100–400:</strong> Moderate to poor — the model struggles.</li>
+<li><strong>PPL > 400:</strong> Poor — the model is barely better than random guessing.</li>
+</ul>
+
+<div class="warning-box"><strong>Caution:</strong>
+
+<p>Perplexity values are <strong>not</strong> bounded between 0 and 1 (unlike probability). Because we take the \(N\)-th root and invert, perplexity can be any positive real number. This is a common point of confusion.</p>
+
+</div>
+
+<h3 class="subsection-title">Worked Example 1: A Concrete Sentence</h3>
+
+<p>Let's work through a concrete example to understand exactly how perplexity is computed.</p>
+
+<div class="example-box"><strong>Example:</strong>
+
+<p><strong>Sentence:</strong> "I love NLP models" (4 words, so \(N = 4\))</p>
+
+<p>Suppose the language model assigns the following conditional probabilities (using bigram, trigram, or any method):</p>
+
+\[
+\begin{aligned}
+P(\text{I} \mid \texttt{&lt;s&gt;}) &= 0.2 \\
+P(\text{love} \mid \text{I}) &= 0.3 \\
+P(\text{NLP} \mid \text{love}) &= 0.5 \\
+P(\text{models} \mid \text{NLP}) &= 0.25
+\end{aligned}
+\]
+
+<p><strong>Step 1:</strong> Compute the joint probability of the entire sentence:
+\[
+P(\text{I love NLP models}) = 0.2 \times 0.3 \times 0.5 \times 0.25 = 0.0075
+\]</p>
+
+<p><strong>Step 2:</strong> Apply the perplexity formula with \(N = 4\):
+\[
+\text{PPL} = (0.0075)^{-\frac{1}{4}} = \sqrt[4]{\frac{1}{0.0075}} = \sqrt[4]{133.\overline{3}} \approx \mathbf{4.47}
+\]</p>
+
+<p><strong>Interpretation:</strong> A perplexity of 4.47 means the model is uncertain among roughly 4–5 equally likely words at each position. The model has moderate confidence — reasonable but not excellent.</p>
+
+</div>
+
+<h3 class="subsection-title">Worked Example 2: Uniform Probability (Worst Case)</h3>
+
+<div class="example-box"><strong>Example:</strong>
+
+<p><strong>Scenario:</strong> A "random" language model that assigns equal probability \(\frac{1}{V}\) to every word in a vocabulary of size \(V\), regardless of context.</p>
+
+<p>For a random digit generator (vocabulary = \{0, 1, ..., 9\}, so \(V = 10\)), for any sequence of length \(N\):</p>
+
+\[
+P(\text{any } N\text{-digit sequence}) = \left(\frac{1}{10}\right)^N
+\]
+
+\[
+\text{PPL} = \left[\left(\frac{1}{10}\right)^N\right]^{-\frac{1}{N}} = \left(\frac{1}{10}\right)^{-1} = \mathbf{10}
+\]
+
+<p><strong>Interpretation:</strong> The model is confused among all 10 digits — it cannot distinguish any digit as more likely than another. This is the worst-case perplexity for a 10-word vocabulary.</p>
+
+<p><em>Key insight: For a uniform model over \(V\) words, PPL = \(V\). This is the upper bound — no reasonable model should exceed this.</em></p>
+
+</div>
+
+<h3 class="subsection-title">Why Perplexity Works: Length Normalization</h3>
+
+<p>Let's revisit our earlier example to see why perplexity solves the length problem:</p>
+
+<div class="example-box"><strong>Example:</strong>
+
+<p><strong>Model A</strong> on "I like cats" (3 words, \(N=3\)) with \(P_A = 0.01\):
+\[
+\text{PPL}_A = (0.01)^{-\frac{1}{3}} \approx \mathbf{4.64}
+\]</p>
+
+<p><strong>Model B</strong> on "I like cute cats very much" (6 words, \(N=6\)) with \(P_B = 0.0001\):
+\[
+\text{PPL}_B = (0.0001)^{-\frac{1}{6}} \approx \mathbf{4.64}
+\]</p>
+
+<p>Despite Model B's raw probability being 100\(\times\) smaller, both models have <strong>the same perplexity</strong> — because the per-word prediction quality is the same. Perplexity enables fair, length-independent comparison.</p>
+
+</div>
+
+<h3 class="subsection-title">Relationship with Cross-Entropy</h3>
+
+<p>For completeness, perplexity is directly related to <strong>cross-entropy</strong>:</p>
+
+\begin{equation}
+    \text{PPL} = 2^{H(P, Q)}
+\end{equation}
+
+<p>Where \(H(P, Q)\) is the cross-entropy between the true distribution \(P\) and the model's predicted distribution \(Q\), measured in bits. An excellent model minimizes cross-entropy, which is equivalent to minimizing perplexity.</p>
+
+<h3 class="subsection-title">The Effect of \(n\)-gram Order on Perplexity</h3>
+
+<div class="key-concept"><strong>Key Concept:</strong>
+
+<p><strong>Higher-order \(n\)-gram models generally yield lower perplexity.</strong></p>
+
+</div>
+
+<ul>
+<li>A <strong>bigram</strong> model sees only the immediate previous word — limited context, higher perplexity.</li>
+<li>A <strong>trigram</strong> model sees two previous words — better context, lower perplexity.</li>
+<li>A <strong>5-gram</strong> model sees four previous words — even more context, even lower perplexity.</li>
+</ul>
+
+<p><strong>Why?</strong> More context words \(\rightarrow\) better ability to disambiguate \(\rightarrow\) more confident (higher probability) predictions \(\rightarrow\) lower perplexity.</p>
+
+<div class="warning-box"><strong>Caution:</strong>
+
+<p>However, higher-order \(n\)-grams face a <strong>data sparsity</strong> problem: as \(n\) increases, the number of possible \(n\)-gram combinations explodes, and most of them never appear in the training corpus. This is why the Markov assumption (limited context window) is both a blessing (tractability) and a curse (limited context).</p>
+
+</div>
+
+<div class="important-note"><strong>Note:</strong>
+
+<p>The desire for <em>more context</em> without the data sparsity problem is precisely what motivated the development of neural language models, attention mechanisms, and ultimately Transformers — which can attend to arbitrarily long contexts through learned representations rather than counting exact \(n\)-gram matches.</p>
+
+</div>
+
+<h2 class="section-title">Perplexity in Practice</h2>
+
+<ul>
+<li><strong>Modern LLMs</strong> (GPT-4, Claude, etc.) are evaluated using perplexity on held-out test corpora.</li>
+<li>Perplexity is computed <strong>automatically</strong> via libraries and APIs — you don't compute it manually; this is like using <code>sklearn.metrics.accuracy_score</code> instead of computing accuracy by hand.</li>
+<li>When comparing two models, <strong>whichever has lower perplexity is the better model</strong> for that task/corpus.</li>
+<li>Perplexity can be used to choose between competing models (e.g., OpenAI vs. Gemini) for your specific domain by evaluating on your own corpus.</li>
+</ul>
+
+<h1 class="chapter-title">Neural Network Foundations for Language Modeling</h1>
+
+<p>Before diving into neural language models, we must understand the building blocks: neural networks themselves. This chapter provides a concise recap of the essential concepts.</p>
+
+<div class="key-concept"><strong>Key Concept:</strong>
+
+<p>Neural language models are simply <strong>neural networks applied to the language modeling task</strong>. The architecture (feedforward, RNN, LSTM, Transformer) may vary, but the underlying principles — weighted sums, activation functions, forward propagation, and backpropagation — remain the same.</p>
+
+</div>
+
+<h2 class="section-title">Machine Learning vs. Deep Learning</h2>
+
+<p>A crucial distinction:</p>
+
+<div style="font-family: 'Outfit', sans-serif; font-weight: 600; text-align: center; margin-top: 24px; margin-bottom: 8px; color: var(--text-headings);">Table: ML vs. DL: The key difference is automatic feature learning</div>
+
+<table>
+<tr>
+  <th><strong>Machine Learning (Traditional)</strong></th>
+  <th><strong>Deep Learning (Neural Networks)</strong></th>
+</tr>
+<tr>
+  <td>Requires <strong>manual feature engineering</strong></td>
+  <td><strong>Learns features automatically</strong> from data</td>
+</tr>
+<tr>
+  <td>You decide: "<em>number_of_rooms, sq_ft, location</em>" predict house price</td>
+  <td>You feed raw text/images; the network discovers relevant patterns</td>
+</tr>
+<tr>
+  <td>Examples: Linear Regression, SVM, Decision Trees</td>
+  <td>Examples: Feedforward NN, RNN, LSTM, Transformers</td>
+</tr>
+</table>
+
+<div class="example-box"><strong>Example:</strong>
+
+<p><strong>ML Approach to Sentiment Analysis:</strong> You manually create features — count positive words ("good", "excellent"), count negative words ("bad", "terrible"), check for negation patterns — then feed these features to a classifier.</p>
+
+<p><strong>DL Approach:</strong> You feed the raw review text. The network learns word embeddings that capture sentiment patterns, identifies negation automatically, and discovers features you might never have thought to engineer.</p>
+
+</div>
+
+<h2 class="section-title">The Single Neuron (Perceptron)</h2>
+
+<p>The fundamental computational unit of any neural network is the <strong>neuron</strong> (also called a perceptron or node).</p>
+
+<div style="background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 12px; padding: 24px; margin: 28px auto; max-width: 600px; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.05);">
+  <h4 style="margin: 0 0 16px 0; text-align: center; color: var(--primary); font-family: 'Outfit', sans-serif;">Figure 2.1: The computation inside a single neuron</h4>
+  <div style="display: flex; flex-direction: column; gap: 12px; align-items: center;">
+    <div style="display: flex; gap: 40px; justify-content: center; flex-wrap: wrap;">
+      <div style="background: #eff6ff; border: 1px solid #bfdbfe; border-radius: 8px; padding: 10px 16px; text-align: center; min-width: 100px;">
+        <strong style="color: #1e40af;">Inputs</strong><br/>\(x_1, x_2, ..., x_n\)
+      </div>
+      <div style="background: #eff6ff; border: 1px solid #bfdbfe; border-radius: 8px; padding: 10px 16px; text-align: center; min-width: 100px;">
+        <strong style="color: #1e40af;">Weights</strong><br/>\(w_1, w_2, ..., w_n\)
+      </div>
+      <div style="background: #eff6ff; border: 1px solid #bfdbfe; border-radius: 8px; padding: 10px 16px; text-align: center; min-width: 100px;">
+        <strong style="color: #1e40af;">Bias</strong><br/>\(b\)
+      </div>
+    </div>
+    <div style="font-size: 1.5rem; color: #64748b;">↓</div>
+    <div style="background: #f0fdf4; border: 1px solid #bbf7d0; border-radius: 8px; padding: 12px 20px; text-align: center; width: 100%; max-width: 450px; box-sizing: border-box;">
+      <strong style="color: #166534;">1. Linear Combination (Weighted Sum)</strong><br/>
+      <div style="font-size: 1.1rem; margin-top: 4px;">\(z = \sum_{i=1}^{n} w_i x_i + b\)</div>
+    </div>
+    <div style="font-size: 1.5rem; color: #64748b;">↓</div>
+    <div style="background: #fff7ed; border: 1px solid #ffedd5; border-radius: 8px; padding: 12px 20px; text-align: center; width: 100%; max-width: 450px; box-sizing: border-box;">
+      <strong style="color: #c2410c;">2. Activation Function (Non-linearity)</strong><br/>
+      <div style="font-size: 1.1rem; margin-top: 4px;">\(a = f(z)\)</div>
+    </div>
+  </div>
+</div>
+
+<div class="example-box"><strong>Closer Look: The Artificial Neuron in Detail</strong>
+
+<h4>The Building Block: The Artificial Neuron</h4>
+<p>The entire network is built from artificial neurons. A neuron takes several inputs and produces</p>
+<p>a single output in two crucial steps:</p>
+
+</div>
+<h3 class="subsection-title">Step-by-Step Computation</h3>
+
+<ol>
+<li><strong>Weighted Sum (Linear Combination):</strong> Each input \(x_i\) is multiplied by its corresponding weight \(w_i\). All products are summed together with a bias term \(b\). This is sometimes called <strong>SOP</strong> (Sum of Products).
+
+\begin{equation}
+        z = w_1 x_1 + w_2 x_2 + \cdots + w_n x_n + b = \sum_{i=1}^{n} w_i x_i + b
+    \end{equation}</li>
+<li><strong>Activation Function (Non-linearity):</strong> The weighted sum \(z\) is passed through a non-linear activation function \(f\) to produce the neuron's output \(a\):
+    \begin{equation}
+        a = f(z)
+    \end{equation}
+
+<p>Without this non-linearity, stacking many neurons would still just produce a linear function — no matter how deep the network, it would be equivalent to a single linear transformation.</li>
+</ol></p>
+
+<h2 class="section-title">Activation Functions</h2>
+
+<p>Activation functions introduce <strong>non-linearity</strong>, enabling neural networks to learn complex patterns. Here are the most important ones:</p>
+
+<h3 class="subsection-title">Sigmoid (\(\sigma\))</h3>
+
+\begin{equation}
+    \sigma(z) = \frac{1}{1 + e^{-z}}
+\end{equation}
+
+<ul>
+<li><strong>Output range:</strong> \((0, 1)\) — ideal for representing probabilities.</li>
+<li><strong>Shape:</strong> S-shaped (smooth, monotonic).</li>
+<li><strong>Key property:</strong> Its derivative is elegant:
+    \begin{equation}
+        \sigma'(z) = \sigma(z) \cdot (1 - \sigma(z))
+    \end{equation}
+    This makes gradient computations in backpropagation very clean.</li>
+<li><strong>Primary use:</strong> Hidden layers (historically) and binary classification output layers.</li>
+</ul>
+
+<h3 class="subsection-title">Softmax</h3>
+
+\begin{equation}
+    \text{softmax}(z_i) = \frac{e^{z_i}}{\displaystyle\sum_{j=1}^{V} e^{z_j}}
+\end{equation}
+
+<ul>
+<li><strong>Output:</strong> A probability distribution over \(V\) classes — all outputs sum to 1.</li>
+<li><strong>Primary use:</strong> <strong>Multi-class classification</strong> output layers. This is <em>the</em> function used at the output of language models, where we choose one word from a vocabulary of size \(V\).</li>
+<li><strong>Why not sigmoid for multi-class?</strong> Sigmoid treats each output independently (probabilities don't sum to 1). Softmax normalizes across all outputs, making them compete — the word with highest probability wins.</li>
+</ul>
+
+<div class="key-concept"><strong>Key Concept:</strong>
+
+<p>Softmax converts raw scores (logits) into a proper probability distribution. The exponential amplifies differences between scores, and the normalization ensures \(\sum_i P(w_i) = 1\). A higher logit \(z_i\) gets a disproportionately higher probability.</p>
+
+</div>
+
+<div class="example-box"><strong>Example:</strong>
+
+<p>Suppose the raw logits for three candidate words are \(z = [2.0, 1.0, 0.1]\).</p>
+
+\[
+\begin{aligned}
+\text{softmax}(2.0) &= \frac{e^{2.0}}{e^{2.0} + e^{1.0} + e^{0.1}} = \frac{7.389}{7.389 + 2.718 + 1.105} \approx \mathbf{0.659} \\
+\text{softmax}(1.0) &= \frac{2.718}{11.212} \approx \mathbf{0.242} \\
+\text{softmax}(0.1) &= \frac{1.105}{11.212} \approx \mathbf{0.099}
+\end{aligned}
+\]
+
+<p>The model would predict the first word (65.9% confidence). The probabilities sum to 1.0.</p>
+
+</div>
+
+<h3 class="subsection-title">ReLU (Rectified Linear Unit)</h3>
+
+\begin{equation}
+    \text{ReLU}(z) = \max(0, z)
+\end{equation}
+
+<ul>
+<li><strong>Output:</strong> 0 for any negative input; \(z\) itself for any positive input.</li>
+<li><strong>Advantage:</strong> Computationally cheap (just a max operation); avoids the "vanishing gradient" problem of sigmoid in deep networks.</li>
+<li><strong>Disadvantage:</strong> "Dying ReLU" — neurons can get stuck outputting 0 for all inputs if weights drift into a region where \(z \leq 0\) always.</li>
+</ul>
+
+<h3 class="subsection-title">Leaky ReLU</h3>
+
+\begin{equation}
+    \text{Leaky ReLU}(z) = \max(0.01z, z)
+\end{equation}
+
+<p>A small positive slope (\(\alpha = 0.01\)) for negative inputs, preventing the "dying ReLU" problem.</p>
+
+<h3 class="subsection-title">Tanh</h3>
+
+\begin{equation}
+    \tanh(z) = \frac{e^z - e^{-z}}{e^z + e^{-z}}
+\end{equation}
+
+<p>Output range: \((-1, 1)\) — a zero-centered version of sigmoid.</p>
+
+<h3 class="subsection-title">Modern Variants: GELU and Swish</h3>
+
+<p>In modern Transformers and LLMs, <strong>GELU</strong> (Gaussian Error Linear Unit) and <strong>Swish</strong> are commonly used in hidden layers. They combine the best of ReLU (non-saturating for positive values) and sigmoid (smoothness), but the mathematical details are beyond our current scope.</p>
+
+<div class="important-note"><strong>Note:</strong>
+
+<p><strong>For this course, the critical ones to know are:</strong> Sigmoid (hidden layers, binary output), Softmax (multi-class output — especially for language modeling), and ReLU/Leaky ReLU (hidden layers in deep networks).</p>
+
+</div>
+
+<div style="font-family: 'Outfit', sans-serif; font-weight: 600; text-align: center; margin-top: 24px; margin-bottom: 8px; color: var(--text-headings);">Table: Summary of common activation functions</div>
+
+<table>
+<tr>
+  <th><strong>Function</strong></th>
+  <th><strong>Range</strong></th>
+  <th><strong>Primary Use</strong></th>
+</tr>
+<tr>
+  <td>Sigmoid</td>
+  <td>\((0, 1)\)</td>
+  <td>Hidden layers, binary classification output</td>
+</tr>
+<tr>
+  <td>Softmax</td>
+  <td>Probability simplex</td>
+  <td>Multi-class output (language modeling!)</td>
+</tr>
+<tr>
+  <td>ReLU</td>
+  <td>\([0, \infty)\)</td>
+  <td>Hidden layers (deep networks)</td>
+</tr>
+<tr>
+  <td>Leaky ReLU</td>
+  <td>\((-\infty, \infty)\)</td>
+  <td>Hidden layers (fixes dying ReLU)</td>
+</tr>
+<tr>
+  <td>Tanh</td>
+  <td>\((-1, 1)\)</td>
+  <td>Hidden layers (zero-centered)</td>
+</tr>
+</table>
+
+<h2 class="section-title">Why Multiple Neurons? The XOR Problem</h2>
+
+<p>A single perceptron can only learn <strong>linearly separable</strong> functions. The classic counterexample is <strong>XOR</strong>:</p>
+
+<div style="font-family: 'Outfit', sans-serif; font-weight: 600; text-align: center; margin-top: 24px; margin-bottom: 8px; color: var(--text-headings);">Table: XOR truth table — not linearly separable</div>
+
+<table>
+<tr>
+  <th>\(x_1\)</th>
+  <th>\(x_2\)</th>
+  <th>XOR</th>
+</tr>
+<tr>
+  <td>0</td>
+  <td>0</td>
+  <td>0</td>
+</tr>
+<tr>
+  <td>0</td>
+  <td>1</td>
+  <td>1</td>
+</tr>
+<tr>
+  <td>1</td>
+  <td>0</td>
+  <td>1</td>
+</tr>
+<tr>
+  <td>1</td>
+  <td>1</td>
+  <td>0</td>
+</tr>
+</table>
+
+<p>No single straight line can separate the points \((0,1)\) and \((1,0)\) from \((0,0)\) and \((1,1)\). A single perceptron <strong>cannot</strong> solve XOR.</p>
+
+<div class="key-concept"><strong>Key Concept:</strong>
+
+<p><strong>Adding more neurons (a hidden layer)</strong> enables the network to learn non-linear decision boundaries. Each additional neuron learns a different linear separation, and combining them (with non-linear activation functions) can represent any function — this is the <strong>Universal Approximation Theorem</strong>.</p>
+
+</div>
+
+<p>This is analogous to how SVM uses kernel functions to project data into higher dimensions where it becomes linearly separable. Here, the hidden layer performs a similar transformation through learned weights.</p>
+
+<div class="example-box"><strong>Example:</strong>
+
+<p><strong>Intuitive Analogy:</strong> A single neuron is like a single judge making a yes/no decision based on a weighted checklist. A multi-layer network is like a panel of judges — each judge (neuron) looks at the evidence differently, and their combined decision (through voting/weighting) can capture nuances that no single judge could.</p>
+
+</div>
+
+<div class="key-concept"><strong>Deeper Insight: Why "Deep" Learning? The XOR Paradox</strong>
+
+<p>Why do we need "hidden layers" between the input and output? Why not just connect them directly? The classic proof of necessity is the XOR (Exclusive OR) Problem.</p>
+
+<p><strong>The Task:</strong> Output 1 if inputs are different (0,1 or 1,0). Output 0 if inputs are the same (0,0 or 1,1).</p>
+
+<p><strong>The Failure of Simple Networks:</strong> A simple network without hidden layers is a linear classifier. It tries to draw a single straight line to separate the data. If you plot the XOR data, this is impossible — you cannot draw one straight line that separates the 1s from the 0s. It is linearly inseparable.</p>
+
+<p><strong>The Deep Solution: Transforming the Space.</strong> By adding a Hidden Layer, the network doesn't just try to draw a line. Instead, it transforms the input space. The hidden layer warps the data, projecting it into a new representation where the classes become linearly separable.</p>
+
+<div class="example-box"><strong>Intuition: Warping the Space</strong>
+
+<p>Consider a simple 2-hidden-node network with <strong>bias units</strong> — nodes that always output 1. Bias units give the network a non-zero baseline so that the weighted sum is never stuck at 0 even if all real inputs are 0.</p>
+
+<p><strong>Weights (pre-trained for XOR):</strong> Inputs \(x_0, x_1\) plus bias \(x_2=1\). Hidden nodes \(h_0, h_1\) (with sigmoid activation). Output \(y_0\) (with sigmoid).</p>
+
+<div style="overflow-x: auto;">
+<table>
+<tr><th>Input \((x_0,x_1)\)</th><th>\(h_0\) value</th><th>\(h_1\) value</th><th>\(y_0\) output</th><th>Interpretation</th></tr>
+<tr><td>(0, 0)</td><td>0.119</td><td>0.018</td><td>0.183 → 0</td><td>Neither input active</td></tr>
+<tr><td>(0, 1)</td><td>0.881</td><td>0.269</td><td>0.743 → 1</td><td>One input active</td></tr>
+<tr><td>(1, 0)</td><td>0.731</td><td>0.119</td><td>0.743 → 1</td><td>One input active</td></tr>
+<tr><td>(1, 1)</td><td>0.993</td><td>0.731</td><td>0.334 → 0</td><td>Both active — cancelled!</td></tr>
+</table>
+</div>
+
+<p><strong>What just happened?</strong> Look at the hidden nodes:</p>
+<ul>
+<li><strong>\(h_0\) acts like Boolean OR:</strong> Its value is high (\(\approx 0.73\)–\(0.99\)) if <em>at least one</em> input is 1, and low (0.119) when both are 0.</li>
+<li><strong>\(h_1\) acts like Boolean AND:</strong> It only spikes high (0.731) when <em>both</em> inputs are 1.</li>
+<li><strong>XOR = OR − AND:</strong> The output layer effectively subtracts the AND signal from the OR signal. For (1,1), the OR node \(h_0\) is high (0.993), but the AND node \(h_1\) is also high (0.731). The <em>weighted subtraction</em> at the output layer pushes the final score below the 0.5 threshold → output 0.</li>
+</ul>
+
+<p><strong>Why non-linearity is essential:</strong> Without the sigmoid activation, the network would just be a linear combination of inputs — no amount of layers could solve XOR. The sigmoid's S-curve gives the hidden nodes their "feature detector" behavior: each node turns on only for specific input configurations. This is the core principle behind <em>deep</em> learning — the first layer learns basic Boolean operations (AND, OR), and subsequent layers combine them into more complex functions</p>
+
+</div>
+
+</div>
+
+
+<h2 class="section-title">Multi-Layer Perceptron (MLP) / Feedforward Network</h2>
+
+<h3 class="subsection-title">Architecture</h3>
+
+<p>A feedforward neural network consists of:</p>
+
+<ul>
+<li><strong>Input Layer:</strong> Receives the raw data (word embeddings, pixel values, etc.). Number of neurons = number of input features.</li>
+<li><strong>Hidden Layer(s):</strong> Intermediate layers that learn representations. Each hidden neuron is connected to <em>every</em> neuron in the previous layer.</li>
+<li><strong>Output Layer:</strong> Produces the final prediction. Number of neurons = number of output classes (or 1 for regression/binary classification).</li>
+</ul>
+
+<div class="definition-box"><strong>Definition:</strong>
+
+<p>A <strong>Dense</strong> (or <strong>Fully Connected</strong>) network is one where every neuron in layer \(l\) is connected to every neuron in layer \(l+1\). All modern LLMs (GPT, Claude, Gemini) are built on dense Transformer architectures.</p>
+
+</div>
+
+<h3 class="subsection-title">Guidelines for Architecture Design (Andrew Ng)</h3>
+
+<ol>
+<li><strong>Number of hidden layers:</strong> Start with <strong>one</strong> hidden layer. If accuracy is insufficient, add more. More layers = more capacity but also more computational cost and less interpretability. Stop when you reach satisfactory performance.</li>
+<li><strong>Number of neurons per hidden layer:</strong> Typically set to <strong>equal to or slightly more than</strong> the number of input neurons. Conveniently, powers of 2 (64, 128, 256, 512) are common due to hardware optimization.</li>
+<li><strong>Number of output neurons:</strong>
+
+<ul>
+<li>Binary classification: 1 neuron with sigmoid.</li>
+<li>Multi-class classification (e.g., language modeling): \(V\) neurons with softmax, where \(V\) = vocabulary size.</li>
+<li>Regression: 1 neuron with linear activation (or no activation).</li>
+</ul></li>
+<li><strong>Start simple, scale up only if needed.</strong> If 90%+ accuracy is achieved with one hidden layer, there's no need to complicate the architecture.</li>
+</ol>
+
+<h2 class="section-title">Forward Propagation (Inference)</h2>
+
+<p>Forward propagation is the process of computing the network's output for a given input. At inference time, this is all that happens.</p>
+
+<dl>
+<dt>Layer 1 (Input \(\to\) Hidden):</dt><dd>For each hidden neuron \(j\):
+    \[
+    z_j^{[1]} = \sum_{i} w_{ji}^{[1]} x_i + b_j^{[1]}, \qquad a_j^{[1]} = f(z_j^{[1]})
+    \]</dd>
+<dt>Layer 2 (Hidden \(\to\) Output):</dt><dd>For each output neuron \(k\):
+    \[
+    z_k^{[2]} = \sum_{j} w_{kj}^{[2]} a_j^{[1]} + b_k^{[2]}, \qquad a_k^{[2]} = f(z_k^{[2]})
+    \]</dd>
+</dl>
+
+<p>The superscript \([l]\) denotes the layer number, and subscripts denote individual neurons within each layer.</p>
+
+<div class="key-concept"><strong>Key Concept:</strong>
+
+<p>In dense networks, the weights between layers form a <strong>matrix</strong>, not a vector. If layer \(l\) has \(m\) neurons and layer \(l+1\) has \(n\) neurons, the weight matrix \(W^{[l]}\) is of size \(n \times m\). This is why large neural networks require massive matrix multiplications — and why GPUs/TPUs (optimized for matrix math) are essential.</p>
+
+</div>
+
+<h2 class="section-title">Backpropagation (Training)</h2>
+
+<p>Backpropagation is the algorithm that <strong>learns the weights</strong> from training data.</p>
+
+<ol>
+<li><strong>Initialize:</strong> All weights are randomly initialized (e.g., small random values from a normal distribution).</li>
+<li><strong>Forward Pass:</strong> Compute the network's output \(\hat{y}\) for a training example.</li>
+<li><strong>Compute Loss:</strong> Compare \(\hat{y}\) with the true label \(y\) using a loss function (e.g., cross-entropy for classification):
+    \begin{equation}
+        \mathcal{L} = -\sum_{c} y_c \log(\hat{y}_c)
+    \end{equation}</li>
+<li><strong>Backward Pass:</strong> Compute the gradient of the loss with respect to <em>every</em> weight in the network using the chain rule:
+    \begin{equation}
+        \frac{\partial \mathcal{L}}{\partial w_{ji}^{[l]}} = \frac{\partial \mathcal{L}}{\partial a^{[L]}} \cdot \frac{\partial a^{[L]}}{\partial z^{[L]}} \cdots \frac{\partial z^{[l]}}{\partial w_{ji}^{[l]}}
+    \end{equation}
+    The error at the output is <strong>propagated backward</strong> through all layers, because the final error is caused by <em>all</em> weights in the network.</li>
+<li><strong>Update Weights:</strong> Using gradient descent (or a variant like Adam):
+    \begin{equation}
+        w_{\text{new}} = w_{\text{old}} - \eta \cdot \frac{\partial \mathcal{L}}{\partial w}
+    \end{equation}
+    where \(\eta\) is the learning rate.</li>
+</ol>
+
+<div class="key-concept"><strong>Key Concept:</strong>
+
+<p>The elegance of the sigmoid derivative (\(\sigma' = \sigma(1-\sigma)\)) makes backpropagation through sigmoid-activated layers computationally efficient — the derivative can be computed directly from the forward-pass output without any additional expensive operations.</p>
+
+</div>
+
+<div class="important-note"><strong>Note:</strong>
+
+<p>The entire neural network boils down to just two operations repeated trillions of times: <strong>multiplication</strong> and <strong>addition</strong>. This is why specialized hardware (GPUs, TPUs) that excels at parallel matrix multiply-add operations has been the key enabler of modern deep learning.</p>
+
+</div>
+
+<div class="example-box"><strong>Part 2: The Backward Pass — Learning from Mistakes (Detailed Walkthrough)</strong>
+
+<p>The model predicted 41% for "NLP", but the target is 100%. We need to adjust the weights using <strong>Backpropagation</strong> and <strong>Gradient Descent</strong>.</p>
+
+<div class="example-box"><strong>Intuition: Gradient Descent</strong>
+
+<p>We calculate the gradient (the slope) of the Loss (the error) with respect to each weight. We then take a small step (the learning rate <em>η</em>) in the opposite direction of the gradient to reduce the loss.</p>
+
+</div>
+
+<h3 class="subsection-title">Step 1: Calculate the Error Signal (δ<sup>o</sup>)</h3>
+<p>We use Cross-Entropy Loss. When combined with Softmax, the derivative (the error signal we need) is remarkably simple:</p>
+<p><strong>δ<sup>o</sup> = Prediction − Target = ŷ − y</strong></p>
+<p>The true target <em>y</em> is a "one-hot" vector where "NLP" is 1.</p>
+<p><strong>Scalar View:</strong> Error for "NLP": 0.41 − 1 = −0.59. The negative error means we need to increase the score for "NLP".</p>
+
+<h3 class="subsection-title">Step 2: Update Output Weights (U)</h3>
+<p>We need the gradient of the Loss with respect to U (∇U).</p>
+
+<div class="key-concept"><strong>The Golden Rule of Weight Updates (Derived from the Chain Rule)</strong>
+<p><strong>Gradient = Error at the Destination × Input from the Source</strong></p>
+</div>
+
+<p>Here, Destination = Output layer (δ<sup>o</sup>); Source = Hidden layer (<em>h</em>).</p>
+<p><strong>Scalar View:</strong> Update the weight connecting h<sub>1</sub> to "NLP" (U<sub>3,1</sub>, currently 0.6).</p>
+<p>Gradient = −0.59 × 0.54 = −0.318</p>
+<p><strong>Update Rule:</strong> U<sub>new</sub> = U<sub>old</sub> − (η × Gradient) = 0.6 − (0.1 × −0.318) = 0.6318</p>
+
+<h3 class="subsection-title">Step 3: Backpropagate Error to the Hidden Layer (δ<sup>h</sup>)</h3>
+<p>This is the core of backpropagation. We need to know how much the hidden layer was responsible for the final error before we can update W.</p>
+
+<div class="example-box"><strong>Intuition: The Blame Game</strong>
+<p>Hidden neuron h<sub>1</sub> connected to all three outputs. How much blame does h<sub>1</sub> deserve? We calculate h<sub>1</sub>'s total blame by summing the errors it contributed to (δ<sup>o</sup>), weighted by the strength of the connections (U).</p>
+</div>
+
+<p><strong>Part A — The Weighted Error:</strong> We pull the error back through U. Mathematically, we multiply the error by the Transpose of the weight matrix (U<sup>T</sup>).</p>
+<p><strong>Scalar View:</strong> Total weighted error for h<sub>1</sub>: (0.26 × 0.2) + (0.33 × 0.4) + (−0.59 × 0.6) = 0.052 + 0.132 − 0.354 = −0.17</p>
+
+<p><strong>Part B — The Activation Derivative (The "Switch" Factor):</strong> We must multiply by the derivative of the Sigmoid function. The derivative tells us the sensitivity of the neuron. If the neuron was saturated (near 0 or 1), the slope is flat, and we dampen the error signal because changing the input wouldn't have changed the output much anyway.</p>
+<p>For h<sub>1</sub> (0.54): σ'(z<sub>1</sub>) = 0.54 × (1 − 0.54) ≈ 0.248</p>
+
+<p><strong>Part C — Combining A and B:</strong> δ<sub>h1</sub> = −0.17 × 0.248 ≈ −0.042</p>
+
+<h3 class="subsection-title">Step 4: Update Input Weights (W)</h3>
+<p>We use the Golden Rule again. Destination = Hidden layer (δ<sup>h</sup>); Source = Input layer (<em>x</em>).</p>
+<p><strong>Scalar View:</strong> Update the weight connecting the first input to the first hidden neuron (W<sub>1,1</sub>, currently 0.5).</p>
+<p>Gradient = −0.042 × 0.1 = −0.0042</p>
+<p><strong>Update Rule:</strong> W<sub>new</sub> = 0.5 − (0.1 × −0.0042) = 0.50042</p>
+
+<div class="key-concept"><strong>We have completed one full training cycle!</strong>
+<p>The weights are now slightly better configured to predict "NLP" after "I love". Repeat this process millions of times across the entire training corpus, and the network gradually learns to predict words correctly.</p>
+</div>
+
+<div class="key-concept"><strong>Formal Backpropagation Summary: Error Terms</strong>
+
+<p>Backpropagation trains the network by computing an <strong>error term &delta;</strong> for each non-input node, then using it to update incoming weights. The update is always: &Delta;w = &mu; &middot; &delta; &middot; (incoming node value), where &mu; is the learning rate.</p>
+
+<p><strong>For output nodes:</strong> Error term comes directly from the difference between predicted and target output, multiplied by the activation derivative.</p>
+<p>&delta;<sub>i</sub> = (t<sub>i</sub> - y<sub>i</sub>) &middot; y&prime;<sub>i</sub></p>
+<p>Where y&prime;<sub>i</sub> is the derivative of the activation function (for sigmoid: y&prime;<sub>i</sub> = y<sub>i</sub>(1-y<sub>i</sub>)).</p>
+
+<p><strong>For hidden nodes:</strong> Error is back-propagated &mdash; each hidden node&apos;s error is the <em>weighted sum</em> of the error terms of all output nodes it connects to, multiplied by its own activation derivative.</p>
+<p>&delta;<sub>j</sub> = (&sum;<sub>i</sub> &delta;<sub>i</sub> &middot; w<sub>i&larr;j</sub>) &middot; h&prime;<sub>j</sub></p>
+
+<p><strong>Weight updates (any layer):</strong></p>
+<p>&Delta;w<sub>dest&larr;src</sub> = &mu; &middot; &delta;<sub>dest</sub> &middot; h<sub>src</sub></p>
+<p>Training proceeds <strong>one example at a time</strong> (stochastic gradient descent), and typically multiple passes (<strong>epochs</strong>) over the training set.</p>
+
+</div>
+
+</div>
+
+<h2 class="section-title">Training Refinements</h2>
+
+<p>Plain gradient descent, while conceptually sound, runs into practical issues. A too-high learning rate overshoots the optimum; a too-low rate creeps along. Bad weight initialization can trap training in flat plateaus where gradients are near zero â€” especially with saturating activation functions like sigmoid. Local optima can derail the search before it reaches the global minimum.</p>
+
+<h3 class="subsection-title">Validation Set and Early Stopping</h3>
+
+<p>Training error on the training set decreases monotonically over epochs. But at some point, <strong>overfitting</strong> sets in â€” the model memorizes training examples instead of generalizing. A <strong>validation set</strong> (held-out, never used for weight updates) detects this: when validation error starts rising while training error keeps falling, training stops. This is called <strong>early stopping</strong> â€” you save the model at the validation minimum.</p>
+
+<h3 class="subsection-title">Weight Initialization</h3>
+
+<p>Weights are initialized to small random values so that node activations fall in the <em>transition region</em> of the activation function, where gradients are steep and learning is fast. For sigmoid, a common formula for the final layer is weights drawn uniformly from \([-1/\sqrt{n}, 1/\sqrt{n}]\) where \(n\) is the previous layer size. For hidden layers: \(\left[-\frac{\sqrt{6}}{\sqrt{n_j + n_{j+1}}}, \frac{\sqrt{6}}{\sqrt{n_j + n_{j+1}}}\right]\) where \(n_j\) and \(n_{j+1}\) are the sizes of the previous and next layers.</p>
+
+<h3 class="subsection-title">Momentum</h3>
+
+<p>If a weight is far from its optimum, individual small gradient steps accumulate slowly. <strong>Momentum</strong> speeds this up by maintaining a running average of past gradients:</p>
+\[
+m_t = 0.9\, m_{t-1} + \Delta w_t, \qquad w_t = w_{t-1} - \mu\, m_t
+\]
+<p>The decay rate (here 0.9) controls how much past gradients influence the current step. This dampens oscillations and accelerates convergence along consistent gradient directions.</p>
+
+<h3 class="subsection-title">Adam (Adaptive Moment Estimation)</h3>
+
+<p><strong>Adam</strong> is the most widely used optimizer today. It combines momentum with <strong>per-parameter learning rates</strong>. Parameters that receive consistently large gradients get their effective step size reduced (they are already near the optimum); parameters with small gradients get boosted.</p>
+\[
+m_t = \beta_1 m_{t-1} + (1-\beta_1)g_t \qquad \text{(momentum)}
+\]
+\[
+v_t = \beta_2 v_{t-1} + (1-\beta_2)g_t^2 \qquad \text{(squared gradient accumulation)}
+\]
+\[
+\Delta w_t = \frac{\mu}{\sqrt{\hat{v}_t} + \epsilon}\, \hat{m}_t
+\]
+<p>Typical hyperparameters: \(\beta_1 = 0.9\), \(\beta_2 = 0.999\), \(\epsilon = 10^{-8}\). The bias correction terms \(\hat{m}_t, \hat{v}_t\) adjust for the fact that \(m_t\) and \(v_t\) start near zero early in training.</p>
+
+<h3 class="subsection-title">Dropout</h3>
+
+<p>A surprisingly effective regularization technique: during training, a random fraction of nodes (e.g., 10â€“20%) are temporarily dropped â€” their values are set to 0 and their weights are frozen. The remaining nodes must pick up the slack, producing a more robust network where multiple nodes learn similar, redundant roles. This helps escape local optima and reduces overfitting.</p>
+
+<h3 class="subsection-title">Mini Batches</h3>
+
+<p>Updating weights after <em>every single</em> training example (stochastic gradient descent, or online learning) converges quickly but is hard to parallelize. <strong>Mini batches</strong> accumulate weight updates over a small group of examples (e.g., 32, 64, or an entire sentence) before applying them. This enables parallel processing on GPUs while still converging faster than full batch training.</p>
+
+<h3 class="subsection-title">Layer Normalization</h3>
+
+<p>In deep networks, node values can explode or vanish as they propagate through many layers, causing <strong>exploding</strong> or <strong>vanishing gradients</strong>. Layer normalization fixes this by normalizing the weighted sum vector \(\vec{s}_l\) at each layer to zero mean and unit variance, then applying a learned scale \(\vec{g}\) and bias \(\vec{b}\):</p>
+\[
+\mu_l = \frac{1}{H}\sum_i s_i^l, \qquad \sigma_l = \sqrt{\frac{1}{H}\sum_i (s_i^l - \mu_l)^2}
+\]
+\[
+\hat{\vec{s}}_l = \frac{\vec{g}}{\sigma_l} \cdot (\vec{s}_l - \mu_l) + \vec{b}
+\]
+<p>This keeps gradient signals stable during backpropagation through many layers â€” critical for the deep architectures used in modern NLP.</p>
+
+
+<h1 class="chapter-title">Neural Language Modeling</h1>
+
+<div class="key-concept"><strong>Why Neural? The Shift from Counting to Understanding</strong>
+
+<h3 class="subsection-title">The Neural Shift: From Counting to Understanding</h3>
+<p>In traditional Natural Language Processing (NLP), the primary method for predicting the next</p>
+<p>word was the N-Gram Model.</p>
+<p>How N-Grams Work: They are purely statistical. They count how often a specific sequence</p>
+<p>of words (an N-gram) appears in the training data. If ”the cat sat on” was followed by ”the</p>
+<p>mat” 100 times and ”the chair” 10 times, the model predicts ”mat” as more likely.</p>
+
+</div>
+<h2 class="section-title">What is a Neural Language Model?</h2>
+
+<p>A <strong>Neural Language Model</strong> is the fusion of three concepts we've studied:</p>
+
+<ol>
+<li><strong>Word Embeddings</strong> (Module 2): Dense vector representations of words that capture semantic similarity. Words with similar meanings have vectors that are close in vector space.</li>
+<li><strong>Neural Networks</strong>: The architecture (feedforward, RNN, LSTM, or Transformer) that processes sequences and learns patterns.</li>
+<li><strong>Language Modeling</strong> (Module 3): The task of predicting \(P(w_t \mid w_1, w_2, \ldots, w_{t-1})\) — the probability of the next word given previous context.</li>
+</ol>
+
+<div class="definition-box"><strong>Definition:</strong>
+
+<p>A <strong>Neural Language Model</strong> is a neural network that takes a sequence of words (represented as word embeddings) as input and outputs a probability distribution over the vocabulary for the next word, trained using backpropagation on a text corpus.</p>
+
+</div>
+
+<h2 class="section-title">Architecture of a Neural Language Model</h2>
+
+<div style="background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 12px; padding: 24px; margin: 28px auto; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.05);">
+  <h4 style="margin: 0 0 20px 0; text-align: center; color: var(--primary); font-family: 'Outfit', sans-serif;">Figure 3.1: High-level pipeline of a neural language model</h4>
+  <div style="display: flex; flex-direction: column; gap: 20px; align-items: center;">
+    <div style="display: flex; align-items: center; justify-content: center; gap: 12px; width: 100%; flex-wrap: wrap;">
+      
+      <div style="background: #eff6ff; border: 1px solid #bfdbfe; border-radius: 8px; padding: 12px; text-align: center; min-width: 140px; flex: 1;">
+        <div style="font-weight: 600; color: #1e40af; font-size: 0.9rem;">1. Input Words</div>
+        <div style="font-size: 0.85rem; color: #475569; margin-top: 4px;">\(w_{t-3}, w_{t-2}, w_{t-1}\)</div>
+      </div>
+      
+      <div style="font-size: 1.25rem; color: #94a3b8; font-weight: bold;">→</div>
+      
+      <div style="background: #f0fdfa; border: 1px solid #99f6e4; border-radius: 8px; padding: 12px; text-align: center; min-width: 140px; flex: 1;">
+        <div style="font-weight: 600; color: #0d9488; font-size: 0.9rem;">2. Embeddings</div>
+        <div style="font-size: 0.8rem; color: #475569; margin-top: 4px;">Lookup Table</div>
+      </div>
+      
+      <div style="font-size: 1.25rem; color: #94a3b8; font-weight: bold;">→</div>
+      
+      <div style="background: #f0f9ff; border: 1px solid #bae6fd; border-radius: 8px; padding: 12px; text-align: center; min-width: 140px; flex: 1;">
+        <div style="font-weight: 600; color: #0369a1; font-size: 0.9rem;">3. Hidden Layer(s)</div>
+        <div style="font-size: 0.8rem; color: #475569; margin-top: 4px;">Dense, Sigmoid/ReLU</div>
+      </div>
+      
+      <div style="font-size: 1.25rem; color: #94a3b8; font-weight: bold;">→</div>
+      
+      <div style="background: #fffbeb; border: 1px solid #fde68a; border-radius: 8px; padding: 12px; text-align: center; min-width: 140px; flex: 1;">
+        <div style="font-weight: 600; color: #b45309; font-size: 0.9rem;">4. Softmax Output</div>
+        <div style="font-size: 0.85rem; color: #475569; margin-top: 4px;">\(\hat{P}(w_t \mid w_{t-3}, w_{t-2}, w_{t-1})\)</div>
+      </div>
+      
+    </div>
+    <div style="background: #f1f5f9; border-radius: 6px; padding: 8px 16px; font-size: 0.85rem; color: #475569; text-align: center; width: 100%; max-width: 500px;">
+      <strong>Context Window:</strong> Predicting the next word \(w_t\) from preceding context words.
+    </div>
+  </div>
+</div>
+
+<p>Let's walk through the architecture step by step:</p>
+
+<h3 class="subsection-title">Step 1: Input — Word Embeddings</h3>
+
+<p>Each input word is converted into a dense vector (embedding) of dimension \(d\) (typically 50–300 for classic models; 768–4096 for modern LLMs).</p>
+
+<div class="example-box"><strong>Example:</strong>
+
+<p>Suppose we have a vocabulary of 50,000 words and embedding dimension \(d = 100\). Each word gets a 100-dimensional vector. The word "cat" might be \([0.23, -0.45, 0.67, \ldots]_{100}\), and "dog" would have a <strong>similar</strong> vector because they are semantically related (both are pets, animals, four-legged, etc.).</p>
+
+</div>
+
+<p>These embeddings are typically <strong>learned jointly</strong> with the language modeling task — the network updates both the embedding vectors and the prediction weights during training.</p>
+
+<h3 class="subsection-title">Step 2: Hidden Layers — Dense Connections</h3>
+
+<p>The concatenated embedding vectors are fed into one or more hidden layers. Each hidden layer is <strong>fully connected</strong> (dense):</p>
+
+<ul>
+<li>Every input neuron is connected to every hidden neuron.</li>
+<li>If we have \(k\) context words with embedding dimension \(d\), input size = \(k \times d\).</li>
+<li>Hidden layer size is typically slightly larger than input size (guideline from Section 2.6).</li>
+<li>Activation: Sigmoid or ReLU in hidden layers.</li>
+</ul>
+
+<h3 class="subsection-title">Step 3: Output — Softmax over Vocabulary</h3>
+
+<p>The final layer has \(V\) neurons (one per word in the vocabulary) with a <strong>softmax</strong> activation:</p>
+
+\begin{equation}
+    P(w_i \mid \text{context}) = \frac{e^{z_i}}{\sum_{j=1}^{V} e^{z_j}}
+\end{equation}
+
+<p>The word with the highest softmax probability is predicted as the next word.</p>
+
+<div class="important-note"><strong>Note:</strong>
+
+<p>This output layer is <strong>computationally expensive</strong> because \(V\) (vocabulary size) can be 50,000–500,000+. Computing softmax over the entire vocabulary for every prediction is the bottleneck. Techniques like <strong>hierarchical softmax</strong> and <strong>negative sampling</strong> (which we saw in word2vec/SGNS) are used to make this tractable.</p>
+
+</div>
+
+<div class="example-box"><strong>Visual Walkthrough: NLM Architecture in Detail</strong>
+
+<p>A simple Feedforward NLM predicts the next word <em>w<sub>t</sub></em> based on a fixed window of context words.</p>
+
+<div class="example-box"><strong>Example: Context = "I love", Target = "NLP"</strong></div>
+
+<p><strong>Input Words:</strong> "I", "love"</p>
+
+<p><strong>Processing pipeline:</strong></p>
+<ol>
+<li><strong>Embedding Layer (Lookup):</strong> Context words are converted to embeddings.</li>
+<li><strong>Concatenation:</strong> Embeddings are combined into the input vector <em>x</em>.</li>
+<li><strong>Hidden Layer:</strong> <em>x</em> is processed using weights <em>W</em> and an activation function to produce the hidden state <em>h</em>.</li>
+<li><strong>Output Layer:</strong> <em>h</em> is processed using weights <em>U</em> to produce raw scores (logits) <em>o</em> for every word in the vocabulary.</li>
+<li><strong>Softmax:</strong> Logits are converted into a probability distribution <em>ŷ</em> over the vocabulary.</li>
+</ol>
+
+</div>
+
+<h2 class="section-title">Recurrent Neural Language Models</h2>
+
+<p>Feed-forward neural language models use a fixed context window (e.g., 5 previous words). <strong>Recurrent Neural Networks (RNNs)</strong> remove this limit â€” they can condition on sequences of arbitrary length by <em>re-using</em> the hidden state from the previous time step.</p>
+
+<p><strong>How it works:</strong> When predicting word \(w_3\), the network receives two inputs: (1) the embedding of the previous word \(w_2\) (as in a feed-forward model), and (2) the <strong>hidden state \(h_1\)</strong> computed while predicting \(w_2\). This hidden state encodes the entire prior context â€” \(w_1\) and \(w_2\). At each step, the hidden state is enriched with information about the newest word while preserving a distilled memory of everything before it.</p>
+
+<p>This means even the last word of a sentence is conditioned in part on the very first word. And the recurrent model is actually <em>simpler</em> than a feed-forward model: it has fewer weights than a comparable 3-gram feed-forward language model, since the same weight matrices are reused at every time step.</p>
+
+<h3 class="subsection-title">Back-Propagation Through Time (BPTT)</h3>
+
+<p>Training a recurrent network requires a modification of standard backpropagation. The key idea of <strong>back-propagation through time</strong> is to <em>unfold</em> the recurrent network over a fixed number of prediction steps (e.g., 5 words). The error from predicting \(w_3\) is propagated back through the <em>unfolded</em> computation graph: through the hidden state at time 2, through the hidden state at time 1, and back to the weights that generated them.</p>
+
+<p>This can be done per training example but is computationally expensive. In practice, <strong>mini-batches</strong> of examples (or entire sentences) are processed, weight updates are accumulated, and then applied. With modern toolkits that support <strong>dynamic computation graphs</strong>, the network can be fully unrolled for each sentence â€” the error is defined as the sum of word prediction errors across all positions, and backpropagation is carried out over the complete sentence graph at once.</p>
+
+<h2 class="section-title">Long Short-Term Memory (LSTM)</h2>
+
+<p>Simple RNNs suffer from a core problem: the hidden layer plays <strong>double duty</strong> â€” it is both the network&apos;s memory and the representation used to predict output words. There is no mechanism to control whether the model should pay more attention to the immediately preceding word or to distant context. Worse, when training on long sequences, gradients must back-propagate through many time steps â€” the signal from recent information can drown out older information (the <strong>vanishing gradient</strong> problem).</p>
+
+<p><strong>LSTM networks</strong> address this by introducing an explicit <strong>memory state</strong> in each cell, inspired by digital memory. The memory is regulated by three <strong>gates</strong> â€” learned parameters between 0 and 1 that control information flow:</p>
+
+<ul>
+<li><strong>Input gate:</strong> How much new input updates the memory state.</li>
+<li><strong>Forget gate:</strong> How much of the prior memory to retain (or forget).</li>
+<li><strong>Output gate:</strong> How strongly the memory state is passed to the next layer.</li>
+</ul>
+
+<p>The cell updates at time \(t\) are:</p>
+\[
+\text{memory}_t = \text{gate}_{\text{input}} \times \text{input}_t + \text{gate}_{\text{forget}} \times \text{memory}_{t-1}
+\]
+\[
+\text{output}_t = \text{gate}_{\text{output}} \times \text{memory}_t, \qquad h_t = f(\text{output}_t)
+\]
+
+<p>The gate values themselves are computed like neural network nodes â€” each gate has its own set of weight matrices operating on the current input \(x_t\), the previous hidden state \(h_{t-1}\), and the previous memory state \(\text{memory}_{t-1}\), followed by a sigmoid activation (which naturally outputs values in (0,1)):</p>
+\[
+\text{gate}_a = \text{sigmoid}\left(W_{xa} x_t + W_{ha} h_{t-1} + W_{ma}\, \text{memory}_{t-1}\right)
+\]
+
+<p>This design allows the network to <em>learn when to remember and when to forget</em>. In the sentence &quot;The country which has made much economic progress over the years still has...&quot;, the forget gate near &quot;country&quot; stays open, preserving the subject across a long subordinate clause. LSTM training uses the same back-propagation through time as RNNs â€” all operations inside the cell are still differentiable matrix multiplications.</p>
+
+<h2 class="section-title">Gated Recurrent Units (GRU)</h2>
+
+<p>LSTM cells add many extra parameters (three gates, each with multiple weight matrices), increasing training time and risk of overfitting. <strong>Gated Recurrent Units (GRU)</strong> offer a simpler alternative with only two gates and no separate memory state â€” the hidden state serves both purposes:</p>
+
+<ul>
+<li><strong>Reset gate:</strong> Controls how much of the previous state influences the <em>candidate</em> combination.</li>
+<li><strong>Update gate:</strong> Interpolates between the previous state and the new candidate combination.</li>
+</ul>
+
+\[
+\text{combination}_t = \tanh(W\, x_t + U(\text{reset}_t \odot \text{state}_{t-1}))
+\]
+\[
+\text{state}_t = (1 - \text{update}_t) \odot \text{state}_{t-1} + \text{update}_t \odot \text{combination}_t
+\]
+
+<p>The update gate acts as a bypass: when it is 0, the previous state passes through unchanged, enabling long-distance memory and gradient flow. When it is 1, the new state is determined mainly from the input. Both LSTM and GRU are still commonly used in neural machine translation, with LSTM cells seeing a recent comeback.</p>
+
+</div>
+
+
+<h2 class="section-title">Recurrent Generation: Predicting Multiple Words</h2>
+
+<p>A neural language model doesn't just predict one word — it can generate entire sequences:</p>
+
+<ol>
+<li>Input: "The cat sat on the"</li>
+<li>Model predicts: "mat" (highest softmax probability)</li>
+<li>Now input becomes: "cat sat on the mat"</li>
+<li>Model predicts: "and"</li>
+<li>Input becomes: "sat on the mat and"</li>
+<li>... and so on until an end-of-sequence token is generated.</li>
+</ol>
+
+<p>This is exactly how modern LLMs like ChatGPT generate text — they repeatedly feed their own output back as input, one token at a time (autoregressive generation).</p>
+
+<div class="key-concept"><strong>Key Concept:</strong>
+
+<p>What appears to be a model "typing" a response in real-time is actually a repeated process of: take current sequence \(\to\) predict next token \(\to\) append to sequence \(\to\) repeat. Each step is a full forward pass through the network.</p>
+
+</div>
+
+<h2 class="section-title">Handling Variable-Length Input</h2>
+
+<p>A practical challenge: sentences have different lengths, but neural networks require <strong>fixed-size input</strong>.</p>
+
+<p><strong>Solution: Padding + Fixed Window</strong></p>
+
+<ol>
+<li>Determine the <strong>maximum sentence length</strong> in the training corpus (or set a reasonable limit, e.g., 128 tokens).</li>
+<li>For sentences shorter than the maximum, <strong>pad</strong> with zeros (or a special <code>&lt;PAD&gt;</code> token embedding).</li>
+<li>The network sees a fixed-size input, with "inactive" slots filled with zeros.</li>
+</ol>
+
+<div class="example-box"><strong>Example:</strong>
+
+<p>Max length = 5 words.</p>
+
+<p>Sentence: "I love NLP" (3 words) <br/>
+Input: [embed("I"), embed("love"), embed("NLP"), \(\vec{0}\), \(\vec{0}\)]</p>
+
+<p>Sentence: "The cat sat on the mat" (6 words) <br/>
+\(\to\) Truncated to: [embed("The"), embed("cat"), embed("sat"), embed("on"), embed("the")]</p>
+
+</div>
+
+<h2 class="section-title">Sentence Embeddings: Representing Multi-Word Inputs</h2>
+
+<p>When we need a single vector to represent an entire sentence (or phrase, or review), we can derive a <strong>sentence embedding</strong> from individual word embeddings.</p>
+
+<h3 class="subsection-title">Method 1: Mean Pooling (Average)</h3>
+
+<p>Take the element-wise average of all word vectors in the sentence:</p>
+
+\begin{equation}
+    \text{sent\_embed} = \frac{1}{N} \sum_{i=1}^{N} \text{embed}(w_i)
+\end{equation}
+
+<h3 class="subsection-title">Method 2: Max Pooling</h3>
+
+<p>Take the element-wise maximum across all word vectors:</p>
+
+\begin{equation}
+    \text{sent\_embed}_j = \max_{i=1}^{N} \left(\text{embed}(w_i)_j\right) \quad \text{for each dimension } j
+\end{equation}
+
+<div class="example-box"><strong>Example:</strong>
+
+<p><strong>Sentence:</strong> "The dessert is good"</p>
+
+<table>
+<tr>
+  <th>Word</th>
+  <th>Dim 1</th>
+  <th>Dim 2</th>
+</tr>
+<tr>
+  <td>the</td>
+  <td>1.0</td>
+  <td>0.0</td>
+</tr>
+<tr>
+  <td>dessert</td>
+  <td>0.5</td>
+  <td>1.0</td>
+</tr>
+<tr>
+  <td>is</td>
+  <td>1.1</td>
+  <td>0.1</td>
+</tr>
+<tr>
+  <td>good</td>
+  <td>0.1</td>
+  <td>0.9</td>
+</tr>
+<tr>
+  <td><strong>Mean Pooling:</strong></td>
+  <td>\((1.0+0.5+1.1+0.1)/4 = 0.675\)</td>
+  <td>\((0.0+1.0+0.1+0.9)/4 = 0.5\)</td>
+</tr>
+<tr>
+  <td><strong>Max Pooling:</strong></td>
+  <td>\(\max(1.0, 0.5, 1.1, 0.1) = 1.1\)</td>
+  <td>\(\max(0.0, 1.0, 0.1, 0.9) = 1.0\)</td>
+</tr>
+</table>
+
+<p><strong>Result:</strong> Mean pooling gives \([0.675, 0.5]\); Max pooling gives \([1.1, 1.0]\). Max pooling is more commonly used in practice.</p>
+
+</div>
+
+<div class="important-note"><strong>Note:</strong>
+
+<p>In practice, libraries like HuggingFace's <code>sentence-transformers</code> provide pre-trained models that produce high-quality sentence embeddings automatically — you don't implement pooling manually. Modern approaches use Transformer-based architectures (like BERT) where the <code>[CLS]</code> token embedding serves as the sentence representation.</p>
+
+</div>
+
+<h2 class="section-title">Example Application: Sentiment Analysis</h2>
+
+<p>Neural language models aren't only for text generation — they can be used for classification tasks too.</p>
+
+<div class="example-box"><strong>Example:</strong>
+
+<p><strong>Problem:</strong> Classify movie reviews as <strong>positive</strong> or <strong>negative</strong>.</p>
+
+<p><strong>Neural Approach:</strong></p>
+
+<ol>
+<li>Convert each word in the review to its embedding vector.</li>
+<li>Derive a sentence embedding for the entire review (via pooling).</li>
+<li>Feed the sentence embedding through hidden layers.</li>
+<li>Output layer: 1 neuron with <strong>sigmoid</strong> (binary classification: \(P(\text{positive})\)).</li>
+<li>Train on labeled reviews using backpropagation.</li>
+<li>At test time, feed a new review \(\to\) get sentiment probability.</li>
+</ol>
+
+<p><strong>Contrast with traditional ML:</strong> In logistic regression, you'd manually engineer features (count of positive words, presence of negation, etc.). The neural network <strong>learns</strong> which words and patterns indicate sentiment from the data.</p>
+
+</div>
+
+<h2 class="section-title">Training Data for Neural Language Models</h2>
+
+<div class="key-concept"><strong>Key Concept:</strong>
+
+<p>Language modeling is fundamentally <strong>self-supervised</strong>: you don't need manually labeled data. Any raw text corpus can be used — the "label" for each position is simply the <em>next word</em> in the text.</p>
+
+</div>
+
+<ul>
+<li><strong>\(n\)-gram training data:</strong> Wikipedia articles, newspaper corpora, books — any large text collection.</li>
+<li><strong>Neural LM training data:</strong> Same types of corpora, but typically much larger — Common Crawl, The Pile, C4, etc.</li>
+<li><strong>Google \(n\)-gram corpus:</strong> A famous resource containing \(n\)-gram counts from a massive web crawl, commonly used for \(n\)-gram language models.</li>
+</ul>
+
+<h1 class="chapter-title">Comparison: \(n\)-gram vs. Neural Language Models</h1>
+
+<h2 class="section-title">Summary Comparison Table</h2>
+
+<div style="font-family: 'Outfit', sans-serif; font-weight: 600; text-align: center; margin-top: 24px; margin-bottom: 8px; color: var(--text-headings);">Table: Head-to-head comparison of \(n\)-gram and neural language models</div>
+
+<table>
+<tr>
+  <th><strong>Criterion</strong></th>
+  <th><strong>\(n\)-gram Models</strong></th>
+  <th><strong>Neural Language Models</strong></th>
+</tr>
+<tr>
+  <td><strong>Representation</strong></td>
+  <td>Count-based (discrete symbols)</td>
+  <td>Dense vector embeddings (capture semantics)</td>
+</tr>
+<tr>
+  <td><strong>Semantic similarity</strong></td>
+  <td>Cannot generalize — "cat" and "dog" are unrelated symbols</td>
+  <td>Can generalize — similar words have similar embeddings</td>
+</tr>
+<tr>
+  <td><strong>Context length</strong></td>
+  <td>Limited (typically \(n \leq 5\)) due to data sparsity</td>
+  <td>Can handle long contexts (attention, RNN memory)</td>
+</tr>
+<tr>
+  <td><strong>Training data size</strong></td>
+  <td>Moderate (can work with smaller corpora)</td>
+  <td>Large to massive (millions to trillions of tokens)</td>
+</tr>
+<tr>
+  <td><strong>Compute</strong></td>
+  <td>Low — simple counting and division</td>
+  <td>High — requires GPUs/TPUs</td>
+</tr>
+<tr>
+  <td><strong>Interpretability</strong></td>
+  <td>High — you can inspect exact \(n\)-gram counts</td>
+  <td>Low — weights are opaque "black boxes"</td>
+</tr>
+<tr>
+  <td><strong>Accuracy</strong></td>
+  <td>Moderate — limited by context and sparsity</td>
+  <td>High — captures complex patterns</td>
+</tr>
+<tr>
+  <td><strong>Deployment</strong></td>
+  <td>Easy — lightweight, fast inference</td>
+  <td>Expensive — heavy infrastructure needed</td>
+</tr>
+<tr>
+  <td><strong>Carbon footprint</strong></td>
+  <td>Minimal</td>
+  <td>Significant (training large models can equal transatlantic flight emissions)</td>
+</tr>
+<tr>
+  <td><strong>Best for</strong></td>
+  <td>Small-scale, fast, interpretable tasks</td>
+  <td>Large-scale, production-ready, high-accuracy tasks</td>
+</tr>
+</table>
+
+<h2 class="section-title">The Semantic Gap: Why Embeddings Matter</h2>
+
+<p>This is the <strong>single most important</strong> advantage of neural LMs over \(n\)-grams:</p>
+
+<div class="example-box"><strong>Example:</strong>
+
+<p><strong>Training data contains:</strong> "I forgot to make sure that the <strong>cat</strong> gets <strong>fed</strong>."</p>
+
+<p><strong>Test data contains:</strong> "I forgot to make sure that the <strong>dog</strong> gets ___ ."</p>
+
+<ul>
+<li><strong>\(n\)-gram model:</strong> Never saw "dog gets fed" in training — \(\to\) zero probability (or backed-off to unigram, losing context). Fails to fill in the blank correctly.</li>
+<li><strong>Neural LM:</strong> The word embedding for "dog" is <strong>close</strong> to the embedding for "cat" in vector space (both are pets, animals, cared-for beings). The model <strong>generalizes</strong>: whatever follows "cat gets" likely also follows "dog gets" \(\to\) predicts "fed" correctly.</li>
+</ul>
+
+</div>
+
+<div class="key-concept"><strong>Key Concept:</strong>
+
+\(n\)-gram models treat words as <strong>discrete, unrelated symbols</strong>. Neural models represent words as <strong>continuous vectors</strong> where semantic similarity = vector proximity. This enables <strong>generalization</strong> — the model transfers knowledge from seen patterns to unseen but similar patterns.
+
+</div>
+
+<div class="key-concept"><strong>Distributional Semantics: The Theoretical Foundation</strong>
+
+<p>Why do word embeddings work? The idea is rooted in <strong>distributional lexical semantics</strong> &mdash; the meaning of a word is defined by the contexts in which it appears. As linguist J.R. Firth famously put it:</p>
+
+<p style="text-align:center; font-style:italic; color:#475569; padding: 12px 0;">&quot;You shall know a word by the company it keeps.&quot;</p>
+
+<p>Words like <em>dog</em> and <em>cat</em> occur in similar contexts (&quot;the ___ jumped&quot;, &quot;child hugged the ___&quot;, &quot;like to watch ___ videos&quot;), so they receive similar embedding vectors. This is not magic &mdash; it is the network learning that words with similar <em>distributional</em> properties should have similar <em>representations</em>. In vector space, similarity is measured by distance functions like cosine distance (the angle between vectors).</p>
+
+<p>When projected to 2D for visualization, semantically similar words (drama, theater, festival) cluster together. This property enables even arithmetic operations on embeddings: early research showed that <strong>queen &asymp; king + (woman &minus; man)</strong>, suggesting embeddings capture meaningful relational structure. In neural language models and machine translation, this capacity to generalize between semantically similar words is the fundamental advantage over discrete n-gram counting.</p>
+
+</div>
+
+<h2 class="section-title">When to Use Which</h2>
+
+<ul>
+<li><strong>Choose \(n\)-gram models when:</strong>
+
+<ul>
+<li>You need a quick, lightweight baseline.</li>
+<li>Computational resources are very limited.</li>
+<li>Interpretability matters (you want to inspect exact probabilities).</li>
+<li>The domain is small and well-defined.</li>
+</ul></li>
+<li><strong>Choose neural LMs when:</strong>
+
+<ul>
+<li>Accuracy is the primary concern.</li>
+<li>You have access to GPUs/cloud compute.</li>
+<li>The task requires understanding semantic similarity.</li>
+<li>You need to handle long-range dependencies.</li>
+<li>You're building a production system.</li>
+</ul></li>
+</ul>
+
+<h1 class="chapter-title">Introduction to Large Language Models</h1>
+
+<div class="key-concept"><strong>Key Concept:</strong>
+
+<p><strong>Large Language Models (LLMs) are nothing but neural language models — scaled up.</strong> They use deep learning architectures (Transformers, GPT, BERT), massive training corpora, and billions of parameters. The fundamental task is the same: predict \(P(\text{next token} \mid \text{previous tokens})\).</p>
+
+</div>
+
+<h2 class="section-title">What Makes an LM "Large"?</h2>
+
+<ol>
+<li><strong>Scale of Data:</strong> Trained on trillions of tokens from the web, books, code, and curated datasets — orders of magnitude more than traditional neural LMs.</li>
+<li><strong>Scale of Parameters:</strong> Billions (or even trillions) of learnable weights. GPT-3 has 175B parameters; GPT-4 is estimated to be in the trillion-parameter range.</li>
+<li><strong>Scale of Compute:</strong> Training requires thousands of GPUs/TPUs running for weeks or months. The cost can run into hundreds of millions of dollars.</li>
+<li><strong>Architecture:</strong> Based on the <strong>Transformer</strong> architecture with <strong>self-attention</strong>, enabling the model to attend to all positions in the input simultaneously — no fixed context window limitation.</li>
+</ol>
+
+<h2 class="section-title">Key Characteristics of LLMs</h2>
+
+<ul>
+<li><strong>Dense (Fully Connected):</strong> Every neuron in layer \(l\) connects to every neuron in layer \(l+1\). This ensures no information is lost but makes the models enormous. (Future topics — small language models, parameter-efficient fine-tuning — explore how to reduce these connections.)</li>
+<li><strong>Autoregressive Generation:</strong> LLMs generate text one token at a time, feeding each prediction back as input for the next step (the same principle as the simple neural LM we studied, but at massive scale).</li>
+<li><strong>Context Window:</strong> Modern LLMs have context windows of 128K–1M+ tokens (GPT-4 Turbo: 128K; Gemini 1.5 Pro: up to 2M). You "pay per token" for both input and output.</li>
+<li><strong>Multilingual:</strong> A single model can understand and generate text in dozens of languages because the embeddings capture cross-lingual semantic similarities.</li>
+<li><strong>Emergent Abilities:</strong> At sufficient scale, LLMs exhibit abilities not explicitly trained for — reasoning, code generation, translation, summarization — emerging purely from the next-token prediction objective.</li>
+</ul>
+
+<h2 class="section-title">Cost and Environmental Considerations</h2>
+
+<div class="warning-box"><strong>Caution:</strong>
+
+<p>Training and running LLMs has significant costs:</p>
+
+<ul>
+<li><strong>Financial:</strong> GPU clusters (NVIDIA H100 at ~&#36;30,000–&#36;40,000 each; A100 at ~&#36;10,000–&#36;12,000 each). Cloud API access via pay-as-you-go (~&#36;20/month for individual use; enterprise costs much higher).</li>
+<li><strong>Environmental:</strong> Training a large model can emit as much CO\(_2\) as multiple transatlantic flights. Inference (serving millions of users) is an ongoing energy drain.</li>
+<li><strong>Interpretability:</strong> Near-zero — even the engineers who build these models cannot fully explain why a specific output was generated.</li>
+</ul>
+
+</div>
+
+<div class="important-note"><strong>Note:</strong>
+
+<p>This is an active area of research: <strong>Green AI</strong>, <strong>Small Language Models</strong> (SLMs), <strong>quantization</strong>, <strong>distillation</strong>, and <strong>parameter-efficient fine-tuning</strong> (PEFT) all aim to reduce these costs while retaining performance. These will be explored in advanced NLP courses.</p>
+
+</div>
+
+<h2 class="section-title">Connection to Perplexity</h2>
+
+<p>LLMs are evaluated using the same <strong>perplexity</strong> metric we studied in Chapter 1. A well-trained LLM achieves very low perplexity on standard benchmarks:</p>
+
+<ul>
+<li>Poor model: PPL \(\approx\) 100–400</li>
+<li>Traditional neural LM: PPL \(\approx\) 30–80</li>
+<li>State-of-the-art LLM: PPL \(\approx\) 5–20 (on in-domain text)</li>
+</ul>
+
+<div class="key-concept"><strong>Key Concept:</strong>
+
+<p>The journey from \(n\)-gram models (PPL \(\approx\) 100–400) to modern LLMs (PPL \(\approx\) 5–20) represents decades of progress — but all evaluated by the <strong>same metric</strong>: lower perplexity = better language modeling.</p>
+
+</div>
+
+<h2 class="section-title">Looking Ahead</h2>
+
+<p>In the post-midterm portion of this course, we will dive deeper into:</p>
+
+<ul>
+<li><strong>Contextual Word Embeddings:</strong> How words get different embeddings depending on context (e.g., "bank" of a river vs. "bank" as a financial institution).</li>
+<li><strong>The Transformer Architecture:</strong> Self-attention, multi-head attention, positional encoding, the "Attention Is All You Need" paper.</li>
+<li><strong>BERT, GPT, and Beyond:</strong> How the two dominant paradigms (encoder-only vs. decoder-only) work.</li>
+</ul>
+
+<h1 class="chapter-title">Quick Reference: Key Formulas</h1>
+
+<div style="text-align: center;">
+
+<table>
+<tr>
+  <th><strong>Concept</strong></th>
+  <th><strong>Formula</strong></th>
+</tr>
+<tr>
+  <td>Language Model Probability (chain rule)</td>
+  <td>\(P(w_1, \ldots, w_N) = \prod_{i=1}^{N} P(w_i \mid w_1, \ldots, w_{i-1})\)</td>
+</tr>
+<tr>
+  <td>Perplexity</td>
+  <td>\(\text{PPL} = P(w_1, \ldots, w_N)^{-\frac{1}{N}} = \sqrt[N]{\frac{1}{P(w_1,\ldots,w_N)}}\)</td>
+</tr>
+<tr>
+  <td>Sigmoid</td>
+  <td>\(\sigma(z) = \dfrac{1}{1 + e^{-z}}\)</td>
+</tr>
+<tr>
+  <td>Sigmoid Derivative</td>
+  <td>\(\sigma'(z) = \sigma(z)(1 - \sigma(z))\)</td>
+</tr>
+<tr>
+  <td>Softmax</td>
+  <td>\(\text{softmax}(z_i) = \dfrac{e^{z_i}}{\sum_{j=1}^{V} e^{z_j}}\)</td>
+</tr>
+<tr>
+  <td>ReLU</td>
+  <td>\(\text{ReLU}(z) = \max(0, z)\)</td>
+</tr>
+<tr>
+  <td>Weighted Sum (single neuron)</td>
+  <td>\(z = \displaystyle\sum_{i} w_i x_i + b\)</td>
+</tr>
+<tr>
+  <td>Gradient Descent Update</td>
+  <td>\(w_{\text{new}} = w_{\text{old}} - \eta \cdot \dfrac{\partial \mathcal{L}}{\partial w}\)</td>
+</tr>
+<tr>
+  <td>Cross-Entropy Loss</td>
+  <td>\(\mathcal{L} = -\displaystyle\sum_{c} y_c \log(\hat{y}_c)\)</td>
+</tr>
+<tr>
+  <td>Mean Pooling (sentence embedding)</td>
+  <td>\(\text{sent} = \dfrac{1}{N}\displaystyle\sum_{i=1}^{N} \text{embed}(w_i)\)</td>
+</tr>
+<tr>
+  <td>Max Pooling (sentence embedding)</td>
+  <td>\(\text{sent}_j = \displaystyle\max_{i=1}^{N}\, \text{embed}(w_i)_j\)</td>
+</tr>
+</table>
+
+</div>
+
+<div style="text-align: center;">
+
+<p><span style="font-size: 1.25em; font-weight: bold; display: block;"><strong>End of Lecture 5 Notes</strong></span></p>
+
+<p><span style="font-size: 1.15em;">Topics covered:</span></p>
+
+<ul>
+<li>Evaluation of Language Models (Perplexity)</li>
+<li>Intrinsic vs. Extrinsic Evaluation</li>
+<li>Neural Network Foundations (Recap)</li>
+<li>Activation Functions (Sigmoid, Softmax, ReLU, Tanh)</li>
+<li>Feedforward & Backpropagation</li>
+<li>Neural Language Modeling Architecture</li>
+<li>Sentence Embeddings (Mean & Max Pooling)</li>
+<li>\(n\)-gram vs. Neural LM Comparison</li>
+<li>Introduction to Large Language Models</li>
+</ul>
+
+<p><small><em>Next: Large Language Models in detail, Contextual Word Embeddings, and the Transformer architecture (post-midterm)</em></small></p>
+
+</div>
+
+
+
+
+
+
+
+
+
+
+    </main>
+    <section class="quiz-section">
+      <h2>Test Your Knowledge</h2>
+      
+    <div id="quiz-card-0" class="quiz-card" data-correct-index="1">
+      <p class="quiz-question">Q: What is the primary purpose of 'Back-off' in N-gram language modelling?</p>
+      <div class="quiz-options">
+      <button id="quiz-0-option-0" class="quiz-option" onclick="checkAnswer(this, 0)">To remove the lowest frequency words from the vocabulary.</button>
+      <button id="quiz-0-option-1" class="quiz-option" onclick="checkAnswer(this, 1)">To substitute high-gram predictions with lower-gram data when counts are zero.</button>
+      <button id="quiz-0-option-2" class="quiz-option" onclick="checkAnswer(this, 2)">To increase the computational performance of GPUs.</button>
+      <button id="quiz-0-option-3" class="quiz-option" onclick="checkAnswer(this, 3)">To inherently evaluate perplexity accurately.</button>
+      </div>
+      <div class="quiz-explanation hidden"><strong>Explanation:</strong> When a higher-order N-gram (like a trigram) has zero occurrences, the model 'backs off' to check the bigram, and then the unigram probability instead.</div>
+    </div>
+
+    </section>
+  </div>
+  <script>
+    function checkAnswer(button, optionIndex) {
+      const card = button.closest('.quiz-card');
+      if (card.dataset.answered === "true") return;
+      card.dataset.answered = "true";
+      const correctIndex = parseInt(card.dataset.correctIndex);
+      const options = card.querySelectorAll('.quiz-option');
+      options.forEach((opt, idx) => {
+        opt.disabled = true;
+        if (idx === correctIndex) opt.classList.add('correct');
+        else if (idx === optionIndex) opt.classList.add('incorrect');
+      });
+      const explanation = card.querySelector('.quiz-explanation');
+      if (explanation) { explanation.classList.remove('hidden'); explanation.classList.add('fade-in'); }
+    }
+  </script>
+</body>
+</html>
