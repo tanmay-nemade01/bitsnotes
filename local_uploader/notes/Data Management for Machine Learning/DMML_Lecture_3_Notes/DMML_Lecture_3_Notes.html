@@ -231,8 +231,28 @@
 <ul>
 <li><strong>Record Linkage / Entity Resolution:</strong> Uses similarity metrics (Jaro-Winkler, Levenshtein distance, Soundex phonetic encoding, TF-IDF cosine similarity) to score pairs of records and probabilistically determine if they represent the same entity.</li>
 <li><strong>Deduplication Libraries:</strong> Python libraries like <code>dedupe</code>, <code>recordlinkage</code>, and <code>fuzzymatcher</code> provide implementations of these algorithms with active learning components (the system asks a human to label ambiguous pairs).</li>
-</ul>
-<!-- ============================================================ -->
+</ul><div class="example-box">
+<h4>Deduplicating Records in SQL</h4>
+<p>In warehouse pipelines, duplicates can arise from overlapping incremental ingestions, backfill overlaps, or source system bugs. Two common SQL approaches are used after data is loaded:</p>
+<p><strong>Method 1 — DISTINCT + Truncate + Re-insert:</strong></p>
+<pre><code>CREATE TABLE distinct_orders AS
+SELECT DISTINCT OrderId, OrderStatus, LastUpdated FROM Orders;
+TRUNCATE TABLE Orders;
+INSERT INTO Orders SELECT * FROM distinct_orders;
+DROP TABLE distinct_orders;</code></pre>
+<p><strong>Method 2 — Window Function (ROW_NUMBER):</strong></p>
+<pre><code>-- Assign row numbers to each group of duplicates
+CREATE TABLE all_orders AS
+SELECT OrderId, OrderStatus, LastUpdated,
+  ROW_NUMBER() OVER(PARTITION BY OrderId, OrderStatus, LastUpdated) AS dup_count
+FROM Orders;
+
+TRUNCATE TABLE Orders;
+INSERT INTO Orders (OrderId, OrderStatus, LastUpdated)
+SELECT OrderId, OrderStatus, LastUpdated FROM all_orders WHERE dup_count = 1;
+DROP TABLE all_orders;</code></pre>
+<p>The <code>ROW_NUMBER()</code> window function approach is more flexible — it works even when only partial columns define a duplicate, and the <code>dup_count > 1</code> filter lets you inspect which rows were removed. Both methods assume the duplicate removal is a post-load transformation (part of the ELT pattern).</p>
+</div><!-- ============================================================ -->
 <!-- SECTION 4: HANDS-ON PYTHON -->
 <!-- ============================================================ -->
 <h2 class="section-title">4. Hands-On: Data Cleaning with Python (pandas)</h2>
@@ -320,6 +340,19 @@ print("Cleaned &amp; Preprocessed Data:\n", df)</code></pre>
 </tbody>
 </table>
 <p>The <strong>key philosophical difference</strong> between ETL and ELT is about where and when computation happens. In ETL, an intermediary ETL server bears the computational burden — meaning you need to provision, scale, and maintain that infrastructure. In ELT, the target cloud data warehouse (which already has elastic, massively parallel compute) does the heavy lifting. This is why ELT dominates cloud-native architectures: it eliminates a whole class of infrastructure and allows transformations to be expressed in SQL, leveraging decades of query optimization research.</p>
+<h4>Why ELT Won: The Columnar Storage Revolution</h4>
+<p>The shift from ETL to ELT is inseparable from the shift in how modern warehouses store data. Traditional OLTP databases (MySQL, PostgreSQL) use <strong>row-oriented storage</strong>: all columns of a single row are stored together on disk. This is optimal when an application reads or writes entire rows — e.g., displaying an order confirmation page that needs every field of a single order. However, analytical queries typically scan only a few columns across millions of rows (e.g., <code>SUM(OrderTotal)</code> filtered by <code>CustomerActive = true</code>). A row-oriented store must read every column of every row from disk, discarding most of the data.</p>
+<p>Modern cloud warehouses (Snowflake, Redshift, BigQuery) use <strong>column-oriented storage</strong>: all values of a single column are stored together in contiguous disk blocks. This has three transformative advantages for analytics:</p>
+<ol>
+<li><strong>Reduced I/O:</strong> Only the columns referenced in a query are read from disk — blocks containing unneeded columns are skipped entirely.</li>
+<li><strong>Superior Compression:</strong> Values within a single column share the same data type and often repeat (e.g., country names), enabling highly efficient compression (dictionary encoding, run-length encoding). A typical compression ratio of 10:1 effectively multiplies both disk and network throughput by 10×.</li>
+<li><strong>Vectorized Processing:</strong> Since a column block contains homogeneous data types, the CPU can process values using SIMD (Single Instruction, Multiple Data) instructions, dramatically accelerating aggregations.</li>
+</ol>
+<p>Because columnar warehouses can both <em>store</em> and <em>transform</em> large datasets efficiently, it became practical to load raw data first (the "L" in ELT) and transform it later using SQL inside the warehouse — the compute is already there, and the storage is cheap. This is the technical foundation on which the entire ELT paradigm rests.</p>
+<div class="important-note">
+<h4>The EtLT Sub-Pattern</h4>
+<p>In practice, many ELT pipelines include a small amount of non-contextual transformation <em>between</em> extraction and loading — this is the <strong>EtLT</strong> sub-pattern (lowercase "t" for lightweight transforms). Examples of these lowercase-t transforms include: deduplicating records, parsing URL parameters into structured columns, masking sensitive PII fields before they enter the warehouse, and standardizing date formats. These transforms are best done before loading because: (a) they are often easier in Python than in SQL, and (b) addressing data quality issues as early as possible in the pipeline prevents downstream analysts from tripping over raw quality problems. Business-logic transformations (the capital "T") remain in the warehouse, written in SQL by data analysts.</p>
+</div>
 <div class="example-box">
 <h4>Real-World Example: Banking ETL Pipeline</h4>
 <p>A mainframe system at a bank pushes nightly transaction data to a staging area. An ETL job (historically written in Informatica, COBOL, or Python) extracts the data at 11 PM, transforms it (cleans data, aggregates individual transactions into daily summaries, standardizes branch codes, applies business rules for regulatory compliance), and loads the processed data into an Oracle data warehouse by 6 AM. Business analysts query the warehouse during the day for next-day reporting.</p>
@@ -330,12 +363,17 @@ print("Cleaned &amp; Preprocessed Data:\n", df)</code></pre>
 <li><strong>Stream Processing Pipelines</strong> — Process data in real time as it arrives, typically within milliseconds to seconds. Built on distributed streaming platforms: <strong>Apache Kafka</strong> (distributed event log for ingestion), <strong>Apache Flink</strong> or <strong>Spark Streaming</strong> (for stateful stream processing with exactly-once semantics). Use cases: real-time fraud detection, live dashboards, IoT sensor monitoring, algorithmic trading. The <strong>Lambda Architecture</strong> (see Section 6.4) combines stream processing with batch processing to get both speed and accuracy.</li>
 <li><strong>Batch Pipelines</strong> — Process large volumes of data on a scheduled cadence (hourly, nightly, weekly). The workhorse of traditional data warehousing. Technologies: Apache Spark, Apache Hive, AWS Glue, Google Dataflow (batch mode). Batch remains essential when: (a) the business question requires full historical context (e.g., monthly financial close), (b) the data source itself is batch-oriented (e.g., a daily file dump from a mainframe), or (c) the computational cost of incremental updates outweighs the benefit of freshness.</li>
 <li><strong>Zero ETL</strong> — An emerging paradigm where cloud providers create direct, managed integrations between source systems and target warehouses without the user writing or maintaining transformation code. For example: AWS's Zero-ETL integration between Aurora (OLTP database) and Redshift (OLAP warehouse) continuously replicates data with near-real-time latency. Similarly, Snowflake's <em>Dynamic Tables</em> and <em>Snowpipe Streaming</em> move toward declarative, low-code pipeline definitions. <strong>Caveat:</strong> Zero ETL does not mean zero transformation — it means the platform manages the extraction and loading, but business logic transformations still need to be defined (usually as SQL views or dbt models in the warehouse).</li>
+<li><strong>Reverse ETL</strong> — An emerging pattern where processed data from the data warehouse is pushed <em>back</em> into operational systems and SaaS platforms. For example, a marketing analyst calculates customer segments and propensity scores in the warehouse, then pushes those scores back into the CRM (Salesforce), ad platform (Google Ads), or customer data platform (Hightouch, Census) to drive personalized campaigns. Reverse ETL closes the loop between analytics and action — data that has been cleaned, aggregated, and enriched in the warehouse becomes a direct input to operational decision-making. Without reverse ETL, valuable analytical insights remain trapped in the warehouse, disconnected from the systems where they could generate immediate business value.</li>
 </ul>
 <!-- ============================================================ -->
 <!-- SECTION 6: DATA ARCHITECTURE CATEGORIZATION -->
 <!-- ============================================================ -->
 <h2 class="section-title">6. Data Architecture: Categorization</h2>
 <p>Data architecture defines <strong>how data is ingested, stored, transformed, and served</strong> along the data engineering lifecycle. It addresses functional requirements related to <strong>people</strong> (who owns, accesses, and governs data), <strong>process</strong> (what workflows, SLAs, and quality checks exist), and <strong>technology</strong> (what tools, platforms, and infrastructure implement the architecture).</p>
+<div class="important-note">
+<h4>Data Architecture in the Enterprise Context</h4>
+<p>Data architecture is a <em>subset</em> of enterprise architecture. Enterprise architecture itself has four pillars: business architecture (strategy, governance, key processes), data architecture (logical and physical data assets), application architecture (blueprint of applications and their interactions), and technology architecture (hardware and software capabilities). A key insight from the textbook is that <strong>good data architecture is the design of systems to support the evolving data needs of an enterprise, achieved by flexible and reversible decisions reached through careful evaluation of trade-offs</strong>. This means architects should favor two-way-door decisions (easily reversible) over one-way-door decisions (nearly impossible to reverse). Two principles from the AWS Well-Architected Framework that are especially relevant: (1) <strong>Plan for failure</strong> — everything fails, all the time; design for availability, reliability, RTO (Recovery Time Objective), and RPO (Recovery Point Objective); and (2) <strong>Architect for scalability</strong> — scalable systems can both scale up to handle spikes and scale down (or even scale to zero) to save costs.</p>
+</div>
 <p>The lecture organizes data architectures along four independent dimensions. Any real-world system can be classified on each of these axes simultaneously — they are not mutually exclusive categories.</p>
 <h3 class="subsection-title">6.1 Categorization by Centralization</h3>
 <p>This dimension describes the organizational ownership and control model for data.</p>
@@ -424,6 +462,16 @@ print("Cleaned &amp; Preprocessed Data:\n", df)</code></pre>
 <li><strong>Slowly Changing Dimensions (SCDs):</strong> Tracking how dimension attributes change over time (e.g., a customer changes address — do we overwrite the old address or create a new versioned record?). SCD Type 1 (overwrite), Type 2 (add new row with effective dates), and Type 3 (add new column for previous value) are fundamental warehouse design patterns.</li>
 </ul>
 <p>Time is the <em>one dimension present in every data warehouse</em>. The time dimension table is typically the most heavily indexed and most frequently joined table in the warehouse.</p>
+<h4>Data Temperatures and Storage Tiering</h4>
+<p>Not all warehouse data is accessed equally. Data engineers must think in terms of <strong>data temperatures</strong> — a framework for matching storage cost to access frequency:</p>
+<ul>
+<li><strong>Hot data</strong> is accessed frequently (multiple times per day or even per second) and must be stored on the fastest, most expensive tier. In a warehouse context, this is the most recent 30–90 days of fact data and all active dimension tables. SSD-backed storage is typical.</li>
+<li><strong>Lukewarm data</strong> is accessed occasionally (weekly or monthly) and can tolerate slightly higher latency. Historical fact data from the past 1–2 years often falls here. Cloud warehouses offer tiered storage classes (e.g., Snowflake's standard vs. auto-suspend warehouses) that reduce cost for infrequent access.</li>
+<li><strong>Cold data</strong> is seldom queried and is retained primarily for compliance, legal hold, or audit purposes. In cloud environments, vendors offer archival tiers (e.g., S3 Glacier Deep Archive at ~$0.004/GB/month with ~12-hour retrieval) that dramatically reduce storage costs at the expense of retrieval latency.</li>
+</ul>
+<p>Managing data temperatures is a key cost optimization strategy. Lifecycle policies automatically transition objects between tiers based on age or access patterns — this is especially important for data lakes backed by object storage (S3, ADLS Gen2, GCS).</p>
+<h4>Object Storage as the Foundation</h4>
+<p>Modern data warehouses and data lakes share a common storage foundation: <strong>object storage</strong> (Amazon S3, Azure Blob Storage, Google Cloud Storage). Object stores are key-value stores for immutable data objects — objects are written once and cannot be modified in place; to update data, a full rewrite is required. This limitation is actually an advantage at scale: immutable objects eliminate the need for locks and change synchronization, enabling parallel reads across thousands of disks. Object stores also provide built-in data durability by replicating across multiple availability zones. Cloud data warehouses like Snowflake and BigQuery use object storage as their physical storage layer, while the query engine sits on top as an independent, elastic compute layer — this is the <strong>separation of compute and storage</strong> principle that makes cloud warehouses both scalable and cost-efficient.</p>
 </li>
 </ol>
 <h3 class="subsection-title">7.1 Data Warehouse (OLAP) vs. Operational Database (OLTP)</h3>
@@ -527,7 +575,41 @@ print("Cleaned &amp; Preprocessed Data:\n", df)</code></pre>
 <tr><td><strong>Use When</strong></td><td>Query performance is the priority; dimension tables are small relative to fact table</td><td>Storage is constrained; dimension tables are large and have deep hierarchies; data integrity is paramount</td></tr>
 </tbody>
 </table>
-<h3 class="subsection-title">8.3 Qualitative vs. Quantitative Data in Schema Design</h3>
+<h3 class="subsection-title">8.3 Slowly Changing Dimensions (SCDs)</h3>
+<p>In real-world warehouses, dimension attributes change over time: a customer relocates, a product is re-categorized, a store is renamed. How the warehouse handles these changes has a profound impact on historical accuracy. The standard approach, defined in Kimball dimensional modeling, uses <strong>Slowly Changing Dimensions (SCDs)</strong>:</p>
+<ul>
+<li><strong>SCD Type 1 — Overwrite:</strong> The old value is simply replaced with the new value. History is lost. Use when the old value has no analytical significance (e.g., correcting a typo in a product name). Simplest to implement but destroys historical context.</li>
+<li><strong>SCD Type 2 — Add New Row:</strong> A new versioned row is added with an effective date range (<code>ValidFrom</code> and <code>Expired</code> dates). The current record uses a far-future expiry date (e.g., <code>2199-12-31</code>). This preserves full history: queries can reconstruct the state of any dimension at any point in time. It is the most commonly used SCD type and the most space-intensive.</li>
+<li><strong>SCD Type 3 — Add New Column:</strong> A column is added for the previous value (e.g., <code>PreviousCountry</code>). Only one level of history is preserved. Useful when you need to compare current vs. previous values but do not need the full history chain.</li>
+</ul>
+<div class="example-box">
+<h4>SCD Type 2 Example</h4>
+<p>Customer Jane (ID 100) moved from the USA to the UK on June 20, 2020. Her Type 2 dimension records would be:</p>
+<table>
+<thead><tr><th>CustomerID</th><th>Name</th><th>Country</th><th>ValidFrom</th><th>Expired</th></tr></thead>
+<tbody>
+<tr><td>100</td><td>Jane</td><td>USA</td><td>2019-05-01</td><td>2020-06-20</td></tr>
+<tr><td>100</td><td>Jane</td><td>UK</td><td>2020-06-20</td><td>2199-12-31</td></tr>
+</tbody>
+</table>
+<p>When joining the SCD with the Orders fact table, the join includes a date range condition: <code>o.OrderDate BETWEEN c.ValidFrom AND c.Expired</code>. This ensures each order is attributed to the country where Jane lived <em>at the time of the order</em>, not her current country — a critical distinction for accurate historical analysis.</p>
+<pre><code>SELECT o.OrderId, o.OrderDate, c.CustomerName, c.CustomerCountry
+FROM Orders o
+INNER JOIN Customers_scd c
+  ON o.CustomerId = c.CustomerId
+    AND o.OrderDate BETWEEN c.ValidFrom AND c.Expired
+ORDER BY o.OrderDate;</code></pre>
+</div>
+<h3 class="subsection-title">8.4 Modeling Terms for Dimensional Design</h3>
+<p>When building data models in an ELT pipeline, the following terms are foundational:</p>
+<ul>
+<li><strong>Measures:</strong> Quantities you want to compute — counts of customers, sums of revenue, averages of order value. Measures are the numeric columns in a fact table that are aggregated by SQL functions like <code>SUM()</code>, <code>AVG()</code>, <code>COUNT()</code>.</li>
+<li><strong>Attributes:</strong> Descriptive columns by which you filter or group — dates, customer names, countries, product categories. Attributes live in dimension tables.</li>
+<li><strong>Granularity:</strong> The level of detail in a fact table. A daily-granularity model stores one row per day per dimension combination; an hourly-granularity model stores one row per hour. <strong>Rule of thumb:</strong> pick the finest granularity required by the business questions, but no finer — unnecessary granularity inflates storage and query times. If your dashboard only needs monthly summaries, daily granularity adds 30× the rows for no benefit.</li>
+<li><strong>Source Tables:</strong> Raw tables loaded into the warehouse via data ingestion (the E and L of ELT). Data models are built <em>on top of</em> source tables — they are transformed, joined, aggregated views of source data.</li>
+<li><strong>Point-in-Time (PIT) Joins:</strong> When joining incrementally ingested data (which contains historical versions of entities) with fact tables, you must find the version of the entity that was valid at the time of the fact event. This is the "point-in-time" join pattern: <code>MAX(updated_at) WHERE updated_at ≤ order_date</code>. It ensures historical accuracy in reporting.</li>
+</ul>
+<h3 class="subsection-title">8.5 Qualitative vs. Quantitative Data in Schema Design</h3>
 <p>This distinction is the key to correctly classifying attributes in dimensional models:</p>
 <ul>
 <li><strong>Qualitative (Descriptive / Categorical):</strong> Attributes that describe <em>what</em> something is, not <em>how much</em>. These belong in <strong>dimension tables</strong>. Examples: product name, customer city, color, category, brand, store type, payment method, employee department. Qualitative attributes answer “who, what, where, when, and why” questions. While you can count them (e.g., “how many products are in the Electronics category?”), you cannot meaningfully average or sum the category itself.</li>
@@ -647,8 +729,8 @@ print("Cleaned &amp; Preprocessed Data:\n", df)</code></pre>
 <li><strong>Document &amp; Content Management</strong> — Controlling the capture, storage, access, and use of unstructured data and information (documents, images, PDFs, emails, web content) stored outside relational databases.</li>
 <li><strong>Reference &amp; Master Data</strong> — Managing shared data to reduce redundancy and ensure consistency through standardized definition and use of data values. This is where MDM (covered in Section 10) formally sits within the DMBOK framework.</li>
 <li><strong>Data Warehousing &amp; Business Intelligence</strong> — Planning, implementation, and control processes to provide historical, analytical data for decision support. Covers warehouse architecture, dimensional modeling, BI tooling, and OLAP.</li>
-<li><strong>Metadata Management</strong> — Planning, implementation, and control activities to enable easy access to high-quality, integrated metadata. Metadata is “data about data”: technical metadata (schemas, data types, lineage), business metadata (definitions, glossaries, ownership), and operational metadata (job run times, error logs, data freshness).</li>
-<li><strong>Data Quality</strong> — Planning, implementation, and control activities to ensure data is fit for purpose. This is the knowledge area that operationalizes the GIGO principle: defining quality dimensions (accuracy, completeness, consistency, timeliness, uniqueness, validity), measuring them, profiling data, and implementing data quality improvement processes.</li>
+<li><strong>Metadata Management</strong> — Planning, implementation, and control activities to enable easy access to high-quality, integrated metadata. Metadata is "data about data" and falls into four categories: <strong>business metadata</strong> (definitions, data owners, how and where data is used), <strong>technical metadata</strong> (schemas, data lineage, pipeline workflows, field mappings), <strong>operational metadata</strong> (job IDs, run statistics, error logs, data volumes processed), and <strong>reference metadata</strong> (lookup data used to classify other data: geographic codes, currency codes, internal calendar standards). Metadata underpins every stage of the data engineering lifecycle — it is the key to discoverability, governance, and automation.</li>
+<li><strong>Data Quality</strong> — Planning, implementation, and control activities to ensure data is fit for purpose. This is the knowledge area that operationalizes the GIGO principle: defining quality dimensions (accuracy, completeness, consistency, timeliness, uniqueness, validity), measuring them, profiling data, and implementing data quality improvement processes. The textbook identifies three core characteristics of data quality: <strong>Accuracy</strong> (is the data factually correct? are there duplicates? are numeric values precise?), <strong>Completeness</strong> (do all required fields contain valid values? are records complete?), and <strong>Timeliness</strong> (are records available when needed? how stale is the data?). Data quality management involves assigning <strong>data accountability</strong> — an individual (not necessarily a data engineer) who coordinates governance activities and is responsible for a specific portion of data (e.g., a table, a data domain, or even a single field entity across many systems).</li>
 </ol>
 <p>These 11 knowledge areas are not independent silos — they form an interconnected ecosystem. For example, a Data Quality (11) initiative may discover pervasive inconsistency in customer names, triggering a Master Data (8) project, which requires updates to the Data Architecture (2) and Data Modeling (3), all governed by the policies set by Data Governance (1).</p>
 <h3 class="subsection-title">11.2 TOGAF (The Open Group Architecture Framework)</h3>
@@ -757,12 +839,24 @@ recommendations.</code></pre>
 <h4>The Data Engineering Lifecycle</h4>
 <p>The following stages represent the complete journey of data from source to consumption. This lifecycle is not strictly linear — it is iterative and cyclical, with feedback loops at every stage.</p>
 <ol>
-<li><strong>Data Generation / Ingestion</strong> — Data arrives from source systems: operational databases (CDC logs, query-based extraction), APIs (REST, GraphQL), IoT sensors and device streams, log files, third-party data feeds, and manual uploads. The ingestion layer must handle both batch (scheduled) and streaming (real-time) modes.</li>
-<li><strong>Data Storage</strong> — Raw data lands in its destination: data lake (object storage for raw files), staging area (temporary landing zone for ETL processing), or data warehouse (if using ELT). Storage decisions (partitioning, file format, compression) made here affect the performance of all downstream stages.</li>
+<li><strong>Data Generation / Ingestion</strong> — Data arrives from source systems: operational databases (CDC logs, query-based extraction), APIs (REST, GraphQL), IoT sensors and device streams, log files, third-party data feeds, and manual uploads. The ingestion layer must handle both batch (scheduled) and streaming (real-time) modes. An important distinction: the <strong>data engineering lifecycle</strong> (what data engineers control) is a <em>subset</em> of the full data lifecycle (which includes business decision-making, analysis, and model deployment that data engineers support but don't own).</li>
+<li><strong>Data Storage</strong> — Raw data lands in its destination: data lake (object storage for raw files), staging area (temporary landing zone for ETL processing), or data warehouse (if using ELT). Storage decisions (partitioning, file format, compression) made here affect the performance of all downstream stages. Importantly, storage is not a single stage — it occurs <em>throughout</em> the lifecycle. Cloud warehouses can simultaneously store data, process it in pipelines, and serve it to analysts. Choosing a storage solution involves evaluating: read/write speed compatibility, downstream bottleneck potential, schema enforcement model (schema-agnostic, flexible schema, or enforced schema), and metadata capture (schema evolution, data lineage, data flow tracking).</li>
 <li><strong>Data Transformation</strong> — The “T” in ETL or ELT: cleaning, enrichment (joining with reference data), aggregation (rolling up transactions to daily summaries), schema alignment (mapping source schemas to target dimensional models), and business logic application. This is where raw data becomes analytics-ready data.</li>
-<li><strong>Data Serving</strong> — Data is made available to consumers: BI dashboards (Power BI, Tableau), data science notebooks (Jupyter, Colab), ML feature stores (for model training and inference), operational applications via APIs, and data sharing/exchange with external partners.</li>
+<li><strong>Data Serving</strong> — Data is made available to consumers: BI dashboards (Power BI, Tableau), data science notebooks (Jupyter, Colab), ML feature stores (for model training and inference), operational applications via APIs, and data sharing/exchange with external partners. The serving stage distinguishes three types of analytics: <strong>Business Intelligence (BI)</strong> describes the past and current state of the business using reports and dashboards; <strong>Operational Analytics</strong> focuses on fine-grained operational details with real-time data (e.g., live inventory, application health dashboards); and <strong>Embedded Analytics</strong> delivers customer-facing analytics within SaaS products, requiring sophisticated multi-tenancy and access control to prevent data leakage between customers.</li>
 </ol>
 <p><strong>Underpinning the entire lifecycle:</strong> Security (authentication, authorization, encryption, auditing), Data Governance (policies, standards, stewardship), DataOps (CI/CD for data pipelines, testing, monitoring), Orchestration (Apache Airflow, Prefect, Dagster for scheduling and dependency management), and Monitoring (data quality alerts, pipeline health, SLA tracking, cost governance).</p>
+<h4>The Six Undercurrents of Data Engineering</h4>
+<p>The textbook identifies six foundational practices — "undercurrents" — that cut across every stage of the data engineering lifecycle. No stage can function adequately without them:</p>
+<ol>
+<li><strong>Security:</strong> Exercise the <em>principle of least privilege</em> — give users and systems access to only the essential data and resources needed for their function. Data engineers must understand IAM roles, policies, network security, and encryption. Security is not just a technology concern — the biggest vulnerabilities are people (phishing, social engineering). A culture of security must permeate the organization.</li>
+<li><strong>Data Management:</strong> The set of best practices (governed by frameworks like DAMA DMBOK) that data engineers use to manage the data lifecycle. As tools become simpler and more abstracted, data engineers move up the value chain from pure technology to strategic data management practices.</li>
+<li><strong>DataOps:</strong> Applying DevOps principles to data — continuous integration, testing, monitoring, and deployment of data pipelines. DataOps ensures pipelines are reliable, observable, and maintainable.</li>
+<li><strong>Data Architecture:</strong> The design of systems that support the evolving data needs of the enterprise (explored in detail in Section 6).</li>
+<li><strong>Orchestration:</strong> The coordination of complex workflows across multiple systems — scheduling pipeline runs, managing dependencies between tasks, handling retries and failures, and providing visibility into pipeline execution status.</li>
+<li><strong>Software Engineering:</strong> Data engineers write code (SQL, Python, Scala) that is deployed, tested, versioned, and maintained like any software. Applying software engineering best practices — version control, code review, testing, CI/CD — to data code is essential for production reliability.</li>
+</ol>
+<h4>The Source Systems Perspective</h4>
+<p>A critical but often overlooked aspect of the lifecycle is <strong>source systems</strong> — the origin of data. Data engineers typically <em>consume</em> but do not <em>control</em> source systems. Key evaluation questions for source systems include: How is data persisted (long-term or temporary)? At what rate is data generated (events per second, GB per hour)? Will the data contain duplicates? Will some data arrive late? What is the schema, and how often does it change? Will reading from the source impact its performance? The answers to these questions directly shape ingestion strategy and pipeline design. The source systems and ingestion stages are typically the <em>most significant bottlenecks</em> in the data engineering lifecycle — unreliable sources have a ripple effect across all downstream stages.</p>
 </div>
 <div class="warning-box">
 <h4>⚠ Exam Tip</h4>
