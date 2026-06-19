@@ -1,7 +1,13 @@
 ---
 import BaseLayout from '../../layouts/BaseLayout.astro';
-import { env } from 'cloudflare:workers';
-import { listLectures, type LectureSummary } from '../../utils/r2Structure';
+import { listSubjects, listLectures, type LectureSummary } from '../../utils/notesLoader';
+
+export function getStaticPaths() {
+  const subjects = listSubjects();
+  return subjects.map((s) => ({
+    params: { subject: s.name },
+  }));
+}
 
 const { subject } = Astro.params;
 if (!subject) {
@@ -9,30 +15,7 @@ if (!subject) {
 }
 
 const decodedSubject = decodeURIComponent(subject);
-const bucket = env?.BUCKET;
-const kv = env?.SESSION;
-let lectures: LectureSummary[] = [];
-let errorMsg = '';
-let isDemoMode = false;
-
-if (bucket) {
-  try {
-    lectures = await listLectures(bucket as any, decodedSubject, kv as any);
-  } catch (error: any) {
-    errorMsg = `Failed to list lectures: ${error.message || error}`;
-    isDemoMode = true;
-  }
-} else {
-  isDemoMode = true;
-}
-
-if (lectures.length === 0 && (isDemoMode || import.meta.env.DEV)) {
-  isDemoMode = true;
-  lectures = ['Lecture 1', 'Lecture 2', 'Lecture 3', 'Lecture 4', 'Lecture 5'].map((name) => ({
-    name,
-    r2Prefix: `${decodedSubject}/${name}`,
-  }));
-}
+const lectures = listLectures(decodedSubject);
 
 // Generate CollectionPage and Course structured data schema
 const collectionPageSchema = {
@@ -49,7 +32,7 @@ const collectionPageSchema = {
   "hasPart": lectures.map((lecture, index) => ({
     "@type": "LearningResource",
     "name": lecture.name,
-    "url": new URL(`/view/${encodeURIComponent(decodedSubject)}/${encodeURIComponent(lecture.name)}`, 'https://bitsnotes.com').href,
+    "url": new URL(`/view/${encodeURIComponent(decodedSubject)}/${encodeURIComponent(lecture.folderName)}`, 'https://bitsnotes.com').href,
     "position": index + 1
   }))
 };
@@ -111,19 +94,6 @@ const seoKeywords = `${decodedSubject}, lecture notes, study guides, college cou
       </div>
     </div>
 
-    <!-- Error Alert -->
-    {errorMsg && (
-      <div class="mb-10 bg-rose-50 dark:bg-rose-950/20 border border-rose-200 dark:border-rose-900/50 rounded-2xl p-5 text-rose-800 dark:text-rose-300 flex items-start gap-3.5 shadow-sm">
-        <svg class="w-6 h-6 text-rose-600 shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"></path>
-        </svg>
-        <div>
-          <h3 class="font-bold text-rose-900 dark:text-rose-100 text-sm">Error Loading Lectures</h3>
-          <p class="text-xs text-rose-700 dark:text-rose-450 mt-1 leading-relaxed">{errorMsg}</p>
-        </div>
-      </div>
-    )}
-
     <!-- Lectures Section Header -->
     <div class="mb-6 flex items-center justify-between">
       <h2 class="text-lg font-bold text-slate-900 dark:text-white flex items-center gap-2">
@@ -140,15 +110,15 @@ const seoKeywords = `${decodedSubject}, lecture notes, study guides, college cou
           <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M20 13V6a2 2 0 00-2-2H6a2 2 0 00-2 2v7m16 0v5a2 2 0 01-2 2H6a2 2 0 01-2-2v-5m16 0h-2.586a1 1 0 00-.707.293l-2.414 2.414a1 1 0 01-.707.293h-3.172a1 1 0 01-.707-.293l-2.414-2.414A1 1 0 006.586 13H4"></path>
         </svg>
         <h3 class="mt-4 text-sm font-bold text-slate-900 dark:text-white">No lectures found</h3>
-        <p class="mt-1.5 text-xs text-slate-600 dark:text-slate-400">Upload HTML files into a subject subfolder using the uploader script.</p>
+        <p class="mt-1.5 text-xs text-slate-600 dark:text-slate-400">Add HTML note files into this subject's folder in src/content/notes/.</p>
       </div>
     ) : (
       <div id="lectures-grid" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6 animate-stagger">
-        {lectures.map(({ name: lectureName }, idx) => {
-          const viewPath = `/view/${encodeURIComponent(decodedSubject)}/${encodeURIComponent(lectureName)}`;
+        {lectures.map(({ name: lectureName, folderName }, idx) => {
+          const viewPath = `/view/${encodeURIComponent(decodedSubject)}/${encodeURIComponent(folderName)}`;
           return (
             <a
-              href={isDemoMode && errorMsg ? '#' : viewPath}
+              href={viewPath}
               target="_blank"
               rel="noopener noreferrer"
               data-lecture-name={lectureName.toLowerCase()}

@@ -7,7 +7,7 @@ import tailwindcss from '@tailwindcss/vite';
 
 // https://astro.build/config
 export default defineConfig({
-  output: 'server',
+  output: 'static',
   adapter: cloudflare(),
   build: {
     inlineStylesheets: 'always',
@@ -18,10 +18,5 @@ export default defineConfig({
     ssr: {
       external: ['cloudflare:email']
     },
-    server: {
-      watch: {
-        ignored: ['**/local_uploader/**']
-      }
-    }
   }
 });
