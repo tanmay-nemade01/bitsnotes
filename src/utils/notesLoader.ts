@@ -126,7 +126,8 @@ export function listLectures(subjectName: string): LectureSummary[] {
   return subjectNotes
     .map((note) => {
       const parts = note.htmlPath.split('/');
-      const fileName = parts[parts.length - 1];
+      const fileNameWithExt = parts[parts.length - 1];
+      const fileName = fileNameWithExt.replace(/\.html?$/i, '');
 
       return {
         name: fileName,
@@ -156,7 +157,8 @@ export function getLectureContent(subjectName: string, lectureFolderName: string
   }
 
   const parts = note.htmlPath.split('/');
-  const fileName = parts[parts.length - 1];
+  const fileNameWithExt = parts[parts.length - 1];
+  const fileName = fileNameWithExt.replace(/\.html?$/i, '');
 
   return {
     htmlContent: note.htmlContent,
