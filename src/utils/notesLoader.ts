@@ -24,6 +24,7 @@ export interface LectureSummary {
 export interface LectureContent {
   htmlContent: string;
   metadata: Record<string, any> | null;
+  fileName: string;
 }
 
 // ─── Static Glob Imports ─────────────────────────────────────────────────────
@@ -124,22 +125,11 @@ export function listLectures(subjectName: string): LectureSummary[] {
 
   return subjectNotes
     .map((note) => {
-      // Find companion json path
-      const jsonPath = note.htmlPath.replace(/\.html?$/i, '.json');
-      const companionJson = jsonFiles[jsonPath];
-
-      let displayName = folderToDisplayName(note.lectureFolder);
-      if (companionJson?.title) {
-        displayName = companionJson.title;
-      } else {
-        const metadata = extractEmbeddedMetadata(note.htmlContent);
-        if (metadata?.title) {
-          displayName = metadata.title;
-        }
-      }
+      const parts = note.htmlPath.split('/');
+      const fileName = parts[parts.length - 1];
 
       return {
-        name: displayName,
+        name: fileName,
         folderName: note.lectureFolder,
       };
     })
@@ -165,9 +155,13 @@ export function getLectureContent(subjectName: string, lectureFolderName: string
     metadata = extractEmbeddedMetadata(note.htmlContent);
   }
 
+  const parts = note.htmlPath.split('/');
+  const fileName = parts[parts.length - 1];
+
   return {
     htmlContent: note.htmlContent,
     metadata,
+    fileName,
   };
 }
 
