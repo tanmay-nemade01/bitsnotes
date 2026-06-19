@@ -1,15 +1,14 @@
 import type { APIRoute } from 'astro';
-import { env } from 'cloudflare:workers';
-import { listSubjects, listLectures } from '../utils/r2Structure';
+import { listSubjects, listLectures } from '../utils/notesLoader';
+
+export const prerender = false;
 
 /**
- * Dynamic SSR sitemap endpoint.
+ * Dynamic sitemap endpoint.
  * Lists all static and dynamic indexable public pages.
  */
 export const GET: APIRoute = async ({ url }) => {
   const baseUrl = `${url.protocol}//${url.host}`;
-  const bucket = env?.BUCKET;
-  const kv = env?.SESSION;
 
   // Pages to include in sitemap
   const pages = [
@@ -20,54 +19,23 @@ export const GET: APIRoute = async ({ url }) => {
     { path: '/terms',   changefreq: 'yearly',  priority: '0.4' },
   ];
 
-  if (bucket) {
-    try {
-      const subjects = await listSubjects(bucket as any, kv as any);
-      for (const subject of subjects) {
-        const subjectParam = encodeURIComponent(subject.name);
-        pages.push({
-          path: `/subject/${subjectParam}`,
-          changefreq: 'weekly',
-          priority: '0.8',
-        });
+  const subjects = listSubjects();
+  for (const subject of subjects) {
+    const subjectParam = encodeURIComponent(subject.name);
+    pages.push({
+      path: `/subject/${subjectParam}`,
+      changefreq: 'weekly',
+      priority: '0.8',
+    });
 
-        const lectures = await listLectures(bucket as any, subject.name, kv as any);
-        for (const lecture of lectures) {
-          const viewPath = `/view/${subjectParam}/${encodeURIComponent(lecture.name)}`;
-          pages.push({
-            path: viewPath,
-            changefreq: 'weekly',
-            priority: '0.8',
-          });
-        }
-      }
-    } catch (error) {
-      console.error('Failed to list subjects/lectures for sitemap:', error);
-    }
-  } else {
-    // Fallback/Demo Mode if Cloudflare R2 binding is not available (e.g. local dev)
-    const demoSubjects = [
-      { name: 'Deep Reinforcement Learning', lectures: ['Lecture 1', 'Lecture 2', 'Lecture 3', 'Lecture 4', 'Lecture 5'] },
-      { name: 'Machine Learning', lectures: ['Lecture 1', 'Lecture 2', 'Lecture 3', 'Lecture 4', 'Lecture 5'] },
-      { name: 'Computer Networks', lectures: ['Lecture 1', 'Lecture 2', 'Lecture 3', 'Lecture 4', 'Lecture 5'] },
-    ];
-
-    for (const subject of demoSubjects) {
-      const subjectParam = encodeURIComponent(subject.name);
+    const lectures = listLectures(subject.name);
+    for (const lecture of lectures) {
+      const viewPath = `/view/${subjectParam}/${encodeURIComponent(lecture.folderName)}`;
       pages.push({
-        path: `/subject/${subjectParam}`,
+        path: viewPath,
         changefreq: 'weekly',
         priority: '0.8',
       });
-
-      for (const lectureName of subject.lectures) {
-        const viewPath = `/view/${subjectParam}/${encodeURIComponent(lectureName)}`;
-        pages.push({
-          path: viewPath,
-          changefreq: 'weekly',
-          priority: '0.8',
-        });
-      }
     }
   }
 
