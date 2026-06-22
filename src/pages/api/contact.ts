@@ -6,8 +6,12 @@ export const prerender = false;
 
 export const POST: APIRoute = async ({ request }) => {
   try {
-    const body = await request.json();
-    const { name, email, subject, message, _website } = body;
+    const body = await request.json() as Record<string, unknown>;
+    const name = body.name as string | undefined;
+    const email = body.email as string | undefined;
+    const subject = body.subject as string | undefined;
+    const message = body.message as string | undefined;
+    const _website = body._website as string | undefined;
 
     // Honeypot: if a bot filled the hidden field, silently accept but don't send
     if (_website) {

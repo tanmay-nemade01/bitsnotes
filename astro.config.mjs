@@ -9,6 +9,10 @@ import tailwindcss from '@tailwindcss/vite';
 export default defineConfig({
   output: 'static',
   adapter: cloudflare(),
+  prefetch: {
+    prefetchAll: true,
+    defaultStrategy: 'hover',
+  },
   build: {
     inlineStylesheets: 'always',
   },
