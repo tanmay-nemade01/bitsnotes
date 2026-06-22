@@ -4,8 +4,12 @@ import { listSubjects, listLectures } from '../utils/notesLoader';
 export const prerender = false;
 
 /**
- * Dynamic sitemap endpoint.
- * Lists all static and dynamic indexable public pages.
+ * Dynamic sitemap endpoint (hand-rolled instead of @astrojs/sitemap).
+ *
+ * @astrojs/sitemap expects all routes to be known at build time via
+ * getStaticPaths, but this site has a server-rendered contact API and
+ * legacy redirect. The hand-rolled approach is simpler to maintain and
+ * avoids adding an extra dependency.
  */
 export const GET: APIRoute = async ({ url }) => {
   const baseUrl = `${url.protocol}//${url.host}`;

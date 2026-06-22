@@ -7,7 +7,15 @@ export const prerender = false;
 export const POST: APIRoute = async ({ request }) => {
   try {
     const body = await request.json();
-    const { name, email, subject, message } = body;
+    const { name, email, subject, message, _website } = body;
+
+    // Honeypot: if a bot filled the hidden field, silently accept but don't send
+    if (_website) {
+      return new Response(
+        JSON.stringify({ success: true }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } }
+      );
+    }
 
     // Validate inputs
     if (!name || !email || !subject || !message) {
@@ -17,9 +25,25 @@ export const POST: APIRoute = async ({ request }) => {
       );
     }
 
+    // Strip CRLF from header-injectable fields to prevent email header injection
+    const sanitize = (s: string) => s.replace(/[\r\n]/g, '').trim();
+
+    const safeName = sanitize(name).slice(0, 100);
+    const safeEmail = sanitize(email);
+    const safeSubject = sanitize(subject).slice(0, 150);
+    const safeMessage = (message || '').slice(0, 5000);
+
+    // Re-check after sanitization
+    if (!safeName || !safeEmail || !safeSubject || !safeMessage) {
+      return new Response(
+        JSON.stringify({ error: 'All fields (name, email, subject, message) are required.' }),
+        { status: 400, headers: { 'Content-Type': 'application/json' } }
+      );
+    }
+
     // Basic email format check
     const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-    if (!emailRegex.test(email)) {
+    if (!emailRegex.test(safeEmail)) {
       return new Response(
         JSON.stringify({ error: 'Please enter a valid email address.' }),
         { status: 400, headers: { 'Content-Type': 'application/json' } }
@@ -36,20 +60,20 @@ export const POST: APIRoute = async ({ request }) => {
       `Message-ID: ${messageId}`,
       `From: BitsNotes Contact Form <${sender}>`,
       `To: ${recipient}`,
-      `Reply-To: ${name} <${email}>`,
-      `Subject: [Contact Form] ${subject}`,
+      `Reply-To: ${safeName} <${safeEmail}>`,
+      `Subject: [Contact Form] ${safeSubject}`,
       `MIME-Version: 1.0`,
       `Content-Type: text/plain; charset=UTF-8`,
       ``,
       `You received a new message from the BitsNotes Contact Form:`,
       ``,
-      `Name: ${name}`,
-      `Email: ${email}`,
-      `Subject: ${subject}`,
+      `Name: ${safeName}`,
+      `Email: ${safeEmail}`,
+      `Subject: ${safeSubject}`,
       ``,
       `Message:`,
       `--------------------------------------------------`,
-      message,
+      safeMessage,
       `--------------------------------------------------`,
       ``,
       `Sent via BitsNotes Cloudflare Email Routing.`
@@ -62,10 +86,10 @@ export const POST: APIRoute = async ({ request }) => {
       console.log('--- [DEMO MODE] EMAIL TRANSMISSION SIMULATION ---');
       console.log(`From: ${sender}`);
       console.log(`To: ${recipient}`);
-      console.log(`Reply-To: ${name} <${email}>`);
-      console.log(`Subject: [Contact Form] ${subject}`);
+      console.log(`Reply-To: ${safeName} <${safeEmail}>`);
+      console.log(`Subject: [Contact Form] ${safeSubject}`);
       console.log('Body:');
-      console.log(message);
+      console.log(safeMessage);
       console.log('-------------------------------------------------');
 
       return new Response(
