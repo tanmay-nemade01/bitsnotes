@@ -11,7 +11,7 @@ export default defineConfig({
   adapter: cloudflare(),
   prefetch: {
     prefetchAll: true,
-    defaultStrategy: 'hover',
+    defaultStrategy: 'tap',
   },
   build: {
     inlineStylesheets: 'always',
