@@ -157,6 +157,7 @@ const quizJson = quizSchema ? JSON.stringify(quizSchema) : null;
     <script type="application/ld+json" set:html={learningResourceJson} />
     {quizJson && <script type="application/ld+json" set:html={quizJson} />}
     <script async src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js?client=ca-pub-2602136383267308" crossorigin="anonymous"></script>
+    <script defer src="/auth-features.js"></script>
   </Fragment>
 
   <div class="flex-grow w-full flex flex-col bg-[var(--bg)]">
@@ -227,10 +228,33 @@ const quizJson = quizSchema ? JSON.stringify(quizSchema) : null;
               ))}
             </nav>
 
+            <!-- Toolbar row: bookmark + notes toggle (always in DOM, shown by JS when logged in) -->
+            <div class="flex items-center justify-between mb-4">
+              <div class="flex items-center gap-2">
+                <button type="button" id="bn-bookmark-toggle"
+                  class="hidden items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium rounded-[var(--r-sm)] border border-[var(--border)] text-[var(--text-muted)] hover:border-[var(--accent)] hover:text-[var(--accent)] transition-colors"
+                  data-subject={subjectName}
+                  data-lecture={lectureFolderName}
+                  data-display-name={lectureName}
+                  data-bookmarked="false"
+                >
+                  <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/></svg>
+                  <svg class="w-3.5 h-3.5 hidden" fill="currentColor" viewBox="0 0 24 24"><path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/></svg>
+                  <span>Save</span>
+                </button>
+              </div>
+              <button type="button" id="bn-notes-toggle"
+                class="hidden items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium text-[var(--text-muted)] hover:text-[var(--text)] border border-[var(--border)] rounded-[var(--r-sm)] hover:border-[var(--border-strong)] transition-colors"
+              >
+                <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+                My Notes
+              </button>
+            </div>
+
             <!-- Tab panels -->
             <!-- Notes panel -->
             <div class="tab-panel active" id="panel-notes" role="tabpanel" aria-labelledby="tab-notes">
-              <div class="lecture-notes-wrapper">
+              <div class="lecture-notes-wrapper" id="lecture-content" data-subject={subjectName} data-lecture={lectureFolderName}>
                 <Fragment set:html={bodyContent} />
               </div>
             </div>
@@ -405,6 +429,19 @@ const quizJson = quizSchema ? JSON.stringify(quizSchema) : null;
               ) : <div class="flex-1"></div>}
             </div>
           </div>
+
+          <!-- ========== HIGHLIGHTS SIDEBAR (right, shown by JS when logged in) ========== -->
+          <aside id="bn-highlights-sidebar" class="hidden w-[260px] shrink-0 sticky top-20 max-h-[calc(100vh-100px)] overflow-y-auto border-l border-[var(--border)] pl-6" style="scrollbar-width:thin">
+            <div class="pb-3 mb-3 border-b border-[var(--border)] flex items-center justify-between">
+              <h3 class="text-xs font-bold text-[var(--text-muted)] uppercase tracking-wider">My Notes</h3>
+              <button type="button" id="bn-close-sidebar" class="text-[var(--text-faint)] hover:text-[var(--text)] transition-colors">
+                <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M6 18L18 6M6 6l12 12"/></svg>
+              </button>
+            </div>
+            <div id="bn-highlights-list" class="flex flex-col">
+              <p class="text-xs text-[var(--text-muted)] px-3 py-4">No highlights yet. Select text in the lecture to highlight it.</p>
+            </div>
+          </aside>
 
         </div>
       </div>
@@ -613,4 +650,76 @@ const quizJson = quizSchema ? JSON.stringify(quizSchema) : null;
     var explanation = card.querySelector('.quiz-explanation');
     if (explanation) { explanation.classList.remove('hidden'); explanation.classList.add('fade-in'); }
   };
+</script>
+
+<script is:inline data-astro-rerun>
+  // ===================== AUTH FEATURES (bookmarks, highlights, progress) =====
+  (function () {
+    var BN = window.BitsNotes;
+    if (!BN) return;
+
+    // Check if user is logged in by trying to fetch bookmarks list
+    fetch('/api/bookmarks/list', { credentials: 'same-origin' }).then(function (r) {
+      if (r.status === 401) return false;
+      return r.json().then(function () { return true; });
+    }).then(function (loggedIn) {
+      if (!loggedIn) return;
+
+      // Show bookmark + notes buttons
+      var bmBtn = document.getElementById('bn-bookmark-toggle');
+      var notesBtn = document.getElementById('bn-notes-toggle');
+      if (bmBtn) bmBtn.classList.remove('hidden');
+      if (notesBtn) notesBtn.classList.remove('hidden');
+
+      // Check bookmark state
+      if (bmBtn) {
+        BN.post('/api/bookmarks/list').then(function (data) {
+          if (!data || !data.bookmarks) return;
+          var subject = bmBtn.dataset.subject;
+          var lecture = bmBtn.dataset.lecture;
+          var allBookmarks = Object.values(data.bookmarks).flat();
+          var isBm = allBookmarks.some(function (b) { return b.subject === subject && b.lecture === lecture; });
+          bmBtn.dataset.bookmarked = isBm ? 'true' : 'false';
+          if (isBm) {
+            bmBtn.classList.add('border-[var(--accent)]', 'bg-[var(--accent-subtle)]', 'text-[var(--accent)]');
+            bmBtn.classList.remove('border-[var(--border)]', 'text-[var(--text-muted)]');
+            bmBtn.querySelector('span:last-child').textContent = 'Saved';
+          }
+        });
+
+        bmBtn.addEventListener('click', function () {
+          BN.toggleBookmark(bmBtn);
+        });
+      }
+
+      // Notes toggle
+      if (notesBtn) {
+        notesBtn.addEventListener('click', function () {
+          BN.toggleHighlightSidebar();
+        });
+      }
+
+      // Close sidebar
+      var closeSidebar = document.getElementById('bn-close-sidebar');
+      if (closeSidebar) {
+        closeSidebar.addEventListener('click', function () {
+          BN.sidebarOpen = false;
+          document.getElementById('bn-highlights-sidebar').classList.add('hidden');
+        });
+      }
+
+      // Load highlights + setup toolbar
+      var contentEl = document.getElementById('lecture-content');
+      if (contentEl && contentEl.dataset.subject) {
+        BN.loadHighlights(contentEl.dataset.subject, contentEl.dataset.lecture);
+        BN.createHighlightToolbar();
+        BN.setupMouseUp();
+      }
+
+      // Setup reading progress
+      if (contentEl && contentEl.dataset.subject) {
+        BN.setupProgress(contentEl.dataset.subject, contentEl.dataset.lecture);
+      }
+    });
+  })();
 </script>

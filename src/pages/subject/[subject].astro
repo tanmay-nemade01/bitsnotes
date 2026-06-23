@@ -93,22 +93,38 @@ const seoKeywords = `${decodedSubject}, lecture notes, study guides, college cou
         {lectures.map(({ name: lectureName, folderName }, idx) => {
           const viewPath = `/view/${encodeURIComponent(decodedSubject)}/${encodeURIComponent(folderName)}`;
           return (
-            <a
-              href={viewPath}
-              data-astro-reload
+            <div
               data-lecture-name={lectureName.toLowerCase()}
-              class="flex items-center gap-4 py-3.5 px-3 -mx-3 rounded-[var(--r-sm)] hover:bg-[var(--bg-subtle)] transition-colors group no-underline"
+              data-subject={decodedSubject}
+              data-lecture={folderName}
+              class="flex items-center gap-4 py-3.5 px-3 -mx-3 rounded-[var(--r-sm)] hover:bg-[var(--bg-subtle)] transition-colors group"
             >
+              {/* Progress dot (hidden by default, shown by JS when logged in) */}
+              <span class="bm-progress-dot hidden w-3 h-3 rounded-full border border-[var(--border)] shrink-0" title="Reading progress"></span>
               <span class="font-mono text-xs text-[var(--text-faint)] w-6 shrink-0 text-right tabular-nums">
                 {(idx + 1).toString().padStart(2, '0')}
               </span>
-              <span class="flex-1 text-sm font-medium text-[var(--text)] group-hover:text-[var(--accent)] transition-colors line-clamp-1">
+              <a href={viewPath} data-astro-reload class="flex-1 min-w-0 text-sm font-medium text-[var(--text)] group-hover:text-[var(--accent)] transition-colors line-clamp-1 no-underline">
                 {lectureName}
-              </span>
+              </a>
+              {/* Bookmark button (hidden by default, shown by JS when logged in) */}
+              <button
+                type="button"
+                class="bm-star-btn hidden p-1 rounded-full hover:bg-[var(--accent-subtle)] transition-colors shrink-0"
+                data-subject={decodedSubject}
+                data-lecture={folderName}
+                data-display-name={lectureName}
+                data-bookmarked="false"
+                aria-label="Bookmark"
+                title="Bookmark"
+              >
+                <svg class="w-3.5 h-3.5 text-[var(--text-faint)] group-hover/bm:text-[var(--accent)] bm-outline transition-colors" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/></svg>
+                <svg class="w-3.5 h-3.5 text-[var(--accent)] hidden bm-filled transition-colors" fill="currentColor" viewBox="0 0 24 24"><path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/></svg>
+              </button>
               <svg class="w-4 h-4 text-[var(--text-faint)] shrink-0 group-hover:text-[var(--accent)] transition-colors" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
                 <path stroke-linecap="round" stroke-linejoin="round" d="M9 5l7 7-7 7"/>
               </svg>
-            </a>
+            </div>
           );
         })}
       </div>
@@ -116,7 +132,10 @@ const seoKeywords = `${decodedSubject}, lecture notes, study guides, college cou
   </div>
 </BaseLayout>
 
-<script is:inline>
+<script defer src="/auth-features.js"></script>
+
+<script is:inline data-astro-rerun>
+  // Search
   const searchInput = document.getElementById('search-input');
   const items = document.querySelectorAll('[data-lecture-name]');
   if (searchInput) {
@@ -134,4 +153,92 @@ const seoKeywords = `${decodedSubject}, lecture notes, study guides, college cou
       });
     });
   }
+
+  // ─── Auth features: bookmarks + progress dots ─────────────────────
+  (function () {
+    var BN = window.BitsNotes;
+    if (!BN) return;
+
+    fetch('/api/bookmarks/list', { credentials: 'same-origin' }).then(function (r) {
+      if (r.status === 401) return false;
+      return r.json().then(function () { return true; });
+    }).then(function (loggedIn) {
+      if (!loggedIn) return;
+
+      var subject = document.querySelector('[data-subject]');
+      var subjectName = subject ? subject.dataset.subject : '';
+
+      // Show bookmark buttons
+      document.querySelectorAll('.bm-star-btn').forEach(function (btn) {
+        btn.classList.remove('hidden');
+        btn.addEventListener('click', function (e) {
+          e.preventDefault();
+          e.stopPropagation();
+          var isBm = btn.dataset.bookmarked === 'true';
+          var data = {
+            subject: btn.dataset.subject,
+            lecture: btn.dataset.lecture,
+            displayName: btn.dataset.displayName,
+          };
+          if (isBm) {
+            BN.del('/api/bookmarks/remove', data).then(function () {
+              btn.dataset.bookmarked = 'false';
+              btn.querySelector('.bm-outline').classList.remove('hidden');
+              btn.querySelector('.bm-filled').classList.add('hidden');
+            });
+          } else {
+            BN.post('/api/bookmarks/add', data).then(function () {
+              btn.dataset.bookmarked = 'true';
+              btn.querySelector('.bm-outline').classList.add('hidden');
+              btn.querySelector('.bm-filled').classList.remove('hidden');
+            });
+          }
+        });
+      });
+
+      // Load bookmarks to set initial state
+      BN.post('/api/bookmarks/list').then(function (data) {
+        if (!data || !data.bookmarks) return;
+        var allBm = Object.values(data.bookmarks).flat();
+        document.querySelectorAll('.bm-star-btn').forEach(function (btn) {
+          var isBm = allBm.some(function (b) {
+            return b.subject === btn.dataset.subject && b.lecture === btn.dataset.lecture;
+          });
+          if (isBm) {
+            btn.dataset.bookmarked = 'true';
+            btn.querySelector('.bm-outline').classList.add('hidden');
+            btn.querySelector('.bm-filled').classList.remove('hidden');
+          }
+        });
+      });
+
+      // Load progress
+      BN.json('/api/progress/list?subject=' + encodeURIComponent(subjectName)).then(function (data) {
+        if (!data || !data.lectures) return;
+        var progressMap = {};
+        data.lectures.forEach(function (l) { progressMap[l.lecture] = l.readPct; });
+
+        document.querySelectorAll('[data-lecture]').forEach(function (row) {
+          var lecture = row.dataset.lecture;
+          var pct = progressMap[lecture];
+          if (pct === undefined) return;
+          var dot = row.querySelector('.bm-progress-dot');
+          if (!dot) return;
+          dot.classList.remove('hidden');
+          if (pct >= 80) {
+            dot.style.backgroundColor = 'var(--accent)';
+            dot.style.borderColor = 'var(--accent)';
+            dot.title = 'Read';
+          } else if (pct > 20) {
+            dot.style.background = 'linear-gradient(to right, var(--accent) 50%, var(--border) 50%)';
+            dot.style.borderColor = 'var(--accent)';
+            dot.title = 'Partially read';
+          } else {
+            dot.style.borderColor = 'var(--text-faint)';
+            dot.title = 'Unread';
+          }
+        });
+      });
+    });
+  })();
 </script>
