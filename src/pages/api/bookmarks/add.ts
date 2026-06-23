@@ -8,6 +8,7 @@ import { getEnv, json, unauthorized, badRequest, getUser, validateFields, saniti
 import { addBookmark } from '../../../lib/bookmarks';
 import { logAuthEvent } from '../../../lib/auth';
 import { getClientIp } from '../../../lib/apiHelpers';
+import { validateOrigin, csrfForbidden } from '../../../lib/auth/csrf';
 
 export const prerender = false;
 
@@ -16,6 +17,12 @@ export const POST: APIRoute = async (context) => {
   if (!user) return unauthorized();
 
   const env = await getEnv(context);
+
+  // CSRF: validate Origin/Referer
+  if (!validateOrigin(context.request, env.APP_BASE_URL)) {
+    return csrfForbidden();
+  }
+
   let body: Record<string, unknown>;
   try { body = await context.request.json(); } catch { return badRequest('Invalid JSON'); }
 

@@ -11,6 +11,7 @@ import {
   clearRefreshCookie,
   logAuthEvent,
 } from '../../../lib/auth';
+import { validateOrigin, csrfForbidden } from '../../../lib/auth/csrf';
 
 export const prerender = false;
 
@@ -18,6 +19,11 @@ export const POST: APIRoute = async (context) => {
   const env = await getEnv(context);
   const user = (context.locals as any).user;
   const ip = getClientIp(context.request);
+
+  // CSRF: validate Origin/Referer
+  if (!validateOrigin(context.request, env.APP_BASE_URL)) {
+    return csrfForbidden();
+  }
 
   if (!user) {
     return unauthorized();
@@ -31,8 +37,8 @@ export const POST: APIRoute = async (context) => {
     Location: '/',
     'Cache-Control': 'no-store',
   });
-  clearSessionCookie(headers);
-  clearRefreshCookie(headers);
+  clearSessionCookie(headers, context.request);
+  clearRefreshCookie(headers, context.request);
 
   return new Response(null, { status: 302, headers });
 };

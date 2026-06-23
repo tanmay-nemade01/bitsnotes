@@ -10,6 +10,7 @@ import {
   sha256Hex, generateToken,
 } from '../../../lib/auth';
 import { sendVerificationEmail } from '../../../lib/auth/email';
+import { validateOrigin, csrfForbidden } from '../../../lib/auth/csrf';
 
 export const prerender = false;
 
@@ -17,6 +18,11 @@ export const POST: APIRoute = async (context) => {
   const env = await getEnv(context);
   const request = context.request;
   const ip = getClientIp(request);
+
+  // CSRF: validate Origin/Referer
+  if (!validateOrigin(request, env.APP_BASE_URL)) {
+    return csrfForbidden();
+  }
 
   let body: { email?: string };
   try {
@@ -43,12 +49,16 @@ export const POST: APIRoute = async (context) => {
     return json({ success: true, message: 'Email already verified.' });
   }
 
-  // Rate limit: check last verification token
+  // Rate limit: check last verification token (use expires_at as proxy for recency)
   const lastToken = await db.prepare(
-    'SELECT created_at FROM verification_tokens WHERE user_id = ? AND purpose = ? ORDER BY expires_at DESC LIMIT 1',
-  ).bind(user.id, 'signup').first<{ created_at: number }>();
+    'SELECT expires_at FROM verification_tokens WHERE user_id = ? AND purpose = ? ORDER BY expires_at DESC LIMIT 1',
+  ).bind(user.id, 'signup').first<{ expires_at: number }>();
 
-  if (lastToken && Date.now() - lastToken.created_at < 60 * 1000) {
+  // The verification token expires_at is set to 24h from creation,
+  // so if the most recent one was created less than 60s ago,
+  // its expires_at will be within 24h - 60s of now.
+  const lastCreatedEstimate = lastToken ? lastToken.expires_at - 24 * 60 * 60 * 1000 : 0;
+  if (lastToken && Date.now() - lastCreatedEstimate < 60 * 1000) {
     return badRequest('Please wait before requesting another verification email.');
   }
 

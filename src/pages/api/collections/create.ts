@@ -7,6 +7,7 @@ import type { APIRoute } from 'astro';
 import { getEnv, json, unauthorized, badRequest, getUser, sanitizeString, validateFields, getClientIp } from '../../../lib/apiHelpers';
 import { createCollection } from '../../../lib/bookmarks';
 import { logAuthEvent } from '../../../lib/auth';
+import { validateOrigin, csrfForbidden } from '../../../lib/auth/csrf';
 
 export const prerender = false;
 
@@ -15,6 +16,12 @@ export const POST: APIRoute = async (context) => {
   if (!user) return unauthorized();
 
   const env = await getEnv(context);
+
+  // CSRF: validate Origin/Referer
+  if (!validateOrigin(context.request, env.APP_BASE_URL)) {
+    return csrfForbidden();
+  }
+
   let body: Record<string, unknown>;
   try { body = await context.request.json(); } catch { return badRequest('Invalid JSON'); }
 

@@ -120,13 +120,13 @@ export async function verifyRefreshToken(
   if (row.revoked_at) return null;
   if (row.expires_at < now) return null;
 
-  // Rotate: revoke current, issue new
-  await db.prepare(
-    'UPDATE refresh_tokens SET revoked_at = ? WHERE token_hash = ?',
-  ).bind(now, tokenHash).run();
-
+  // Rotate: generate new token, revoke current and record successor, then insert new
   const newToken = generateToken(32);
   const newTokenHash = await sha256Hex(newToken);
+  await db.prepare(
+    'UPDATE refresh_tokens SET revoked_at = ?, replaced_by = ? WHERE token_hash = ?',
+  ).bind(now, newTokenHash, tokenHash).run();
+
   await db.prepare(
     'INSERT INTO refresh_tokens (token_hash, user_id, created_at, expires_at) VALUES (?, ?, ?, ?)',
   ).bind(newTokenHash, row.user_id, now, now + REFRESH_TOKEN_TTL * 1000).run();
@@ -148,26 +148,44 @@ export async function revokeAllRefreshTokens(db: AuthDb, userId: string): Promis
 const SESSION_COOKIE = '__session';
 const REFRESH_COOKIE = '__rt';
 
-export function setSessionCookie(headers: Headers, token: string): void {
+/**
+ * Check if a request is over HTTPS.
+ * In dev (localhost), this will be false, so we skip the Secure flag.
+ */
+export function isSecure(request: Request): boolean {
+  const proto = request.headers.get('x-forwarded-proto') || new URL(request.url).protocol.replace(':', '');
+  return proto === 'https';
+}
+
+/** Build the cookie suffix with or without Secure based on the request protocol. */
+function cookieSecure(request: Request): string {
+  return isSecure(request) ? ' Secure;' : '';
+}
+
+export function setSessionCookie(headers: Headers, token: string, request?: Request): void {
+  const sec = request ? cookieSecure(request) : ' Secure;';
   headers.append(
     'Set-Cookie',
-    `${SESSION_COOKIE}=${token}; Path=/; HttpOnly; Secure; SameSite=Strict; Max-Age=${ACCESS_TOKEN_TTL}`,
+    `${SESSION_COOKIE}=${token}; Path=/; HttpOnly;${sec} SameSite=Strict; Max-Age=${ACCESS_TOKEN_TTL}`,
   );
 }
 
-export function setRefreshCookie(headers: Headers, token: string): void {
+export function setRefreshCookie(headers: Headers, token: string, request?: Request): void {
+  const sec = request ? cookieSecure(request) : ' Secure;';
   headers.append(
     'Set-Cookie',
-    `${REFRESH_COOKIE}=${token}; Path=/api/auth; HttpOnly; Secure; SameSite=Strict; Max-Age=${REFRESH_TOKEN_TTL}`,
+    `${REFRESH_COOKIE}=${token}; Path=/api/auth; HttpOnly;${sec} SameSite=Strict; Max-Age=${REFRESH_TOKEN_TTL}`,
   );
 }
 
-export function clearSessionCookie(headers: Headers): void {
-  headers.append('Set-Cookie', `${SESSION_COOKIE}=; Path=/; HttpOnly; Secure; SameSite=Strict; Max-Age=0`);
+export function clearSessionCookie(headers: Headers, request?: Request): void {
+  const sec = request ? cookieSecure(request) : ' Secure;';
+  headers.append('Set-Cookie', `${SESSION_COOKIE}=; Path=/; HttpOnly;${sec} SameSite=Strict; Max-Age=0`);
 }
 
-export function clearRefreshCookie(headers: Headers): void {
-  headers.append('Set-Cookie', `${REFRESH_COOKIE}=; Path=/api/auth; HttpOnly; Secure; SameSite=Strict; Max-Age=0`);
+export function clearRefreshCookie(headers: Headers, request?: Request): void {
+  const sec = request ? cookieSecure(request) : ' Secure;';
+  headers.append('Set-Cookie', `${REFRESH_COOKIE}=; Path=/api/auth; HttpOnly;${sec} SameSite=Strict; Max-Age=0`);
 }
 
 export function getSessionTokenFromCookie(cookieHeader: string | null): string | null {
@@ -187,10 +205,11 @@ export function getRefreshTokenFromCookie(cookieHeader: string | null): string |
 const STATE_COOKIE = '__oauth_state';
 const STATE_TTL = 10 * 60; // 10 minutes
 
-export function setOAuthStateCookie(headers: Headers, state: string): void {
+export function setOAuthStateCookie(headers: Headers, state: string, request?: Request): void {
+  const sec = request ? cookieSecure(request) : ' Secure;';
   headers.append(
     'Set-Cookie',
-    `${STATE_COOKIE}=${state}; Path=/api/auth/callback; HttpOnly; Secure; SameSite=Strict; Max-Age=${STATE_TTL}`,
+    `${STATE_COOKIE}=${state}; Path=/api/auth/callback; HttpOnly;${sec} SameSite=Lax; Max-Age=${STATE_TTL}`,
   );
 }
 
@@ -200,6 +219,10 @@ export function getOAuthStateFromCookie(cookieHeader: string | null): string | n
   return match?.[1] ?? null;
 }
 
-export function clearOAuthStateCookie(headers: Headers): void {
-  headers.append('Set-Cookie', `${STATE_COOKIE}=; Path=/api/auth/callback; HttpOnly; Secure; SameSite=Strict; Max-Age=0`);
+export function clearOAuthStateCookie(headers: Headers, request?: Request): void {
+  const sec = request ? cookieSecure(request) : ' Secure;';
+  headers.append('Set-Cookie', `${STATE_COOKIE}=; Path=/api/auth/callback; HttpOnly;${sec} SameSite=Lax; Max-Age=0`);
 }
+
+/** Alias for backward compat */
+export { setOAuthStateCookie as setOAuthStateCookieLegacy };

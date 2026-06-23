@@ -152,13 +152,13 @@ export const onRequest = defineMiddleware(async (context, next) => {
   if ((locals as any).__newSessionToken) {
     try {
       const { setSessionCookie } = await import('./lib/auth/session');
-      setSessionCookie(headers, (locals as any).__newSessionToken);
+      setSessionCookie(headers, (locals as any).__newSessionToken, request);
     } catch {}
   }
   if ((locals as any).__newRefreshToken) {
     try {
       const { setRefreshCookie } = await import('./lib/auth/session');
-      setRefreshCookie(headers, (locals as any).__newRefreshToken);
+      setRefreshCookie(headers, (locals as any).__newRefreshToken, request);
     } catch {}
   }
 

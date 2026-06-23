@@ -113,6 +113,7 @@ export const GET: APIRoute = async (context) => {
         displayName: profile.displayName,
         avatarUrl: profile.avatarUrl,
       });
+      await createIdentity(db, newUser.id, provider, profile.providerUid);
       user = newUser;
       isNewUser = true;
     }
@@ -142,7 +143,7 @@ export const GET: APIRoute = async (context) => {
         ...getRedirectHeaders(),
       },
     });
-    clearOAuthStateCookie(response.headers);
+    clearOAuthStateCookie(response.headers, request);
     return response;
   }
 
@@ -161,7 +162,7 @@ export const GET: APIRoute = async (context) => {
           ...getRedirectHeaders(),
         },
       });
-      clearOAuthStateCookie(response.headers);
+      clearOAuthStateCookie(response.headers, request);
       return response;
     }
   }
@@ -187,9 +188,9 @@ export const GET: APIRoute = async (context) => {
     Location: '/',
     'Cache-Control': 'no-store',
   });
-  setSessionCookie(headers, accessToken);
-  setRefreshCookie(headers, newRefreshToken);
-  clearOAuthStateCookie(headers);
+  setSessionCookie(headers, accessToken, request);
+  setRefreshCookie(headers, newRefreshToken, request);
+  clearOAuthStateCookie(headers, request);
 
   return new Response(null, { status: 302, headers });
 };

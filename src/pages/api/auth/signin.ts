@@ -6,6 +6,8 @@
 import type { APIRoute } from 'astro';
 import { getEnv, badRequest, serverError, getClientIp } from '../../../lib/apiHelpers';
 import { verifyTurnstile, generateCodeVerifier, generateCodeChallenge } from '../../../lib/auth';
+import { isSecure } from '../../../lib/auth/session';
+import { validateOrigin, csrfForbidden } from '../../../lib/auth/csrf';
 
 export const prerender = false;
 
@@ -13,6 +15,11 @@ export const POST: APIRoute = async (context) => {
   const env = await getEnv(context);
   const request = context.request;
   const ip = getClientIp(request);
+
+  // CSRF: validate Origin/Referer
+  if (!validateOrigin(request, env.APP_BASE_URL)) {
+    return csrfForbidden();
+  }
 
   // Accept both JSON and application/x-www-form-urlencoded (native <form> POST)
   let provider: string | undefined;
@@ -89,7 +96,7 @@ export const POST: APIRoute = async (context) => {
       status: 200,
       headers: {
         'Content-Type': 'application/json',
-        'Set-Cookie': `__oauth_state=${stateToken}; Path=/api/auth/callback; HttpOnly; Secure; SameSite=Strict; Max-Age=600`,
+        'Set-Cookie': `__oauth_state=${stateToken}; Path=/api/auth/callback; HttpOnly;${isSecure(request) ? ' Secure;' : ''} SameSite=Lax; Max-Age=600`,
         'Cache-Control': 'no-store',
       },
     },

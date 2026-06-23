@@ -58,6 +58,9 @@ export function uuidv7(): string {
   // 12-bit counter + 62-bit random
   const randBytes = new Uint8Array(10);
   crypto.getRandomValues(randBytes);
+  // Inject monotonic counter into first 2 bytes of random portion
+  randBytes[0] = (randBytes[0] & 0xf0) | ((_seq >> 8) & 0x0f);
+  randBytes[1] = (_seq & 0xff);
   // Set version (7) in byte 6 high nibble, variant (10xx) in byte 8
   randBytes[0] = (randBytes[0] & 0x0f) | 0x70; // version 7
   randBytes[2] = (randBytes[2] & 0x3f) | 0x80; // variant 10xx
@@ -67,15 +70,7 @@ export function uuidv7(): string {
 
 // ─── Internal helpers ───────────────────────────────────────────────────────
 
-const B64URL_CHARS = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_';
-
 function base64urlEncode(bytes: Uint8Array): string {
-  let result = '';
-  for (const b of bytes) {
-    result += B64URL_CHARS[b >> 2];
-    result += B64URL_CHARS[((b & 3) << 4) | ((bytes[bytes.indexOf(b) + 1] ?? 0) >> 4)];
-  }
-  // Simpler approach: use btoa
   let binary = '';
   for (const b of bytes) binary += String.fromCharCode(b);
   return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');

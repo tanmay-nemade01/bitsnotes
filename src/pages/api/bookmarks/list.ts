@@ -26,5 +26,8 @@ export const GET: APIRoute = async (context) => {
     grouped[bm.collection_id].push(bm);
   }
 
-  return json({ collections, bookmarks: grouped, uncategorized });
+  // Flat sorted list for "recently saved" (bookmarks already sorted by created_at DESC)
+  const recentBookmarks = bookmarks.slice(0, 5);
+
+  return json({ collections, bookmarks: grouped, uncategorized, recentBookmarks });
 };

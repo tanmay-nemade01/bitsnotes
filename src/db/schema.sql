@@ -40,7 +40,8 @@ CREATE TABLE IF NOT EXISTS verification_tokens (
   user_id         TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
   purpose         TEXT NOT NULL,               -- 'signup' | 'email_change'
   expires_at      INTEGER NOT NULL,
-  consumed_at     INTEGER
+  consumed_at     INTEGER,
+  created_at      INTEGER NOT NULL
 );
 
 -- ─── Auth: Refresh Tokens ───────────────────────────────────────────────────
@@ -92,23 +93,6 @@ CREATE TABLE IF NOT EXISTS bookmarks (
 CREATE INDEX IF NOT EXISTS idx_bookmarks_user ON bookmarks(user_id);
 CREATE INDEX IF NOT EXISTS idx_bookmarks_coll ON bookmarks(user_id, collection_id);
 CREATE INDEX IF NOT EXISTS idx_collections_user ON collections(user_id);
-
--- ─── Highlights & Notes ─────────────────────────────────────────────────────
-CREATE TABLE IF NOT EXISTS highlights (
-  id              TEXT PRIMARY KEY,            -- UUID v7
-  user_id         TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-  subject         TEXT NOT NULL,
-  lecture         TEXT NOT NULL,
-  selector_path   TEXT NOT NULL,               -- CSS selector path relative to #lecture-content
-  start_offset    INTEGER NOT NULL,
-  end_offset      INTEGER NOT NULL,
-  note_body       TEXT,                        -- NULL = highlight only; non-NULL = highlight + note
-  color           TEXT NOT NULL DEFAULT 'yellow', -- 'yellow' | 'blue'
-  created_at      INTEGER NOT NULL,
-  updated_at      INTEGER NOT NULL
-);
-
-CREATE INDEX IF NOT EXISTS idx_highlights_user_lec ON highlights(user_id, subject, lecture);
 
 -- ─── Reading Progress ───────────────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS reading_progress (

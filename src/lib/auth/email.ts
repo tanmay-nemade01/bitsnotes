@@ -63,6 +63,7 @@ export async function sendVerificationEmail(
   // Build raw MIME message
   const raw = buildMimeMessage(emailBody);
 
+  // Use globalThis to avoid type conflict between cloudflare:email and workers-types
   const message = new (globalThis as any).EmailMessage(
     'BitsNotes <noreply@bitsnotes.com>',
     to,

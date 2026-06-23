@@ -20,8 +20,6 @@ export type AuthEvent =
   | 'collection_create'
   | 'collection_rename'
   | 'collection_delete'
-  | 'highlight_save'
-  | 'highlight_remove'
   | 'progress_mark_read';
 
 export interface AuditContext {

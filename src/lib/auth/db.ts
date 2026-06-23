@@ -142,8 +142,8 @@ export async function storeVerificationToken(
   expiresAt: number,
 ): Promise<void> {
   await db.prepare(
-    'INSERT INTO verification_tokens (token_hash, user_id, purpose, expires_at) VALUES (?, ?, ?, ?)',
-  ).bind(tokenHash, userId, purpose, expiresAt).run();
+    'INSERT INTO verification_tokens (token_hash, user_id, purpose, expires_at, created_at) VALUES (?, ?, ?, ?, ?)',
+  ).bind(tokenHash, userId, purpose, expiresAt, Date.now()).run();
 }
 
 /**
