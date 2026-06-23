@@ -1,11 +1,10 @@
 ---
 import BaseLayout from '../../layouts/BaseLayout.astro';
+import { env } from 'cloudflare:workers';
 
 export const prerender = false;
 
-const turnstileSiteKey = (import.meta as any).env?.TURNSTILE_SITE_KEY
-  || (globalThis as any).TURNSTILE_SITE_KEY
-  || '';
+const turnstileSiteKey = (env as any).TURNSTILE_SITE_KEY || '';
 ---
 
 <BaseLayout
@@ -57,37 +56,37 @@ const turnstileSiteKey = (import.meta as any).env?.TURNSTILE_SITE_KEY
     </p>
   </main>
 
-  <script is:inline define:vars={{ turnstileSiteKey }}>
-    // Load Turnstile
-    (function() {
-      const s = document.createElement('script');
-      s.src = 'https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit';
-      s.async = true;
-      document.head.appendChild(s);
-    })();
-
+  <script is:inline>
     let turnstileToken = '';
 
     function onTurnstileSuccess(token) {
       turnstileToken = token;
+      document.getElementById('auth-error').classList.add('hidden');
+    }
+
+    function onTurnstileExpired() {
+      turnstileToken = '';
+    }
+
+    function onTurnstileError() {
+      turnstileToken = '';
+      // Allow interaction without Turnstile in dev/error state
+      console.warn('Turnstile widget failed to load — proceeding without captcha verification.');
     }
 
     function handleSignIn(provider) {
-      if (!turnstileToken) {
-        document.getElementById('auth-error').textContent = 'Please complete the verification.';
-        document.getElementById('auth-error').classList.remove('hidden');
-        return;
-      }
-
       document.getElementById('auth-error').classList.add('hidden');
+
+      // Build the request body — include turnstile token only if available
+      const body = { provider: provider };
+      if (turnstileToken) {
+        body['cf-turnstile-response'] = turnstileToken;
+      }
 
       fetch('/api/auth/signin', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          provider: provider,
-          'cf-turnstile-response': turnstileToken,
-        }),
+        body: JSON.stringify(body),
       }).then(async (res) => {
         if (res.redirected) {
           window.location.href = res.url;

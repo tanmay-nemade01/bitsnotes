@@ -15,7 +15,7 @@ export const GET: APIRoute = async (context) => {
   const url = new URL(context.request.url);
   const subject = url.searchParams.get('subject');
 
-  const env = getEnv(context);
+  const env = await getEnv(context);
 
   if (subject) {
     const normalized = sanitizeString(subject, 200);

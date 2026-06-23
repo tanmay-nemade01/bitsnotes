@@ -10,7 +10,7 @@ import { consumeVerificationToken, verifyUserEmail, logAuthEvent } from '../../.
 export const prerender = false;
 
 export const GET: APIRoute = async (context) => {
-  const env = getEnv(context);
+  const env = await getEnv(context);
   const request = context.request;
   const url = new URL(request.url);
   const token = url.searchParams.get('token');

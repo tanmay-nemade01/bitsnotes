@@ -18,7 +18,7 @@ import { sendVerificationEmail } from '../../../../lib/auth/email';
 export const prerender = false;
 
 export const GET: APIRoute = async (context) => {
-  const env = getEnv(context);
+  const env = await getEnv(context);
   const request = context.request;
   const url = new URL(request.url);
   const ip = getClientIp(request);
@@ -54,7 +54,7 @@ export const GET: APIRoute = async (context) => {
   }
 
   if (returnedState !== stateData.state) {
-    const loggingDb = (context.locals as any).runtime?.env?.DB;
+    const loggingDb = env.DB;
     if (loggingDb) {
       await logAuthEvent(loggingDb, { event: 'state_mismatch', ip, ua: request.headers.get('User-Agent') || '' });
     }

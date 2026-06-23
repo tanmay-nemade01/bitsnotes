@@ -13,7 +13,7 @@ export const GET: APIRoute = async (context) => {
   const user = getUser(context);
   if (!user) return unauthorized();
 
-  const env = getEnv(context);
+  const env = await getEnv(context);
   const collections = await listCollections(env.DB, user.id);
   const bookmarks = await listBookmarks(env.DB, user.id);
 

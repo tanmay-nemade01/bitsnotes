@@ -15,7 +15,7 @@ import {
 export const prerender = false;
 
 export const POST: APIRoute = async (context) => {
-  const env = getEnv(context);
+  const env = await getEnv(context);
   const user = (context.locals as any).user;
   const ip = getClientIp(context.request);
 

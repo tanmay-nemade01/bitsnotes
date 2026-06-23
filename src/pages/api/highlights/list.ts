@@ -18,7 +18,7 @@ export const GET: APIRoute = async (context) => {
 
   if (!subject || !lecture) return badRequest('subject and lecture required');
 
-  const env = getEnv(context);
+  const env = await getEnv(context);
   const highlights = await listHighlights(env.DB, user.id, subject, lecture);
   return json({ highlights });
 };

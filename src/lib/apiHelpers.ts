@@ -6,7 +6,7 @@
 import type { APIContext } from 'astro';
 import { verifyJwt, getSessionTokenFromCookie, findUserById, getEntitlement, type AuthDb } from '../lib/auth';
 
-// ─── Env access ─────────────────────────────────────────────────────────────
+// ─── Env access (Astro v6: use cloudflare:workers) ─────────────────────────
 
 export interface EnvBindings {
   DB: AuthDb;
@@ -20,11 +20,14 @@ export interface EnvBindings {
   SEND_EMAIL: any;
 }
 
-export function getEnv(context: APIContext): EnvBindings {
-  const runtimeEnv = (context.locals as any).runtime?.env
-    || (context.locals as any).env
-    || {};
-  return runtimeEnv as EnvBindings;
+export async function getEnv(context?: APIContext): Promise<EnvBindings> {
+  try {
+    const { getEnv: getCFEnv } = await import('./getEnv');
+    const env = await getCFEnv();
+    return env as unknown as EnvBindings;
+  } catch {
+    return {} as EnvBindings;
+  }
 }
 
 // ─── User resolution ────────────────────────────────────────────────────────

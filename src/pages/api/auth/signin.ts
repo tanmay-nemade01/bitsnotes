@@ -10,7 +10,7 @@ import { verifyTurnstile, generateCodeVerifier, generateCodeChallenge } from '..
 export const prerender = false;
 
 export const POST: APIRoute = async (context) => {
-  const env = getEnv(context);
+  const env = await getEnv(context);
   const request = context.request;
   const ip = getClientIp(request);
 

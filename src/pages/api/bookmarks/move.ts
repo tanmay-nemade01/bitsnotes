@@ -14,7 +14,7 @@ export const POST: APIRoute = async (context) => {
   const user = getUser(context);
   if (!user) return unauthorized();
 
-  const env = getEnv(context);
+  const env = await getEnv(context);
   let body: Record<string, unknown>;
   try { body = await context.request.json(); } catch { return badRequest('Invalid JSON'); }
 

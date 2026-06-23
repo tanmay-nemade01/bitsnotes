@@ -1,4 +1,5 @@
 import { defineMiddleware } from 'astro/middleware';
+import { env } from 'cloudflare:workers';
 
 const securityHeaders: Record<string, string> = {
   'X-Content-Type-Options': 'nosniff',
@@ -24,12 +25,12 @@ const cspReportOnly = [
 
 const cspEnforcing = [
   "default-src 'self'",
-  "script-src 'self' 'unsafe-inline' https://challenges.cloudflare.com",
+  "script-src 'self' 'unsafe-inline' 'unsafe-eval' https://challenges.cloudflare.com",
   "style-src 'self' 'unsafe-inline'",
   "img-src 'self' data:",
   "font-src 'self'",
   "frame-src 'self' https://challenges.cloudflare.com",
-  "connect-src 'self'",
+  "connect-src 'self' https://challenges.cloudflare.com",
   "manifest-src 'self'",
   "base-uri 'self'",
   "form-action 'self'",
@@ -55,11 +56,8 @@ export const onRequest = defineMiddleware(async (context, next) => {
     const dbMod = await import('./lib/auth/db');
     const cookieHeader = request.headers.get('Cookie');
     const sessionToken = sessionMod.getSessionTokenFromCookie(cookieHeader);
-    const signingKey = (context.locals as any).runtime?.env?.SESSION_SIGNING_KEY
-      || (context.locals as any).env?.SESSION_SIGNING_KEY
-      || '';
-    const db = (context.locals as any).runtime?.env?.DB
-      || (context.locals as any).env?.DB;
+    const signingKey = (env as any).SESSION_SIGNING_KEY || '';
+    const db = (env as any).DB;
 
     if (sessionToken && db && signingKey) {
       const claims = await sessionMod.verifyJwt(sessionToken, signingKey);
