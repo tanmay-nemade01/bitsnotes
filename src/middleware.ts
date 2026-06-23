@@ -27,7 +27,7 @@ const cspEnforcing = [
   "default-src 'self'",
   "script-src 'self' 'unsafe-inline' 'unsafe-eval' https://challenges.cloudflare.com",
   "style-src 'self' 'unsafe-inline'",
-  "img-src 'self' data:",
+  "img-src 'self' data: https://avatars.githubusercontent.com https://lh3.googleusercontent.com",
   "font-src 'self'",
   "frame-src 'self' https://challenges.cloudflare.com",
   "connect-src 'self' https://challenges.cloudflare.com",
@@ -35,6 +35,7 @@ const cspEnforcing = [
   "base-uri 'self'",
   "form-action 'self'",
   "frame-ancestors 'none'",
+  "navigate-to 'self' https://github.com https://accounts.google.com",
 ].join('; ');
 
 const noCacheHeader = 'no-store, no-cache, must-revalidate';

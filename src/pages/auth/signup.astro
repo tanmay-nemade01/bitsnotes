@@ -13,9 +13,6 @@ const turnstileSiteKey = (env as any).TURNSTILE_SITE_KEY || '';
   robots="noindex, nofollow"
   hideChrome={false}
 >
-  <Fragment slot="head">
-    <script src="https://challenges.cloudflare.com/turnstile/v0/api.js" async defer></script>
-  </Fragment>
   <main class="mx-auto max-w-md px-4 py-16">
     <h1 class="text-3xl font-display font-semibold text-center mb-2">Create your account</h1>
     <p class="text-center text-[var(--color-muted)] mb-8">Free forever. No passwords needed.</p>
@@ -46,7 +43,6 @@ const turnstileSiteKey = (env as any).TURNSTILE_SITE_KEY || '';
       <div
         class="cf-turnstile"
         data-sitekey={turnstileSiteKey}
-        data-callback="onTurnstileSuccess"
         data-theme="light"
       ></div>
     </div>
@@ -69,25 +65,31 @@ const turnstileSiteKey = (env as any).TURNSTILE_SITE_KEY || '';
 
     function onTurnstileSuccess(token) {
       turnstileToken = token;
+      document.getElementById('auth-error').classList.add('hidden');
+    }
+
+    function onTurnstileExpired() {
+      turnstileToken = '';
+    }
+
+    function onTurnstileError() {
+      turnstileToken = '';
+      console.warn('Turnstile widget failed to load — proceeding without captcha verification.');
     }
 
     function handleSignUp(provider) {
-      if (!turnstileToken) {
-        document.getElementById('auth-error').textContent = 'Please complete the verification.';
-        document.getElementById('auth-error').classList.remove('hidden');
-        return;
-      }
-
       document.getElementById('auth-error').classList.add('hidden');
+
+      const body = { provider: provider };
+      if (turnstileToken) {
+        body['cf-turnstile-response'] = turnstileToken;
+      }
 
       // For signup, we use the same signin endpoint which handles both new + existing users
       fetch('/api/auth/signin', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          provider: provider,
-          'cf-turnstile-response': turnstileToken,
-        }),
+        body: JSON.stringify(body),
       }).then(async (res) => {
         if (res.redirected) {
           window.location.href = res.url;
@@ -107,5 +109,34 @@ const turnstileSiteKey = (env as any).TURNSTILE_SITE_KEY || '';
 
     document.getElementById('google-btn').addEventListener('click', () => handleSignUp('google'));
     document.getElementById('github-btn').addEventListener('click', () => handleSignUp('github'));
+
+    // Load Turnstile script and render widget explicitly
+    (function() {
+      var container = document.querySelector('.cf-turnstile');
+      var sitekey = container ? container.getAttribute('data-sitekey') : '';
+      var s = document.createElement('script');
+      s.src = 'https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit';
+      s.async = true;
+      s.onload = function() {
+        if (window.turnstile && sitekey) {
+          try {
+            window.turnstile.render('#turnstile-container .cf-turnstile', {
+              sitekey: sitekey,
+              callback: onTurnstileSuccess,
+              'expired-callback': onTurnstileExpired,
+              'error-callback': onTurnstileError,
+              theme: 'light',
+            });
+          } catch (e) {
+            console.warn('Turnstile render failed:', e);
+            onTurnstileError();
+          }
+        } else {
+          onTurnstileError();
+        }
+      };
+      s.onerror = function() { onTurnstileError(); };
+      document.head.appendChild(s);
+    })();
   </script>
 </BaseLayout>
