@@ -63,3 +63,58 @@ lint.py reported FAILs on <path>. Fix every FAIL and re-run until it passes.
 Self-score the notes at <path> against the quality rubric. Give breakdown
 per category and list every gap keeping it under 85.
 ```
+
+## Math-focused extraction (Phase 1, math-heavy lecture)
+```text
+Use Agent 1 (extractor) to process <transcript.txt> into a dense draft.
+This lecture is math-heavy and the transcript describes formulas and
+derivations in plain language. Follow the Math extraction protocol strictly:
+reconstruct real LaTeX for every formula, keep the professor's verbal
+description next to each equation as the audit trail, build a symbol registry
+per concept (name, meaning, type, units/domain, LaTeX), capture every
+derivation step and mark skipped steps with *[verify]*, dimension/shape-check
+every vector/matrix formula, and tag any uncertain reconstruction with
+*[verify: <reason>]* instead of silently guessing. Output the math map as
+part of the Step 0.5 inventory.
+```
+
+## Math reconciliation (Phase 2, with enrichment docs)
+```text
+Use Agent 2 (enricher) to apply the 9-step spine to <dense-draft.md> using
+the attached enrichment docs <doc1.pdf, doc2.md, ...> as MATH GROUND TRUTH
+for the topics the transcript already covers. Resolve every *[verify]*
+marker from Agent 1: confirm, correct, or fill each one against the docs
+without introducing new topics. Complete every derivation end-to-end with
+annotated algebra steps. Keep the professor's notation as primary; note
+standard alternatives, never silently replace. Run the Step R4 factuality
+checks (dimensions, limiting case, domain, numerical spot-check) on every
+reconciled formula. Any marker the docs do not cover must be escalated with
+a :::warning-box callout, not left bare. Report a final marker sweep.
+```
+
+## Verify just the formulas in existing notes
+```text
+Scan <path/to/notes.html> for every formula. For each, run the Step R4
+factuality checks from the enricher skill: dimensional/shape consistency,
+limiting/special-case reduction, output domain, and a tiny numerical
+spot-check. List any formula that fails a check, with the failing check
+and a proposed correction. Do not edit the file — just report.
+```
+
+## Complete a skipped derivation
+```text
+In the notes for <Lecture Name>, the section on <concept> shows a
+derivation that skips from <line A> to <line B> with "after simplification".
+Fill in every missing algebraic step in a \begin{aligned} block, each line
+annotated with the move (distribute, substitute, apply Bayes, take log,
+etc.). Source each non-trivial step from <enrichment doc> or a standard
+identity. Remove any *[verify]* marker once the gap is filled.
+```
+
+## Symbol-registry pass
+```text
+For each section in <path> that introduces three or more new symbols, add a
+Symbol Registry block listing: symbol, plain-language meaning, LaTeX, type
+(scalar/vector/matrix), and units or domain. Ensure every symbol used in
+that section's math appears in the registry.
+```

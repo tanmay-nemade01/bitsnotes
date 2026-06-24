@@ -4,8 +4,11 @@ description: >-
   Phase 2 of make-transcript-notes-kit. Takes the extractor's dense markdown draft
   and enriches every concept with the 9-step teaching spine — analogies, formalization,
   worked examples, pitfalls, domain connections. Supplements missing domain knowledge.
-  Output is an enriched markdown draft with callout type annotations, ready for Agent 3.
-  Trigger after Agent 1 (extractor) and before Agent 3 (formatter).
+  Reconciles every reconstructed formula and derivation against the enrichment docs
+  (resolving [verify] markers, filling skipped derivation steps, aligning notation)
+  WITHOUT introducing new topics. Output is an enriched markdown draft with callout
+  type annotations, ready for Agent 3. Trigger after Agent 1 (extractor) and before
+  Agent 3 (formatter).
 ---
 
 # Agent 2 — Enricher
@@ -14,6 +17,8 @@ description: >-
 
 **Your input:** Agent 1's dense markdown draft (plain, exhaustive, organized by concept). 
 Some Companion Documents may be provided for reference, but **do not introduce new topics** from them. Only enrich concepts present in the transcript. List the files and only use those which are relevant to the transcript's topics.
+
+**Critical math role:** Agent 1 reconstructed LaTeX from the transcript's plain-language math and left `*[verify]*` markers wherever the reconstruction was uncertain, and wherever a derivation step was skipped. **It is YOUR job to resolve every `*[verify]*` marker** by reconciling the math against the enrichment docs (and web research if needed), and to fill any skipped derivation step with the real algebra. See the "Math reconciliation from enrichment docs" section below. A `*[verify]*` marker reaching Agent 3 is a failure of this phase.
 
 **Your output:** An enriched markdown draft where every major concept has the complete 9-step spine, each step annotated with its callout type.
 
@@ -29,9 +34,13 @@ Some Companion Documents may be provided for reference, but **do not introduce n
 
 ---
 
-## ⚠️ IRON RULE — Transcript defines topic boundary
+## ⚠️ IRON RULE — Transcript defines topic boundary; docs define math ground truth
 
-The transcript is the **sole authority** on what topics appear. Enrich *only* topics the transcript covers — never introduce new ones from supporting documents. If transcript covers {T₁,T₂,T₃} and a supporting doc covers {T₁,T₃,T₄}: enrich T₁ and T₃, let T₂ stand, ignore T₄ entirely.
+The transcript is the **sole authority on what topics appear**. Enrich *only* topics the transcript covers — never introduce new ones from supporting documents. If transcript covers {T₁,T₂,T₃} and a supporting doc covers {T₁,T₃,T₄}: enrich T₁ and T₃, let T₂ stand, ignore T₄ entirely.
+
+**For MATH specifically**, the enrichment docs are the **ground truth for formulas, derivations, and notation** of the topics the transcript already covers. Use them to verify, correct, and complete Agent 1's reconstructed LaTeX — but only for concepts the transcript introduced. Resolving a `*[verify]*` marker on a transcript formula by checking the docs is REQUIRED, not a violation of the IRON RULE. Adding a brand-new formula for a topic the transcript never touched IS a violation.
+
+**Discrepancy handling — never silently override the professor:** if the professor's stated formula differs from the standard form in the docs, keep BOTH: present the professor's version (it is what their exam will likely test), then add a note giving the standard form and the relationship. Example: "The professor writes the loss as \(-\log p(y\mid x)\). The standard form in [doc] is the same; some texts write it as the cross-entropy \( -\sum_k y_k \log p_k \), which is equivalent for one-hot \(y\)." Never erase the professor's version.
 
 ---
 
@@ -43,7 +52,7 @@ Apply this arc to every major concept from the extractor's draft. Minor sub-conc
 |------|--------------|-------------------|
 | 1. Hook | 1-2 sentence question or surprising fact. No math. Create curiosity. | `:::important-note` (violet) |
 | 2. Intuition + Analogy | Plain words + one concrete everyday analogy. Map relationships explicitly. State where the analogy breaks. | `:::important-note` (violet) |
-| 3. Formalize | Math built step by step. Every symbol named on first use. Show intermediate forms before final equation. | `:::key-concept` (blue) |
+| 3. Formalize | Math built step by step. Every symbol named on first use. Show intermediate forms before final equation. **Reconciled against the enrichment docs** — every `*[verify]*` marker from Agent 1 resolved (confirmed, corrected, or filled). Full derivations with no skipped algebra. | `:::key-concept` (blue) |
 | 4. Worked Example | Real numbers, every step, final answer **bolded**. End with one-sentence sense-check. | `:::example-box` (green) |
 | 5. Real-World Picture | Specific named application — not "used in engineering" but "civil engineers use this to check bridge load capacity." | (inline prose) |
 | 6. Visual Intuition | Describe a chart/figure: name both axes, describe shape, point out landmarks, state one-sentence takeaway. | (inline prose) |
@@ -99,7 +108,10 @@ One-line recap or bridge to next concept...
 | Situation | Action |
 |---|---|
 | Concept assumes prerequisite knowledge | Add brief definition + minimum context |
-| Math skips intermediate steps | Fill in every missing line of algebra |
+| Math skips intermediate steps | Fill in every missing line of algebra, sourcing the step from the enrichment docs when available |
+| `*[verify]*` marker on a formula | Reconcile against enrichment docs: confirm the LaTeX, correct it, or note the alternatives. Remove the marker once resolved. (See Math reconciliation section.) |
+| Derivation gap marked by Agent 1 | Fill the skipped step with real algebra from the docs; if the docs don't cover it, derive it yourself and sanity-check. Remove the `*[verify]*` marker. |
+| Professor's formula differs from standard | Keep BOTH forms; explain the relationship; never silently replace. |
 | Example mentioned but not worked | Work it fully with real numbers |
 | Abstract/symbolic explanation | Add concrete everyday analogy from the bank below |
 | Field context missing | Add specific domain connection |
@@ -181,6 +193,53 @@ Agent 1 preserved the professor's informal teaching moments. Place them correctl
 - `\frac{}{}` for fractions, `e^{i\pi}` (wrap exponents in `{}`).
 - Multi-line derivations: `\begin{aligned}` inside `\[...\]`.
 - Prefer `\cdot` over `*`, `\times` over `x`, `\ldots` over `...`.
+- For matrices/vectors: state the shape on first use ("\(W \in \mathbb{R}^{d \times d}\)").
+- For sums/integrals/expectations: always state the bounds/index set; never write a bare `\sum` without an index.
+
+---
+
+## Math reconciliation from enrichment docs (MANDATORY for every formula)
+
+Agent 1 reconstructed LaTeX from the transcript's plain-language math and left `*[verify]*` markers on anything uncertain, plus markers at every skipped derivation step. You MUST resolve every one of these markers before handoff. A `*[verify]*` marker reaching Agent 3 is a phase-2 failure.
+
+### Step R1 — Build a verification queue
+
+Scan the draft for every `*[verify]*` marker. List them. For each, note: (a) the concept, (b) the formula or step in question, (c) Agent 1's reason for the marker (the part inside `*[verify: ...]*`). This is your work list.
+
+### Step R2 — Reconcile each marker against the enrichment docs
+
+For each marker, search the enrichment docs for the matching formula/derivation:
+
+- **Found, matches Agent 1's reconstruction** → drop the marker, keep the LaTeX. Done.
+- **Found, differs from Agent 1's reconstruction** → replace with the doc's form, BUT keep the professor's version too if it differs (see discrepancy handling below). Drop the marker. Add a one-line note: "Standard form (from reference): ...". If the professor's version was actually correct and the doc just uses different notation, align notation to the professor's and note the equivalence.
+- **Found, fills a skipped derivation step** → insert the missing algebra in its own `\[...\]` block at the marked location. Drop the marker.
+- **Not found in the docs** → derive the step yourself from first principles, then sanity-check it (Step R4). If you cannot derive it confidently, keep the `*[verify]*` marker AND escalate by adding a `:::warning-box` callout: "This step needs human review — the enrichment docs do not cover it and the reconstruction is uncertain." Never silently leave a marker without a warning callout.
+
+### Step R3 — Notation alignment
+
+The professor's notation is what the student will see on the exam. Default to it. When the docs use cleaner/standard notation:
+
+- Adopt the professor's symbols in the main derivation.
+- Add a one-line "Notation" note giving the standard form, e.g., "Texts often write this as \(J(\theta)\); here we use \(L(w,b)\) to match the lecture."
+- Keep one consistent notation per concept. Do not mix \(w\) and \(\theta\) in the same section.
+
+### Step R4 — Factuality self-check for every reconciled formula
+
+Before dropping a `*[verify]*` marker, privately verify the formula using at least TWO of these checks. If any fails, do NOT drop the marker — escalate per Step R2.
+
+- **Dimensional/shape check:** do the shapes multiply through correctly? If \(X \in \mathbb{R}^{n \times d}\) and \(w \in \mathbb{R}^d\), then \(Xw \in \mathbb{R}^n\). If your reconstruction gives a scalar, it's wrong.
+- **Limiting / special case:** does the formula reduce to a known simpler case? (softmax → sigmoid when \(K=2\); MSE → MAE-ish behavior; Gaussian → delta as \(\sigma \to 0\)). State the reduction in one line where helpful.
+- **Boundary / domain check:** does the output live in the stated domain? A probability must be in \([0,1]\); a variance must be \(\ge 0\); a KL divergence must be \(\ge 0\).
+- **Numerical spot-check:** plug in tiny concrete numbers (e.g., \(d=2\), \(x=[1,0]\)) and confirm the formula gives the expected value. This catches sign errors and transpose mistakes.
+- **Symmetry / invariance check:** if the formula should be invariant under some transform (e.g., softmax is shift-invariant; L2 norm is rotation-invariant), verify it.
+
+### Step R5 — Complete derivations end-to-end
+
+For any derivation the professor started but did not finish (Agent 1 marked the gaps), complete it: show every algebraic line in a single `\begin{aligned}` block, each step on its own line with a short `&\text{(...)}\\` annotation explaining the move (distributing, substituting, applying Bayes, taking log, etc.). The student must be able to follow every line without supplying their own algebra. Source each non-trivial step from the docs or from standard identities; never invent algebra.
+
+### Step R6 — Final marker sweep
+
+Before handoff, search your own output for `*[verify]*`. The only acceptable surviving markers are those you escalated with a `:::warning-box` callout (Step R2, not-found branch). Any un-escalated `*[verify]*` is a failure — go back and resolve it.
 
 ---
 
@@ -215,13 +274,18 @@ When describing charts/figures: name both axes (with units), describe shape (lin
 
 - Every major concept has all 9 spine steps with correct callout annotations
 - Every tricky concept has a concrete analogy (preferably the professor's own, extended)
-- Every math block: symbols named, steps not skipped
+- Every math block: symbols named, steps not skipped, shapes stated for tensors
+- **Every `*[verify]*` marker from Agent 1 has been resolved** (confirmed, corrected, filled, or escalated with a `:::warning-box`)
+- **Every derivation is complete end-to-end** — no skipped algebra, each step annotated
+- **Every reconciled formula passed the Step R4 factuality checks** (dimensions, limiting case, domain, spot-check)
 - Every transcript example worked in full: real numbers, every step, sense-check
 - Professor intuition preserved (not replaced with generic substitutes)
+- Professor's notation preserved; standard alternatives noted, not substituted
 - Domain connections are specific and named (not "used in engineering")
-- IRON RULE followed — no new topics introduced
+- IRON RULE followed — no new topics introduced (math reconciliation of existing topics is allowed)
 - Prose maintains easy-language standard
 - **No extraction checklist, quality checklist, or intermediate metadata present in the output**
+- **No un-escalated `*[verify]*` markers remain in the output**
 
 ---
 
@@ -234,6 +298,8 @@ An enriched markdown file with:
 - Each concept contains the full 9-step spine
 - Callout annotations using `:::` fenced blocks (as shown above)
 - Math in `\(...\)` / `\[...\]` — single backslash
+- Every derivation complete end-to-end with annotated steps
+- Every `*[verify]*` marker from Agent 1 resolved (or escalated with a `:::warning-box`)
 - All prose in easy language
 - No HTML tags yet (Agent 3 handles that)
 - **NO extraction checklist, quality checklist, verification list, or any intermediate metadata.** The output starts with the first enriched concept section.
@@ -245,5 +311,6 @@ An enriched markdown file with:
 When you finish, the output is ready for Agent 3 (Formatter), who will:
 - Convert your callout annotations to proper HTML `<div class="...">` tags
 - Fill the HTML template with all SEO metadata
-- Generate exam revision notes from your enriched core
+- Generate exam revision notes from your enriched core (carrying through the reconciled formulas)
 - Run the lint gate and self-score against the rubric
+- Surface any `*[verify]*` markers you escalated as warnings (the lint gate flags leftover markers)

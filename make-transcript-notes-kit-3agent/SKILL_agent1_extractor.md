@@ -5,7 +5,11 @@ description: >-
   detail from a raw lecture transcript into a dense markdown draft — every concept,
   example, formula, student Q&A, industry application, exam tip, professor intuition,
   worked computation, and named reference. Filters ONLY administrative noise and PII.
-  Output is plain markdown, no callout boxes or HTML.
+  Reconstructs real LaTeX from the transcript's plain-language descriptions of math
+  (formulas, derivations, symbols), keeps a per-lecture symbol registry, flags
+  ambiguous math with a [verify] marker, and preserves the professor's verbal
+  explanation alongside every equation so Agent 2 can reconcile it against the
+  enrichment docs. Output is plain markdown, no callout boxes or HTML.
   Trigger after Agent 2 (enricher) and Agent 3 (formatter).
 ---
 
@@ -29,6 +33,8 @@ description: >-
 6. **Industry applications are ESSENTIAL** — Every named tool, company, system, product, technique, or real-world use case the professor mentions. These connect theory to practice.
 7. **Exam guidance is CRITICAL** — Mark distributions, question patterns, study advice, what to expect, what is important. Students need this.
 8. **Anonymize ruthlessly** — Strip ALL professor names, institute names, student names. Never mention "transcript", "lecture", "recording", "slides". The draft must read as standalone educational material.
+9. **Factual fidelity for numbers and math** — Preserve every number, constant, dimension, and formula exactly as stated. Do not round, paraphrase, or "tidy" values. When the transcript's plain-language math is ambiguous, reconstruct the most likely LaTeX and mark it `*[verify]*` rather than silently guessing. (See the Math extraction protocol.)
+10. **Math is an audit trail, not a paraphrase** — Every reconstructed formula must keep the professor's verbal description next to it. Agent 2 will reconcile your LaTeX against the enrichment docs using that verbal description as the bridge.
 
 ---
 
@@ -47,14 +53,20 @@ Every sentence in the transcript potentially belongs to one or more of these dim
 
 ### Dimension 2 — Formulas and Mathematics
 
-- Every formula, equation, derivation step
+**AI/ML lectures are often math-heavy, and transcripts describe formulas and derivations in plain language ("sigma of x plus b", "the square root of one over n"). Your job is to reconstruct the real LaTeX from that plain-language description — carefully and verifiably. See the "Math extraction protocol" section below for the full method. This dimension lists what to capture.**
+
+- Every formula, equation, derivation step — reconstructed as proper LaTeX
+- The professor's plain-language description of the math, preserved verbatim alongside the LaTeX (this is the audit trail; Agent 2 will reconcile it against the enrichment docs)
 - Assumptions, conditions, when the formula does/does not apply
-- Every variable/symbol — name it, define it, give its units if any
+- Every variable/symbol — name it, define it, give its type (scalar/vector/matrix), its units if any, and its domain (e.g., \(x \in \mathbb{R}^d\), \(p \in [0,1]\))
 - Intermediate algebra steps the professor shows
 - Numerical substitutions the professor performs
-- The professor''s verbal explanation while writing math ("we take this because...", "notice that...")
-- Different versions of the same formula (e.g., normalized vs unnormalized, log base 10 vs natural log)
+- The professor's verbal explanation while writing math ("we take this because...", "notice that...")
+- Different versions of the same formula (e.g., normalized vs unnormalized, log base 10 vs natural log, element-wise vs matrix form, scalar vs batched form)
 - Which notation convention the professor prefers and why
+- The shape/dimensions of every tensor when relevant ("W is d by d", "the Jacobian is n by m")
+- Limiting / special cases the professor mentions (e.g., "if sigma goes to 0 this collapses to...", "in the binary case this reduces to...")
+- Any place the transcript's math is ambiguous, garbled, or you are not fully confident in the reconstruction — mark with a `*[verify: <what was unclear>]*` marker next to the LaTeX (see protocol). NEVER silently guess a formula. A flagged guess is recoverable; a silent mis-transcription is not.
 
 ### Dimension 3 — Worked Examples and Computations
 
@@ -177,9 +189,10 @@ Before writing a single paragraph, scan the transcript and enumerate:
 1. **Every concept** — one line each, in order of appearance. A concept = anything that earns a definition, formula, named idea, or dedicated section in the transcript.
 2. **Every worked example** — each computational walkthrough the transcript contains. Note the concept it belongs to.
 3. **Every formula and symbol** — list them. You will name every symbol on first use.
-4. **Every student Q&A exchange** — mark the transcript timestamps or section headers.
-5. **Every exam guidance mention** — note the topic and what was said.
-6. **Every named reference** — textbook, paper, tool, company, dataset mentioned.
+4. **The math map** — for every formula/derivation in the transcript, record: (a) the transcript sentence(s) that describe it, (b) the symbols it introduces, (c) whether the professor worked it, stated it, or derived it, (d) your confidence in the reconstruction (high / medium / low). This map is your contract with the Math extraction protocol below — every entry must end up as LaTeX in the draft, with low/medium-confidence entries marked `*[verify]*`.
+5. **Every student Q&A exchange** — mark the transcript timestamps or section headers.
+6. **Every exam guidance mention** — note the topic and what was said.
+7. **Every named reference** — textbook, paper, tool, company, dataset mentioned.
 
 **This checklist is your contract with completeness.** A dropped item is a failed extraction. You may start writing prose only AFTER the checklist is complete.
 
@@ -237,7 +250,12 @@ After all concept sections, add:
 - Every worked computation shows ALL intermediate steps
 - Every named tool/company/system is documented
 - Every exam-related comment is captured
-- Every formula has all variables named
+- Every formula has all variables named (cross-check against the symbol registry)
+- Every formula in the draft has its source transcript quote preserved alongside it
+- Every low/medium-confidence formula carries a `*[verify]*` marker with a reason
+- Every derivation's gaps are marked `*[verify]*` rather than silently filled
+- Dimension/shape consistency check passed (or failures marked `*[verify]*`) for every formula involving vectors/matrices
+- No formula was silently "corrected" to match a standard form — discrepancies with standard treatments are noted, not erased
 
 ---
 
@@ -297,6 +315,86 @@ Worked computations must be captured with ZERO information loss. Here is the sta
 2. Show the correction
 3. Explain what went wrong
 4. These are HIGH VALUE learning moments — never skip them
+
+---
+
+## Math extraction protocol (reconstruct LaTeX from plain-language math)
+
+Lecture transcripts describe math in plain language. Auto-generated transcripts are especially noisy: "x i" might be \(x_i\) or \(x^{(i)}\); "w trans x" might be \(w^\top x\) or \(w^T x\); "one over n sum" is \(\frac{1}{n}\sum\). Your job is to reconstruct the real LaTeX carefully, never to copy the garbled string verbatim, and never to silently guess. Follow this protocol for every formula, derivation, and symbol.
+
+### Step M1 — Locate the math, capture the verbal description verbatim
+
+Before writing any LaTeX, quote the exact transcript sentence(s) that describe the math. Keep this quote as the audit trail. Agent 2 will compare your LaTeX against this quote and against the enrichment docs to reconcile.
+
+- If the transcript says "the loss is minus log of p of y given x", record both: the quote AND the reconstructed LaTeX \(L = -\log p(y \mid x)\).
+- Place the verbal description immediately before or after the LaTeX block in the draft, never discard it.
+
+### Step M2 — Reconstruct the LaTeX
+
+Reconstruct the formula as proper LaTeX using single-backslash delimiters `\(...\)` inline and `\[...\]` block. Rules:
+
+- **Subscripts vs superscripts:** listen for "sub" / "i" / "index" → subscript; "squared" / "transpose" / "T" / "to the" / "power" → superscript. When ambiguous ("x i"), prefer subscript \(x_i\) for an indexed element, but mark `*[verify]*` if the surrounding context could mean \(x^i\).
+- **Transpose:** "w trans x", "w transpose x" → \(w^\top x\) (use `\top`, not `T`).
+- **Fractions:** "one over n", "1 over n" → \(\frac{1}{n}\). Never write `1/n` in prose math.
+- **Sums / products / integrals:** capture the bounds. "sum over i from 1 to n" → \(\sum_{i=1}^{n}\). If the professor omits bounds, write \(\sum_i\) and note "bounds not stated".
+- **Expectations:** "expectation of x" → \(\mathbb{E}[x]\) or \(\mathbb{E}[X]\); keep the professor's casing convention.
+- **Norms:** "norm of x" → \(\|x\|\); "L2 norm" → \(\|x\|_2\).
+- **Matrices:** uppercase for matrices (\(W, X, A\)), lowercase bold for vectors when the professor distinguishes; if the professor does not distinguish, follow the professor's convention and note it.
+- **Distributions:** "normal with mean mu and variance sigma squared" → \(X \sim \mathcal{N}(\mu, \sigma^2)\). Note: variance vs standard deviation is a common transcription trap — if the professor says "variance sigma squared" use \(\sigma^2\); if they say "standard deviation sigma" the parameter is \(\sigma\) and variance is \(\sigma^2\). When unsure, mark `*[verify]*`.
+- **Log base:** listen carefully. "log" alone → \(\log\) (natural log in ML context unless the professor says otherwise). "log base 2" → \(\log_2\). "log base 10" → \(\log_{10}\). "ln" → \(\ln\). Never assume; transcribe what was said.
+
+### Step M3 — Build the symbol registry (per concept)
+
+For every concept that introduces math, list every new symbol with: name, plain-language meaning, LaTeX, type, units/domain. Example:
+
+```
+Symbol registry — Logistic regression
+- x     — input feature vector          — \(\mathbf{x}\)        — vector in \(\mathbb{R}^d\)
+- w     — weight vector                 — \(\mathbf{w}\)        — vector in \(\mathbb{R}^d\)
+- b     — bias term                     — \(b\)                 — scalar
+- z     — pre-activation (linear part)  — \(z = \mathbf{w}^\top \mathbf{x} + b\) — scalar
+- sigma — logistic sigmoid              — \(\sigma(z) = \frac{1}{1+e^{-z}}\) — scalar in (0,1)
+- y     — true label                    — \(y \in \{0,1\}\)     — scalar
+```
+
+A student who reads only the symbol registry of a section must understand every symbol used in that section's math. This registry is mandatory for any section containing three or more new symbols.
+
+### Step M4 — Derivations: capture every step, mark every gap
+
+When the professor derives one formula from another:
+
+- Record every algebraic step the professor shows, in order, each in its own `\[...\]` block.
+- If the professor skips a step ("and after simplifying we get..."), insert a `*[verify: step skipped — "after simplifying"]*` marker where the missing step belongs. Do NOT fill the gap yourself with invented algebra — that is Agent 2's job, using the enrichment docs.
+- If the professor's verbal description of a step is unclear, keep the quote and mark the LaTeX `*[verify]*`.
+- Capture the final result, then a one-line plain-language restatement of what the derivation showed.
+
+### Step M5 — Confidence tagging
+
+After reconstructing each formula, assign a confidence and tag accordingly. Do not include the confidence level as a heading or scoreboard in the output — only as inline markers where needed.
+
+- **High confidence** (professor stated the formula clearly, transcript is clean) → no marker.
+- **Medium confidence** (transcript is noisy but reconstruction is the most natural reading) → append `*[verify]*` after the LaTeX with a short reason: `*[verify: transcript says "w trans x" — assuming \(w^\top x\)]*`.
+- **Low confidence** (multiple plausible readings) → append `*[verify]*` AND list the alternative readings in a one-line note: `*[verify: could be \(x_i\) or \(x^{(i)}\); chose \(x_i\) per context]*`.
+
+The `*[verify]*` marker is your friend. It tells Agent 2 exactly where to spend reconciliation effort against the enrichment docs, and tells a human reviewer where to look. A page full of `*[verify]*` markers is healthier than a page of silent mis-transcriptions.
+
+### Step M6 — Dimensional / shape consistency check (internal, do not output)
+
+Before finalizing a concept's math, privately sanity-check:
+
+- Do the dimensions/shapes line up? If \(x \in \mathbb{R}^d\) and \(w \in \mathbb{R}^d\), then \(w^\top x\) is a scalar — good. If your reconstruction makes \(w^\top x\) a vector, something is wrong; re-read the transcript and fix or mark `*[verify]*`.
+- Does the formula reduce to a known special case the professor mentioned? (e.g., does your softmax reduce to logistic regression when \(K=2\)?)
+- Are units consistent? If a quantity is described as a probability, your formula must output a value in \([0,1]\).
+
+If a check fails and you cannot resolve it, mark the formula `*[verify]*` with the failing check noted. Never ship a formula you have not at least mentally dimension-checked.
+
+### Step M7 — Preservation rules (what NOT to do with math)
+
+- Never paraphrase a number. "0.05" stays "0.05", not "about 5%".
+- Never round a value the professor stated exactly.
+- Never silently "correct" a formula you believe the professor got wrong. Capture the professor's version, then add a note: `*[verify: professor's form differs from standard — see enrichment docs]*`. Agent 2 reconciles.
+- Never drop a formula because it seems redundant. Variant forms (normalized/unnormalized, batched/scalar, log-domain/original) are pedagogically distinct — keep all of them.
+- Never replace the professor's notation with "cleaner" standard notation without noting it. If the professor writes \(w^T x\) and you render \(w^\top x\), that is fine (typographic), but if the professor uses \(\theta\) and you switch to \(w\), note the swap.
 
 ---
 
@@ -369,6 +467,9 @@ A plain markdown file. No HTML. No callout boxes. No CSS classes. Just clean, de
 - `##` for major concepts (in teaching order)
 - `###` for sub-concepts
 - Formulas in `\(...\)` (inline) or `\[...\]` (block) — single backslash only
+- A **symbol registry** at the top of any section introducing three or more new symbols (see Math extraction protocol Step M3)
+- The professor's plain-language description of the math preserved next to every reconstructed formula (the audit trail for Agent 2)
+- `*[verify: <reason>]*` markers next to any formula or derivation step whose reconstruction is uncertain — never silently guess
 - All professor intuition woven into prose (never as attributed quotes)
 - All PII stripped
 - Student Q&A formatted as blockquotes with **Q:** and **A:** labels
@@ -383,7 +484,8 @@ A plain markdown file. No HTML. No callout boxes. No CSS classes. Just clean, de
 
 ## 1. [First Concept]
 ### Definition and Explanation
-### Mathematical Formulation
+### Symbol Registry            ← if 3+ new symbols
+### Mathematical Formulation   ← reconstructed LaTeX + professor's verbal description alongside, *[verify]* where uncertain
 ### Worked Examples
   - Example 1: [full walkthrough]
   - Example 2: [full walkthrough]
@@ -415,5 +517,6 @@ When you finish, the output is ready for Agent 2 (Enricher), who will:
 - Add analogies from the analogy bank
 - Place content into callout box types
 - Work any incomplete examples in full
+- **Reconcile every reconstructed formula and derivation against the enrichment docs**, resolving every `*[verify]*` marker you left (confirming the LaTeX, correcting it, or filling skipped derivation steps from the docs — without introducing new topics)
 
-Do NOT do any of that yourself. Your job is pure extraction — be a perfect transcriber of ALL educational content across ALL 9 dimensions.
+Do NOT do any of that yourself. Your job is pure extraction — be a perfect transcriber of ALL educational content across ALL 9 dimensions, and a careful, honestly-marked reconstructor of the math.

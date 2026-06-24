@@ -28,6 +28,9 @@ Checks (each reported as PASS / WARN / FAIL):
   * Suspiciously long unbroken tokens flagged as overflow risk.
   * Exam revision notes: at least one .exam-revision-entry present.
   * No <style> tags, no inline style="" attributes, no Google Fonts links.
+  * Leftover *[verify]* math-reconstruction markers (WARN) — these are
+    Agent 1/2 process markers for uncertain math and must be resolved
+    (removed) or escalated into a .warning-box callout before shipping.
 
 Exit code is non-zero if any check FAILs.
 """
@@ -695,6 +698,46 @@ def check_content_structure(parser, report):
 
 
 # ---------------------------------------------------------------------------
+# Leftover math-verification marker check
+# ---------------------------------------------------------------------------
+
+_VERIFY_MARKER = re.compile(r"\*\[verify(?::[^\]]*)?\]\*", re.IGNORECASE)
+
+
+def check_verify_markers(raw, report):
+    """Detect leftover *[verify]* markers from Agent 1/Agent 2.
+
+    Agent 1 marks uncertain math reconstructions with *[verify: reason]*.
+    Agent 2 must resolve every one (confirm/correct/fill) or escalate it
+    inside a :::warning-box callout and remove the raw marker token.
+    A surviving *[verify]* token in the shipped HTML means a math
+    reconstruction was never reconciled — a real correctness risk.
+
+    Scripts/styles/comments are stripped so JSON-escaped text in the
+    metadata script does not trip the check.
+    """
+    visible = re.sub(r"<!--.*?-->", "", raw, flags=re.DOTALL)
+    visible = re.sub(r"<script\b.*?</script>", "", visible,
+                     flags=re.DOTALL | re.IGNORECASE)
+    visible = re.sub(r"<style\b.*?</style>", "", visible,
+                     flags=re.DOTALL | re.IGNORECASE)
+
+    hits = _VERIFY_MARKER.findall(visible)
+    if hits:
+        sample = "; ".join(h[:60] for h in hits[:5])
+        report.warned(
+            "math verify markers",
+            f"{len(hits)} leftover *[verify]* marker(s) found in the visible "
+            f"body. These are Agent 1/2 process markers for uncertain math "
+            f"reconstructions and must be resolved before shipping: either "
+            f"remove (resolved by Agent 2) or convert into a .warning-box "
+            f"callout (escalated for human review). Sample: {sample}")
+    else:
+        report.passed("math verify markers",
+                      "No leftover *[verify]* markers in the visible body.")
+
+
+# ---------------------------------------------------------------------------
 # Intermediate metadata leakage check
 # ---------------------------------------------------------------------------
 
@@ -781,6 +824,7 @@ def lint_file(path):
     check_exam_revision(parser, report)
     check_content_structure(parser, report)
     check_intermediate_metadata(raw, report)
+    check_verify_markers(raw, report)
     return report
 
 

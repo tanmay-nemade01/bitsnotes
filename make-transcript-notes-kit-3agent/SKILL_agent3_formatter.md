@@ -26,6 +26,7 @@ description: >-
 4. **SEO must be complete** — Every SEO element is mandatory. The lint gate enforces this.
 5. **Exam revision is a distillation, not an invention** — Built from the completed core only.
 6. **STRIP intermediate metadata** — Before converting to HTML, strip any extraction checklists, quality self-checks, verification tick-lists, or other intermediate/process metadata that may have leaked from Agent 1 or Agent 2. These are NOT educational content. The HTML body must contain ONLY the textbook content and exam revision notes.
+7. **Math is final and reconciled** — Agent 2 should have resolved every `*[verify]*` marker. If any remain (escalated by Agent 2 with a `:::warning-box`), preserve that warning callout in the HTML and keep the marker text out of the visible prose. The lint gate will WARN on leftover `*[verify]*` markers so they are not silently shipped. Exam revision `keyFormula` values must use Agent 2's reconciled LaTeX, not re-derived.
 
 ---
 
@@ -35,6 +36,8 @@ Before anything else, scan the enriched draft for intermediate/process metadata 
 
 - **Extraction checklists** — any section titled "Extraction Checklist" with ticked/bulleted lists of concepts. These are Agent 1's internal verification and belong nowhere in the final output.
 - **Quality self-check lists** — any section titled "Quality self-check" or "Quality self-check before handoff" with checkbox items. These are Agent 2's internal verification.
+- **The math verification queue / marker sweep lists** — Agent 2's internal R-step work lists. These are process artifacts.
+- **Any `*[verify]*` markers that Agent 2 resolved** — the marker text itself (`*[verify: ...]*`) must be removed from visible prose. Only markers that Agent 2 explicitly escalated inside a `:::warning-box` should remain, and even then only the human-readable warning prose — not the `*[verify: ...]*` token.
 - **Any other process/verification metadata** — any section that reads like internal QA rather than educational material.
 
 **How to identify:** Look for sections whose heading contains words like "checklist", "self-check", "verification", or sections that are just long bulleted/ticked lists of concept names with `[x]` markers. These have zero educational value for the end reader.
@@ -161,6 +164,7 @@ Each entry = one `<div class="exam-revision-entry">`:
 **Critical rules:**
 - One entry per major concept.
 - Every formula in `\[...\]` with every symbol named.
+- **Use the reconciled formulas from Agent 2's enriched core** — do not re-derive or paraphrase. If the core shows two equivalent forms (professor's + standard), use the professor's form in `keyFormula` and mention the alternative in `mustKnow` if useful.
 - **No content invented here** — everything must be traceable to the core.
 - The intro paragraph: "Below is the distilled, exam-ready core of this lecture. Every entry is built from the full textbook notes above. Use this section for rapid review — but if something doesn't make sense, go back to the full explanation in the main content."
 
@@ -221,9 +225,12 @@ Each entry = one `<div class="exam-revision-entry">`:
 
 - **Single backslash ONLY:** `\( ... \)` inline, `\[ ... \]` block. **Never `\\(` or `\\[`** — those render as literal backslash characters.
 - **Every symbol named per chapter** — a student jumping to any chapter must understand every symbol.
+- **Every derivation complete** — no line should read "after simplification" or skip algebra. If a step is genuinely out of scope, say so explicitly in prose; never silently omit.
 - **Fraction hygiene:** `\frac{}{}` not inline `/`. **Exponent hygiene:** `e^{i\pi}` not `e^i\pi`.
 - **Multi-line:** `\begin{aligned}` inside `\[ ... \]`.
 - **No raw LaTeX leaking:** `\cdot` not `*`, `\times` not `x`, `\ldots` not `...`.
+- **Tensor shapes stated** on first use for any vector/matrix/tensor formula.
+- **No `*[verify]*` tokens in the visible body** — these are Agent 1/2 process markers. Remove resolved ones; convert escalated ones into `:::warning-box` prose. (The lint gate will WARN if any remain.)
 - **Wide formulas** auto-scroll via platform CSS on `mjx-container` — no manual wrapper needed.
 
 ---
@@ -274,6 +281,8 @@ The lint checks: template hygiene (no surviving `{{PLACEHOLDER}}`), viewport met
 - Callout box used for wrong purpose
 - Professor's informal analogies replaced with generic LLM ones
 - Exam revision entry contains info not in core content
+- Unresolved `*[verify]*` marker in visible body (resolved markers must be removed; escalated ones converted to warning callouts)
+- Derivation skips algebra steps or says "after simplification" without showing the simplification
 - SEO absent/broken: missing description, OG/Twitter/JSON-LD, or description outside 100-155 chars
 
 ---
@@ -284,7 +293,8 @@ The lint checks: template hygiene (no surviving `{{PLACEHOLDER}}`), viewport met
 - [ ] All 9 spine steps per major concept; correct callout per step
 - [ ] Sampled paragraphs pass easy-language audit (avg <~20 words, terms defined on first use)
 - [ ] Every tricky idea has concrete, mapping analogy
-- [ ] Math: step-by-step, every symbol named, correct single-backslash delimiters
+- [ ] Math: step-by-step, every symbol named, correct single-backslash delimiters, tensor shapes stated, every derivation complete with no skipped algebra
+- [ ] No `*[verify]*` markers in visible body (resolved removed, escalated converted to warning callouts)
 - [ ] Every worked example: all steps, real numbers, final highlighted, sense-check
 - [ ] No thin summaries; domain knowledge supplemented
 - [ ] Clean hierarchy; hook opener; bridges between concepts
