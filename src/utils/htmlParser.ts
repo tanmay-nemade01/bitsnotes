@@ -52,7 +52,8 @@ export function parseLectureHtml(htmlContent: string): ParsedLectureHtml {
     inlineStyles = inlineStyles
       .replace(/body\s*\{[^}]*\}/gi, '')
       .replace(/\.container\s*\{[^}]*\}/gi, '')
-      .replace(/\.hidden\s*\{[^}]*\}/gi, '');
+      .replace(/\.hidden\s*\{[^}]*\}/gi, '')
+      .replace(/:root\s*\{[^}]*\}/gi, '');
   }
 
   // Remove duplicate stylesheet link and duplicate body tags to prevent double loading
