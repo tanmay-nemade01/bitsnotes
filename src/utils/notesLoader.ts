@@ -74,7 +74,7 @@ for (const [htmlPath, htmlContent] of Object.entries(htmlFiles)) {
 /** Extract metadata from <script type="application/json" id="lecture-metadata"> in HTML. */
 function extractEmbeddedMetadata(htmlContent: string): Record<string, any> | null {
   const match = htmlContent.match(
-    /<script\s+type=["']application\/json["']\s+id=["']lecture-metadata["']\s*>(.*?)<\/script>/s
+    /<script\s+[^>]*id=["']lecture-metadata["'][^>]*>([\s\S]*?)<\/script>/i
   );
   if (!match) return null;
   try {
@@ -129,8 +129,10 @@ export function listLectures(subjectName: string): LectureSummary[] {
       const fileNameWithExt = parts[parts.length - 1];
       const fileName = fileNameWithExt.replace(/\.html?$/i, '');
 
+      const displayName = fileName.replace(/_/g, ' ');
+
       return {
-        name: fileName,
+        name: displayName,
         folderName: note.lectureFolder,
       };
     })

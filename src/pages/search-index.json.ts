@@ -36,7 +36,7 @@ export const GET: APIRoute = async () => {
     for (const lecture of lectures) {
       const content = getLectureContent(subject.name, lecture.folderName);
       if (content) {
-        const title = content.metadata?.title || lecture.name;
+        const title = content.metadata?.title ? `${lecture.name} — ${content.metadata.title}` : lecture.name;
         const text = cleanHtmlText(content.htmlContent);
         
         index.push({
