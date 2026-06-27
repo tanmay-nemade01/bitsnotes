@@ -1,6 +1,16 @@
 # Prompt cookbook — copy, paste, go
 
-## Full conversion
+## Full conversion (with topic mapping)
+```text
+Use make-transcript-notes-kit to convert the lecture transcript for
+<Lecture Name> in <Subject>. Go through all three phases: exhaustive
+extraction, domain knowledge supplementation with the full 9-step teaching
+spine, and HTML formatting. Read topic_mappings/<Subject>.yaml for
+prerequisite detection, generate the prerequisite section, and update
+the YAML. Run the lint gate at the end.
+```
+
+## Full conversion (no topic mapping)
 ```text
 Use make-transcript-notes-kit to convert the lecture transcript for
 <Lecture Name> in <Subject>. Go through all three phases: exhaustive
@@ -34,7 +44,7 @@ pitfall warning box, domain connection, and recap.
 
 ## Easy-language pass
 ```text
-Run an easy-language pass on the notes at <path>. Split sentences >~25 words,
+Run an easy-language pass on the notes at <path>. Split sentences >~22 words,
 define every term on first use inline, replace jargon with plain words, and
 ensure every formula has a plain-English intuition before it.
 ```

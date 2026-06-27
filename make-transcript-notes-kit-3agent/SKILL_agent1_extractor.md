@@ -1,4 +1,4 @@
-﻿---
+---
 name: extractor
 description: >-
   Phase 1 of make-transcript-notes-kit. Exhaustively extracts every educational
@@ -10,14 +10,14 @@ description: >-
   ambiguous math with a [verify] marker, and preserves the professor's verbal
   explanation alongside every equation so Agent 2 can reconcile it against the
   enrichment docs. Output is plain markdown, no callout boxes or HTML.
-  Trigger after Agent 2 (enricher) and Agent 3 (formatter).
+  Trigger before Agent 2 (enricher) and Agent 3 (formatter).
 ---
 
 # Agent 1 — Extractor
 
 **Your job:** Read a raw `.txt` lecture transcript and produce an **exhaustive, maximally detailed dense markdown draft**. Capture EVERY educational dimension — not just concepts and definitions, but also student questions, professor answers, industry applications, worked computations, exam guidance, named references, and every pedagogical moment. Filter NOTHING that has educational value.
 
-**Your output:** A markdown file with every concept organized into sections, all examples captured in full, all student Q&A preserved, all industry connections documented, all exam guidance recorded. This is the raw material Agent 2 will enrich with the 9-step teaching spine.
+**Your output:** A markdown file with every concept organized into sections, all examples captured in full, all student Q&A preserved, all industry connections documented, all exam guidance recorded. This is the raw material Agent 2 will enrich with the teaching spine.
 
 **THE #1 PRINCIPLE: When in doubt, INCLUDE. It is always better to include something marginal than to miss something valuable. Agent 2 can trim; you cannot recover what you did not capture.**
 
@@ -35,6 +35,8 @@ description: >-
 8. **Anonymize ruthlessly** — Strip ALL professor names, institute names, student names. Never mention "transcript", "lecture", "recording", "slides". The draft must read as standalone educational material.
 9. **Factual fidelity for numbers and math** — Preserve every number, constant, dimension, and formula exactly as stated. Do not round, paraphrase, or "tidy" values. When the transcript's plain-language math is ambiguous, reconstruct the most likely LaTeX and mark it `*[verify]*` rather than silently guessing. (See the Math extraction protocol.)
 10. **Math is an audit trail, not a paraphrase** — Every reconstructed formula must keep the professor's verbal description next to it. Agent 2 will reconcile your LaTeX against the enrichment docs using that verbal description as the bridge.
+11. **Strict File Attachment Guard Rail** — Focus *only and only* on the files attached to the prompt/context. Do *not* search for or read other files in the workspace (such as other transcripts or notes) unless you are absolutely certain that the attached files do not match the expected context at all (e.g., they are completely blank, corrupted, or clearly belong to a different course/lecture, suggesting an accidental attachment). Only under that absolute certainty may you check for other files in the workspace; otherwise, restrict your processing strictly to the attached files.
+12. **Strict Script Creation Guard Rail** — You are strictly prohibited from creating or writing any script (Python, Bash, JS, etc.) inside the toolkit folder (`make-transcript-notes-kit-3agent` or its subfolders) during the process. Any intermediate or temporary scripts created in the workspace for testing or content parsing must be cleaned up and deleted before completing the task.
 
 ---
 
@@ -282,6 +284,7 @@ Student Q&A exchanges are the SECOND most valuable content after worked examples
 ### When multiple students ask related questions
 - This signals a COMMON confusion point. Capture all instances.
 - Note the pattern: "Multiple students asked about why the sigmoid formula differs for positive and negative context words."
+- **Repetition is expected.** Students often re-ask the same doubt in different words. Capture each occurrence here (over-inclusion is your job), but group them and tag the cluster — Agent 2 will deduplicate these into one canonical Q&A per confusion point. Flag near-identical questions explicitly so the dedup is clean.
 
 ---
 
@@ -443,7 +446,7 @@ If a check fails and you cannot resolve it, mark the formula `*[verify]*` with t
 
 Write for a **smart beginner**: clever, motivated, meeting this topic for the first time.
 
-- **Sentences ~20 words.** Split if >25. One idea per sentence.
+- **Sentences ~20 words.** Split if >22. One idea per sentence.
 - **Define every term on first use**: *italicize* the term -> give plain meaning -> give symbol if any. Example: "An *eigenvalue* — how much an eigenvector stretches — is written lambda."
 - **Common words first**: "average" before "mean", "spread" before "variance."
 - **Active voice**: "We compute the loss" not "The loss is computed."
@@ -512,7 +515,7 @@ A plain markdown file. No HTML. No callout boxes. No CSS classes. Just clean, de
 ## Handoff to Agent 2
 
 When you finish, the output is ready for Agent 2 (Enricher), who will:
-- Apply the 9-step teaching spine to each concept
+- Apply the teaching spine to each concept
 - Supplement missing domain knowledge
 - Add analogies from the analogy bank
 - Place content into callout box types

@@ -27,6 +27,8 @@ description: >-
 5. **Exam revision is a distillation, not an invention** — Built from the completed core only.
 6. **STRIP intermediate metadata** — Before converting to HTML, strip any extraction checklists, quality self-checks, verification tick-lists, or other intermediate/process metadata that may have leaked from Agent 1 or Agent 2. These are NOT educational content. The HTML body must contain ONLY the textbook content and exam revision notes.
 7. **Math is final and reconciled** — Agent 2 should have resolved every `*[verify]*` marker. If any remain (escalated by Agent 2 with a `:::warning-box`), preserve that warning callout in the HTML and keep the marker text out of the visible prose. The lint gate will WARN on leftover `*[verify]*` markers so they are not silently shipped. Exam revision `keyFormula` values must use Agent 2's reconciled LaTeX, not re-derived.
+8. **Strict File Attachment Guard Rail** — Focus *only and only* on the files attached to the prompt/context. Do *not* search for or read other files in the workspace (such as other drafts or notes) unless you are absolutely certain that the attached files do not match the expected context at all (e.g., they are completely blank, corrupted, or clearly belong to a different course/lecture, suggesting an accidental attachment). Only under that absolute certainty may you check for other files in the workspace; otherwise, restrict your processing strictly to the attached files (while allowing necessary reads of templates/notes.html and the single topic_mappings/<Subject>.yaml file for the subject as instructed in Step 7).
+9. **Strict Script Creation Guard Rail** — You are strictly prohibited from creating or writing any script (Python, Bash, JS, etc.) inside the toolkit folder (`make-transcript-notes-kit-3agent` or its subfolders) during the process. Any intermediate or temporary scripts created in the workspace for testing or content parsing must be cleaned up and deleted before completing the task.
 
 ---
 
@@ -41,6 +43,8 @@ Before anything else, scan the enriched draft for intermediate/process metadata 
 - **Any other process/verification metadata** — any section that reads like internal QA rather than educational material.
 
 **How to identify:** Look for sections whose heading contains words like "checklist", "self-check", "verification", or sections that are just long bulleted/ticked lists of concept names with `[x]` markers. These have zero educational value for the end reader.
+
+**Do NOT strip educational appendices.** Agent 1 produces two consolidated content sections — "Exam Guidance Summary" and "Key Industry Applications" — and Agent 2 carries them through. These are legitimate educational content (the professor's exam strategy and real-world connections), NOT process metadata. Preserve and render them as normal sections. Only strip the internal checklists/self-checks listed above.
 
 After stripping, the remaining content should start directly with the first educational concept section.
 
@@ -63,14 +67,14 @@ Agent 2's draft uses `:::` fenced blocks. Convert them:
 | CSS Class | Color | Use for |
 |---|---|---|
 | `.key-concept` | blue | Core definitions, foundational principles |
-| `.important-note` | violet | Intuition, mental models, plain-language restatements |
-| `.example-box` | green | Fully worked examples with real numbers |
-| `.warning-box` | red | Pitfalls, traps, cautions, common mistakes |
-| `.key-takeaway` | amber | One-line recap, bridge to next concept |
+| `.important-note` | violet | Intuition, mental models, plain-language restatements, **student Q&A** (labeled `**Q:**`/`**A:**`) |
+| `.example-box` | green | Fully worked examples with real numbers, procedure traces |
+| `.warning-box` | red | Pitfalls, traps, cautions, common mistakes, **assumptions & scope** (labeled `**Scope:**`/`**Assumption:**`) |
+| `.key-takeaway` | amber | One-line recap, bridge to next concept, **per-concept exam guidance** (labeled `**Exam note:**`) |
 
 Plus structural classes: `.chapter-title` (h1), `.section-title` (h2), `.subsection-title` (h3).
 
-**Rules:** No other callout types exist. No two same-type callouts back-to-back — separate with body text.
+**Rules:** No other callout types exist — situational spine content reuses these five with bold labels. No two same-type callouts back-to-back — separate with body text.
 
 ---
 
@@ -91,8 +95,31 @@ Use `templates/notes.html`. Replace every `{{PLACEHOLDER}}`:
 | `{{CANONICAL_URL}}` | `https://bitsnotes.com/<subject-slug>/<lecture-slug>` |
 | `{{STRUCTURED_DATA_JSON}}` | Minified JSON-LD — see SEO below |
 | `{{RAW_METADATA_JSON}}` | Full metadata JSON — see Step 3 below |
+| `{{PREREQUISITE_KNOWLEDGE}}` | Optional HTML for "Previously covered" section — see Step 7 (Topic Mapping) |
 | `{{MAIN_TEXTBOOK_CONTENT}}` | The converted HTML from Step 1 |
 | `{{EXAM_REVISION_NOTES}}` | Exam revision HTML — see Step 4 below |
+
+### Filling the Prerequisite Knowledge section
+
+This is populated by Step 7 (Topic Mapping) below. If no YAML file exists for this subject (new subject) or no previous lectures cover overlapping topics, set `{{PREREQUISITE_KNOWLEDGE}}` to an empty string and the section will be omitted.
+
+This template is now generated by Step 7 (Topic Mapping). The example below shows the structure — Step 7 has its own copy with the same format:
+
+```html
+<section class="prerequisite-section">
+  <h2>Prerequisite Knowledge</h2>
+  <p class="prerequisite-intro">This lecture builds on the following
+  concepts from earlier lectures. If any feel unfamiliar, review the
+  linked notes before proceeding.</p>
+
+  <div class="prerequisite-entry">
+    <h3>Previously Covered in This Subject</h3>
+    <ul>
+      <li><strong>Concept</strong> — covered in Lecture N</li>
+    </ul>
+  </div>
+</section>
+```
 
 ---
 
@@ -235,7 +262,76 @@ Each entry = one `<div class="exam-revision-entry">`:
 
 ---
 
-## Step 7 — Run the lint gate
+## Step 7 — Topic Mapping (same-subject only)
+
+This step reads the topic mapping YAML for the **same subject only**, generates the prerequisite HTML section, and writes back this lecture's topics.
+
+### 7.1 — Find the YAML file for this subject
+
+Look for `topic_mappings/<Subject>.yaml`. The filename may use an acronym (e.g., `ML.yaml` for "Machine Learning"). The helper function `load_topic_map()` in `scripts/topic_mapping_utils.py` handles this — it tries the direct filename first, then falls back to scanning all YAML files and matching by the `subject_name` field inside each file.
+
+**If no YAML file exists for this subject** (new subject with no prior lectures):
+- Set `{{PREREQUISITE_KNOWLEDGE}}` to an empty string (section will be omitted)
+- Skip to Step 7.4 (write-back) to create the YAML file for this subject
+
+**Do NOT scan other subjects' YAML files.** Cross-subject prerequisite detection is not part of this step.
+
+### 7.2 — Identify previously covered topics
+
+From the YAML, get the `topics_covered` lists from all **previous** lectures (lecture numbers lower than the current one). Compare them against the major topics in the completed HTML core (the h2/h3 section headings).
+
+For each topic in the current lecture that matches a topic from a previous lecture, record:
+- The matching topic name
+- The previous lecture number and topic title
+
+### 7.3 — Generate the Prerequisite Knowledge HTML
+
+If matches were found, generate the `{{PREREQUISITE_KNOWLEDGE}}` HTML:
+
+```html
+<section class="prerequisite-section">
+  <h2>Prerequisite Knowledge</h2>
+  <p class="prerequisite-intro">This lecture builds on the following
+  concepts from earlier lectures. If any feel unfamiliar, review the
+  linked notes before proceeding.</p>
+
+  <div class="prerequisite-entry">
+    <h3>Previously Covered in This Subject</h3>
+    <ul>
+      <li><strong>Concept</strong> — covered in Lecture N</li>
+    </ul>
+  </div>
+</section>
+```
+
+If no matches found, set `{{PREREQUISITE_KNOWLEDGE}}` to an empty string.
+
+### 7.4 — Write back this lecture's topics to the YAML
+
+From the completed HTML core, compile a flat list of every major topic covered using the section hierarchy:
+
+- Every `h2` (section title) becomes a topic entry
+- Every `h3` (subsection title) becomes a sub-topic entry
+
+Format each topic (h2) using the standard format: `LectureNum.TopicNum Title` (e.g., if this is Lecture 3, a topic is formatted as `3.1 Title`). Format each subtopic (h3) using the standard format: `LectureNum.TopicNum.SubtopicNum Title` (e.g., a subtopic under that is formatted as `3.1.1 Title`). The first number must always match the current lecture number. Then run:
+
+```bash
+python scripts/update_topic_mapping.py "<Subject>" "<LectureNumber>" \
+    "<Lecture Topic>" "<file_name>" <topics_file>
+```
+
+Where `<topics_file>` is a temporary text file containing one topic per line. If the subject's YAML file doesn't exist yet, the script creates it.
+
+### 7.5 — Verify the update
+
+Open the updated YAML file and confirm:
+- The new lecture entry exists with correct lecture_number, topic, file_name
+- The topics_covered list is complete
+- No previous lectures were accidentally modified
+
+---
+
+## Step 8 — Run the lint gate
 
 ```bash
 python scripts/lint.py output/<subject>/<lecture>/notes.html
@@ -247,14 +343,14 @@ The lint checks: template hygiene (no surviving `{{PLACEHOLDER}}`), viewport met
 
 ---
 
-## Step 8 — Self-score against the quality rubric
+## Step 9 — Self-score against the quality rubric
 
 ### Rubric (100 points)
 
 | # | Category | Weight |
 |---|----------|:------:|
 | 1 | Completeness/coverage — every transcript concept present, every example fully worked | 14 |
-| 2 | Teaching spine — all 9 steps per major concept, correct callout per step | 12 |
+| 2 | Teaching spine — all core spine steps per major concept (or procedural spine for algorithms), correct callout per step, situational steps where the transcript provides them | 12 |
 | 3 | Easy language — <~20 word sentences, terms defined on first use, common words | 10 |
 | 4 | Relatable analogies — every tricky idea has concrete mapping analogy | 9 |
 | 5 | Math intuition & display — built step by step, every symbol named, correct `\(`/`\[` delimiters | 13 |
@@ -290,7 +386,7 @@ The lint checks: template hygiene (no surviving `{{PLACEHOLDER}}`), viewport met
 ## Ship checklist (all must be ✓ before finishing)
 
 - [ ] Every concept present in teaching order; every transcript example worked in full
-- [ ] All 9 spine steps per major concept; correct callout per step
+- [ ] All core spine steps per major concept (or procedural spine for algorithms); correct callout per step; situational steps where the transcript provides them
 - [ ] Sampled paragraphs pass easy-language audit (avg <~20 words, terms defined on first use)
 - [ ] Every tricky idea has concrete, mapping analogy
 - [ ] Math: step-by-step, every symbol named, correct single-backslash delimiters, tensor shapes stated, every derivation complete with no skipped algebra
@@ -300,6 +396,7 @@ The lint checks: template hygiene (no surviving `{{PLACEHOLDER}}`), viewport met
 - [ ] Clean hierarchy; hook opener; bridges between concepts
 - [ ] Anonymized: no PII; reads as standalone textbook
 - [ ] Metadata JSON complete with examRevisionNotes
+- [ ] Topic mapping: YAML updated for this lecture; prerequisite section populated (or omitted for new subjects)
 - [ ] Professor intuition preserved (analogies, stories, confusion flags — not generic substitutes)
 - [ ] Exam revision: one entry per major concept, built from core only, every formula renders
 - [ ] SEO: description 100-155 chars, unique, keyword-rich; OG, Twitter, canonical, robots, keywords, JSON-LD all present

@@ -35,11 +35,18 @@ Checks (each reported as PASS / WARN / FAIL):
 Exit code is non-zero if any check FAILs.
 """
 
+import io
 import json
 import os
 import re
 import sys
 from html.parser import HTMLParser
+
+if sys.platform.startswith("win"):
+    if hasattr(sys.stdout, "encoding") and sys.stdout.encoding.lower() != "utf-8":
+        sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace")
+    if hasattr(sys.stderr, "encoding") and sys.stderr.encoding.lower() != "utf-8":
+        sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding="utf-8", errors="replace")
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import _plain_language as PL  # shared word lists + readability helpers
@@ -553,7 +560,7 @@ def check_pii_and_secrets(raw, report):
                       "No obvious PII or transcript references detected.")
 
 
-_SENTENCE_SPLIT = re.compile(r"(?<=[.!?])\s+")
+_SENTENCE_SPLIT = re.compile(r"(?<=[.!?])\s+|(?<=[.!?][\"\u201d])\s+")
 _WORD = re.compile(r"\S+")
 
 
