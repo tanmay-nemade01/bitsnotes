@@ -57,10 +57,14 @@ Once all sections are enriched, assemble them back into `2_enriched_draft.md`:
 python scripts/section_splitter.py assemble output/<Subject>/<Lecture>/_sections/ \
     --output output/<Subject>/<Lecture>/2_enriched_draft.md --format md
 ```
-Confirm `2_enriched_draft.md` is successfully created, then clean up the temporary directory:
+Confirm `2_enriched_draft.md` is successfully created, then clean up all temporary directories, sections, and any helper scripts created during the process:
 ```bash
+# Remove the temporary _sections working directory
 Remove-Item -Recurse -Force output/<Subject>/<Lecture>/_sections/
+
+# Remove any other intermediate helper files, drafts, or scripts created during this phase
 ```
+Ensure that ONLY the intended final output file `2_enriched_draft.md` remains in the lecture output folder.
 
 ---
 

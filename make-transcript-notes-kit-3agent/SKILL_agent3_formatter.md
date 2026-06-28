@@ -149,14 +149,18 @@ python scripts/section_splitter.py assemble \
 
 This concatenates all `section_*.html` files in inventory order. **No content changes during assembly** — it is purely mechanical concatenation. Read `_body.html` to get the `{{MAIN_TEXTBOOK_CONTENT}}` value.
 
-After successful assembly, clean up the intermediate section files:
+After successful assembly, clean up all intermediate directories, sections, body HTMLs, and helper scripts created during the formatting process:
 
 ```bash
 # Remove the _sections working directory
 Remove-Item -Recurse -Force output/<subject>/<lecture>/_sections/
+
 # Remove the temporary body file after template fill
 Remove-Item -Force output/<subject>/<lecture>/_body.html
+
+# Remove any other intermediate helper files, drafts, or scripts created during this phase
 ```
+Ensure that ONLY the intended final output file `notes.html` remains in the lecture output folder (along with the updated YAML file in `topic_mappings/`).
 
 ---
 
