@@ -76,7 +76,7 @@ per category and list every gap keeping it under 85.
 
 ## Math-focused extraction (Phase 1, math-heavy lecture)
 ```text
-Use Agent 1 (extractor) to process <transcript.txt> into a dense draft.
+Use Agent 1 (extractor) to process transcript.txt into 1_dense_draft.md.
 This lecture is math-heavy and the transcript describes formulas and
 derivations in plain language. Follow the Math extraction protocol strictly:
 reconstruct real LaTeX for every formula, keep the professor's verbal
@@ -90,13 +90,15 @@ part of the Step 0.5 inventory.
 
 ## Math reconciliation (Phase 2, with enrichment docs)
 ```text
-Use Agent 2 (enricher) to apply the 9-step spine to <dense-draft.md> using
-the attached enrichment docs <doc1.pdf, doc2.md, ...> as MATH GROUND TRUTH
-for the topics the transcript already covers. Resolve every *[verify]*
-marker from Agent 1: confirm, correct, or fill each one against the docs
-without introducing new topics. Complete every derivation end-to-end with
-annotated algebra steps. Keep the professor's notation as primary; note
-standard alternatives, never silently replace. Run the Step R4 factuality
+Use Agent 2 (enricher) to apply the 9-step spine to the section files in the
+_sections/ directory (produced by splitting 1_dense_draft.md) sequentially.
+Process each section_XX.md individually, resolving all *[verify]* markers and
+applying the core/procedural spine using the attached enrichment docs
+<doc1.pdf, doc2.md, ...> as MATH GROUND TRUTH for the topics the section covers.
+Resolve every *[verify]* marker from Agent 1: confirm, correct, or fill each one
+against the docs without introducing new topics. Complete every derivation
+end-to-end with annotated algebra steps. Keep the professor's notation as primary;
+note standard alternatives, never silently replace. Run the Step R4 factuality
 checks (dimensions, limiting case, domain, numerical spot-check) on every
 reconciled formula. Any marker the docs do not cover must be escalated with
 a :::warning-box callout, not left bare. Report a final marker sweep.

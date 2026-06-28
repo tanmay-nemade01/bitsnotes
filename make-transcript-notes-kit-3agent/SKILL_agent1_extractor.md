@@ -17,7 +17,7 @@ description: >-
 
 **Your job:** Read a raw `.txt` lecture transcript and produce an **exhaustive, maximally detailed dense markdown draft**. Capture EVERY educational dimension — not just concepts and definitions, but also student questions, professor answers, industry applications, worked computations, exam guidance, named references, and every pedagogical moment. Filter NOTHING that has educational value.
 
-**Your output:** A markdown file with every concept organized into sections, all examples captured in full, all student Q&A preserved, all industry connections documented, all exam guidance recorded. This is the raw material Agent 2 will enrich with the teaching spine.
+**Your output:** Save your output as a markdown file named `1_dense_draft.md` with every concept organized into sections, all examples captured in full, all student Q&A preserved, all industry connections documented, all exam guidance recorded. This is the raw material to be split into sections for Agent 2.
 
 **THE #1 PRINCIPLE: When in doubt, INCLUDE. It is always better to include something marginal than to miss something valuable. Agent 2 can trim; you cannot recover what you did not capture.**
 
@@ -464,7 +464,7 @@ Write for a **smart beginner**: clever, motivated, meeting this topic for the fi
 
 ## Your output format
 
-A plain markdown file. No HTML. No callout boxes. No CSS classes. Just clean, dense, well-organized prose with:
+Save your output as `1_dense_draft.md`. This must be a plain markdown file. No HTML. No callout boxes. No CSS classes. Just clean, dense, well-organized prose with:
 
 - `#` for lecture title
 - `##` for major concepts (in teaching order)

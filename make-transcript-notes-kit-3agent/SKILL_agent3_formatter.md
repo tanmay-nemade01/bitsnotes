@@ -12,7 +12,12 @@ description: >-
 
 **Your job:** Take Agent 2's enriched markdown draft (with `:::` callout annotations) and produce the **final `notes.html`** — a self-contained, lint-clean, rubric-scored HTML page with all SEO, structured data, and lecture metadata embedded directly in the HTML. **No companion `.json` files are created.**
 
-**Your input:** Agent 2's enriched markdown draft with callout annotations.
+**Critical: Section-by-section processing.** The enriched draft sections are already split by the workflow. You will process **one pre-split enriched markdown section file at a time** in the `_sections/` directory, converting each section to HTML independently, then mechanically reassembling them. This keeps heading numbering local and prevents cross-section interference.
+
+**Your input:** A directory `_sections/` containing:
+- `_inventory.json` — the locked heading numbering map.
+- `section_00_preamble.md` (if it exists).
+- `section_XX.md` — pre-split enriched markdown concept and appendix files (containing `:::` callout annotations).
 
 **Your output:** `output/<subject>/<lecture>/notes.html` — passes lint with zero FAILs, scores ≥ 85/100 against the rubric, zero red-list items. This is the ONLY file produced. All metadata is embedded in the HTML. The BitsNotes viewer reads the metadata from `<script id="lecture-metadata">` inside this single HTML file.
 
@@ -27,7 +32,7 @@ description: >-
 5. **Exam revision is a distillation, not an invention** — Built from the completed core only.
 6. **STRIP intermediate metadata** — Before converting to HTML, strip any extraction checklists, quality self-checks, verification tick-lists, or other intermediate/process metadata that may have leaked from Agent 1 or Agent 2. These are NOT educational content. The HTML body must contain ONLY the textbook content and exam revision notes.
 7. **Math is final and reconciled** — Agent 2 should have resolved every `*[verify]*` marker. If any remain (escalated by Agent 2 with a `:::warning-box`), preserve that warning callout in the HTML and keep the marker text out of the visible prose. The lint gate will WARN on leftover `*[verify]*` markers so they are not silently shipped. Exam revision `keyFormula` values must use Agent 2's reconciled LaTeX, not re-derived.
-8. **Strict File Attachment Guard Rail** — Focus *only and only* on the files attached to the prompt/context. Do *not* search for or read other files in the workspace (such as other drafts or notes) unless you are absolutely certain that the attached files do not match the expected context at all (e.g., they are completely blank, corrupted, or clearly belong to a different course/lecture, suggesting an accidental attachment). Only under that absolute certainty may you check for other files in the workspace; otherwise, restrict your processing strictly to the attached files (while allowing necessary reads of templates/notes.html and the single topic_mappings/<Subject>.yaml file for the subject as instructed in Step 7).
+8. **Strict File Attachment Guard Rail** — Focus *only and only* on the files attached to the prompt/context. Do *not* search for or read other files in the workspace (such as other drafts or notes) unless you are absolutely certain that the attached files do not match the expected context at all (e.g., they are completely blank, corrupted, or clearly belong to a different course/lecture, suggesting an accidental attachment). Only under that absolute certainty may you check for other files in the workspace; otherwise, restrict your processing strictly to the attached files (while allowing necessary reads of templates/notes.html and the single topic_mappings/<Subject>.yaml file for the subject as instructed in Step 8).
 9. **Strict Script Creation Guard Rail** — You are strictly prohibited from creating or writing any script (Python, Bash, JS, etc.) inside the toolkit folder (`make-transcript-notes-kit-3agent` or its subfolders) during the process. Any intermediate or temporary scripts created in the workspace for testing or content parsing must be cleaned up and deleted before completing the task.
 
 ---
@@ -50,9 +55,26 @@ After stripping, the remaining content should start directly with the first educ
 
 ---
 
-## Step 1 — Convert callout annotations to HTML
+## Step 1 — Read the pre-split sections and inventory
 
-Agent 2's draft uses `:::` fenced blocks. Convert them:
+The enriched draft is already split into sections under `output/<subject>/<lecture>/_sections/` before you run.
+
+**Read `_inventory.json` immediately** from that directory. This is your contract. Every heading number is already assigned — you do NOT compute or renumber headings during conversion. If the inventory says section 3 has subsections 3.1, 3.2, 3.3, those are the exact numbers you use.
+
+
+---
+
+## Step 2 — Convert each section to HTML (ONE AT A TIME)
+
+**Process sections sequentially.** For each `section_NN.md` file (in numeric order, starting from `section_01.md`):
+
+### 2a — Strip intermediate metadata from this section
+
+Apply the same rules as Step 0, but scoped to this section only. Remove extraction checklists, quality self-checks, verification tick-lists, and resolved `*[verify]*` markers that appear within this section's boundaries.
+
+### 2b — Convert callout annotations to HTML
+
+Same conversion rules as before, applied to this section only:
 
 ```
 :::key-concept           →  <div class="key-concept"> ... </div>
@@ -76,9 +98,62 @@ Plus structural classes: `.chapter-title` (h1), `.section-title` (h2), `.subsect
 
 **Rules:** No other callout types exist — situational spine content reuses these five with bold labels. No two same-type callouts back-to-back — separate with body text.
 
+### 2c — Fix heading numbers against the inventory
+
+**This is the critical step that prevents numbering drift.** Before writing the HTML:
+
+1. Look up this section's number in `_inventory.json` (e.g., section 3 → `"num": 3`).
+2. The `##` heading MUST use exactly `2. <Title>` format (the inventory title already includes the number).
+3. Every `###` subsection MUST use exactly `2.X <Title>` where X matches the `sub_num` in the inventory.
+4. **Never renumber.** If the markdown says `## 2.3 Some Topic` but the inventory says this is section 4, use `4. Some Topic`. The inventory is authoritative.
+
+### 2d — Math quality check (per section)
+
+- **Single backslash ONLY:** `\( ... \)` inline, `\[ ... \]` block. **Never `\\(` or `\\[`**.
+- **Every symbol named** within this section — a student jumping to any section must understand every symbol.
+- **Fraction hygiene:** `\frac{}{}` not inline `/`. **Exponent hygiene:** `e^{i\pi}` not `e^i\pi`.
+- **Multi-line:** `\begin{aligned}` inside `\[ ... \]`.
+- **No raw LaTeX leaking:** `\cdot` not `*`, `\times` not `x`, `\ldots` not `...`.
+- **No `*[verify]*` tokens in visible body** — remove resolved ones; convert escalated ones into `:::warning-box` prose.
+
+### 2e — Write the section HTML
+
+Write the converted HTML to `section_NN.html` in the same `_sections/` directory. The file must contain ONLY the HTML for this section — no `<html>`, `<head>`, or `<body>` tags. Just the content that will go inside `<main>`.
+
+### 2f — Move to the next section
+
+Repeat 2a-2e for every `section_NN.md` file. Do NOT process multiple sections in parallel — each gets its own focused conversion pass.
+
+### 2g — Convert the preamble (if it exists)
+
+If `section_00_preamble.md` exists, convert it to `section_00_preamble.html` using the same rules. The preamble typically contains the lecture title (h1) and introductory paragraphs.
+
 ---
 
-## Step 2 — Fill the HTML template
+## Step 3 — Assemble the body HTML
+
+Once ALL sections are converted, mechanically reassemble them:
+
+```bash
+python scripts/section_splitter.py assemble \
+    output/<subject>/<lecture>/_sections/ \
+    --output output/<subject>/<lecture>/_body.html
+```
+
+This concatenates all `section_*.html` files in inventory order. **No content changes during assembly** — it is purely mechanical concatenation. Read `_body.html` to get the `{{MAIN_TEXTBOOK_CONTENT}}` value.
+
+After successful assembly, clean up the intermediate section files:
+
+```bash
+# Remove the _sections working directory
+Remove-Item -Recurse -Force output/<subject>/<lecture>/_sections/
+# Remove the temporary body file after template fill
+Remove-Item -Force output/<subject>/<lecture>/_body.html
+```
+
+---
+
+## Step 4 — Fill the HTML template
 
 Use `templates/notes.html`. Replace every `{{PLACEHOLDER}}`:
 
@@ -94,16 +169,14 @@ Use `templates/notes.html`. Replace every `{{PLACEHOLDER}}`:
 | `{{KEYWORDS}}` | Comma-separated: subject name, lecture topic, all key concepts |
 | `{{CANONICAL_URL}}` | `https://bitsnotes.com/<subject-slug>/<lecture-slug>` |
 | `{{STRUCTURED_DATA_JSON}}` | Minified JSON-LD — see SEO below |
-| `{{RAW_METADATA_JSON}}` | Full metadata JSON — see Step 3 below |
-| `{{PREREQUISITE_KNOWLEDGE}}` | Optional HTML for "Previously covered" section — see Step 7 (Topic Mapping) |
-| `{{MAIN_TEXTBOOK_CONTENT}}` | The converted HTML from Step 1 |
-| `{{EXAM_REVISION_NOTES}}` | Exam revision HTML — see Step 4 below |
+| `{{RAW_METADATA_JSON}}` | Full metadata JSON — see Step 5 below |
+| `{{PREREQUISITE_KNOWLEDGE}}` | Optional HTML for "Previously covered" section — see Step 8 (Topic Mapping) |
+| `{{MAIN_TEXTBOOK_CONTENT}}` | The assembled body HTML from `_body.html` (Step 3) |
+| `{{EXAM_REVISION_NOTES}}` | Exam revision HTML — see Step 6 below |
 
 ### Filling the Prerequisite Knowledge section
 
-This is populated by Step 7 (Topic Mapping) below. If no YAML file exists for this subject (new subject) or no previous lectures cover overlapping topics, set `{{PREREQUISITE_KNOWLEDGE}}` to an empty string and the section will be omitted.
-
-This template is now generated by Step 7 (Topic Mapping). The example below shows the structure — Step 7 has its own copy with the same format:
+This is populated by Step 8 (Topic Mapping) below. If no YAML file exists for this subject (new subject) or no previous lectures cover overlapping topics, set `{{PREREQUISITE_KNOWLEDGE}}` to an empty string and the section will be omitted.
 
 ```html
 <section class="prerequisite-section">
@@ -123,7 +196,7 @@ This template is now generated by Step 7 (Topic Mapping). The example below show
 
 ---
 
-## Step 3 — Generate embedded metadata (embedded in HTML, no separate file)
+## Step 5 — Generate embedded metadata (embedded in HTML, no separate file)
 
 This metadata is placed inside `<script type="application/json" id="lecture-metadata">` in the HTML `<head>`. The BitsNotes viewer reads it directly from the HTML file — no companion `.json` file is created.
 
@@ -171,7 +244,7 @@ This metadata is placed inside `<script type="application/json" id="lecture-meta
 
 ---
 
-## Step 4 — Generate exam revision notes (AFTER core is complete)
+## Step 6 — Generate exam revision notes (AFTER core is complete)
 
 Re-read the full core first. This section is a *distillation*, not a co-product.
 
@@ -197,7 +270,7 @@ Each entry = one `<div class="exam-revision-entry">`:
 
 ---
 
-## Step 5 — SEO (all mandatory — lint enforces)
+## Step 7 — SEO (all mandatory — lint enforces)
 
 ### Meta description
 `<meta name="description" content="...">` — **100-155 characters**, unique per lecture, includes subject name + 2-3 key concepts naturally. Plain text only. No HTML tags.
@@ -248,35 +321,21 @@ Each entry = one `<div class="exam-revision-entry">`:
 
 ---
 
-## Step 6 — Math quality check
-
-- **Single backslash ONLY:** `\( ... \)` inline, `\[ ... \]` block. **Never `\\(` or `\\[`** — those render as literal backslash characters.
-- **Every symbol named per chapter** — a student jumping to any chapter must understand every symbol.
-- **Every derivation complete** — no line should read "after simplification" or skip algebra. If a step is genuinely out of scope, say so explicitly in prose; never silently omit.
-- **Fraction hygiene:** `\frac{}{}` not inline `/`. **Exponent hygiene:** `e^{i\pi}` not `e^i\pi`.
-- **Multi-line:** `\begin{aligned}` inside `\[ ... \]`.
-- **No raw LaTeX leaking:** `\cdot` not `*`, `\times` not `x`, `\ldots` not `...`.
-- **Tensor shapes stated** on first use for any vector/matrix/tensor formula.
-- **No `*[verify]*` tokens in the visible body** — these are Agent 1/2 process markers. Remove resolved ones; convert escalated ones into `:::warning-box` prose. (The lint gate will WARN if any remain.)
-- **Wide formulas** auto-scroll via platform CSS on `mjx-container` — no manual wrapper needed.
-
----
-
-## Step 7 — Topic Mapping (same-subject only)
+## Step 8 — Topic Mapping (same-subject only)
 
 This step reads the topic mapping YAML for the **same subject only**, generates the prerequisite HTML section, and writes back this lecture's topics.
 
-### 7.1 — Find the YAML file for this subject
+### 8.1 — Find the YAML file for this subject
 
 Look for `topic_mappings/<Subject>.yaml`. The filename may use an acronym (e.g., `ML.yaml` for "Machine Learning"). The helper function `load_topic_map()` in `scripts/topic_mapping_utils.py` handles this — it tries the direct filename first, then falls back to scanning all YAML files and matching by the `subject_name` field inside each file.
 
 **If no YAML file exists for this subject** (new subject with no prior lectures):
 - Set `{{PREREQUISITE_KNOWLEDGE}}` to an empty string (section will be omitted)
-- Skip to Step 7.4 (write-back) to create the YAML file for this subject
+- Skip to Step 8.4 (write-back) to create the YAML file for this subject
 
 **Do NOT scan other subjects' YAML files.** Cross-subject prerequisite detection is not part of this step.
 
-### 7.2 — Identify previously covered topics
+### 8.2 — Identify previously covered topics
 
 From the YAML, get the `topics_covered` lists from all **previous** lectures (lecture numbers lower than the current one). Compare them against the major topics in the completed HTML core (the h2/h3 section headings).
 
@@ -284,7 +343,7 @@ For each topic in the current lecture that matches a topic from a previous lectu
 - The matching topic name
 - The previous lecture number and topic title
 
-### 7.3 — Generate the Prerequisite Knowledge HTML
+### 8.3 — Generate the Prerequisite Knowledge HTML
 
 If matches were found, generate the `{{PREREQUISITE_KNOWLEDGE}}` HTML:
 
@@ -306,7 +365,7 @@ If matches were found, generate the `{{PREREQUISITE_KNOWLEDGE}}` HTML:
 
 If no matches found, set `{{PREREQUISITE_KNOWLEDGE}}` to an empty string.
 
-### 7.4 — Write back this lecture's topics to the YAML
+### 8.4 — Write back this lecture's topics to the YAML
 
 From the completed HTML core, compile a flat list of every major topic covered using the section hierarchy:
 
@@ -322,7 +381,7 @@ python scripts/update_topic_mapping.py "<Subject>" "<LectureNumber>" \
 
 Where `<topics_file>` is a temporary text file containing one topic per line. If the subject's YAML file doesn't exist yet, the script creates it.
 
-### 7.5 — Verify the update
+### 8.5 — Verify the update
 
 Open the updated YAML file and confirm:
 - The new lecture entry exists with correct lecture_number, topic, file_name
@@ -331,19 +390,19 @@ Open the updated YAML file and confirm:
 
 ---
 
-## Step 8 — Run the lint gate
+## Step 9 — Run the lint gate
 
 ```bash
 python scripts/lint.py output/<subject>/<lecture>/notes.html
 ```
 
-Fix **every FAIL**. Re-run until clean. WARNs don't block but usually flag real issues — fix them when possible.
+Fix **every FAIL**. Re-run until clean. **Exception:** If readability (sentence length) is the only test failing at any point and you have already tried fixing it at least 2 times, mark the lint check as completed and move forward to the next task. WARNs don't block but usually flag real issues — fix them when possible.
 
 The lint checks: template hygiene (no surviving `{{PLACEHOLDER}}`), viewport meta, metadata completeness, SEO (OG, Twitter, canonical, robots, keywords, JSON-LD, description length), callout box usage (all 5 types present), style separation (no `<style>`/inline `style`/Google Fonts), math delimiters (no `\\(`), PII/secrets, readability (sentence length), long tokens, exam revision entries, content structure.
 
 ---
 
-## Step 9 — Self-score against the quality rubric
+## Step 10 — Self-score against the quality rubric
 
 ### Rubric (100 points)
 
@@ -385,6 +444,9 @@ The lint checks: template hygiene (no surviving `{{PLACEHOLDER}}`), viewport met
 
 ## Ship checklist (all must be ✓ before finishing)
 
+- [ ] All sections converted individually with heading numbers verified against `_inventory.json`
+- [ ] Section HTMLs assembled mechanically (no content changes during assembly)
+- [ ] Intermediate `_sections/` directory and `_body.html` cleaned up
 - [ ] Every concept present in teaching order; every transcript example worked in full
 - [ ] All core spine steps per major concept (or procedural spine for algorithms); correct callout per step; situational steps where the transcript provides them
 - [ ] Sampled paragraphs pass easy-language audit (avg <~20 words, terms defined on first use)
@@ -400,5 +462,5 @@ The lint checks: template hygiene (no surviving `{{PLACEHOLDER}}`), viewport met
 - [ ] Professor intuition preserved (analogies, stories, confusion flags — not generic substitutes)
 - [ ] Exam revision: one entry per major concept, built from core only, every formula renders
 - [ ] SEO: description 100-155 chars, unique, keyword-rich; OG, Twitter, canonical, robots, keywords, JSON-LD all present
-- [ ] Lint passes with zero FAILs
+- [ ] Lint passes with zero FAILs (or only readability failing after 2 fix attempts)
 - [ ] Score ≥ 85/100 and zero red-list items

@@ -6,25 +6,25 @@ dramatically reducing context-window bloat.
 
 ## How it works
 
-```
 Agent 1 (Extractor)          Agent 2 (Enricher)            Agent 3 (Formatter)
 ─────────────────          ──────────────────           ───────────────────
 Reads: SKILL_agent1_       Reads: SKILL_agent2_        Reads: SKILL_agent3_
        extractor.md               enricher.md                 formatter.md
 
-Input: raw .txt             Input: dense draft           Input: enriched draft
-       transcript                  (markdown)                   (markdown + annotations)
+Input: raw .txt             Input: split dense draft     Input: split enriched draft
+       transcript                  (markdown sections)          (markdown + annotations)
 
-Does: exhaustive            Does: teaching spine        Does: HTML conversion,
-      extraction,                  supplementation,             SEO metadata,
-      PII stripping,               analogies,                   exam revision,
-      professor intuition          worked examples,             topic mapping (same-subject),
-      preservation                 pitfalls,                    prerequisite HTML section,
-                                   domain connections           YAML write-back,
+Does: HTML conversion,       Does: teaching spine        Does: section-by-section
+      exhaustive,                  supplementation,             HTML conversion,
+      extraction,                  analogies,                   SEO metadata,
+      PII stripping,               worked examples,             exam revision,
+      professor intuition          pitfalls,                    topic mapping (same-subject),
+      preservation                 domain connections           prerequisite HTML section,
+                                   (processed per-section)      YAML write-back,
                                                                 lint gate,
                                                                 rubric self-score
 
-Output: dense draft         Output: enriched draft       Output: notes.html
+Output: dense draft         Output: enriched sections    Output: notes.html
         (markdown)          (markdown + :::annotations)   + updated topic_mappings/*.yaml
 ```
 
@@ -74,16 +74,21 @@ itself via `<script id="lecture-metadata">`.
 
 ## Usage
 
-Run each agent in sequence, feeding the output of one into the next:
+Run the process in the following sequence:
 
 ```
 1. "Use Agent 1 (extractor) to process <transcript.txt> into a dense draft."
 
-2. "Use Agent 2 (enricher) to apply the teaching spine to <dense-draft.md>."
+2. Split the dense draft into concept-wise sections:
+   python scripts/section_splitter.py split output/<Subject>/<Lecture>/dense-draft.md --output-dir output/<Subject>/<Lecture>/_sections/
 
-3. "Use Agent 3 (formatter) to convert <enriched-draft.md> into notes.html.
-    Read topic_mappings/<Subject>.yaml for prerequisite detection.
-    Update the YAML, run lint, and self-score."
+3. "Use Agent 2 (enricher) to apply the teaching spine to the section files in
+    output/<Subject>/<Lecture>/_sections/ sequentially. Process each section_XX.md
+    individually, resolving all *[verify]* markers and applying the core/procedural spine."
+
+4. "Use Agent 3 (formatter) to convert the pre-split enriched sections in
+    output/<Subject>/<Lecture>/_sections/ into HTML. Read topic_mappings/<Subject>.yaml
+    for prerequisite detection, update the YAML, run lint, and self-score."
 ```
 
 ## What's inside
@@ -91,13 +96,14 @@ Run each agent in sequence, feeding the output of one into the next:
 ```
 make-transcript-notes-kit-3agent/
 ├── SKILL_agent1_extractor.md  ← Agent 1: Exhaustive extraction
-├── SKILL_agent2_enricher.md   ← Agent 2: Spine + supplementation
-├── SKILL_agent3_formatter.md  ← Agent 3: HTML + SEO + topic mapping + lint + rubric
+├── SKILL_agent2_enricher.md   ← Agent 2: Spine + supplementation (section-by-section)
+├── SKILL_agent3_formatter.md  ← Agent 3: Section-by-section HTML + SEO + topic mapping + lint + rubric
 ├── templates/
 │   └── notes.html             ← HTML template (with {{PREREQUISITE_KNOWLEDGE}})
 ├── scripts/
 │   ├── lint.py                ← Quality gate
 │   ├── _plain_language.py     ← Shared word lists for lint
+│   ├── section_splitter.py    ← Splits enriched MD into per-section files + reassembles HTML
 │   ├── topic_mapping_utils.py ← YAML parser + coverage search (acronym-aware)
 │   └── update_topic_mapping.py ← YAML updater (called by Agent 3)
 └── references/
@@ -120,3 +126,16 @@ Workspace root (shared):
 | Original toolkit (14 files) | SKILL.md + 8 guidelines + 4 other | ~12,000+ |
 | Optimized (1 file) | SKILL.md | ~5,000 |
 | **3-agent (this)** | **1 focused file per agent** | **~1,500 each (Agents 1-2), ~2,000 (Agent 3)** |
+
+## Section-by-section processing (Agents 2 & 3)
+
+Large markdown files cause attention degradation during LLM calls — leading to skipped concepts, math notation drift, and malformed tags.
+
+To solve this, the pipeline splits the draft into sections **immediately after extraction**:
+
+1. **Split** — `scripts/section_splitter.py split` breaks `dense-draft.md` into per-section files and locks heading numbering in `_inventory.json`.
+2. **Enrich (Agent 2)** — Agent 2 enriches each section (`section_XX.md`) individually. It focuses all its attention on one concept at a time, ensuring maximum depth and quality without context bloat or output length issues.
+3. **Convert (Agent 3)** — Agent 3 converts each enriched section to HTML. The heading numbers are locked and verified against `_inventory.json`.
+4. **Assemble** — `scripts/section_splitter.py assemble` mechanically concatenates the section HTMLs into the final body. No content changes during assembly.
+
+This contains errors to individual sections and makes quality checks extremely targeted.

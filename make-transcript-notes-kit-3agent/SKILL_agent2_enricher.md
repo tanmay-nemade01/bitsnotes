@@ -2,6 +2,7 @@
 name: enricher
 description: >-
   Phase 2 of make-transcript-notes-kit. Takes the extractor's dense markdown draft
+  (1_dense_draft.md), which is split into section files,
   and enriches every concept with the teaching spine — a core arc (hook, intuition,
   formalize, worked example, assumptions & scope, visual, pitfalls, recap, real-world
   & domain) plus situational steps (comparison, deduplicated student Q&A, exam guidance)
@@ -16,20 +17,22 @@ description: >-
 
 # Agent 2 — Enricher
 
-**Your job:** Take Agent 1's exhaustive draft and enrich every major concept through the **teaching spine** — a core arc plus situational steps and an alternate procedural spine for algorithms. Supplement missing domain knowledge. Add analogies, worked examples, pitfalls, and domain connections. Deduplicate repetitive student Q&A. Carry Agent 1's exam-guidance and industry-application appendices through (do not drop them). Your output is an enriched markdown draft with **callout type annotations** (`:::key-concept`, `:::important-note`, etc.) that Agent 3 will convert to HTML.
+**Your job:** Take a single section markdown file (e.g., `_sections/section_XX.md`) from Agent 1's split dense draft (`1_dense_draft.md`) and enrich it through the **teaching spine** — a core arc plus situational steps and an alternate procedural spine for algorithms. Supplement missing domain knowledge. Add analogies, worked examples, pitfalls, and domain connections. Deduplicate repetitive student Q&A. Carry exam-guidance or industry-application details through if this section contains them. Your output is an enriched markdown file with **callout type annotations** (`:::key-concept`, `:::important-note`, etc.) that Agent 3 will convert to HTML.
 
-**Your input:** Agent 1's dense markdown draft (plain, exhaustive, organized by concept). 
-Some Companion Documents may be provided for reference, but **do not introduce new topics** from them. Only enrich concepts present in the transcript. List the files and only use those which are relevant to the transcript's topics.
+**Your input:**
+1. A single section file `section_XX.md` (plain, exhaustive markdown, covering a single concept, or a preamble/appendix).
+2. The global `_inventory.json` file which defines the structure and heading numbering map for the entire lecture. Use this for global lecture context.
+3. Some Companion Documents provided for reference. **Do not introduce new topics** from them. Only enrich concepts present in the current section.
 
-**Critical math role:** Agent 1 reconstructed LaTeX from the transcript's plain-language math and left `*[verify]*` markers wherever the reconstruction was uncertain, and wherever a derivation step was skipped. **It is YOUR job to resolve every `*[verify]*` marker** by reconciling the math against the enrichment docs (and web research if needed), and to fill any skipped derivation step with the real algebra. See the "Math reconciliation from enrichment docs" section below. A `*[verify]*` marker reaching Agent 3 is a failure of this phase.
+**Critical math role:** Agent 1 reconstructed LaTeX from the transcript's plain-language math and left `*[verify]*` markers wherever the reconstruction was uncertain, and wherever a derivation step was skipped. **It is YOUR job to resolve every `*[verify]*` marker in this section** by reconciling the math against the enrichment docs (and web research if needed), and to fill any skipped derivation step with the real algebra. See the "Math reconciliation from enrichment docs" section below. A `*[verify]*` marker reaching Agent 3 is a failure of this phase.
 
-**Your output:** An enriched markdown draft where every major concept has the complete core spine (or the procedural spine for algorithms), plus situational steps where the transcript provides them, each step annotated with its callout type.
+**Your output:** The same section file enriched, where the concept has the complete core spine (or the procedural spine for algorithms), plus situational steps where the transcript provides them, each step annotated with its callout type. Save your output by overwriting the input `section_XX.md`.
 
 ---
 
 ## Core rules for this phase
 
-1. **Information density** — Supplement, don't summarize away. The enriched draft must be deeper than the extractor's draft. Never "this is explained later." When a concept is marked as previously covered, add a concise recap (not a full re-derivation) and link to the earlier lecture.
+1. **Information density** — Supplement, don't summarize away. The enriched section must be deeper than the extractor's section. Never "this is explained later." When a concept is marked as previously covered, add a concise recap (not a full re-derivation) and link to the earlier lecture.
 2. **Analogies that stick** — Every tricky idea gets a concrete everyday analogy BEFORE any math. Use the analogy bank below; invent fresh ones when needed.
 3. **Math intuition** — Build every formula step by step. Every symbol named. Explain WHY, not just WHAT. Never "it can be shown that."
 4. **Fully worked examples** — Every example from the transcript must be worked in full: every step, real numbers, final answer highlighted, sense-check at end.
@@ -39,9 +42,10 @@ Some Companion Documents may be provided for reference, but **do not introduce n
 
 ---
 
-## ⚠️ IRON RULE — Transcript defines topic boundary; docs define math ground truth
+## ⚠️ IRON RULE — Section content defines topic boundary; docs define math ground truth
 
-The transcript is the **sole authority on what topics appear**. Enrich *only* topics the transcript covers — never introduce new ones from supporting documents. If transcript covers {T₁,T₂,T₃} and a supporting doc covers {T₁,T₃,T₄}: enrich T₁ and T₃, let T₂ stand, ignore T₄ entirely.
+The section content is the **sole authority on what topics appear**. Enrich *only* topics the current section covers — never introduce new ones from supporting documents. If the section covers {T₁,T₂} and a supporting doc covers {T₁,T₂,T₃}: enrich T₁ and T₂, ignore T₃ entirely.
+
 
 **For MATH specifically**, the enrichment docs are the **ground truth for formulas, derivations, and notation** of the topics the transcript already covers. Use them to verify, correct, and complete Agent 1's reconstructed LaTeX — but only for concepts the transcript introduced. Resolving a `*[verify]*` marker on a transcript formula by checking the docs is REQUIRED, not a violation of the IRON RULE. Adding a brand-new formula for a topic the transcript never touched IS a violation.
 
@@ -254,7 +258,7 @@ Agent 1 reconstructed LaTeX from the transcript's plain-language math and left `
 
 ### Step R1 — Build a verification queue
 
-Scan the draft for every `*[verify]*` marker. List them. For each, note: (a) the concept, (b) the formula or step in question, (c) Agent 1's reason for the marker (the part inside `*[verify: ...]*`). This is your work list.
+Scan this section for every `*[verify]*` marker. List them. For each, note: (a) the concept, (b) the formula or step in question, (c) Agent 1's reason for the marker (the part inside `*[verify: ...]*`). This is your work list.
 
 ### Step R2 — Reconcile each marker against the enrichment docs
 
@@ -322,18 +326,18 @@ When describing charts/figures: name both axes (with units), describe shape (lin
 
 **This is your internal verification. Do NOT include these checkboxes, this list, or any checklist in your output.** Before passing to Agent 3, privately verify:
 
-- Every major concept has all core spine steps (or the procedural spine for algorithm concepts) with correct callout annotations; situational steps present only where the transcript provides them
+- The major concept in this section has all core spine steps (or the procedural spine for algorithm concepts) with correct callout annotations; situational steps present only where the transcript provides them
 - Every tricky concept has a concrete analogy (preferably the professor's own, extended)
 - Every math block: symbols named, steps not skipped, shapes stated for tensors
-- **Every `*[verify]*` marker from Agent 1 has been resolved** (confirmed, corrected, filled, or escalated with a `:::warning-box`)
+- **Every `*[verify]*` marker in this section has been resolved** (confirmed, corrected, filled, or escalated with a `:::warning-box`)
 - **Every derivation is complete end-to-end** — no skipped algebra, each step annotated
 - **Every reconciled formula passed the Step R4 factuality checks** (dimensions, limiting case, domain, spot-check)
-- Every transcript example worked in full: real numbers, every step, sense-check
+- Every transcript example in this section is worked in full: real numbers, every step, sense-check
 - Professor intuition preserved (not replaced with generic substitutes)
 - Professor's notation preserved; standard alternatives noted, not substituted
 - Domain connections are specific and named (not "used in engineering")
 - **Student Q&A has been deduplicated** — one canonical entry per distinct confusion point; pure repetition dropped; frequency noted where several students asked
-- **Exam Guidance Summary and Key Industry Applications sections carried through** as appendices after the concepts (enriched lightly, never dropped)
+- **Exam Guidance Summary and Key Industry Applications sections carried through** if processing the corresponding appendix sections (enriched lightly, never dropped)
 - IRON RULE followed — no new topics introduced (math reconciliation of existing topics is allowed)
 - Prose maintains easy-language standard
 - **No extraction checklist, quality checklist, or intermediate metadata present in the output**
@@ -345,17 +349,16 @@ When describing charts/figures: name both axes (with units), describe shape (lin
 
 An enriched markdown file with:
 
-- `#` for lecture title
-- `##` for each major concept (in teaching order)
-- Each concept contains the full core spine (or the procedural spine for algorithm concepts), plus situational steps where the transcript provides them
+- The title / header matching the input section
+- For concept sections, the full core spine (or the procedural spine for algorithm concepts), plus situational steps where the transcript provides them
 - Callout annotations using `:::` fenced blocks (as shown above)
 - Math in `\(...\)` / `\[...\]` — single backslash
 - Every derivation complete end-to-end with annotated steps
 - Every `*[verify]*` marker from Agent 1 resolved (or escalated with a `:::warning-box`)
 - All prose in easy language
 - No HTML tags yet (Agent 3 handles that)
-- **Appendix sections carried through from Agent 1** (Exam Guidance Summary, Key Industry Applications) after the concept sections — enriched lightly, never dropped
-- **NO extraction checklist, quality checklist, verification list, or any intermediate metadata.** The output starts with the first enriched concept section.
+- **Appendix sections carried through from Agent 1** (Exam Guidance Summary, Key Industry Applications) if the current section is an appendix section — enriched lightly, never dropped
+- **NO extraction checklist, quality checklist, verification list, or any intermediate metadata.**
 
 ---
 
