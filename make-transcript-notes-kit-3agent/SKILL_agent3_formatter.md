@@ -10,14 +10,11 @@ description: >-
 
 # Agent 3 — Formatter
 
-**Your job:** Take Agent 2's enriched markdown draft (with `:::` callout annotations) and produce the **final `notes.html`** — a self-contained, lint-clean, rubric-scored HTML page with all SEO, structured data, and lecture metadata embedded directly in the HTML. **No companion `.json` files are created.**
+**Your job:** Take Agent 2's enriched draft (`2_enriched_draft.md`), split it into concept-wise sections, and produce the **final `notes.html`** — a self-contained, lint-clean, rubric-scored HTML page with all SEO, structured data, and lecture metadata embedded directly in the HTML. **No companion `.json` files are created.**
 
-**Critical: Section-by-section processing.** The enriched draft sections are already split by the workflow. You will process **one pre-split enriched markdown section file at a time** in the `_sections/` directory, converting each section to HTML independently, then mechanically reassembling them. This keeps heading numbering local and prevents cross-section interference.
+**Critical: Section-by-section processing.** The enriched draft can be very large. Converting it to HTML in one shot causes heading numbering drift, malformed tags, and inconsistent formatting. Instead, you will process **one `##` section at a time** — splitting the draft, converting each section independently, then mechanically reassembling. This keeps heading numbering local and prevents cross-section interference.
 
-**Your input:** A directory `_sections/` containing:
-- `_inventory.json` — the locked heading numbering map.
-- `section_00_preamble.md` (if it exists).
-- `section_XX.md` — pre-split enriched markdown concept and appendix files (containing `:::` callout annotations).
+**Your input:** Agent 2's enriched draft `2_enriched_draft.md`.
 
 **Your output:** `output/<subject>/<lecture>/notes.html` — passes lint with zero FAILs, scores ≥ 85/100 against the rubric, zero red-list items. This is the ONLY file produced. All metadata is embedded in the HTML. The BitsNotes viewer reads the metadata from `<script id="lecture-metadata">` inside this single HTML file.
 
@@ -55,11 +52,21 @@ After stripping, the remaining content should start directly with the first educ
 
 ---
 
-## Step 1 — Read the pre-split sections and inventory
+## Step 1 — Split the enriched draft into per-section files
 
-The enriched draft is already split into sections under `output/<subject>/<lecture>/_sections/` before you run.
+Use the section splitter to break the enriched markdown into one file per `##` section:
 
-**Read `_inventory.json` immediately** from that directory. This is your contract. Every heading number is already assigned — you do NOT compute or renumber headings during conversion. If the inventory says section 3 has subsections 3.1, 3.2, 3.3, those are the exact numbers you use.
+```bash
+python scripts/section_splitter.py split output/<subject>/<lecture>/2_enriched_draft.md \
+    --output-dir output/<subject>/<lecture>/_sections/
+```
+
+This creates:
+- `_inventory.json` — the **locked heading numbering map** (source of truth for all heading numbers)
+- `section_00_preamble.md` — content before the first `##` heading (if any)
+- `section_01.md`, `section_02.md`, ... — one file per `##` section
+
+**Read `_inventory.json` immediately.** This is your contract. Every heading number is already assigned — you do NOT compute or renumber headings during conversion. If the inventory says section 3 has subsections 3.1, 3.2, 3.3, those are the exact numbers you use.
 
 
 ---

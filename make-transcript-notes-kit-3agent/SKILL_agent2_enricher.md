@@ -17,16 +17,50 @@ description: >-
 
 # Agent 2 — Enricher
 
-**Your job:** Take a single section markdown file (e.g., `_sections/section_XX.md`) from Agent 1's split dense draft (`1_dense_draft.md`) and enrich it through the **teaching spine** — a core arc plus situational steps and an alternate procedural spine for algorithms. Supplement missing domain knowledge. Add analogies, worked examples, pitfalls, and domain connections. Deduplicate repetitive student Q&A. Carry exam-guidance or industry-application details through if this section contains them. Your output is an enriched markdown file with **callout type annotations** (`:::key-concept`, `:::important-note`, etc.) that Agent 3 will convert to HTML.
+**Your job:** Take Agent 1's dense draft (`1_dense_draft.md`) and run the section splitter to break it into sections under a temporary `_sections/` directory. Then, sequentially process and enrich each `_sections/section_XX.md` file using the **teaching spine** — a core arc plus situational steps and an alternate procedural spine for algorithms. Supplement missing domain knowledge from the enrichment documents. Deduplicate repetitive student Q&A. Once all sections are enriched, assemble them back into a single `2_enriched_draft.md` file and clean up the temporary directory.
 
 **Your input:**
-1. A single section file `section_XX.md` (plain, exhaustive markdown, covering a single concept, or a preamble/appendix).
-2. The global `_inventory.json` file which defines the structure and heading numbering map for the entire lecture. Use this for global lecture context.
-3. Some Companion Documents provided for reference. **Do not introduce new topics** from them. Only enrich concepts present in the current section.
+1. Agent 1's dense draft `1_dense_draft.md`.
+2. Some Companion Documents provided for reference. **Do not introduce new topics** from them. Only enrich concepts present in the draft.
 
-**Critical math role:** Agent 1 reconstructed LaTeX from the transcript's plain-language math and left `*[verify]*` markers wherever the reconstruction was uncertain, and wherever a derivation step was skipped. **It is YOUR job to resolve every `*[verify]*` marker in this section** by reconciling the math against the enrichment docs (and web research if needed), and to fill any skipped derivation step with the real algebra. See the "Math reconciliation from enrichment docs" section below. A `*[verify]*` marker reaching Agent 3 is a failure of this phase.
+**Critical math role:** Agent 1 reconstructed LaTeX from the transcript's plain-language math and left `*[verify]*` markers wherever the reconstruction was uncertain, and wherever a derivation step was skipped. **It is YOUR job to resolve every `*[verify]*` marker in each section** by reconciling the math against the enrichment docs (and web research if needed), and to fill any skipped derivation step with the real algebra. See the "Math reconciliation from enrichment docs" section below. A `*[verify]*` marker reaching Agent 3 is a failure of this phase.
 
-**Your output:** The same section file enriched, where the concept has the complete core spine (or the procedural spine for algorithms), plus situational steps where the transcript provides them, each step annotated with its callout type. Save your output by overwriting the input `section_XX.md`.
+**Your output:** A single assembled file `2_enriched_draft.md` where every major concept has the complete core spine (or the procedural spine for algorithms), plus situational steps where the transcript provides them, each step annotated with its callout type.
+
+---
+
+## Step-by-Step Processing Pipeline
+
+Before starting any enrichment work, perform the setup steps autonomously:
+
+### Step 1 — Split the draft
+Run the split script on the input draft to create the sections:
+```bash
+python scripts/section_splitter.py split output/<Subject>/<Lecture>/1_dense_draft.md \
+    --output-dir output/<Subject>/<Lecture>/_sections/
+```
+
+### Step 2 — Read the inventory
+Read `_sections/_inventory.json`. This contains your contract and heading numbering map for the entire lecture.
+
+### Step 3 — Process sections sequentially
+For each `section_XX.md` (starting from `section_01.md`, and including `section_00_preamble.md` and appendices if present):
+1. Read the section file.
+2. Apply the teaching spine, complete worked examples, resolve all `*[verify]*` markers, and enrich math.
+3. Save the enriched content by overwriting the file `section_XX.md`.
+
+Do not process multiple sections in parallel — do them one at a time to maintain focus.
+
+### Step 4 — Assemble and clean up
+Once all sections are enriched, assemble them back into `2_enriched_draft.md`:
+```bash
+python scripts/section_splitter.py assemble output/<Subject>/<Lecture>/_sections/ \
+    --output output/<Subject>/<Lecture>/2_enriched_draft.md --format md
+```
+Confirm `2_enriched_draft.md` is successfully created, then clean up the temporary directory:
+```bash
+Remove-Item -Recurse -Force output/<Subject>/<Lecture>/_sections/
+```
 
 ---
 

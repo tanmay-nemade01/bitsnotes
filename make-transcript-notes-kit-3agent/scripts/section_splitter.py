@@ -155,16 +155,16 @@ def _extract_h3s(text: str) -> list[dict]:
 # Assemble
 # ---------------------------------------------------------------------------
 
-def assemble_html(section_dir: str, output_path: str) -> str:
-    """Reassemble per-section HTML files into a single body HTML.
+def assemble_files(section_dir: str, output_path: str, format_type: str = "html") -> str:
+    """Reassemble per-section files into a single output file.
 
     Reads ``_inventory.json`` to get the section order, then concatenates
-    all ``section_*.html`` files in order. Skips the preamble (section 0)
-    unless it's the only section.
+    all files in order.
 
     Args:
-        section_dir: Directory containing section HTML files and _inventory.json.
-        output_path: Path to write the assembled body HTML.
+        section_dir: Directory containing section files and _inventory.json.
+        output_path: Path to write the assembled file.
+        format_type: "html" or "md".
 
     Returns:
         Path to the assembled output file.
@@ -179,26 +179,27 @@ def assemble_html(section_dir: str, output_path: str) -> str:
 
     parts = []
     missing = []
+    ext = ".html" if format_type == "html" else ".md"
 
     for entry in inventory:
         if entry["num"] == 0:
-            # Preamble — include only if it has an html file
-            preamble_html = os.path.join(section_dir, "section_00_preamble.html")
-            if os.path.exists(preamble_html):
-                with open(preamble_html, "r", encoding="utf-8") as f:
+            # Preamble — include only if it has a file
+            preamble_file = os.path.join(section_dir, "section_00_preamble" + ext)
+            if os.path.exists(preamble_file):
+                with open(preamble_file, "r", encoding="utf-8") as f:
                     parts.append(f.read().strip())
             continue
 
-        html_file = entry["file"].replace(".md", ".html")
-        html_path = os.path.join(section_dir, html_file)
-        if os.path.exists(html_path):
-            with open(html_path, "r", encoding="utf-8") as f:
+        filename = entry["file"].replace(".md", ext)
+        filepath = os.path.join(section_dir, filename)
+        if os.path.exists(filepath):
+            with open(filepath, "r", encoding="utf-8") as f:
                 parts.append(f.read().strip())
         else:
-            missing.append(html_file)
+            missing.append(filename)
 
     if missing:
-        print(f"WARNING: {len(missing)} section HTML file(s) missing: {missing}", file=sys.stderr)
+        print(f"WARNING: {len(missing)} section {format_type.upper()} file(s) missing: {missing}", file=sys.stderr)
 
     body = "\n\n".join(parts)
 
@@ -215,7 +216,7 @@ def assemble_html(section_dir: str, output_path: str) -> str:
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Split enriched markdown into per-section files, or reassemble HTML sections."
+        description="Split enriched markdown into per-section files, or reassemble HTML/MD sections."
     )
     sub = parser.add_subparsers(dest="command", required=True)
 
@@ -225,16 +226,17 @@ def main():
     sp.add_argument("--output-dir", required=True, help="Directory for section files")
 
     # assemble
-    ap = sub.add_parser("assemble", help="Reassemble per-section HTML into a single body")
-    ap.add_argument("section_dir", help="Directory containing section HTML files")
-    ap.add_argument("--output", required=True, help="Path for assembled body HTML")
+    ap = sub.add_parser("assemble", help="Reassemble per-section files into a single output file")
+    ap.add_argument("section_dir", help="Directory containing section files")
+    ap.add_argument("--output", required=True, help="Path for assembled output")
+    ap.add_argument("--format", default="html", choices=["html", "md"], help="Format of the sections to assemble")
 
     args = parser.parse_args()
 
     if args.command == "split":
         split_markdown(args.markdown, args.output_dir)
     elif args.command == "assemble":
-        assemble_html(args.section_dir, args.output)
+        assemble_files(args.section_dir, args.output, args.format)
 
 
 if __name__ == "__main__":
