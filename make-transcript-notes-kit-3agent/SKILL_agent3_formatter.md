@@ -416,7 +416,7 @@ Open the updated YAML file and confirm:
 python scripts/lint.py output/<subject>/<lecture>/<lecture_name>.html
 ```
 
-Fix **every FAIL**. Re-run until clean. **Exception:** If readability (sentence length) is the only test failing at any point, skip the lint check (accept the fail) and move forward to the next task next in line (Step 10 — Self-score against the quality rubric). WARNs don't block but usually flag real issues — fix them when possible.
+Fix **every FAIL**. Re-run until clean. **Exception:** If readability (sentence length) is the only test failing, AND you have already tried fixing the readability issues at least 2 times, you may skip the readability check (accept the fail) and move forward to the next task (Step 10 — Self-score against the quality rubric). In all other cases (e.g. first run, other tests failing, or fewer than 2 attempts to fix readability), you must not skip it. WARNs don't block but usually flag real issues — fix them when possible.
 
 The lint checks: template hygiene (no surviving `{{PLACEHOLDER}}`), viewport meta, metadata completeness, SEO (OG, Twitter, canonical, robots, keywords, JSON-LD, description length), callout box usage (all 5 types present), style separation (no `<style>`/inline `style`/Google Fonts), math delimiters (no `\\(`), PII/secrets, readability (sentence length), long tokens, exam revision entries, content structure.
 
@@ -486,5 +486,5 @@ The lint checks: template hygiene (no surviving `{{PLACEHOLDER}}`), viewport met
 - [ ] Professor intuition preserved (analogies, stories, confusion flags — not generic substitutes)
 - [ ] Exam revision: one entry per major concept, built from core only, every formula renders
 - [ ] SEO: description 100-155 chars, unique, keyword-rich; OG, Twitter, canonical, robots, keywords, JSON-LD all present
-- [ ] Lint passes with zero FAILs (or only readability failing, in which case the check is skipped and we move forward)
+- [ ] Lint passes with zero FAILs (or readability is the only failing test AND you have attempted to fix it at least 2 times, in which case the check is skipped and we move forward)
 - [ ] Score ≥ 85/100 and zero red-list items
