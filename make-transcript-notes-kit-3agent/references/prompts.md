@@ -28,7 +28,7 @@ Skip heavy domain knowledge supplementation.
 
 ## Enrich existing notes (Phase 2 pass)
 ```text
-Take the existing notes in <path/to/notes.html> and run Phase 2 against
+Take the existing notes in <path/to/LectureName.html> and run Phase 2 against
 them — supplement every concept with domain knowledge, analogies, worked
 examples, pitfalls, and domain connections. Complete the 9-step spine for
 every major concept. Self-score against the quality rubric when done.
@@ -99,7 +99,7 @@ enriched sections back into 2_enriched_draft.md.
 
 ## Verify just the formulas in existing notes
 ```text
-Scan <path/to/notes.html> for every formula. For each, run the Step R4
+Scan <path/to/LectureName.html> for every formula. For each, run the Step R4
 factuality checks from the enricher skill: dimensional/shape consistency,
 limiting/special-case reduction, output domain, and a tiny numerical
 spot-check. List any formula that fails a check, with the failing check

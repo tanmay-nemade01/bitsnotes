@@ -24,7 +24,7 @@ Does: HTML conversion,       Does: teaching spine        Does: section-by-sectio
                                                                 lint gate,
                                                                 rubric self-score
 
-Output: dense draft         Output: enriched sections    Output: notes.html
+Output: dense draft         Output: enriched sections    Output: <Lecture>.html
         (markdown)          (markdown + :::annotations)   + updated topic_mappings/*.yaml
 ```
 
@@ -65,7 +65,7 @@ enrichment without any YAML interaction.
 
 ## Output — single HTML file, no companion JSONs
 
-Each lecture produces one file: `output/<Subject>/<Lecture>/notes.html`.
+Each lecture produces one file: `output/<Subject>/<Lecture>/<Lecture>.html`.
 
 All metadata, SEO tags (Open Graph, Twitter Cards, structured data), and
 lecture content are embedded directly in the HTML — **no companion `.json`
@@ -84,7 +84,7 @@ Run the process in the following sequence:
 
 3. "Use Agent 3 (formatter) to split 2_enriched_draft.md, convert the sections
     into HTML, assemble them, read topic_mappings/<Subject>.yaml for prerequisite
-    detection, update the YAML, run lint, and self-score to produce notes.html."
+    detection, update the YAML, run lint, and self-score to produce <Lecture>.html."
 ```
 
 ## What's inside

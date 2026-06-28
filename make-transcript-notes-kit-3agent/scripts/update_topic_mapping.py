@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 r"""Update a topic_mapping YAML file with a new lecture's details.
 
-Called by Agent 3 (formatter) AFTER generating notes.html but BEFORE the
+Called by Agent 3 (formatter) AFTER generating the HTML file but BEFORE the
 lint gate runs. Appends or updates the lecture entry in the YAML file.
 
 Usage:
@@ -11,7 +11,7 @@ Usage:
     subject:       Full subject name (e.g. "Artificial Computational Intelligence")
     lecture_number: Lecture number (e.g. "3" or "1-2")
     lecture_topic:  Descriptive topic string (quote if it has spaces)
-    file_name:      Relative path to the notes.html (e.g. "ACI/ACI_Lecture_3_Notes/ACI_Lecture_3_Notes.html")
+    file_name:      Relative path to the HTML file (e.g. "ACI/ACI_Lecture_3_Notes/ACI_Lecture_3_Notes.html")
     topics_file:    Optional path to a text file with one topic per line
 
 If topics_file is omitted, the script enters interactive mode prompting for
@@ -95,7 +95,7 @@ def update_or_add_lecture(subject_name, lecture_number, lecture_topic,
         subject_name: full subject name
         lecture_number: lecture number (string)
         lecture_topic: descriptive topic string
-        file_name: relative path to notes.html
+        file_name: relative path to the HTML file
         new_topics: list of topic strings covered
 
     Returns:

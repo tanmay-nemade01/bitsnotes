@@ -467,8 +467,8 @@ Write for a **smart beginner**: clever, motivated, meeting this topic for the fi
 Save your output as `1_dense_draft.md`. This must be a plain markdown file. No HTML. No callout boxes. No CSS classes. Just clean, dense, well-organized prose with:
 
 - `#` for lecture title — **clean topic title only** (e.g., `# Logistic Regression`, not `# Logistic Regression — Complete Lecture Notes`). No pipeline identifiers, no "Complete", no "Dense Draft", no "Enriched".
-- `##` for major concepts (in teaching order)
-- `###` for sub-concepts
+- `##` for major concepts, strictly using the topic numbering system `lecture_number.topic_number` (e.g., `## 5.1 [Concept Name]` for Lecture 5, Topic 1).
+- `###` for sub-concepts, strictly using the sub-topic numbering system `lecture_number.topic_number.sub_topic_number` (e.g., `### 5.1.1 [Sub-concept Name]` under Topic 5.1).
 - Formulas in `\(...\)` (inline) or `\[...\]` (block) — single backslash only
 - A **symbol registry** at the top of any section introducing three or more new symbols (see Math extraction protocol Step M3)
 - The professor's plain-language description of the math preserved next to every reconstructed formula (the audit trail for Agent 2)
@@ -486,20 +486,20 @@ Save your output as `1_dense_draft.md`. This must be a plain markdown file. No H
 ```
 # [Topic]
 
-## 1. [First Concept]
-### Definition and Explanation
-### Symbol Registry            ← if 3+ new symbols
-### Mathematical Formulation   ← reconstructed LaTeX + professor's verbal description alongside, *[verify]* where uncertain
-### Worked Examples
+## <lecture_number>.<topic_number> [First Concept]
+### <lecture_number>.<topic_number>.<sub_topic_number> Definition and Explanation
+### <lecture_number>.<topic_number>.<sub_topic_number> Symbol Registry            ← if 3+ new symbols
+### <lecture_number>.<topic_number>.<sub_topic_number> Mathematical Formulation   ← reconstructed LaTeX + professor's verbal description alongside, *[verify]* where uncertain
+### <lecture_number>.<topic_number>.<sub_topic_number> Worked Examples
   - Example 1: [full walkthrough]
   - Example 2: [full walkthrough]
-### Student Questions and Answers
+### <lecture_number>.<topic_number>.<sub_topic_number> Student Questions and Answers
 > **Q:** ...
 > **A:** ...
-### Industry Applications
-### Exam Notes
+### <lecture_number>.<topic_number>.<sub_topic_number> Industry Applications
+### <lecture_number>.<topic_number>.<sub_topic_number> Exam Notes
 
-## 2. [Second Concept]
+## <lecture_number>.<topic_number + 1> [Second Concept]
   [same structure]
 
 ...

@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
 r"""Quality gate for transcript-based notes HTML pages.
 
-Checks a generated notes.html against the shipping standard.
+Checks a generated lecture HTML file against the shipping standard.
 Pure standard library (html.parser + re). No third-party deps.
 
 Usage:
-    python3 scripts/lint.py <notes.html>
+    python3 scripts/lint.py <lecture_html_file>
 
 Checks (each reported as PASS / WARN / FAIL):
   * Template hygiene: no surviving {{PLACEHOLDER}} tokens, no broken comments.
@@ -920,7 +920,7 @@ def lint_file(path):
 
 def main(argv):
     if len(argv) != 2:
-        print("Usage: python3 scripts/lint.py <notes.html>", file=sys.stderr)
+        print("Usage: python3 scripts/lint.py <lecture_html_file>", file=sys.stderr)
         return 2
 
     path = argv[1]
