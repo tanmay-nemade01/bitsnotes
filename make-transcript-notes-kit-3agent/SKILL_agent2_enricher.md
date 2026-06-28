@@ -17,7 +17,7 @@ description: >-
 
 # Agent 2 — Enricher
 
-**Your job:** Take Agent 1's dense draft (`1_dense_draft.md`) and run the section splitter to break it into sections under a temporary `_sections/` directory. Then, sequentially process and enrich each `_sections/section_XX.md` file using the **teaching spine** — a core arc plus situational steps and an alternate procedural spine for algorithms. Supplement missing domain knowledge from the enrichment documents. Deduplicate repetitive student Q&A. Once all sections are enriched, assemble them back into a single `2_enriched_draft.md` file and clean up the temporary directory.
+**Your job:** Take Agent 1's dense draft (`1_dense_draft.md`) and run the section splitter to break it into sections under a temporary `_sections/` directory. Then, sequentially process and enrich each `_sections/section_XX.md` file using the **teaching spine** — a core arc plus situational steps and an alternate procedural spine for algorithms. Supplement missing domain knowledge from the enrichment documents. Deduplicate repetitive student Q&A. Once all sections are enriched, assemble them back into a single `2_enriched_draft.md` file. Do NOT delete the `_sections/` directory during cleanup so Agent 3 can reuse these enriched section files directly.
 
 **Your input:**
 1. Agent 1's dense draft `1_dense_draft.md`.
@@ -57,14 +57,13 @@ Once all sections are enriched, assemble them back into `2_enriched_draft.md`:
 python scripts/section_splitter.py assemble output/<Subject>/<Lecture>/_sections/ \
     --output output/<Subject>/<Lecture>/2_enriched_draft.md --format md
 ```
-Confirm `2_enriched_draft.md` is successfully created, then clean up all temporary directories, sections, and any helper scripts created during the process:
-```bash
-# Remove the temporary _sections working directory
-Remove-Item -Recurse -Force output/<Subject>/<Lecture>/_sections/
+Confirm `2_enriched_draft.md` is successfully created. **Do NOT delete the temporary `_sections/` directory** (containing the enriched markdown sections and `_inventory.json`), as Agent 3 can reuse them directly to save time and ensure continuity.
 
-# Remove any other intermediate helper files, drafts, or scripts created during this phase
+Clean up any other intermediate helper files, drafts, or scripts created during this phase:
+```bash
+# Remove any other intermediate helper files, drafts, or scripts created during this phase (but do NOT delete the _sections/ directory)
 ```
-Ensure that ONLY the intended final output file `2_enriched_draft.md` remains in the lecture output folder.
+Ensure that ONLY the intended final output file `2_enriched_draft.md` and the `_sections/` directory remain in the lecture output folder.
 
 ---
 

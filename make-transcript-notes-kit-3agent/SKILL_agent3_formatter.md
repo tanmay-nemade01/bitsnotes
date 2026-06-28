@@ -10,9 +10,9 @@ description: >-
 
 # Agent 3 — Formatter
 
-**Your job:** Take Agent 2's enriched draft (`2_enriched_draft.md`), split it into concept-wise sections, and produce the **final `<lecture_name>.html`** (matching the lecture directory name, e.g., `ML_Lecture_5_notes.html` inside directory `ML_Lecture_5_notes`) — a self-contained, lint-clean, rubric-scored HTML page with all SEO, structured data, and lecture metadata embedded directly in the HTML. **No companion `.json` files are created.**
+**Your job:** Take Agent 2's enriched draft (`2_enriched_draft.md`), reuse the split section files from Agent 2 if they are present in the `_sections/` directory, or split the draft yourself if they are missing or if the draft has been manually updated, and produce the **final `<lecture_name>.html`** (matching the lecture directory name, e.g., `ML_Lecture_5_notes.html` inside directory `ML_Lecture_5_notes`) — a self-contained, lint-clean, rubric-scored HTML page with all SEO, structured data, and lecture metadata embedded directly in the HTML. **No companion `.json` files are created.**
 
-**Critical: Section-by-section processing.** The enriched draft can be very large. Converting it to HTML in one shot causes heading numbering drift, malformed tags, and inconsistent formatting. Instead, you will process **one `##` section at a time** — splitting the draft, converting each section independently, then mechanically reassembling. This keeps heading numbering local and prevents cross-section interference.
+**Critical: Section-by-section processing.** The enriched draft can be very large. Converting it to HTML in one shot causes heading numbering drift, malformed tags, and inconsistent formatting. Instead, you will process **one `##` section at a time** — reusing Agent 2's split sections or splitting the draft yourself, converting each section independently, then mechanically reassembling. This keeps heading numbering local and prevents cross-section interference.
 
 **Your input:** Agent 2's enriched draft `2_enriched_draft.md`.
 
@@ -72,16 +72,20 @@ After stripping, the remaining content should start directly with the first educ
 
 ---
 
-## Step 1 — Split the enriched draft into per-section files
+## Step 1 — Reuse or split the enriched draft into per-section files
 
-Use the section splitter to break the enriched markdown into one file per `##` section:
+**Optimized Reuse Path:**
+If the temporary `_sections/` directory already exists (left behind by Agent 2), contains `_inventory.json` and the `section_XX.md` files, AND `2_enriched_draft.md` has not been manually edited since Agent 2 ran, you should **reuse the existing section files directly** and skip the splitting command to save time and resource usage.
+
+**Fallback/Modification Path:**
+If the `_sections/` directory is missing, incomplete, or if `2_enriched_draft.md` was manually edited/updated after Agent 2 ran, you must run the section splitter to (re)generate the section files from the draft:
 
 ```bash
 python scripts/section_splitter.py split output/<subject>/<lecture>/2_enriched_draft.md \
     --output-dir output/<subject>/<lecture>/_sections/
 ```
 
-This creates:
+Running this command creates:
 - `_inventory.json` — the **locked heading numbering map** (source of truth for all heading numbers)
 - `section_00_preamble.md` — content before the first `##` heading (if any)
 - `section_01.md`, `section_02.md`, ... — one file per `##` section
