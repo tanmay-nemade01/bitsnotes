@@ -466,7 +466,7 @@ Write for a **smart beginner**: clever, motivated, meeting this topic for the fi
 
 Save your output as `1_dense_draft.md`. This must be a plain markdown file. No HTML. No callout boxes. No CSS classes. Just clean, dense, well-organized prose with:
 
-- `#` for lecture title
+- `#` for lecture title — **clean topic title only** (e.g., `# Logistic Regression`, not `# Logistic Regression — Complete Lecture Notes`). No pipeline identifiers, no "Complete", no "Dense Draft", no "Enriched".
 - `##` for major concepts (in teaching order)
 - `###` for sub-concepts
 - Formulas in `\(...\)` (inline) or `\[...\]` (block) — single backslash only
@@ -479,11 +479,12 @@ Save your output as `1_dense_draft.md`. This must be a plain markdown file. No H
 - Industry applications prefixed with "Real-world:" for easy scanning
 - Exam guidance prefixed with "Exam note:" for easy scanning
 - **NO extraction checklist, verification list, or internal metadata in the output.** The output starts directly with the first educational section.
+- **NO pipeline jargon** — no agent names ("Agent 1", "Extractor"), no phase labels, no course codes. The draft must read as standalone educational material.
 
 ### Suggested section structure
 
 ```
-# [Topic] — Complete Lecture Notes
+# [Topic]
 
 ## 1. [First Concept]
 ### Definition and Explanation

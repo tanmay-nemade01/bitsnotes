@@ -413,7 +413,7 @@ def check_metadata(raw, parser, report):
     required = {
         "title": str, "subject": str, "gradeLevel": str,
         "datePublished": str, "targetAudience": str,
-        "summary": str, "sections": list, "examRevisionNotes": list,
+        "sections": list, "examRevisionNotes": list,
     }
 
     for field, ftype in required.items():
@@ -456,6 +456,13 @@ def check_metadata(raw, parser, report):
         report.passed("metadata", f"Valid metadata JSON with {len(data['sections'])} sections, {len(exam)} exam revision entries.")
     else:
         report.warned("metadata", "Metadata JSON present but has issues (see above).")
+
+    # Warn if removed fields are still present
+    removed_fields = [f for f in ("summary", "keyConcepts", "quiz") if f in data]
+    if removed_fields:
+        report.warned("metadata",
+                      f"Metadata contains removed field(s): {', '.join(removed_fields)}. "
+                      "These sections are no longer part of the output. Remove them.")
 
 
 def check_callout_boxes(parser, report):
@@ -799,6 +806,81 @@ def check_intermediate_metadata(raw, report):
                       "No extraction checklists or quality self-checks leaked into the HTML.")
 
 
+# -- Pipeline jargon patterns (student-facing guardrail) --
+_PIPELINE_JARGON_PATTERNS = [
+    ("'Enriched' in title/heading/body",
+     re.compile(r"\bEnriched\b", re.IGNORECASE)),
+    ("'Dense Draft' reference",
+     re.compile(r"\bDense\s+Draft\b", re.IGNORECASE)),
+    ("Agent name/phase label",
+     re.compile(r"\b(?:Agent\s*[123]|Extractor|Enricher|Formatter)\b", re.IGNORECASE)),
+    ("'enriched by' or 'created by agent'",
+     re.compile(r"(?:enriched\s+by|created\s+by\s+agent|based\s+on\s+agent)", re.IGNORECASE)),
+    ("Callout legend (CSS class names)",
+     re.compile(r"(?:key-concept|important-note|example-box|warning-box|key-takeaway)\s*=\s*")),
+    ("Enrichment source attribution",
+     re.compile(r"Enrichment\s+sources?\s*:", re.IGNORECASE)),
+]
+
+
+def check_pipeline_jargon(raw, parser, report):
+    """Detect pipeline-internal language that should never be visible to students.
+
+    Checks both the <title> tag and the visible body text for words like
+    'Enriched', agent names, callout legends, and enrichment source
+    attribution. Any hit is a FAIL.
+    """
+    # Extract visible text: strip scripts, styles, comments
+    visible = re.sub(r"<!--.*?-->", "", raw, flags=re.DOTALL)
+    visible = re.sub(r"<script\b.*?</script>", "", visible,
+                     flags=re.DOTALL | re.IGNORECASE)
+    visible = re.sub(r"<style\b.*?</style>", "", visible,
+                     flags=re.DOTALL | re.IGNORECASE)
+
+    # Also check <title> tag content specifically
+    title_match = re.search(r"<title[^>]*>(.*?)</title>", raw,
+                            re.DOTALL | re.IGNORECASE)
+    title_text = title_match.group(1).strip() if title_match else ""
+
+    hits = []
+
+    for desc, pattern in _PIPELINE_JARGON_PATTERNS:
+        # Check title
+        if title_text and pattern.search(title_text):
+            hits.append(f"{desc} found in <title> tag: '{title_text[:80]}'")
+        # Check visible body
+        body_matches = pattern.findall(visible)
+        if body_matches:
+            sample = body_matches[0] if isinstance(body_matches[0], str) else str(body_matches[0])
+            hits.append(
+                f"{desc} found in visible body ({len(body_matches)} occurrence(s), "
+                f"e.g. '{sample[:60]}'). Pipeline-internal language must not be "
+                f"visible to students.")
+
+    # Also check metadata title for jargon
+    meta_match = re.search(
+        r'<script[^>]*id\s*=\s*"lecture-metadata"[^>]*>\s*(.*?)\s*</script>',
+        raw, re.DOTALL)
+    if meta_match:
+        try:
+            meta_data = json.loads(meta_match.group(1))
+            meta_title = meta_data.get("title", "")
+            for desc, pattern in _PIPELINE_JARGON_PATTERNS:
+                if pattern.search(meta_title):
+                    hits.append(
+                        f"{desc} found in metadata title: '{meta_title[:80]}'. "
+                        "The metadata title must be a clean topic title.")
+                    break
+        except (json.JSONDecodeError, AttributeError):
+            pass  # metadata JSON issues are caught by check_metadata
+
+    if hits:
+        report.failed("pipeline jargon (student-facing)", "\n".join(hits))
+    else:
+        report.passed("pipeline jargon (student-facing)",
+                      "No pipeline-internal language found in visible content.")
+
+
 # ---------------------------------------------------------------------------
 # Driver
 # ---------------------------------------------------------------------------
@@ -832,6 +914,7 @@ def lint_file(path):
     check_content_structure(parser, report)
     check_intermediate_metadata(raw, report)
     check_verify_markers(raw, report)
+    check_pipeline_jargon(raw, parser, report)
     return report
 
 
