@@ -63,28 +63,40 @@ enrichment without any YAML interaction.
 - **No distraction for Agents 1-2** — zero topic mapping overhead in the
   extraction and enrichment phases
 
-## Output — single HTML file, no companion JSONs
+## Output Structure
 
-Each lecture produces one file: `output/<Subject>/<Lecture>/<Lecture>.html`.
+Each lecture is self-contained within its own folder structure under `outputs/<Subject>/<LecturePrefix>/` (e.g. `outputs/Machine Learning/ML_Lecture_6/`):
 
-All metadata, SEO tags (Open Graph, Twitter Cards, structured data), and
-lecture content are embedded directly in the HTML — **no companion `.json`
-files are created**. The BitsNotes viewer reads everything from the HTML
-itself via `<script id="lecture-metadata">`.
+```
+outputs/<Subject>/<LecturePrefix>/
+├── <LecturePrefix>_notes_dense.md       ← Agent 1 output (exhaustive draft)
+├── <LecturePrefix>_notes_enriched.md    ← Agent 2 output (enriched markdown)
+├── sections/                            ← Workspace directory for split sections
+└── <LecturePrefix>_notes/               ← Agent 3 output directory
+    └── <LecturePrefix>_notes.html       ← Agent 3 final HTML output
+```
+
+All metadata, SEO tags (Open Graph, Twitter Cards, structured data), and lecture content are embedded directly in the single HTML file — **no companion `.json` files are created**. The BitsNotes viewer reads everything from the HTML itself via `<script id="lecture-metadata">`.
 
 ## Usage
 
 Run the process in the following sequence:
 
 ```
-1. "Use Agent 1 (extractor) to process transcript.txt into 1_dense_draft.md."
+0. "Set up folder structure and pre-create empty files with proper names under outputs/<Subject>/<LecturePrefix>/."
+   Example for ML Lecture 6 (LecturePrefix: ML_Lecture_6):
+   - Parent directory: outputs/Machine Learning/ML_Lecture_6/
+   - Subdirectories: sections/ and ML_Lecture_6_notes/
+   - Empty files: ML_Lecture_6_notes_dense.md, ML_Lecture_6_notes_enriched.md, and ML_Lecture_6_notes/ML_Lecture_6_notes.html
 
-2. "Use Agent 2 (enricher) to split 1_dense_draft.md, apply the teaching spine
-    section-by-section, resolve all *[verify]* markers, and assemble into 2_enriched_draft.md."
+1. "Use Agent 1 (extractor) to process transcript.txt into <LecturePrefix>_notes_dense.md."
 
-3. "Use Agent 3 (formatter) to split 2_enriched_draft.md, convert the sections
+2. "Use Agent 2 (enricher) to split <LecturePrefix>_notes_dense.md, apply the teaching spine
+    section-by-section, resolve all *[verify]* markers, and assemble into <LecturePrefix>_notes_enriched.md."
+
+3. "Use Agent 3 (formatter) to split <LecturePrefix>_notes_enriched.md, convert the sections
     into HTML, assemble them, read topic_mappings/<Subject>.yaml for prerequisite
-    detection, update the YAML, run lint, and self-score to produce <Lecture>.html."
+    detection, update the YAML, run lint, and self-score to produce <LecturePrefix>_notes/<LecturePrefix>_notes.html."
 ```
 
 ## What's inside

@@ -17,7 +17,7 @@ description: >-
 
 **Your job:** Read a raw `.txt` lecture transcript and produce an **exhaustive, maximally detailed dense markdown draft**. Capture EVERY educational dimension — not just concepts and definitions, but also student questions, professor answers, industry applications, worked computations, exam guidance, named references, and every pedagogical moment. Filter NOTHING that has educational value.
 
-**Your output:** Save your output as a markdown file named `1_dense_draft.md` with every concept organized into sections, all examples captured in full, all student Q&A preserved, all industry connections documented, all exam guidance recorded. This is the raw material to be split into sections for Agent 2.
+**Your output:** Save your output into the pre-created empty file named `<LecturePrefix>_notes_dense.md` inside the lecture directory `outputs/<Subject>/<LecturePrefix>/` (e.g. `ML_Lecture_6_notes_dense.md` inside `outputs/Machine Learning/ML_Lecture_6/`). Organize every concept into sections, all examples captured in full, all student Q&A preserved, all industry connections documented, all exam guidance recorded. This is the raw material to be split into sections for Agent 2.
 
 **THE #1 PRINCIPLE: When in doubt, INCLUDE. It is always better to include something marginal than to miss something valuable. Agent 2 can trim; you cannot recover what you did not capture.**
 
@@ -464,7 +464,7 @@ Write for a **smart beginner**: clever, motivated, meeting this topic for the fi
 
 ## Your output format
 
-Save your output as `1_dense_draft.md`. This must be a plain markdown file. No HTML. No callout boxes. No CSS classes. Just clean, dense, well-organized prose with:
+Save your output to the pre-created empty file `<LecturePrefix>_notes_dense.md` (overwriting it). This must be a plain markdown file. No HTML. No callout boxes. No CSS classes. Just clean, dense, well-organized prose with:
 
 - `#` for lecture title — **clean topic title only** (e.g., `# Logistic Regression`, not `# Logistic Regression — Complete Lecture Notes`). No pipeline identifiers, no "Complete", no "Dense Draft", no "Enriched".
 - `##` for major concepts, strictly using the topic numbering system `lecture_number.topic_number` (e.g., `## 5.1 [Concept Name]` for Lecture 5, Topic 1).

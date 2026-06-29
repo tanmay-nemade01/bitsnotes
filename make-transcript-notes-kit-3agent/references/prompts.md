@@ -76,7 +76,7 @@ per category and list every gap keeping it under 85.
 
 ## Math-focused extraction (Phase 1, math-heavy lecture)
 ```text
-Use Agent 1 (extractor) to process transcript.txt into 1_dense_draft.md.
+Use Agent 1 (extractor) to process transcript.txt into <LecturePrefix>_notes_dense.md.
 This lecture is math-heavy and the transcript describes formulas and
 derivations in plain language. Follow the Math extraction protocol strictly:
 reconstruct real LaTeX for every formula, keep the professor's verbal
@@ -90,11 +90,11 @@ part of the Step 0.5 inventory.
 
 ## Math reconciliation (Phase 2, with enrichment docs)
 ```text
-Use Agent 2 (enricher) to process 1_dense_draft.md using the attached enrichment docs
-<doc1.pdf, doc2.md, ...> as MATH GROUND TRUTH. You must split 1_dense_draft.md into sections
-under _sections/, apply the 9-step spine section-by-section (resolving all *[verify]* markers,
+Use Agent 2 (enricher) to process <LecturePrefix>_notes_dense.md using the attached enrichment docs
+<doc1.pdf, doc2.md, ...> as MATH GROUND TRUTH. You must split <LecturePrefix>_notes_dense.md into sections
+under sections/, apply the 9-step spine section-by-section (resolving all *[verify]* markers,
 annotating all algebra steps, and performing factuality checks), and then reassemble the
-enriched sections back into 2_enriched_draft.md.
+enriched sections back into <LecturePrefix>_notes_enriched.md.
 ```
 
 ## Verify just the formulas in existing notes

@@ -10,13 +10,13 @@ description: >-
 
 # Agent 3 — Formatter
 
-**Your job:** Take Agent 2's enriched draft (`2_enriched_draft.md`), reuse the split section files from Agent 2 if they are present in the `_sections/` directory, or split the draft yourself if they are missing or if the draft has been manually updated, and produce the **final `<lecture_name>.html`** (matching the lecture directory name, e.g., `ML_Lecture_5_notes.html` inside directory `ML_Lecture_5_notes`) — a self-contained, lint-clean, rubric-scored HTML page with all SEO, structured data, and lecture metadata embedded directly in the HTML. **No companion `.json` files are created.**
+**Your job:** Take Agent 2's enriched draft (`<LecturePrefix>_notes_enriched.md`), reuse the split section files from Agent 2 if they are present in the `sections/` directory, or split the draft yourself if they are missing or if the draft has been manually updated, and produce the **final `<LecturePrefix>_notes.html`** inside the folder `<LecturePrefix>_notes/` (e.g., `ML_Lecture_5_notes/ML_Lecture_5_notes.html` inside `ML_Lecture_5/`) — a self-contained, lint-clean, rubric-scored HTML page with all SEO, structured data, and lecture metadata embedded directly in the HTML. **No companion `.json` files are created.**
 
 **Critical: Section-by-section processing.** The enriched draft can be very large. Converting it to HTML in one shot causes heading numbering drift, malformed tags, and inconsistent formatting. Instead, you will process **one `##` section at a time** — reusing Agent 2's split sections or splitting the draft yourself, converting each section independently, then mechanically reassembling. This keeps heading numbering local and prevents cross-section interference.
 
-**Your input:** Agent 2's enriched draft `2_enriched_draft.md`.
+**Your input:** Agent 2's enriched draft `<LecturePrefix>_notes_enriched.md` (located in the same directory).
 
-**Your output:** `output/<subject>/<lecture>/<lecture_name>.html` (where `<lecture_name>` matches the lecture directory name) — passes lint with zero FAILs, scores ≥ 85/100 against the rubric, zero red-list items. This is the ONLY file produced. All metadata is embedded in the HTML. The BitsNotes viewer reads the metadata from `<script id="lecture-metadata">` inside this single HTML file.
+**Your output:** `outputs/<Subject>/<LecturePrefix>/<LecturePrefix>_notes/<LecturePrefix>_notes.html` — passes lint with zero FAILs, scores ≥ 85/100 against the rubric, zero red-list items. This is the ONLY file produced. All metadata is embedded in the HTML. The BitsNotes viewer reads the metadata from `<script id="lecture-metadata">` inside this single HTML file.
 
 ---
 
@@ -75,14 +75,14 @@ After stripping, the remaining content should start directly with the first educ
 ## Step 1 — Reuse or split the enriched draft into per-section files
 
 **Optimized Reuse Path:**
-If the temporary `_sections/` directory already exists (left behind by Agent 2), contains `_inventory.json` and the `section_XX.md` files, AND `2_enriched_draft.md` has not been manually edited since Agent 2 ran, you should **reuse the existing section files directly** and skip the splitting command to save time and resource usage.
+If the `sections/` directory already exists (left behind by Agent 2), contains `_inventory.json` and the `section_XX.md` files, AND `<LecturePrefix>_notes_enriched.md` has not been manually edited since Agent 2 ran, you should **reuse the existing section files directly** and skip the splitting command to save time and resource usage.
 
 **Fallback/Modification Path:**
-If the `_sections/` directory is missing, incomplete, or if `2_enriched_draft.md` was manually edited/updated after Agent 2 ran, you must run the section splitter to (re)generate the section files from the draft:
+If the `sections/` directory is missing, incomplete, or if `<LecturePrefix>_notes_enriched.md` was manually edited/updated after Agent 2 ran, you must run the section splitter to (re)generate the section files from the draft:
 
 ```bash
-python scripts/section_splitter.py split output/<subject>/<lecture>/2_enriched_draft.md \
-    --output-dir output/<subject>/<lecture>/_sections/
+python scripts/section_splitter.py split outputs/<Subject>/<LecturePrefix>/<LecturePrefix>_notes_enriched.md \
+    --output-dir outputs/<Subject>/<LecturePrefix>/sections/
 ```
 
 Running this command creates:
@@ -168,24 +168,21 @@ Once ALL sections are converted, mechanically reassemble them:
 
 ```bash
 python scripts/section_splitter.py assemble \
-    output/<subject>/<lecture>/_sections/ \
-    --output output/<subject>/<lecture>/_body.html
+    outputs/<Subject>/<LecturePrefix>/sections/ \
+    --output outputs/<Subject>/<LecturePrefix>/_body.html
 ```
 
 This concatenates all `section_*.html` files in inventory order. **No content changes during assembly** — it is purely mechanical concatenation. Read `_body.html` to get the `{{MAIN_TEXTBOOK_CONTENT}}` value.
 
-After successful assembly, clean up all intermediate directories, sections, body HTMLs, and helper scripts created during the formatting process:
+After successful assembly, clean up intermediate files (but do NOT delete the `sections/` directory):
 
 ```bash
-# Remove the _sections working directory
-Remove-Item -Recurse -Force output/<subject>/<lecture>/_sections/
-
 # Remove the temporary body file after template fill
-Remove-Item -Force output/<subject>/<lecture>/_body.html
+Remove-Item -Force outputs/<Subject>/<LecturePrefix>/_body.html
 
-# Remove any other intermediate helper files, drafts, or scripts created during this phase
+# Remove any other intermediate helper files, drafts, or scripts created during this phase (keep sections/ and notes_dense/notes_enriched markdown files)
 ```
-Ensure that ONLY the intended final output file `<lecture_name>.html` remains in the lecture output folder (along with the updated YAML file in `topic_mappings/`).
+Ensure that `<LecturePrefix>_notes_dense.md`, `<LecturePrefix>_notes_enriched.md`, the `sections/` directory, and `<LecturePrefix>_notes/<LecturePrefix>_notes.html` remain in the lecture folder (along with the updated YAML file in `topic_mappings/`).
 
 ---
 
@@ -417,7 +414,7 @@ Open the updated YAML file and confirm:
 ## Step 9 — Run the lint gate
 
 ```bash
-python scripts/lint.py output/<subject>/<lecture>/<lecture_name>.html
+python scripts/lint.py outputs/<Subject>/<LecturePrefix>/<LecturePrefix>_notes/<LecturePrefix>_notes.html
 ```
 
 Fix **every FAIL**. Re-run until clean. **Exception:** If readability (sentence length) is the only test failing, AND you have already tried fixing the readability issues at least 2 times, you may skip the readability check (accept the fail) and move forward to the next task (Step 10 — Self-score against the quality rubric). In all other cases (e.g. first run, other tests failing, or fewer than 2 attempts to fix readability), you must not skip it. WARNs don't block but usually flag real issues — fix them when possible.
@@ -473,7 +470,7 @@ The lint checks: template hygiene (no surviving `{{PLACEHOLDER}}`), viewport met
 
 - [ ] All sections converted individually with heading numbers verified against `_inventory.json`
 - [ ] Section HTMLs assembled mechanically (no content changes during assembly)
-- [ ] Intermediate `_sections/` directory and `_body.html` cleaned up
+- [ ] Intermediate `_body.html` cleaned up (while preserving sections/ folder and md drafts)
 - [ ] Every concept present in teaching order; every transcript example worked in full
 - [ ] All core spine steps per major concept (or procedural spine for algorithms); correct callout per step; situational steps where the transcript provides them
 - [ ] Sampled paragraphs pass easy-language audit (avg <~20 words, terms defined on first use)

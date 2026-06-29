@@ -17,15 +17,15 @@ description: >-
 
 # Agent 2 — Enricher
 
-**Your job:** Take Agent 1's dense draft (`1_dense_draft.md`) and run the section splitter to break it into sections under a temporary `_sections/` directory. Then, sequentially process and enrich each `_sections/section_XX.md` file using the **teaching spine** — a core arc plus situational steps and an alternate procedural spine for algorithms. Supplement missing domain knowledge from the enrichment documents. Deduplicate repetitive student Q&A. Once all sections are enriched, assemble them back into a single `2_enriched_draft.md` file. Do NOT delete the `_sections/` directory during cleanup so Agent 3 can reuse these enriched section files directly.
+**Your job:** Take Agent 1's dense draft (`<LecturePrefix>_notes_dense.md`) and run the section splitter to break it into sections under the `sections/` directory. Then, sequentially process and enrich each `sections/section_XX.md` file using the **teaching spine** — a core arc plus situational steps and an alternate procedural spine for algorithms. Supplement missing domain knowledge from the enrichment documents. Deduplicate repetitive student Q&A. Once all sections are enriched, assemble them back into the pre-created empty file `<LecturePrefix>_notes_enriched.md`. Do NOT delete the `sections/` directory during cleanup so Agent 3 can reuse these enriched section files directly.
 
 **Your input:**
-1. Agent 1's dense draft `1_dense_draft.md`.
+1. Agent 1's dense draft `<LecturePrefix>_notes_dense.md` (located in the same directory).
 2. Some Companion Documents provided for reference. **Do not introduce new topics** from them. Only enrich concepts present in the draft.
 
 **Critical math role:** Agent 1 reconstructed LaTeX from the transcript's plain-language math and left `*[verify]*` markers wherever the reconstruction was uncertain, and wherever a derivation step was skipped. **It is YOUR job to resolve every `*[verify]*` marker in each section** by reconciling the math against the enrichment docs (and web research if needed), and to fill any skipped derivation step with the real algebra. See the "Math reconciliation from enrichment docs" section below. A `*[verify]*` marker reaching Agent 3 is a failure of this phase.
 
-**Your output:** A single assembled file `2_enriched_draft.md` where every major concept has the complete core spine (or the procedural spine for algorithms), plus situational steps where the transcript provides them, each step annotated with its callout type.
+**Your output:** Save your output into the pre-created empty file `<LecturePrefix>_notes_enriched.md` (overwriting it) where every major concept has the complete core spine (or the procedural spine for algorithms), plus situational steps where the transcript provides them, each step annotated with its callout type.
 
 ---
 
@@ -36,12 +36,12 @@ Before starting any enrichment work, perform the setup steps autonomously:
 ### Step 1 — Split the draft
 Run the split script on the input draft to create the sections:
 ```bash
-python scripts/section_splitter.py split output/<Subject>/<Lecture>/1_dense_draft.md \
-    --output-dir output/<Subject>/<Lecture>/_sections/
+python scripts/section_splitter.py split outputs/<Subject>/<LecturePrefix>/<LecturePrefix>_notes_dense.md \
+    --output-dir outputs/<Subject>/<LecturePrefix>/sections/
 ```
 
 ### Step 2 — Read the inventory
-Read `_sections/_inventory.json`. This contains your contract and heading numbering map for the entire lecture.
+Read `sections/_inventory.json`. This contains your contract and heading numbering map for the entire lecture.
 
 ### Step 3 — Process sections sequentially
 For each `section_XX.md` (starting from `section_01.md`, and including `section_00_preamble.md` and appendices if present):
@@ -52,18 +52,18 @@ For each `section_XX.md` (starting from `section_01.md`, and including `section_
 Do not process multiple sections in parallel — do them one at a time to maintain focus.
 
 ### Step 4 — Assemble and clean up
-Once all sections are enriched, assemble them back into `2_enriched_draft.md`:
+Once all sections are enriched, assemble them back into `<LecturePrefix>_notes_enriched.md`:
 ```bash
-python scripts/section_splitter.py assemble output/<Subject>/<Lecture>/_sections/ \
-    --output output/<Subject>/<Lecture>/2_enriched_draft.md --format md
+python scripts/section_splitter.py assemble outputs/<Subject>/<LecturePrefix>/sections/ \
+    --output outputs/<Subject>/<LecturePrefix>/<LecturePrefix>_notes_enriched.md --format md
 ```
-Confirm `2_enriched_draft.md` is successfully created. **Do NOT delete the temporary `_sections/` directory** (containing the enriched markdown sections and `_inventory.json`), as Agent 3 can reuse them directly to save time and ensure continuity.
+Confirm `<LecturePrefix>_notes_enriched.md` is successfully created. **Do NOT delete the `sections/` directory** (containing the enriched markdown sections and `_inventory.json`), as Agent 3 can reuse them directly to save time and ensure continuity.
 
 Clean up any other intermediate helper files, drafts, or scripts created during this phase:
 ```bash
-# Remove any other intermediate helper files, drafts, or scripts created during this phase (but do NOT delete the _sections/ directory)
+# Remove any other intermediate helper files, drafts, or scripts created during this phase (but do NOT delete the sections/ directory)
 ```
-Ensure that ONLY the intended final output file `2_enriched_draft.md` and the `_sections/` directory remain in the lecture output folder.
+Ensure that ONLY `<LecturePrefix>_notes_dense.md`, `<LecturePrefix>_notes_enriched.md`, and the `sections/` directory remain in the lecture folder.
 
 ---
 
