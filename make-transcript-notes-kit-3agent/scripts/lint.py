@@ -881,6 +881,87 @@ def check_pipeline_jargon(raw, parser, report):
                       "No pipeline-internal language found in visible content.")
 
 
+# -- Placeholder and task patterns (student-facing guardrail) --
+_PLACEHOLDER_TASK_PATTERNS = [
+    ("TODO marker", re.compile(r"\bTODO\b", re.IGNORECASE)),
+    ("placeholder marker", re.compile(r"\bplaceholder\b", re.IGNORECASE)),
+    ("Agent 2 task instruction", re.compile(r"\bdefine\s+[\w\s-]{2,50}\s+in\s+(?:[\w\s-]+\s+)?notes?\b", re.IGNORECASE)),
+    ("bracketed placeholder", re.compile(r"\[\s*(?:insert|add|fill|define|todo|placeholder)[^\]]{0,100}\]", re.IGNORECASE)),
+    ("Agent 3 delegation", re.compile(r"\b(?:task|instruction)\s+for\s+Agent\s*3\b", re.IGNORECASE)),
+]
+
+
+def check_placeholder_tasks(raw, parser, report):
+    """Detect leftover placeholder text, TODOs, or task instructions.
+
+    These are Agent 2 process instructions for Agent 3 (e.g., 'Define Logistic
+    Regression in revision notes' or 'TODO: ...') and must be resolved
+    content-aware by Agent 3 during HTML conversion.
+    """
+    # Extract visible text: strip scripts, styles, comments
+    visible = re.sub(r"<!--.*?-->", "", raw, flags=re.DOTALL)
+    visible = re.sub(r"<script\b.*?</script>", "", visible,
+                     flags=re.DOTALL | re.IGNORECASE)
+    visible = re.sub(r"<style\b.*?</style>", "", visible,
+                     flags=re.DOTALL | re.IGNORECASE)
+
+    hits = []
+
+    # Check visible text
+    for desc, pattern in _PLACEHOLDER_TASK_PATTERNS:
+        matches = pattern.findall(visible)
+        if matches:
+            sample = matches[0] if isinstance(matches[0], str) else str(matches[0])
+            hits.append(
+                f"{desc} found in visible body: '{sample[:60]}'."
+            )
+
+    # Check metadata JSON fields
+    meta_match = re.search(
+        r'<script[^>]*id\s*=\s*"lecture-metadata"[^>]*>\s*(.*?)\s*</script>',
+        raw, re.DOTALL)
+    if meta_match:
+        try:
+            meta_data = json.loads(meta_match.group(1))
+            def _has_placeholder(val, pattern):
+                if isinstance(val, str):
+                    return bool(pattern.search(val))
+                if isinstance(val, list):
+                    return any(_has_placeholder(item, pattern) for item in val)
+                if isinstance(val, dict):
+                    return any(_has_placeholder(item, pattern) for item in val.values())
+                return False
+
+            for desc, pattern in _PLACEHOLDER_TASK_PATTERNS:
+                if _has_placeholder(meta_data, pattern):
+                    # Find a sample from metadata to show in the report
+                    sample = ""
+                    def _find_sample(val, pattern):
+                        if isinstance(val, str) and pattern.search(val):
+                            return val
+                        if isinstance(val, list):
+                            for item in val:
+                                s = _find_sample(item, pattern)
+                                if s: return s
+                        if isinstance(val, dict):
+                            for item in val.values():
+                                s = _find_sample(item, pattern)
+                                if s: return s
+                        return ""
+                    sample = _find_sample(meta_data, pattern)
+                    hits.append(
+                        f"{desc} found in metadata JSON: '{sample[:60]}'."
+                    )
+        except (json.JSONDecodeError, AttributeError):
+            pass
+
+    if hits:
+        report.failed("placeholder tasks", "\n".join(hits))
+    else:
+        report.passed("placeholder tasks",
+                      "No leftover placeholder tasks or TODOs found.")
+
+
 # ---------------------------------------------------------------------------
 # Driver
 # ---------------------------------------------------------------------------
@@ -915,6 +996,7 @@ def lint_file(path):
     check_intermediate_metadata(raw, report)
     check_verify_markers(raw, report)
     check_pipeline_jargon(raw, parser, report)
+    check_placeholder_tasks(raw, parser, report)
     return report
 
 
