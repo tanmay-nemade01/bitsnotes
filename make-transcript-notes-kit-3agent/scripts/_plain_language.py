@@ -49,6 +49,9 @@ FLOURISH_PHRASES = [
     "lies at the intersection of", "at the intersection of",
     "in the realm of", "in the world of",
     "it is important to note that", "it is worth noting that",
+    "it's important to note that", "it's worth noting that",
+    "it is crucial to understand that", "it is crucial to note that",
+    "as we can see",
     "in essence", "essentially,", "fundamentally,",
 ]
 
@@ -83,6 +86,52 @@ FANCY_WORDS = {
     "cognizant": "aware", "delineate": "describe",
 }
 
+# --------------------------------------------------------------------------- #
+# 4. Clichés, Jargon, and AI/Marketing Hype — WARN only, never FAIL.
+#
+# This list targets phrases that are *unambiguously* AI-chatbot or corporate
+# jargon. Words with legitimate technical meanings (transform, harness, may,
+# could, etc.) are intentionally excluded — the agent prompt teaches judgment,
+# and the lint gate only softly warns on these patterns.
+# --------------------------------------------------------------------------- #
+CLICHES_AND_JARGON = {
+    # AI-chatbot clichés (almost never appropriate in educational notes)
+    "dive into": "look at / explain",
+    "dives into": "explains / covers",
+    "diving into": "looking at / covering",
+    "delve into": "look at / explain",
+    "delves into": "explains / covers",
+    "delving into": "looking at / covering",
+    "unleash": "use / enable",
+    "unleashes": "enables",
+    "unleashing": "enabling",
+    "unleash your potential": "improve your skills",
+    "unleash the potential": "use / enable",
+    "game-changing": "effective / important",
+    "game changer": "useful improvement",
+    "transformative": "helpful / significant",
+    "explore the depth of": "understand",
+    "explore the depths of": "understand",
+    "groundbreaking": "new / significant",
+    "cutting-edge": "modern / recent",
+    # Corporate jargon (never appropriate in educational notes)
+    "touch base": "meet / discuss",
+    "touches base": "meets / discusses",
+    "touching base": "meeting / discussing",
+    "move the needle": "improve results",
+    "moves the needle": "improves results",
+    "moving the needle": "improving results",
+    "mission-critical": "important / essential",
+    "mission critical": "important / essential",
+    "deliverable": "result / output",
+    "deliverables": "results / outputs",
+    "synergy": "cooperation / combination",
+    "synergies": "combinations",
+    "synergistic": "combined",
+    "paradigm shift": "major change",
+    "paradigm shifts": "major changes",
+}
+
 # Pre-compiled matchers ------------------------------------------------------ #
 _FANCY_RE = {
     w: re.compile(r"\b" + re.escape(w) + r"\b", re.IGNORECASE)
@@ -91,6 +140,10 @@ _FANCY_RE = {
 _HANDWORD_RE = {
     w: re.compile(r"\b" + re.escape(w) + r"\b", re.IGNORECASE)
     for w in HANDWAVE_WORDS
+}
+_CLICHES_RE = {
+    w: re.compile(r"\b" + re.escape(w) + r"\b", re.IGNORECASE)
+    for w in CLICHES_AND_JARGON
 }
 _VOWEL_GROUP = re.compile(r"[aeiouy]+")
 _WORD = re.compile(r"[A-Za-z']+")
@@ -125,6 +178,17 @@ def find_fancy(text):
         c = len(rx.findall(text))
         if c:
             out.append((w, FANCY_WORDS[w], c))
+    out.sort(key=lambda t: (-t[2], t[0]))
+    return out
+
+
+def find_cliches_and_jargon(text):
+    """Return [(word, suggestion, count)] for clichés, jargon, AI/marketing words (WARN)."""
+    out = []
+    for w, rx in _CLICHES_RE.items():
+        c = len(rx.findall(text))
+        if c:
+            out.append((w, CLICHES_AND_JARGON[w], c))
     out.sort(key=lambda t: (-t[2], t[0]))
     return out
 

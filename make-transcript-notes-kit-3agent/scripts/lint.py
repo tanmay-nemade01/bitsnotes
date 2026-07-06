@@ -962,6 +962,83 @@ def check_placeholder_tasks(raw, parser, report):
                       "No leftover placeholder tasks or TODOs found.")
 
 
+_EMOJI_RE = re.compile(r"[\U00010000-\U0010ffff]", flags=re.UNICODE)
+
+
+def check_writing_style(parser, report):
+    """Soft writing-style check — WARN only, never FAIL.
+
+    The agent prompts teach principles (clarity, active voice, conversational
+    tone). This lint check catches surface-level patterns the agent missed.
+    It never hard-fails because many flagged words have legitimate technical
+    uses (e.g., "transform" in Fourier transform). The goal is to nudge, not
+    to gatekeep.
+
+    Checks:
+      - Semicolons in visible prose (suggest splitting).
+      - Emojis in visible prose (educational notes should not have emojis).
+      - Hashtags (#word) in visible prose.
+      - Raw asterisks (*) in visible prose (likely leaked markdown).
+      - AI-chatbot clichés and corporate jargon (from _plain_language.py).
+    """
+    prose = parser.prose
+    if not prose.strip():
+        report.warned("writing style", "No visible prose extracted; cannot assess style.")
+        return
+
+    warnings = []
+
+    # 1. Semicolons — suggest shorter sentences
+    semicolons = prose.count(";")
+    if semicolons > 0:
+        warnings.append(
+            f"Found {semicolons} semicolon(s) in prose. "
+            "Consider splitting into shorter sentences."
+        )
+
+    # 2. Emojis — should not appear in textbook notes
+    emoji_hits = _EMOJI_RE.findall(prose)
+    if emoji_hits:
+        warnings.append(
+            f"Found {len(emoji_hits)} emoji(s) in prose: " + "".join(emoji_hits[:10]) + ". "
+            "Educational notes should not contain emojis."
+        )
+
+    # 3. Hashtags — social media artifact
+    hashtag_hits = re.findall(r"#\w+", prose)
+    if hashtag_hits:
+        warnings.append(
+            f"Found {len(hashtag_hits)} hashtag(s) in prose: " + ", ".join(hashtag_hits[:5]) + ". "
+            "Hashtags are not appropriate in educational notes."
+        )
+
+    # 4. Raw asterisks (likely leaked markdown bold/italic markers)
+    clean_prose = re.sub(r"\\\(.*?\\\)|\\\[.*?\\\]|\$\$.*?\$\$", " ", prose, flags=re.DOTALL)
+    asterisk_count = clean_prose.count("*")
+    if asterisk_count > 0:
+        warnings.append(
+            f"Found {asterisk_count} raw asterisk(s) ('*') in prose. "
+            "These may be leaked markdown markers."
+        )
+
+    # 5. AI-chatbot clichés and corporate jargon (soft signal only)
+    cliche_hits = PL.find_cliches_and_jargon(clean_prose)
+    if cliche_hits:
+        total = sum(c for _, _, c in cliche_hits)
+        detail = "; ".join(f"'{w}'→'{s}' ({c}x)" for w, s, c in cliche_hits[:6])
+        warnings.append(
+            f"{total} AI-cliché / jargon hit(s): {detail}. "
+            "Review — if the word is technically accurate in context, keep it."
+        )
+
+    # Always WARN, never FAIL — the agent's judgment is the primary defense
+    if warnings:
+        report.warned("writing style", "\n".join(warnings))
+    else:
+        report.passed("writing style",
+                      "No obvious AI-cliché or formatting issues in prose.")
+
+
 # ---------------------------------------------------------------------------
 # Driver
 # ---------------------------------------------------------------------------
@@ -997,6 +1074,7 @@ def lint_file(path):
     check_verify_markers(raw, report)
     check_pipeline_jargon(raw, parser, report)
     check_placeholder_tasks(raw, parser, report)
+    check_writing_style(parser, report)
     return report
 
 

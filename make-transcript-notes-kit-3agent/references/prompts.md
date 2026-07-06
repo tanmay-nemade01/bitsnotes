@@ -42,11 +42,21 @@ math with every symbol named, fully worked example with real numbers,
 pitfall warning box, domain connection, and recap.
 ```
 
-## Easy-language pass
+## Easy-language & Writing Style Pass
 ```text
-Run an easy-language pass on the notes at <path>. Split sentences >~22 words,
-define every term on first use inline, replace jargon with plain words, and
-ensure every formula has a plain-English intuition before it.
+Run an easy-language and writing style pass on the notes at <path>.
+The notes should sound like a knowledgeable person explaining things
+to a friend — not like an AI chatbot or a corporate press release.
+Focus on:
+- Splitting sentences longer than 22 words (aim for ~15 words target).
+- Defining terms on first use inline.
+- Using active voice and conversational tone.
+- Cutting filler phrases ("It's important to note that" → just say the thing).
+- Cutting marketing-speak and AI clichés (the lint gate will flag any remaining).
+- Ensuring every formula has a plain-English intuition explanation.
+Technical terms are fine when they are the right word (e.g., "Fourier transform"
+is not marketing-speak). Words like "could" and "may" are appropriate when
+expressing genuine uncertainty.
 ```
 
 ## Add more worked examples
