@@ -177,15 +177,18 @@ python scripts/section_splitter.py assemble \
 
 This concatenates all `section_*.html` files in inventory order. **No content changes during assembly** — it is purely mechanical concatenation. Read `_body.html` to get the `{{MAIN_TEXTBOOK_CONTENT}}` value.
 
-After successful assembly, clean up intermediate files (but do NOT delete the `sections/` directory):
+After successful assembly, clean up intermediate files (but do NOT delete the `sections/` directory itself, or the `.md` section files inside it):
 
 ```bash
 # Remove the temporary body file after template fill
 Remove-Item -Force outputs/<Subject>/<LecturePrefix>/_body.html
 
+# Remove the temporary section summaries JSON files from the sections directory
+Get-ChildItem -Path outputs/<Subject>/<LecturePrefix>/sections/ -Filter "*_summary.json" | Remove-Item -Force
+
 # Remove any other intermediate helper files, drafts, or scripts created during this phase (keep sections/ and notes_dense/notes_enriched markdown files)
 ```
-Ensure that `<LecturePrefix>_notes_dense.md`, `<LecturePrefix>_notes_enriched.md`, the `sections/` directory, and `<LecturePrefix>_notes/<LecturePrefix>_notes.html` remain in the lecture folder (along with the updated YAML file in `topic_mappings/`).
+Ensure that `<LecturePrefix>_notes_dense.md`, `<LecturePrefix>_notes_enriched.md`, `<LecturePrefix>_extraction_manifest.json`, the `sections/` directory (containing the markdown section files and `_inventory.json`), and `<LecturePrefix>_notes/<LecturePrefix>_notes.html` remain in the lecture folder (along with the updated YAML file in `topic_mappings/`).
 
 ---
 

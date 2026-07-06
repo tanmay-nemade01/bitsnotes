@@ -17,7 +17,9 @@ description: >-
 
 **Your job:** Read a raw `.txt` lecture transcript and produce an **exhaustive, maximally detailed dense markdown draft**. Capture EVERY educational dimension — not just concepts and definitions, but also student questions, professor answers, industry applications, worked computations, exam guidance, named references, and every pedagogical moment. Filter NOTHING that has educational value.
 
-**Your output:** Save your output into the pre-created empty file named `<LecturePrefix>_notes_dense.md` inside the lecture directory `outputs/<Subject>/<LecturePrefix>/` (e.g. `ML_Lecture_6_notes_dense.md` inside `outputs/Machine Learning/ML_Lecture_6/`). Organize every concept into sections, all examples captured in full, all student Q&A preserved, all industry connections documented, all exam guidance recorded. This is the raw material to be split into sections for Agent 2.
+**Your output:** Save your outputs inside the lecture directory `outputs/<Subject>/<LecturePrefix>/` (e.g. `outputs/Machine Learning/ML_Lecture_6/`):
+1. Save the dense markdown draft into the pre-created empty file named `<LecturePrefix>_notes_dense.md` (e.g. `ML_Lecture_6_notes_dense.md`). Organize every concept into sections, all examples captured in full, all student Q&A preserved, all industry connections documented, all exam guidance recorded. This is the raw material to be split into sections for Agent 2.
+2. Save a machine-readable summary of the extraction into `<LecturePrefix>_extraction_manifest.json` (e.g. `ML_Lecture_6_extraction_manifest.json`). This JSON is a contract listing every extracted concept (with its ID, title, and flags for formula/worked-example/qna), worked example description, formula description, Q&A question, exam guidance, and named reference.
 
 **THE #1 PRINCIPLE: When in doubt, INCLUDE. It is always better to include something marginal than to miss something valuable. Agent 2 can trim; you cannot recover what you did not capture.**
 
@@ -254,10 +256,60 @@ After all concept sections, add:
 - Every exam-related comment is captured
 - Every formula has all variables named (cross-check against the symbol registry)
 - Every formula in the draft has its source transcript quote preserved alongside it
-- Every low/medium-confidence formula carries a `*[verify]*` marker with a reason
-- Every derivation's gaps are marked `*[verify]*` rather than silently filled
-- Dimension/shape consistency check passed (or failures marked `*[verify]*`) for every formula involving vectors/matrices
+- Every low/medium-confidence formula carries a `*[verify: <reason>]*` marker with a reason
+- Every derivation's gaps are marked `*[verify: <reason>]*` rather than silently filled
+- Dimension/shape consistency check passed (or failures marked `*[verify: <reason>]*`) for every formula involving vectors/matrices
 - No formula was silently "corrected" to match a standard form — discrepancies with standard treatments are noted, not erased
+
+### Step 4.5 — Tail-section audit (MANDATORY)
+
+Re-read the LAST 3 sections of your generated markdown output. For each, cross-check against your extraction inventory:
+- Is every concept from the inventory present in this section with full detail?
+- Is every worked example worked in full (all intermediate steps, not just "we get...")?
+- Is every Q&A exchange captured with the professor's full answer?
+- Is every formula reconstructed with symbol definitions?
+- Is the math quality (verify markers, symbol registries) at the same level as the first 3 sections?
+
+If any section is thinner or less detailed than the early sections, re-read the raw transcript and patch the markdown.
+
+### Step 5 — Run dense draft lint gate (MANDATORY)
+
+You must run the dense draft lint script on your output to catch syntax, style, mathematical, anonymization, and structural rules before handing off:
+```bash
+python scripts/lint_dense.py outputs/<Subject>/<LecturePrefix>/<LecturePrefix>_notes_dense.md --lecture-num <lecture_number>
+```
+For example, for Lecture 5:
+```bash
+python scripts/lint_dense.py outputs/Machine_Learning/ML_Lecture_5/ML_Lecture_5_notes_dense.md --lecture-num 5
+```
+You MUST resolve all FAIL items flagged by the lint gate and re-run until it passes.
+
+### Step 6 — Write the extraction manifest JSON (MANDATORY)
+
+Once the dense draft is complete and passes the lint gate, write the summary of your extraction to `<LecturePrefix>_extraction_manifest.json` under the lecture directory (e.g. `outputs/Machine Learning/ML_Lecture_6/ML_Lecture_6_extraction_manifest.json`). This JSON is a contract used downstream to verify completeness:
+```json
+{
+  "concepts": [
+    { "id": "L.T", "title": "Concept Name", "has_formula": true, "has_worked_example": true, "has_qna": true }
+  ],
+  "worked_examples": [
+    { "concept": "L.T", "description": "Short description of the worked computation / example" }
+  ],
+  "formulas": [
+    { "concept": "L.T", "description": "Short description of the formula (e.g. 'Sigmoid function')" }
+  ],
+  "qna_exchanges": [
+    { "concept": "L.T", "question_summary": "Summary of the student's question/doubt" }
+  ],
+  "exam_guidance": [
+    { "concept": "L.T", "guidance": "Consolidated guidance or notes about the exam questions" }
+  ],
+  "named_references": [
+    { "type": "textbook/paper/tool/dataset", "name": "e.g. Bishop §4.3" }
+  ]
+}
+```
+All entries must be directly derived from your Step 0.5 inventory and the actual extracted content. Double check that every concept ID aligns with the sequential L.T dotted numbering system.
 
 ---
 

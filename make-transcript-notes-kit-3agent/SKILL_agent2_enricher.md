@@ -40,30 +40,50 @@ python scripts/section_splitter.py split outputs/<Subject>/<LecturePrefix>/<Lect
     --output-dir outputs/<Subject>/<LecturePrefix>/sections/
 ```
 
-### Step 2 — Read the inventory
-Read `sections/_inventory.json`. This contains your contract and heading numbering map for the entire lecture.
+### Step 2 — Read the inventory and manifest
+1. Read `sections/_inventory.json`. This contains your contract and heading numbering map for the entire lecture.
+2. Read `<LecturePrefix>_extraction_manifest.json` (located in the same directory). This manifest serves as a completeness checklist containing the concepts, worked examples, formulas, and Q&As you must enrich.
 
 ### Step 3 — Process sections sequentially
 For each `section_XX.md` (starting from `section_01.md`, and including `section_00_preamble.md` and appendices if present):
-1. Read the section file.
-2. Apply the teaching spine, complete worked examples, resolve all `*[verify]*` markers, and enrich math.
-3. Save the enriched content by overwriting the file `section_XX.md`.
+1. **Read the section file.**
+2. **Read previous section summaries.** Read all existing `sections/section_YY_summary.json` files from previous sections (if any). Review the symbols introduced, analogies used, and topics covered to ensure cross-section context consistency, consistent symbol notation, and logical bridge building.
+3. **Apply enrichment.** Apply the teaching spine, complete worked examples, resolve all `*[verify]*` markers, and enrich math using the companion documents.
+4. **Section Mini-Lint Check.** Verify that:
+   - All core spine steps (Hook, Analogy, Formalize, Worked Example, Scope, Visual, Pitfalls, Recap, Connection) are present in the concept section (or procedural spine for algorithms).
+   - Correct callout annotations (`:::key-concept`, `:::important-note`, `:::example-box`, `:::warning-box`, `:::key-takeaway`) are used.
+   - All `*[verify]*` markers are resolved (removed or escalated).
+   - Heading numbering matches `L.T` / `L.T.S` structure.
+5. **Save the enriched content.** Overwrite the file `section_XX.md`.
+6. **Write the section summary.** Save a short JSON object to `sections/section_XX_summary.json` containing:
+   ```json
+   {
+     "id": "L.T",
+     "title": "Concept Name",
+     "summary": "Brief 1-2 sentence concept summary",
+     "symbols": ["list", "of", "symbols", "defined"],
+     "analogy": "Analogy description"
+   }
+   ```
 
 Do not process multiple sections in parallel — do them one at a time to maintain focus.
 
-### Step 4 — Assemble and clean up
-Once all sections are enriched, assemble them back into `<LecturePrefix>_notes_enriched.md`:
-```bash
-python scripts/section_splitter.py assemble outputs/<Subject>/<LecturePrefix>/sections/ \
-    --output outputs/<Subject>/<LecturePrefix>/<LecturePrefix>_notes_enriched.md --format md
-```
-Confirm `<LecturePrefix>_notes_enriched.md` is successfully created. **Do NOT delete the `sections/` directory** (containing the enriched markdown sections and `_inventory.json`), as Agent 3 can reuse them directly to save time and ensure continuity.
+### Step 4 — Assemble and verify
+1. Assemble sections back into `<LecturePrefix>_notes_enriched.md`:
+   ```bash
+   python scripts/section_splitter.py assemble outputs/<Subject>/<LecturePrefix>/sections/ \
+       --output outputs/<Subject>/<LecturePrefix>/<LecturePrefix>_notes_enriched.md --format md
+   ```
+2. Confirm `<LecturePrefix>_notes_enriched.md` is successfully created.
+3. **Run the verification script** against the manifest:
+   ```bash
+   python scripts/verify_manifest.py outputs/<Subject>/<LecturePrefix>/<LecturePrefix>_extraction_manifest.json \
+       outputs/<Subject>/<LecturePrefix>/<LecturePrefix>_notes_enriched.md
+   ```
+   If any failures are flagged, locate the relevant `section_XX.md` files, correct the missing content/markup, re-assemble, and run the verification again until it passes.
 
-Clean up any other intermediate helper files, drafts, or scripts created during this phase:
-```bash
-# Remove any other intermediate helper files, drafts, or scripts created during this phase (but do NOT delete the sections/ directory)
-```
-Ensure that ONLY `<LecturePrefix>_notes_dense.md`, `<LecturePrefix>_notes_enriched.md`, and the `sections/` directory remain in the lecture folder.
+Clean up any other intermediate helper files, drafts, or scripts created during this phase (but do NOT delete the `sections/` directory or the `section_XX_summary.json` summaries, as Agent 3 will clean them up):
+Ensure that ONLY `<LecturePrefix>_notes_dense.md`, `<LecturePrefix>_notes_enriched.md`, `<LecturePrefix>_extraction_manifest.json`, and the `sections/` directory (with section files and summaries) remain in the lecture folder.
 
 ---
 
