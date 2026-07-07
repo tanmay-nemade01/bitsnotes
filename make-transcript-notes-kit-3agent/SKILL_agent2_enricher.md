@@ -40,18 +40,15 @@ python scripts/section_splitter.py split outputs/<Subject>/<LecturePrefix>/<Lect
     --output-dir outputs/<Subject>/<LecturePrefix>/sections/
 ```
 
-### Step 2 — Read the inventory, manifest, and blueprint
+### Step 2 — Read the inventory and manifest
 1. Read `sections/_inventory.json`. This contains your contract and heading numbering map for the entire lecture.
 2. Read `<LecturePrefix>_extraction_manifest.json` (located in the same directory). This manifest serves as a completeness checklist containing the concepts, worked examples, formulas, and Q&As you must enrich.
-3. Check if `lecture_blueprint.md` is attached to your prompt or exists in the output folder `outputs/<Subject>/<LecturePrefix>/`. If present, read it to use as a pedagogical source of truth.
 
 ### Step 3 — Process sections sequentially
 For each `section_XX.md` (starting from `section_01.md`, and including `section_00_preamble.md` and appendices if present):
 1. **Read the section file.**
 2. **Read previous section summaries.** Read all existing `sections/section_YY_summary.json` files from previous sections (if any). Review the symbols introduced, analogies used, and topics covered to ensure cross-section context consistency, consistent symbol notation, and logical bridge building.
-3. **Apply enrichment.** Apply the teaching spine, complete worked examples, resolve all `*[verify]*` markers, and enrich math using the companion documents.
-   * **If `lecture_blueprint.md` is available**: Ingest the pre-designed everyday analogies, standard assumptions, common pitfalls, and real-world connections for the current concept. Use these as the baseline seeds/skeletons and expand on them with details from the dense draft and local companion documents.
-   * **If `lecture_blueprint.md` is NOT available (Fallback Flow)**: Design everyday analogies, research edge cases/assumptions, identify pitfalls, and extract real-world connections autonomously from scratch using the companion documents and your own general knowledge.
+3. **Apply enrichment.** Apply the teaching spine, complete worked examples, resolve all `*[verify]*` markers, and enrich math using the companion documents. Design everyday analogies, research edge cases/assumptions, identify pitfalls, and extract real-world connections autonomously from scratch using the companion documents and your own general knowledge.
 4. **Section Mini-Lint Check.** Verify that:
    - All core spine steps (Hook, Analogy, Formalize, Worked Example, Scope, Visual, Pitfalls, Recap, Connection) are present in the concept section (or procedural spine for algorithms).
    - Correct callout annotations (`:::key-concept`, `:::important-note`, `:::example-box`, `:::warning-box`, `:::key-takeaway`) are used.
@@ -97,7 +94,7 @@ Ensure that ONLY `<LecturePrefix>_notes_dense.md`, `<LecturePrefix>_notes_enrich
 3. **Math intuition** — Build every formula step by step. Every symbol named. Explain WHY, not just WHAT. Never "it can be shown that."
 4. **Fully worked examples** — Every example from the transcript must be worked in full: every step, real numbers, final answer highlighted, sense-check at end.
 5. **Writing style — sound human, not AI** — Write like a knowledgeable person explaining things to a friend. Short sentences (aim ~15 words, cap at ~22). Active voice. Conversational tone — starting with "and" or "but" is fine. Address the reader as "you." Vary sentence length for rhythm. Define every term on first use. Cut filler phrases ("it is important to note that" → just say the thing). Cut literary flourishes and marketing-speak. If a sentence reads like it came from a corporate press release or an AI chatbot, rewrite it. But use your judgment — technical terms are fine when they are the right word (e.g., "Fourier transform" is not marketing-speak). Words like "could" and "may" are appropriate when expressing genuine uncertainty.
-6. **Strict File Attachment Guard Rail** — Focus *only and only* on the files attached to the prompt/context, including the `lecture_blueprint.md` if provided or located in the lecture folder. Do *not* search for or read other files in the workspace (such as other drafts or notes) unless you are absolutely certain that the attached files do not match the expected context at all (e.g., they are completely blank, corrupted, or clearly belong to a different course/lecture, suggesting an accidental attachment). Only under that absolute certainty may you check for other files in the workspace; otherwise, restrict your processing and enrichment strictly to the attached files, local companion documents, and the optional `lecture_blueprint.md`.
+6. **Strict File Attachment Guard Rail** — Focus *only and only* on the files attached to the prompt/context. Do *not* search for or read other files in the workspace (such as other drafts or notes) unless you are absolutely certain that the attached files do not match the expected context at all (e.g., they are completely blank, corrupted, or clearly belong to a different course/lecture, suggesting an accidental attachment). Only under that absolute certainty may you check for other files in the workspace; otherwise, restrict your processing and enrichment strictly to the attached files and local companion documents.
 7. **Strict Script Creation Guard Rail** — You are strictly prohibited from creating or writing any script (Python, Bash, JS, etc.) inside the toolkit folder (`make-transcript-notes-kit-3agent` or its subfolders) during the process. Any intermediate or temporary scripts created in the workspace for testing or content parsing must be cleaned up and deleted before completing the task.
 8. **🚫 Student-Facing Output Guardrail** — Your output will eventually become student-facing notes. **Do NOT inject any pipeline-internal text** into the output:
     - No headers like `"ML Lecture 5 | Enriched by Agent 2 (Enricher)"` or any mention of agent names/phases
