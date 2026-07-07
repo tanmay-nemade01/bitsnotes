@@ -37,7 +37,7 @@ description: >-
 8. **Anonymize ruthlessly** — Strip ALL professor names, institute names, student names. Never mention "transcript", "lecture", "recording", "slides". The draft must read as standalone educational material.
 9. **Factual fidelity for numbers and math** — Preserve every number, constant, dimension, and formula exactly as stated. Do not round, paraphrase, or "tidy" values. When the transcript's plain-language math is ambiguous, reconstruct the most likely LaTeX and mark it `*[verify]*` rather than silently guessing. (See the Math extraction protocol.)
 10. **Math is an audit trail, not a paraphrase** — Every reconstructed formula must keep the professor's verbal description next to it. Agent 2 will reconcile your LaTeX against the enrichment docs using that verbal description as the bridge.
-11. **Strict File Attachment Guard Rail** — Focus *only and only* on the files attached to the prompt/context. Do *not* search for or read other files in the workspace (such as other transcripts or notes) unless you are absolutely certain that the attached files do not match the expected context at all (e.g., they are completely blank, corrupted, or clearly belong to a different course/lecture, suggesting an accidental attachment). Only under that absolute certainty may you check for other files in the workspace; otherwise, restrict your processing strictly to the attached files.
+11. **Strict File Attachment Guard Rail** — Focus *only and only* on the files attached to the prompt/context, including the `lecture_blueprint.md` if provided or located in the lecture folder. Do *not* search for or read other files in the workspace (such as other transcripts or notes) unless you are absolutely certain that the attached files do not match the expected context at all (e.g., they are completely blank, corrupted, or clearly belong to a different course/lecture, suggesting an accidental attachment). Only under that absolute certainty may you check for other files in the workspace; otherwise, restrict your processing strictly to the attached files and the optional `lecture_blueprint.md`.
 12. **Strict Script Creation Guard Rail** — You are strictly prohibited from creating or writing any script (Python, Bash, JS, etc.) inside the toolkit folder (`make-transcript-notes-kit-3agent` or its subfolders) during the process. Any intermediate or temporary scripts created in the workspace for testing or content parsing must be cleaned up and deleted before completing the task.
 
 ---
@@ -184,21 +184,32 @@ Capture these FULLY:
 
 ## Process
 
-### Step 0 — Read the full transcript once. Do not skim.
+### Step 0 — Check for Blueprint and Read Transcript
+1. Check if `lecture_blueprint.md` is attached to your prompt or exists in the output folder `outputs/<Subject>/<LecturePrefix>/`.
+2. Read the full transcript once. Do not skim.
 
-### Step 0.5 — Build the extraction inventory (MANDATORY — no prose before checklist)
+### Step 0.5 — Build or Ingest the extraction inventory (MANDATORY — no prose before checklist)
 
-Before writing a single paragraph, scan the transcript and enumerate:
+Before writing a single paragraph, check if `lecture_blueprint.md` is available:
 
-1. **Every concept** — one line each, in order of appearance. A concept = anything that earns a definition, formula, named idea, or dedicated section in the transcript.
-2. **Every worked example** — each computational walkthrough the transcript contains. Note the concept it belongs to.
-3. **Every formula and symbol** — list them. You will name every symbol on first use.
-4. **The math map** — for every formula/derivation in the transcript, record: (a) the transcript sentence(s) that describe it, (b) the symbols it introduces, (c) whether the professor worked it, stated it, or derived it, (d) your confidence in the reconstruction (high / medium / low). This map is your contract with the Math extraction protocol below — every entry must end up as LaTeX in the draft, with low/medium-confidence entries marked `*[verify]*`.
-5. **Every student Q&A exchange** — mark the transcript timestamps or section headers.
-6. **Every exam guidance mention** — note the topic and what was said.
-7. **Every named reference** — textbook, paper, tool, company, dataset mentioned.
+* **IF `lecture_blueprint.md` is available**:
+  Ingest the blueprint content directly:
+  1. Use its concept inventory as your list of concepts. You do not need to scan the transcript to build this list from scratch, but you must double-check it against the transcript to ensure no major concepts were omitted.
+  2. Copy its pre-resolved standard LaTeX formulas and symbol definitions.
+  3. Locate the corresponding sections of the transcript for each concept based on the boundary descriptions.
+  4. Build your math map by copying the pre-resolved LaTeX equations, and verify them against the transcript's plain-text descriptions. Mark any differences or ambiguities with `*[verify]*` tags.
 
-**This checklist is your contract with completeness.** A dropped item is a failed extraction. You may start writing prose only AFTER the checklist is complete.
+* **IF `lecture_blueprint.md` is NOT available (Fallback Flow)**:
+  Scan the transcript and enumerate the following from scratch:
+  1. **Every concept** — one line each, in order of appearance. A concept = anything that earns a definition, formula, named idea, or dedicated section in the transcript.
+  2. **Every worked example** — each computational walkthrough the transcript contains. Note the concept it belongs to.
+  3. **Every formula and symbol** — list them. You will name every symbol on first use.
+  4. **The math map** — for every formula/derivation in the transcript, record: (a) the transcript sentence(s) that describe it, (b) the symbols it introduces, (c) whether the professor worked it, stated it, or derived it, (d) your confidence in the reconstruction (high / medium / low). This map is your contract with the Math extraction protocol below — every entry must end up as LaTeX in the draft, with low/medium-confidence entries marked `*[verify]*`.
+  5. **Every student Q&A exchange** — mark the transcript timestamps or section headers.
+  6. **Every exam guidance mention** — note the topic and what was said.
+  7. **Every named reference** — textbook, paper, tool, company, dataset mentioned.
+
+**This checklist is your contract with completeness.** A dropped item is a failed extraction. You may start writing prose only AFTER the checklist (either ingested and verified, or generated from scratch) is complete.
 
 ### Step 1 — Second pass: extract sentence by sentence
 
