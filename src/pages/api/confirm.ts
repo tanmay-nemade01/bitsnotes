@@ -94,6 +94,6 @@ export const GET: APIRoute = async ({ url }) => {
     console.warn('[Newsletter Confirm] RESEND_API_KEY not set. Welcome email not sent.');
   }
 
-  // Redirect to homepage with success indicator
-  return Response.redirect(`${url.origin}/?subscribed=1`, 302);
+  // Redirect to the dedicated subscription confirmed page
+  return Response.redirect(`${url.origin}/subscribed`, 302);
 };

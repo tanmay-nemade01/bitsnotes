@@ -40,7 +40,7 @@ export const GET: APIRoute = async ({ url }) => {
     return Response.redirect(`${url.origin}/?unsubscribe_error=expired`, 302);
   }
 
-  return Response.redirect(`${url.origin}/?unsubscribed=1`, 302);
+  return Response.redirect(`${url.origin}/unsubscribed`, 302);
 };
 
 // POST: Gmail/Yahoo RFC 8058 one-click unsubscribe
