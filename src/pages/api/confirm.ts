@@ -39,6 +39,42 @@ export const GET: APIRoute = async ({ url }) => {
   contact.confirmedAt = new Date().toISOString();
   contact.unsubscribeToken = unsubscribeToken;
 
+  // Create contact in Resend Contacts API
+  const RESEND_API_KEY = (env as any).RESEND_API_KEY as string | undefined;
+  if (RESEND_API_KEY) {
+    try {
+      const RESEND_AUDIENCE_ID = (env as any).RESEND_AUDIENCE_ID as string | undefined;
+      const contactPayload: any = {
+        email: email,
+        unsubscribed: false,
+      };
+      if (RESEND_AUDIENCE_ID) {
+        contactPayload.audienceId = RESEND_AUDIENCE_ID;
+      }
+
+      const resendContactResponse = await fetch('https://api.resend.com/contacts', {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${RESEND_API_KEY}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(contactPayload),
+      });
+
+      if (resendContactResponse.ok) {
+        const contactData = await resendContactResponse.json() as any;
+        if (contactData && contactData.id) {
+          contact.resendContactId = contactData.id;
+        }
+      } else {
+        const errText = await resendContactResponse.text();
+        console.error('[Newsletter Confirm] Resend Contacts API returned non-OK status:', resendContactResponse.status, errText);
+      }
+    } catch (e) {
+      console.error('[Newsletter Confirm] Failed to register contact in Resend:', e);
+    }
+  }
+
   // Store updated contact + permanent unsubscribe token mapping
   await kv.put(`contact:${email}`, JSON.stringify(contact));
   await kv.put(`unsubscribe:${unsubscribeToken}`, email);
@@ -47,7 +83,6 @@ export const GET: APIRoute = async ({ url }) => {
   await kv.delete(`token:${token}`);
 
   // Send subscription confirmation/welcome email via Resend
-  const RESEND_API_KEY = (env as any).RESEND_API_KEY as string | undefined;
   if (RESEND_API_KEY) {
     const unsubscribeUrl = `${url.origin}/api/unsubscribe?token=${unsubscribeToken}`;
 

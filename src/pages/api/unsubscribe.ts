@@ -13,6 +13,30 @@ async function processUnsubscribe(token: string, kv: KVNamespace): Promise<boole
     contact.status = 'unsubscribed';
     contact.unsubscribedAt = new Date().toISOString();
     await kv.put(`contact:${email}`, JSON.stringify(contact));
+
+    // Sync unsubscribe status to Resend
+    const RESEND_API_KEY = (env as any).RESEND_API_KEY as string | undefined;
+    if (RESEND_API_KEY && contact.resendContactId) {
+      try {
+        const resendPatchResponse = await fetch(`https://api.resend.com/contacts/${contact.resendContactId}`, {
+          method: 'PATCH',
+          headers: {
+            'Authorization': `Bearer ${RESEND_API_KEY}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            unsubscribed: true,
+          }),
+        });
+
+        if (!resendPatchResponse.ok) {
+          const errText = await resendPatchResponse.text();
+          console.error('[Newsletter Unsubscribe] Resend Contacts API returned non-OK status:', resendPatchResponse.status, errText);
+        }
+      } catch (e) {
+        console.error('[Newsletter Unsubscribe] Failed to unsubscribe contact in Resend:', e);
+      }
+    }
   }
 
   // Remove the unsubscribe token lookup
