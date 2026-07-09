@@ -1,6 +1,7 @@
 import type { APIRoute } from 'astro';
 import { env } from 'cloudflare:workers';
 import { generateSecureToken } from '../../utils/crypto';
+import { sendZeptoMailEmail } from '../../utils/zoho';
 
 export const prerender = false;
 
@@ -76,23 +77,17 @@ export const POST: APIRoute = async ({ request, url }) => {
     // Store confirmation token with 24-hour TTL for auto-expiry
     await kv.put(`token:${confirmationToken}`, email, { expirationTtl: 86400 });
 
-    // Send confirmation email via Resend
-    const RESEND_API_KEY = (env as any).RESEND_API_KEY as string | undefined;
+    // Send confirmation email via Zoho ZeptoMail
+    const ZEPTOMAIL_TOKEN = (env as any).ZEPTOMAIL_TOKEN as string | undefined;
 
-    if (RESEND_API_KEY) {
+    if (ZEPTOMAIL_TOKEN) {
       const confirmUrl = `${domain}/api/confirm?token=${confirmationToken}`;
 
-      await fetch('https://api.resend.com/emails', {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${RESEND_API_KEY}`,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          from: 'BitsNotes <newsletter@bitsnotes.com>',
-          to: email,
+      try {
+        await sendZeptoMailEmail({
+          toEmail: email,
           subject: 'Confirm your BitsNotes subscription',
-          html: [
+          htmlBody: [
             '<div style="font-family: Inter, system-ui, sans-serif; max-width: 480px; margin: 0 auto; padding: 32px 24px;">',
             '  <h2 style="font-family: Fraunces, serif; font-size: 22px; color: #1A1916; margin: 0 0 12px;">Confirm your subscription</h2>',
             '  <p style="font-size: 14px; color: #48453F; line-height: 1.6; margin: 0 0 24px;">',
@@ -106,10 +101,12 @@ export const POST: APIRoute = async ({ request, url }) => {
             '  </p>',
             '</div>',
           ].join('\n'),
-        }),
-      });
+        });
+      } catch (error) {
+        console.error('[Newsletter Subscribe] Failed to send confirmation email via ZeptoMail:', error);
+      }
     } else {
-      console.warn('[Newsletter] RESEND_API_KEY not set. Confirmation email not sent.');
+      console.warn('[Newsletter] ZEPTOMAIL_TOKEN not set. Confirmation email not sent.');
     }
 
     return new Response(
