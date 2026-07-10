@@ -230,7 +230,7 @@ for (const subjectName of subjectFolders) {
       title,
       subject: subjectName,
       folderName: lectureFolder,
-      text: cleanText
+      snippet: cleanText.slice(0, 300)
     });
   }
 

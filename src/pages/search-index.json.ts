@@ -42,13 +42,13 @@ export const GET: APIRoute = async () => {
         const content = await getLectureContent(subject.name, lecture.folderName);
         if (content) {
           const title = content.metadata?.title ? `${lecture.name} — ${content.metadata.title}` : lecture.name;
-          const text = cleanHtmlText(content.htmlContent);
+          const fullText = cleanHtmlText(content.htmlContent);
           
           index.push({
             title,
             subject: subject.name,
             folderName: lecture.folderName,
-            text
+            snippet: fullText.slice(0, 300)
           });
         }
       }
@@ -57,7 +57,8 @@ export const GET: APIRoute = async () => {
     return new Response(JSON.stringify(index), {
       headers: {
         'Content-Type': 'application/json',
-        'Cache-Control': 'public, max-age=3600'
+        'Cache-Control': 'private, no-store, max-age=0',
+        'X-Robots-Tag': 'noindex, nofollow'
       }
     });
   }
@@ -81,11 +82,19 @@ export const GET: APIRoute = async () => {
       });
     }
 
-    const indexData = await obj.text();
-    return new Response(indexData, {
+    const rawIndex = await obj.json() as any[];
+    // Truncate text to snippets to prevent bulk content scraping
+    const safeIndex = rawIndex.map((item: any) => ({
+      title: item.title,
+      subject: item.subject,
+      folderName: item.folderName,
+      snippet: (item.text || item.snippet || '').slice(0, 300)
+    }));
+    return new Response(JSON.stringify(safeIndex), {
       headers: {
         'Content-Type': 'application/json',
-        'Cache-Control': 'public, max-age=3600'
+        'Cache-Control': 'private, no-store, max-age=0',
+        'X-Robots-Tag': 'noindex, nofollow'
       }
     });
   } catch (err: any) {

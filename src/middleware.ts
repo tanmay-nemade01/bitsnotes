@@ -5,6 +5,7 @@ const securityHeaders = {
   'X-Frame-Options': 'DENY',
   'Referrer-Policy': 'strict-origin-when-cross-origin',
   'Permissions-Policy': 'camera=(), microphone=(), geolocation=(), interest-cohort=()',
+  'X-Robots-Tag': 'noarchive',
 };
 
 // Content-Security-Policy in report-only mode (AdSense/GA/CF beacon/MathJax need testing)
