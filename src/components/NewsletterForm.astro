@@ -2,6 +2,8 @@
 // src/components/NewsletterForm.astro
 // Floating, interactive newsletter widget on bottom-left.
 // Shows full card first, then minimizes to a mailbox badge on scroll/idle/interaction.
+import { env } from 'cloudflare:workers';
+const turnstileSiteKey = (env as any).TURNSTILE_SITE_KEY || '1x00000000000000000000AA';
 ---
 
 <div id="newsletter-floating-widget" class="newsletter-widget hidden">
@@ -55,6 +57,8 @@
               class="block w-full px-3.5 py-2.5 border border-[var(--border)] bg-[var(--bg)] text-[var(--text)] placeholder-[var(--text-faint)] text-sm rounded-[var(--r-sm)] focus:outline-none focus:ring-2 focus:ring-[var(--focus-ring)] focus:border-[var(--accent)] transition-colors duration-150"
             />
           </div>
+          <!-- Cloudflare Turnstile widget container -->
+          <div id="nl-turnstile" data-sitekey={turnstileSiteKey} style="min-height:0;"></div>
           <button
             type="submit"
             id="nl-submit-btn"
@@ -244,6 +248,9 @@
   }
 </style>
 
+<!-- Cloudflare Turnstile: explicit render mode so we control init timing -->
+<script src="https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit" async defer></script>
+
 <script is:inline>
   (function() {
     function initNewsletterWidget() {
@@ -268,12 +275,32 @@
 
       var minimizeTimeout = null;
       var hasInteracted = false;
+      var turnstileWidgetId = null;
+      var turnstileRendered = false;
 
       // Delayed slide-up entry (expanded by default)
+      // Render Turnstile widget when the card is visible
+      function renderTurnstile() {
+        if (turnstileRendered) return;
+        var container = document.getElementById('nl-turnstile');
+        if (!container || typeof turnstile === 'undefined') return;
+        try {
+          turnstileWidgetId = turnstile.render(container, {
+            sitekey: container.getAttribute('data-sitekey') || '1x00000000000000000000AA',
+            theme: 'auto',
+            size: 'flexible',
+          });
+          turnstileRendered = true;
+        } catch (err) {
+          console.warn('[Newsletter] Turnstile render failed:', err);
+        }
+      }
+
       setTimeout(function() {
         if (!localStorage.getItem('bitsnotes-newsletter-subscribed') && !localStorage.getItem('bitsnotes-newsletter-dismissed')) {
           widget.classList.remove('hidden');
           widget.classList.add('is-expanded');
+          renderTurnstile();
           startAutoMinimizeSequence();
         }
       }, 4000);
@@ -291,6 +318,7 @@
         if (widget.classList.contains('is-minimized')) {
           widget.classList.remove('is-minimized');
           widget.classList.add('is-expanded');
+          renderTurnstile();
           // Restart automatic minimize on new page activity
           startAutoMinimizeSequence();
         }
@@ -357,12 +385,15 @@
 
         var email = document.getElementById('nl-email').value;
         var honeypot = document.getElementById('nl-website').value;
+        var turnstileResponse = (typeof turnstile !== 'undefined' && turnstileWidgetId != null)
+          ? turnstile.getResponse(turnstileWidgetId)
+          : '';
 
         try {
           var response = await fetch('/api/subscribe', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ email: email, _website: honeypot }),
+            body: JSON.stringify({ email: email, _website: honeypot, turnstileToken: turnstileResponse }),
           });
 
           var data = await response.json();
@@ -392,6 +423,10 @@
           submitBtn.disabled = false;
           submitBtn.classList.remove('opacity-70', 'cursor-not-allowed');
           submitBtn.innerHTML = originalBtnHTML;
+          // Reset Turnstile widget for potential retry
+          if (typeof turnstile !== 'undefined' && turnstileWidgetId != null) {
+            try { turnstile.reset(turnstileWidgetId); } catch (_) {}
+          }
         }
       });
     }

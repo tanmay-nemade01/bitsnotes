@@ -23,10 +23,43 @@ export const POST: APIRoute = async ({ request, url }) => {
     const body = await request.json() as Record<string, unknown>;
     const email = (body.email as string | undefined)?.trim().toLowerCase();
     const honeypot = body._website as string | undefined;
+    const turnstileToken = body.turnstileToken as string | undefined;
 
     // Honeypot: silently succeed for bots
     if (honeypot) {
       return new Response(JSON.stringify({ success: true }), { status: 200, headers: jsonHeaders });
+    }
+
+    // Verify Cloudflare Turnstile token
+    const TURNSTILE_SECRET_KEY = (env as any).TURNSTILE_SECRET_KEY as string | undefined;
+    if (TURNSTILE_SECRET_KEY) {
+      if (!turnstileToken) {
+        return new Response(
+          JSON.stringify({ error: 'Bot verification failed. Please try again.' }),
+          { status: 400, headers: jsonHeaders }
+        );
+      }
+
+      const verifyRes = await fetch('https://challenges.cloudflare.com/turnstile/v0/siteverify', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: new URLSearchParams({
+          secret: TURNSTILE_SECRET_KEY,
+          response: turnstileToken,
+          remoteip: request.headers.get('CF-Connecting-IP') || '',
+        }),
+      });
+
+      const verifyData = await verifyRes.json() as { success: boolean };
+      if (!verifyData.success) {
+        console.warn('[Newsletter Subscribe] Turnstile verification failed:', verifyData);
+        return new Response(
+          JSON.stringify({ error: 'Bot verification failed. Please try again.' }),
+          { status: 403, headers: jsonHeaders }
+        );
+      }
+    } else {
+      console.warn('[Newsletter Subscribe] TURNSTILE_SECRET_KEY not set. Skipping Turnstile verification.');
     }
 
     // Validate email
