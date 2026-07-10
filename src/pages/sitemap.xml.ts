@@ -23,7 +23,7 @@ export const GET: APIRoute = async ({ url }) => {
     { path: '/terms',   changefreq: 'yearly',  priority: '0.4' },
   ];
 
-  const subjects = listSubjects();
+  const subjects = await listSubjects();
   for (const subject of subjects) {
     const subjectParam = encodeURIComponent(subject.name);
     pages.push({
@@ -32,7 +32,7 @@ export const GET: APIRoute = async ({ url }) => {
       priority: '0.8',
     });
 
-    const lectures = listLectures(subject.name);
+    const lectures = await listLectures(subject.name);
     for (const lecture of lectures) {
       const viewPath = `/view/${subjectParam}/${encodeURIComponent(lecture.folderName)}`;
       pages.push({
