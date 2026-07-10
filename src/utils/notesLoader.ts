@@ -163,7 +163,7 @@ async function buildLocalManifest(): Promise<NotesManifest> {
           metadata = getFallbackMetadata(defaultDisplayName, subjectName);
         }
 
-        const displayName = metadata.title || defaultDisplayName;
+        const displayName = defaultDisplayName;
 
         lecturesList.push({
           name: displayName,
