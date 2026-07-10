@@ -2,6 +2,7 @@ import type { APIRoute } from 'astro';
 import { env } from 'cloudflare:workers';
 import { generateSecureToken } from '../../utils/crypto';
 import { sendZeptoMailEmail } from '../../utils/zoho';
+import { getDisposableDomains, isDomainDisposable } from '../../utils/disposableEmails';
 
 export const prerender = false;
 
@@ -48,6 +49,16 @@ export const POST: APIRoute = async ({ request, url }) => {
       );
     }
 
+    // Block disposable email domains (dynamic list cached in KV for 24h)
+    const emailDomain = email.split('@').pop()!;
+    const blocklist = await getDisposableDomains(kv);
+    if (isDomainDisposable(emailDomain, blocklist)) {
+      return new Response(
+        JSON.stringify({ error: 'Please use a standard email address.' }),
+        { status: 400, headers: jsonHeaders }
+      );
+    }
+
     // Check existing subscriber
     const existingRaw = await kv.get(`contact:${email}`);
     if (existingRaw) {
@@ -71,8 +82,8 @@ export const POST: APIRoute = async ({ request, url }) => {
       createdAt: new Date().toISOString(),
     };
 
-    // Store subscriber record (no TTL — permanent)
-    await kv.put(`contact:${email}`, JSON.stringify(contactData));
+    // Store subscriber record with a 24-hour TTL to prevent storage leaks if not confirmed
+    await kv.put(`contact:${email}`, JSON.stringify(contactData), { expirationTtl: 86400 });
 
     // Store confirmation token with 24-hour TTL for auto-expiry
     await kv.put(`token:${confirmationToken}`, email, { expirationTtl: 86400 });
