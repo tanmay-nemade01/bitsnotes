@@ -17,7 +17,7 @@ description: >-
 
 # Agent 2 — Enricher
 
-**Your job:** Take Agent 1's dense draft (`<LecturePrefix>_notes_dense.md`) and run the section splitter to break it into sections under the `sections/` directory. Then, sequentially process and enrich each `sections/section_XX.md` file using the **teaching spine** — a core arc plus situational steps and an alternate procedural spine for algorithms. Supplement missing domain knowledge from the enrichment documents. Deduplicate repetitive student Q&A. Once all sections are enriched, assemble them back into the pre-created empty file `<LecturePrefix>_notes_enriched.md`. Do NOT delete the `sections/` directory during cleanup so Agent 3 can reuse these enriched section files directly.
+**Your job:** Take Agent 1's dense draft (`<LecturePrefix>_notes_dense.md`) and run the section splitter to break it into sections (which will create the `sections/` directory). Then, sequentially process and enrich each `sections/section_XX.md` file using the **teaching spine** — a core arc plus situational steps and an alternate procedural spine for algorithms. Supplement missing domain knowledge from the enrichment documents. Deduplicate repetitive student Q&A. You are **fully responsible** for ensuring the prose meets readability requirements (splitting long sentences, using easy language, avoiding fancy words, and cutting hand-waving). Once all sections are enriched, assemble them back into the file `<LecturePrefix>_notes_enriched.md` (creating it if it does not exist, or overwriting it). Do NOT delete the `sections/` directory during cleanup so Agent 3 can reuse these enriched section files directly.
 
 **Your input:**
 1. Agent 1's dense draft `<LecturePrefix>_notes_dense.md` (located in the same directory).
@@ -25,7 +25,7 @@ description: >-
 
 **Critical math role:** Agent 1 reconstructed LaTeX from the transcript's plain-language math and left `*[verify]*` markers wherever the reconstruction was uncertain, and wherever a derivation step was skipped. **It is YOUR job to resolve every `*[verify]*` marker in each section** by reconciling the math against the enrichment docs (and web research if needed), and to fill any skipped derivation step with the real algebra. See the "Math reconciliation from enrichment docs" section below. A `*[verify]*` marker reaching Agent 3 is a failure of this phase.
 
-**Your output:** Save your output into the pre-created empty file `<LecturePrefix>_notes_enriched.md` (overwriting it) where every major concept has the complete core spine (or the procedural spine for algorithms), plus situational steps where the transcript provides them, each step annotated with its callout type.
+**Your output:** Save your output into the file `<LecturePrefix>_notes_enriched.md` (creating it if it does not exist, or overwriting it) where every major concept has the complete core spine (or the procedural spine for algorithms), plus situational steps where the transcript provides them, each step annotated with its callout type.
 
 ---
 
@@ -75,7 +75,13 @@ Do not process multiple sections in parallel — do them one at a time to mainta
        --output outputs/<Subject>/<LecturePrefix>/<LecturePrefix>_notes_enriched.md --format md
    ```
 2. Confirm `<LecturePrefix>_notes_enriched.md` is successfully created.
-3. **Run the verification script** against the manifest:
+3. **Run the quality lint gate** against the assembled enriched draft to check readability, sentence lengths, fancy words, and verify markers:
+   ```bash
+   python scripts/lint_dense.py outputs/<Subject>/<LecturePrefix>/<LecturePrefix>_notes_enriched.md \
+       --lecture-num <lecture_number> --phase enriched
+   ```
+   You MUST resolve all FAIL items (such as too many long sentences, banned hand-waving, academic/fancy words, and unresolved verify markers) flagged by the lint gate. Modify the corresponding section files, re-assemble, and re-run until it passes with zero FAILs.
+4. **Run the verification script** against the manifest:
    ```bash
    python scripts/verify_manifest.py outputs/<Subject>/<LecturePrefix>/<LecturePrefix>_extraction_manifest.json \
        outputs/<Subject>/<LecturePrefix>/<LecturePrefix>_notes_enriched.md

@@ -10,13 +10,13 @@ description: >-
 
 # Agent 3 — Formatter
 
-**Your job:** Take Agent 2's enriched draft (`<LecturePrefix>_notes_enriched.md`), reuse the split section files from Agent 2 if they are present in the `sections/` directory, or split the draft yourself if they are missing or if the draft has been manually updated, and produce the **final `<LecturePrefix>_notes.html`** inside the folder `<LecturePrefix>_notes/` (e.g., `ML_Lecture_5_notes/ML_Lecture_5_notes.html` inside `ML_Lecture_5/`) — a self-contained, lint-clean, rubric-scored HTML page with all SEO, structured data, and lecture metadata embedded directly in the HTML. **No companion `.json` files are created.**
+**Your job:** Take Agent 2's enriched draft (`<LecturePrefix>_notes_enriched.md`), reuse the split section files from Agent 2 if they are present in the `sections/` directory, or split the draft yourself if they are missing or if the draft has been manually updated, and produce the **final `<LecturePrefix>_notes.html`** inside the folder `<LecturePrefix>_notes/` (e.g., `ML_Lecture_5_notes/ML_Lecture_5_notes.html` inside `ML_Lecture_5/`) — you must create the folder `<LecturePrefix>_notes/` if it does not exist. The output must be a self-contained, lint-clean, rubric-scored HTML page with all SEO, structured data, and lecture metadata embedded directly in the HTML. **No companion `.json` files are created.**
 
 **Critical: Section-by-section processing.** The enriched draft can be very large. Converting it to HTML in one shot causes heading numbering drift, malformed tags, and inconsistent formatting. Instead, you will process **one `##` section at a time** — reusing Agent 2's split sections or splitting the draft yourself, converting each section independently, then mechanically reassembling. This keeps heading numbering local and prevents cross-section interference.
 
 **Your input:** Agent 2's enriched draft `<LecturePrefix>_notes_enriched.md` (located in the same directory).
 
-**Your output:** `outputs/<Subject>/<LecturePrefix>/<LecturePrefix>_notes/<LecturePrefix>_notes.html` — passes lint with zero FAILs, scores ≥ 85/100 against the rubric, zero red-list items. This is the ONLY file produced. All metadata is embedded in the HTML. The BitsNotes viewer reads the metadata from `<script id="lecture-metadata">` inside this single HTML file.
+**Your output:** Create the directory `<LecturePrefix>_notes/` and write `outputs/<Subject>/<LecturePrefix>/<LecturePrefix>_notes/<LecturePrefix>_notes.html` — passes lint with zero FAILs, scores ≥ 85/100 against the rubric, zero red-list items. This is the ONLY file produced. All metadata is embedded in the HTML. The BitsNotes viewer reads the metadata from `<script id="lecture-metadata">` inside this single HTML file.
 
 ---
 
@@ -424,7 +424,7 @@ Open the updated YAML file and confirm:
 python scripts/lint.py outputs/<Subject>/<LecturePrefix>/<LecturePrefix>_notes/<LecturePrefix>_notes.html
 ```
 
-Fix **every FAIL**. Re-run until clean. **Exception:** If readability (sentence length) is the only test failing, AND you have already tried fixing the readability issues at least 2 times, you may skip the readability check (accept the fail) and move forward to the next task (Step 10 — Self-score against the quality rubric). In all other cases (e.g. first run, other tests failing, or fewer than 2 attempts to fix readability), you must not skip it. WARNs don't block but usually flag real issues — fix them when possible.
+Fix **every FAIL**. Re-run until clean. Note that readability (sentence length), hand-waving, Flesch reading ease, and fancy/academic words checks in `lint.py` have been downgraded to warnings (`WARN`) for this phase, as they are fully handled and verified by Agent 2 during Phase 2. Your focus is strictly on fixing HTML-related failures, template hygiene, SEO metadata, metadata JSON structure, and CSS class rules. Fix any WARNs where appropriate, but do not spend time manually editing or splitting sentences in the main content as that was already optimized by Agent 2.
 
 The lint checks: template hygiene (no surviving `{{PLACEHOLDER}}`), viewport meta, metadata completeness, SEO (OG, Twitter, canonical, robots, keywords, JSON-LD, description length), callout box usage (all 5 types present), style separation (no `<style>`/inline `style`/Google Fonts), math delimiters (no `\\(`), PII/secrets, readability (sentence length), long tokens, exam revision entries, content structure.
 
@@ -458,7 +458,7 @@ The lint checks: template hygiene (no surviving `{{PLACEHOLDER}}`), viewport met
 - Math doesn't render (double-backslash `\\(` used)
 - Formula in exam revision doesn't render or has unnamed symbols
 - Domain connection missing from any major concept
-- Long jargon-dense sentences — smart beginner gets lost
+- Long jargon-dense sentences in text generated/added by Agent 3 (e.g., in revision notes or prerequisite sections) — smart beginner gets lost (main textbook readability is enforced by Agent 2)
 - PII present: names, institute, "transcript"/"lecture" references
 - Content is thin — student can't learn from notes alone
 - Callout box used for wrong purpose
@@ -481,7 +481,7 @@ The lint checks: template hygiene (no surviving `{{PLACEHOLDER}}`), viewport met
 - [ ] Intermediate `_body.html` cleaned up (while preserving sections/ folder and md drafts)
 - [ ] Every concept present in teaching order; every transcript example worked in full
 - [ ] All core spine steps per major concept (or procedural spine for algorithms); correct callout per step; situational steps where the transcript provides them
-- [ ] Sampled paragraphs pass easy-language audit (avg <~20 words, terms defined on first use)
+- [ ] Sampled paragraphs pass easy-language audit (avg <~20 words, terms defined on first use) (handled by Agent 2)
 - [ ] Every tricky idea has concrete, mapping analogy
 - [ ] Math: step-by-step, every symbol named, correct single-backslash delimiters, tensor shapes stated, every derivation complete with no skipped algebra
 - [ ] No `*[verify]*` markers in visible body (resolved removed, escalated converted to warning callouts)
@@ -496,5 +496,5 @@ The lint checks: template hygiene (no surviving `{{PLACEHOLDER}}`), viewport met
 - [ ] Professor intuition preserved (analogies, stories, confusion flags — not generic substitutes)
 - [ ] Exam revision: one entry per major concept, built from core only, every formula renders
 - [ ] SEO: description 100-155 chars, unique, keyword-rich; OG, Twitter, canonical, robots, keywords, JSON-LD all present
-- [ ] Lint passes with zero FAILs (or readability is the only failing test AND you have attempted to fix it at least 2 times, in which case the check is skipped and we move forward)
+- [ ] Lint passes with zero FAILs (readability, sentence length, and style checks are now warnings, so focus on template, HTML, and SEO errors)
 - [ ] Score ≥ 85/100 and zero red-list items

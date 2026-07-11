@@ -204,9 +204,13 @@ def check_pii_and_anonymization(text, report):
         report.passed("PII / anonymization", "No PII or transcript references detected.")
 
 
-def check_verify_markers(text, report):
+def check_verify_markers(text, report, strict=False):
     # Verify markers should have a description/reason
     markers = re.findall(r"\*\[verify\b(.*?)\]\*", text)
+    if strict and len(markers) > 0:
+        report.failed("verify markers", f"Found {len(markers)} unresolved verify marker(s). In the enriched draft, all verify markers must be resolved or escalated.")
+        return
+        
     bad_markers = 0
     for m in markers:
         m = m.strip()
@@ -222,8 +226,12 @@ def check_verify_markers(text, report):
 
 
 def check_writing_style(text, report):
+    # Filter out callout annotations (lines starting with :::)
+    lines = [line for line in text.split("\n") if not line.strip().startswith(":::")]
+    clean_text = "\n".join(lines)
+    
     # Strip math expressions so they don't trigger readability check
-    prose = re.sub(r"\\\(.*?\\\)|\\\[.*?\\\]|\$\$.*?\$\$", " ", text, flags=re.DOTALL)
+    prose = re.sub(r"\\\(.*?\\\)|\\\[.*?\\\]|\$\$.*?\$\$", " ", clean_text, flags=re.DOTALL)
     
     # 1. Banned hand-waving
     hand_waves = PL.find_handwaving(prose)
@@ -268,7 +276,31 @@ def check_writing_style(text, report):
         report.passed("sentence length", "All sentences are short and clear.")
 
 
-def lint_dense_file(path, lecture_num=None):
+def check_fancy_words(text, report):
+    # Filter out callout annotations (lines starting with :::)
+    lines = [line for line in text.split("\n") if not line.strip().startswith(":::")]
+    clean_text = "\n".join(lines)
+    
+    # Strip math expressions
+    prose = re.sub(r"\\\(.*?\\\)|\\\[.*?\\\]|\$\$.*?\$\$", " ", clean_text, flags=re.DOTALL)
+    
+    hits = PL.find_fancy(prose)
+    if not hits:
+        report.passed("fancy words", "No fancy-word offenders detected.")
+        return
+    total = sum(c for _, _, c in hits)
+    detail = "; ".join(f"'{w}'→'{s}' ({c}x)" for w, s, c in hits[:6])
+    if total >= 10:
+        report.failed("fancy words",
+                      f"{total} fancy-word hit(s): {detail}. "
+                      "Too many academic words — replace with plain alternatives.")
+    else:
+        report.warned("fancy words",
+                      f"{total} fancy-word hit(s): {detail}. "
+                      "Consider plain alternatives for a friendlier read.")
+
+
+def lint_dense_file(path, lecture_num=None, phase="dense"):
     if not os.path.exists(path):
         print(f"Error: file not found at {path}", file=sys.stderr)
         sys.exit(2)
@@ -290,23 +322,28 @@ def lint_dense_file(path, lecture_num=None):
     check_math_delimiters(text, report)
     check_symbol_registries(text, report)
     check_pii_and_anonymization(text, report)
-    check_verify_markers(text, report)
+    
+    strict_verify = (phase == "enriched")
+    check_verify_markers(text, report, strict=strict_verify)
+    
     check_writing_style(text, report)
+    check_fancy_words(text, report)
     
     return report
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Lint dense markdown draft for quality.")
-    parser.add_argument("markdown", help="Path to the dense markdown file.")
+    parser = argparse.ArgumentParser(description="Lint dense/enriched markdown drafts for quality.")
+    parser.add_argument("markdown", help="Path to the markdown file.")
     parser.add_argument("--lecture-num", type=int, default=None, help="Explicit lecture number to enforce.")
+    parser.add_argument("--phase", choices=["dense", "enriched"], default="dense", help="Pipeline phase (dense or enriched).")
     args = parser.parse_args()
     
     print("=" * 68)
-    print(f"Linting Dense Draft: {args.markdown}")
+    print(f"Linting {args.phase.capitalize()} Draft: {args.markdown}")
     print("=" * 68)
     
-    report = lint_dense_file(args.markdown, args.lecture_num)
+    report = lint_dense_file(args.markdown, args.lecture_num, args.phase)
     report.print_all()
     
     print("-" * 68)
@@ -318,7 +355,7 @@ def main():
     if c["WARN"]:
         print("Result: PASS WITH WARNINGS. Review warnings; no blocking issues.")
         sys.exit(0)
-    print("Result: PASS. Ready for Phase 2.")
+    print(f"Result: PASS. Ready for the next phase.")
     sys.exit(0)
 
 

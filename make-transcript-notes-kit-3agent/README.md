@@ -14,14 +14,14 @@ Reads: SKILL_agent1_       Reads: SKILL_agent2_        Reads: SKILL_agent3_
 Input: raw .txt             Input: split dense draft     Input: split enriched draft
        transcript                  (markdown sections)          (markdown + annotations)
 
-Does: HTML conversion,       Does: teaching spine        Does: section-by-section
-      exhaustive,                  supplementation,             HTML conversion,
-      extraction,                  analogies,                   SEO metadata,
-      PII stripping,               worked examples,             exam revision,
-      professor intuition          pitfalls,                    topic mapping (same-subject),
-      preservation                 domain connections           prerequisite HTML section,
-                                   (processed per-section)      YAML write-back,
-                                                                lint gate,
+Does: exhaustive extraction,    Does: teaching spine        Does: section-by-section
+      PII stripping,               supplementation,             HTML conversion,
+      professor intuition          analogies,                   SEO metadata,
+      preservation                 worked examples,             exam revision,
+                                   pitfalls,                    topic mapping (same-subject),
+                                   domain connections,          prerequisite HTML section,
+                                   readability & style gate     YAML write-back,
+                                   (processed per-section)      HTML/SEO lint gate,
                                                                 rubric self-score
 
 Output: dense draft         Output: enriched sections    Output: <Lecture>.html
@@ -83,20 +83,11 @@ All metadata, SEO tags (Open Graph, Twitter Cards, structured data), and lecture
 Run the process in the following sequence:
 
 ```
-0. "Set up folder structure and pre-create empty files with proper names under outputs/<Subject>/<LecturePrefix>/."
-   Example for ML Lecture 6 (LecturePrefix: ML_Lecture_6):
-   - Parent directory: outputs/Machine Learning/ML_Lecture_6/
-   - Subdirectories: sections/ and ML_Lecture_6_notes/
-   - Empty files: ML_Lecture_6_notes_dense.md, ML_Lecture_6_notes_enriched.md, and ML_Lecture_6_notes/ML_Lecture_6_notes.html
+1. "Use Agent 1 (extractor) to create the project directory outputs/<Subject>/<LecturePrefix>/ and process transcript.txt into <LecturePrefix>_notes_dense.md and <LecturePrefix>_extraction_manifest.json."
 
-1. "Use Agent 1 (extractor) to process transcript.txt into <LecturePrefix>_notes_dense.md."
+2. "Use Agent 2 (enricher) to split <LecturePrefix>_notes_dense.md (creating the sections/ directory), apply the teaching spine section-by-section, resolve all *[verify]* markers, optimize readability (sentence splitting, plain language), assemble into <LecturePrefix>_notes_enriched.md, and run lint_dense.py with --phase enriched."
 
-2. "Use Agent 2 (enricher) to split <LecturePrefix>_notes_dense.md, apply the teaching spine
-    section-by-section, resolve all *[verify]* markers, and assemble into <LecturePrefix>_notes_enriched.md."
-
-3. "Use Agent 3 (formatter) to split <LecturePrefix>_notes_enriched.md, convert the sections
-    into HTML, assemble them, read topic_mappings/<Subject>.yaml for prerequisite
-    detection, update the YAML, run lint, and self-score to produce <LecturePrefix>_notes/<LecturePrefix>_notes.html."
+3. "Use Agent 3 (formatter) to split <LecturePrefix>_notes_enriched.md, convert the sections into HTML, assemble them, read topic_mappings/<Subject>.yaml for prerequisite detection, update the YAML, run lint.py (style/readability warnings are downgraded), and self-score to produce the final html under a newly created <LecturePrefix>_notes/ folder."
 ```
 
 ## What's inside
