@@ -1,0 +1,965 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="description" content="Monte Carlo Methods for model-free RL: first-visit and every-visit prediction, epsilon-soft exploration, on-policy control with GPI, action-value estimation from complete episodes.">
+  <title>Monte Carlo Methods for Model-Free Reinforcement Learning | Deep Reinforcement Learning | BitsNotes</title>
+  <link rel="stylesheet" href="/lecture-notes.css">
+  <script type="application/json" id="lecture-metadata">
+{
+  "title": "Monte Carlo Methods for Model-Free Reinforcement Learning",
+  "subject": "Deep Reinforcement Learning",
+  "gradeLevel": "postgraduate",
+  "datePublished": "2026-06-12",
+  "targetAudience": "Postgraduate students in AI/ML with prior knowledge of MDPs, Bellman equations, and dynamic programming, now moving to model-free RL.",
+  "summary": "Monte Carlo (MC) methods mark the transition from planning with a known model to learning directly from experience. Unlike dynamic programming — which requires full knowledge of transition probabilities and rewards — MC methods estimate value functions and optimal policies by averaging complete returns observed across many episodes. This chapter builds the full model-free toolkit. It contrasts model-based and model-free paradigms, introduces the dart-throwing analogy for data-driven estimation, and defines episodes, returns, and the first-visit versus every-visit distinction. The backward-scan algorithm for efficient return computation is presented with step-by-step worked examples. A five-state grid example demonstrates first-visit MC prediction, with running value estimates updated after each episode. The chapter then explains why action values Q(s,a) are essential for control when no model is available, and why maintaining exploration is non-negotiable — deterministic policies can lock the agent out of critical state-action pairs. Epsilon-soft and epsilon-greedy policies are introduced as the practical solution. The on-policy first-visit MC control algorithm is presented in full, showing how the evaluation-improvement cycle of Generalized Policy Iteration (GPI) operates in a model-free setting. Worked examples — a line-world with extreme rewards and a grid control problem — trace the entire loop: episode generation, return computation, Q-value averaging, and epsilon-greedy policy update. The distinction between on-policy and off-policy learning is introduced as a bridge to importance-sampling methods covered in later lectures.",
+  "keyConcepts": [
+    "Distinguish model-based (DP) from model-free (MC) approaches and identify when each is applicable",
+    "Compute state values using first-visit and every-visit Monte Carlo prediction from a given set of episodes",
+    "Apply the backward-scan algorithm to efficiently compute returns for all states in a single pass",
+    "Explain why action values Q(s,a) are necessary for model-free control and why exploration must be maintained",
+    "Derive epsilon-greedy policy updates from Q-value estimates and compute the resulting action probabilities",
+    "Trace the on-policy first-visit MC control algorithm through episode generation, Q-update, and policy improvement",
+    "Articulate how Generalized Policy Iteration extends from DP to MC and identify evaluation and improvement phases",
+    "Differentiate on-policy from off-policy learning and explain why off-policy requires importance sampling corrections"
+  ],
+  "sections": [
+    { "title": "1. From Model-Based to Model-Free: The Paradigm Shift", "description": "Recap of dynamic programming, the planning-versus-learning distinction, offline/online RL, and the motivation for data-driven approaches when exact models are unavailable." },
+    { "title": "2. Monte Carlo Methods: The Big Idea", "description": "The dart-throwing analogy, sampling-based estimation, and why MC methods learn from complete returns without transition probabilities." },
+    { "title": "3. Episodes, Returns, and the Experience Format", "description": "Definition of an episode as a complete S,A,R,S,... trajectory, sources of experience (actual, simulated, model-generated), and the return G_t formula." },
+    { "title": "4. First-Visit Monte Carlo Policy Evaluation", "description": "The prediction problem, the first-visit algorithm, backward-scan return computation, and a fully worked five-state grid example with running value estimates." },
+    { "title": "5. Every-Visit Monte Carlo and Practical Tradeoffs", "description": "How every-visit differs from first-visit, why first-visit is more commonly analyzed, and a comparison of estimates with repeated state visits." },
+    { "title": "6. From State Values to Action Values", "description": "Why V(s) alone cannot drive policy improvement without a model, the definition of Q(s,a), and the maintaining-exploration problem." },
+    { "title": "7. Exploration: Epsilon-Soft and Epsilon-Greedy Policies", "description": "Exploring starts versus stochastic policies, epsilon-soft policy definition, epsilon-greedy as a special case, and the transition from epsilon-soft initialization to epsilon-greedy updates." },
+    { "title": "8. On-Policy First-Visit Monte Carlo Control", "description": "The full control algorithm with pseudocode, the evaluate-improve loop under GPI, environment interaction semantics, and why policy updates occur only for visited state-action pairs." },
+    { "title": "9. Worked Examples of MC Control", "description": "Line-world example with extreme rewards and the four-state grid control example — complete episode-by-episode computation of returns, Q-values, and epsilon-greedy policy updates." },
+    { "title": "10. On-Policy vs Off-Policy: Setting the Stage", "description": "Definition of on-policy (same policy for acting and improvement) versus off-policy (separate behaviour and target policies), and why off-policy requires importance sampling." },
+    { "title": "11. Key Terms and Points to Remember", "description": "Concise glossary of Monte Carlo terminology and a summary of essential takeaways." }
+  ],
+  "quiz": [
+    {
+      "question": "What is the fundamental difference between dynamic programming and Monte Carlo methods for reinforcement learning?",
+      "options": [
+        "DP uses value functions; MC does not.",
+        "DP requires a complete model of the environment (p(s',r|s,a)); MC learns from sampled episodes without needing the model.",
+        "DP works only for episodic tasks; MC works only for continuing tasks.",
+        "DP uses the Bellman optimality equation; MC uses the Bellman expectation equation."
+      ],
+      "answerIndex": 1,
+      "explanation": "DP performs expected Bellman backups using the known transition probabilities and reward dynamics. MC methods, in contrast, are model-free — they estimate values by averaging the complete returns observed after visits to states or state-action pairs across many sampled episodes. No transition probability model is required."
+    },
+    {
+      "question": "An episode is observed: S0=W, A0=East, R1=0, S1=X, A1=North, R2=0, S2=Z, A2=Exit, R3=-1, T. With γ=1 and using first-visit MC, what is the return appended for state W?",
+      "options": [
+        "-1",
+        "0",
+        "-2",
+        "1"
+      ],
+      "answerIndex": 0,
+      "explanation": "The first visit of W is at t=0. The return following W is the sum of rewards: R1 + R2 + R3 = 0 + 0 + (-1) = -1. The terminal state contributes no further reward."
+    },
+    {
+      "question": "In the five-state grid example with states A, B, C, D, E where D has exit +10 and A has exit -10 (ordinary moves cost -1, γ=1), four episodes produce first-visit returns for C of 9, 9, -11, and 9. What is V(C) after processing all four episodes?",
+      "options": [
+        "16 / 4 = 4",
+        "36 / 4 = 9",
+        "(9 + 9 - 11 + 9) / 4 = 4",
+        "9"
+      ],
+      "answerIndex": 2,
+      "explanation": "After all four episodes, V(C) = average of the four first-visit returns: (9 + 9 + (-11) + 9) / 4 = 16 / 4 = 4. This matches the final value from the worked example in the lecture."
+    },
+    {
+      "question": "Why are action values Q(s,a) essential for Monte Carlo control when no model of the environment is available?",
+      "options": [
+        "Q(s,a) is computationally cheaper to estimate than V(s).",
+        "Without a model, you cannot compute the one-step lookahead expectation Σ p(s',r|s,a)[r + γV(s')], so you cannot compare actions using V(s) alone.",
+        "Q(s,a) converges faster than V(s).",
+        "V(s) is undefined when the model is unknown."
+      ],
+      "answerIndex": 1,
+      "explanation": "In DP, a model lets you use V(s) with one-step lookahead to compare actions. Without the transition probabilities p(s',r|s,a), this expectation cannot be computed. Q(s,a) directly stores the expected return after taking action a in state s, so actions can be compared instantly — arg maxₐ Q(s,a) — without any model."
+    },
+    {
+      "question": "Consider a state S with 4 available actions. Under an epsilon-greedy policy with ε = 0.4, where action A₁ is the greedy action, what probability is assigned to A₁?",
+      "options": [
+        "1 - ε = 0.6",
+        "1 - ε + ε/4 = 0.7",
+        "ε/4 = 0.1",
+        "0.4"
+      ],
+      "answerIndex": 1,
+      "explanation": "The greedy action receives (1 - ε) plus its share of the exploration budget: (1 - 0.4) + 0.4/4 = 0.6 + 0.1 = 0.7. Each of the three non-greedy actions receives ε/4 = 0.1. Every action has a non-zero probability, satisfying the epsilon-soft requirement."
+    },
+    {
+      "question": "What distinguishes on-policy learning from off-policy learning in Monte Carlo methods?",
+      "options": [
+        "On-policy uses first-visit MC; off-policy uses every-visit MC.",
+        "On-policy evaluates/improves the same policy used to generate episodes; off-policy uses a separate behaviour policy to generate data for a different target policy.",
+        "On-policy requires a model; off-policy is model-free.",
+        "On-policy converges faster; off-policy converges more slowly but to a better optimum."
+      ],
+      "answerIndex": 1,
+      "explanation": "In on-policy learning, the same epsilon-soft policy generates episodes and is subsequently evaluated and improved. In off-policy learning, a behaviour policy (often more exploratory) collects data while a separate target policy (potentially greedy) is the one being learned. Off-policy methods need importance sampling to correct for the mismatch between the two policies."
+    }
+  ]
+}
+</script>
+</head>
+<body>
+  <div class="container">
+    <header class="hero-header">
+      <span class="subject-badge">Deep Reinforcement Learning</span>
+      <h1 class="lecture-title">Monte Carlo Methods for Model-Free Reinforcement Learning</h1>
+      <div class="meta-info">
+        <div class="meta-item">📅 <strong>Published:</strong> 2026-06-12</div>
+        <div class="meta-item">🎓 <strong>Level:</strong> postgraduate</div>
+        <div class="meta-item">👥 <strong>Audience:</strong> Postgraduate students in AI/ML with prior knowledge of MDPs, Bellman equations, and dynamic programming, now moving to model-free RL.</div>
+      </div>
+    </header>
+    <section class="summary-card">
+      <h3>Lecture Summary</h3>
+      <div class="summary-text">Monte Carlo (MC) methods mark the transition from planning with a known model to learning directly from experience. Unlike dynamic programming — which requires full knowledge of transition probabilities and rewards — MC methods estimate value functions and optimal policies by averaging complete returns observed across many episodes.<br/><br/>This chapter builds the full model-free toolkit. It contrasts model-based and model-free paradigms, introduces the dart-throwing analogy for data-driven estimation, and defines episodes, returns, and the first-visit versus every-visit distinction. The backward-scan algorithm for efficient return computation is presented with step-by-step worked examples. A five-state grid example demonstrates first-visit MC prediction, with running value estimates updated after each episode.<br/><br/>The chapter then explains why action values Q(s,a) are essential for control when no model is available, and why maintaining exploration is non-negotiable — deterministic policies can lock the agent out of critical state-action pairs. Epsilon-soft and epsilon-greedy policies are introduced as the practical solution. The on-policy first-visit MC control algorithm is presented in full, showing how the evaluation-improvement cycle of Generalized Policy Iteration (GPI) operates in a model-free setting. Worked examples — a line-world with extreme rewards and a grid control problem — trace the entire loop: episode generation, return computation, Q-value averaging, and epsilon-greedy policy update. The distinction between on-policy and off-policy learning is introduced as a bridge to importance-sampling methods covered in later lectures.</div>
+      <h3 style="margin-top:24px; margin-bottom:8px;">Key Learning Objectives</h3>
+      <ul class="key-concepts-list">
+        <li>Distinguish model-based (DP) from model-free (MC) approaches and identify when each is applicable</li>
+        <li>Compute state values using first-visit and every-visit Monte Carlo prediction from a given set of episodes</li>
+        <li>Apply the backward-scan algorithm to efficiently compute returns for all states in a single pass</li>
+        <li>Explain why action values Q(s,a) are necessary for model-free control and why exploration must be maintained</li>
+        <li>Derive epsilon-greedy policy updates from Q-value estimates and compute the resulting action probabilities</li>
+        <li>Trace the on-policy first-visit MC control algorithm through episode generation, Q-update, and policy improvement</li>
+        <li>Articulate how Generalized Policy Iteration extends from DP to MC and identify evaluation and improvement phases</li>
+        <li>Differentiate on-policy from off-policy learning and explain why off-policy requires importance sampling corrections</li>
+      </ul>
+    </section>
+    <main>
+
+<h1 class="chapter-title">1. From Model-Based to Model-Free: The Paradigm Shift</h1>
+
+<p>In the previous lectures, we developed a complete toolkit for solving Markov Decision Processes (MDPs) under the assumption that a perfect model of the environment — the four-argument transition function \(p(s', r \mid s, a)\) — was known in advance. This assumption enabled dynamic programming (DP): we could perform expected Bellman backups by summing over all possible next states and rewards, iteratively refining value functions until convergence, and then extracting optimal policies through one-step lookahead.</p>
+
+<div class="key-concept">
+  <strong>Model-Based (Planning):</strong> A solution approach that requires the transition probabilities and reward function of the environment to be known in advance. The policy is derived <em>offline</em> by reasoning about the model without needing to interact with the actual environment. DP algorithms — policy iteration and value iteration — are canonical examples of model-based planning.
+</div>
+
+<p>The race-car problem illustrated this paradigm perfectly. Given a transition graph showing probabilities of moving from Cool to Warm, Cool to Overheated, and so on, along with the associated rewards, DP could compute optimal actions for every state before the agent ever turned the ignition key. This approach — sometimes called <em>planning</em> or <em>offline learning</em> — is elegant, but it depends on a luxury that real-world problems rarely provide: an accurate, complete model of the environment.</p>
+
+<div class="important-note">
+  <strong>The core motivation for model-free RL:</strong> In many domains — computational biology, weather prediction, computer graphics, financial markets, game playing, autonomous driving — either no closed-form mathematical model exists, or the model is too complex, incomplete, or expensive to construct. In such cases, we must learn directly from data: from actual or simulated experience.
+</div>
+
+<h2 class="section-title">7.1 Three Sources of Experience</h2>
+
+<p>When we move to data-driven (model-free) approaches, experience can come from three distinct sources:</p>
+
+<ol>
+  <li><strong>Actual experience from the real environment.</strong> For example, recording the trajectories of human drivers over thousands of journeys, or logging the moves of chess players across millions of games. Modern vehicles with smart sensors already collect such data continuously.</li>
+  <li><strong>Simulated experience.</strong> When real-world data is scarce or dangerous to collect — such as training an agent to navigate tunnels and uncover land mines — we can build a simulator and generate episodes artificially. The learned policy can then be deployed in the real environment.</li>
+  <li><strong>Experience generated from an approximate model.</strong> Even an imprecise model can be useful: we can use it to randomly generate many experiences, learn a reasonable initial policy via model-free methods, and then let the agent refine that policy through real interaction. This hybrid approach combines the efficiency of planning with the adaptability of learning.</li>
+</ol>
+
+<h2 class="section-title">7.2 The Contrast: DP Backups vs MC Estimation</h2>
+
+<div class="example-box">
+  <strong>DP Backup (Expected Update):</strong>
+  \[
+  V_{k+1}(s) = \max_a \sum_{s', r} p(s', r \mid s, a) \left[ r + \gamma V_k(s') \right]
+  \]
+  This requires knowledge of \(p(s', r \mid s, a)\) for every state-action pair. The update averages over <em>all possible</em> outcomes, weighted by their probabilities.
+
+  <strong>MC Estimation (Sample Average):</strong>
+  \[
+  V(s) \approx \frac{1}{N(s)} \sum_{i=1}^{N(s)} G_i(s)
+  \]
+  where \(G_i(s)\) is the return actually observed after the \(i\)-th visit to state \(s\) across episodes. No transition probabilities are needed — only the outcomes that <em>actually happened</em>.
+</div>
+
+<p>This shift from "expected over all possibilities" to "averaged over what was observed" is the defining characteristic of Monte Carlo methods. It trades the requirement of a perfect model for the requirement of sufficient experience.</p>
+
+
+<h1 class="chapter-title">2. Monte Carlo Methods: The Big Idea</h1>
+
+<p>Monte Carlo methods are a broad class of computational algorithms that estimate unknown quantities through repeated random sampling. The name originates from the Monte Carlo casino in Monaco, reflecting the role of randomness and chance in these techniques.</p>
+
+<h2 class="section-title">7.3 The Dart-Throwing Analogy</h2>
+
+<p>Consider a wall of size \(8 \times 8\) feet with an irregularly shaped painting on it. You want to estimate the area of the painting, but its shape is too complex for a direct geometric formula. The Monte Carlo solution is beautifully simple:</p>
+
+<ol>
+  <li>Close your eyes and throw darts at the wall randomly, ensuring reasonable coverage of the entire surface.</li>
+  <li>After throwing \(N\) darts, count how many landed inside the painting — say \(k\) of them.</li>
+  <li>The estimated area is:
+    \[
+    \text{Area}_{\text{painting}} \approx \frac{k}{N} \times \text{Area}_{\text{wall}} = \frac{k}{N} \times 64
+    \]
+  </li>
+</ol>
+
+<p>If you threw 100 darts and 63 landed inside, your estimate would be \(0.63 \times 64 = 40.32\) square feet. Throw 1,000 darts, and the estimate improves. Throw 10,000, and it improves further.</p>
+
+<div class="key-concept">
+  <strong>Monte Carlo principle:</strong> Estimate an unknown quantity by generating random samples, observing the outcomes, and computing the sample average. More samples yield better estimates. The approach is entirely data-driven — no formal mathematical model of the underlying distribution is required.
+</div>
+
+<h2 class="section-title">7.4 MC Methods in Reinforcement Learning</h2>
+
+<p>In RL, the unknown quantities we wish to estimate are value functions and optimal policies. Instead of throwing darts at a wall, we <em>generate complete episodes</em> by interacting with (or simulating) the environment. Each episode is a sample trajectory — a sequence of states, actions, and rewards from start to termination. By averaging the returns observed after visits to each state (or state-action pair), we estimate its value.</p>
+
+<p>Monte Carlo methods are defined by two essential properties:</p>
+<ul>
+  <li><strong>Model-free:</strong> They do not require or use any knowledge of transition probabilities or reward dynamics. The only information they consume is the sequence of states, actions, and rewards in each episode.</li>
+  <li><strong>Episode-based:</strong> They learn from <em>complete</em> episodes. A value estimate for a state is updated only after the episode ends, when the full return following that state is known.</li>
+</ul>
+
+<p>Three additional properties distinguish Monte Carlo methods from dynamic programming and make them particularly attractive in practice:</p>
+<ul>
+  <li><strong>No bootstrapping:</strong> The estimate for each state is independent — it does not build upon the estimate of any other state. Unlike DP, where \(V_{k+1}(s)\) depends on \(V_k(s')\), each MC estimate is computed solely from observed returns. This also means Monte Carlo methods maintain their validity even when the Markov property is violated, because they never substitute a guess for the actual outcome.</li>
+  <li><strong>State-independent computational cost:</strong> The computational expense of estimating the value of a single state is independent of the total number of states. This makes Monte Carlo methods particularly attractive when only a small subset of states is of interest — you can generate many episodes starting from the states you care about and average returns only for those states, ignoring all others.</li>
+  <li><strong>Simulation-friendly:</strong> For surprisingly many applications, it is easy to <em>simulate</em> sample episodes even though it is difficult to construct the explicit transition-probability model required by DP. A classic example is blackjack — computing the exact transition probabilities for all 200 states is complex and error-prone, but simulating games by dealing cards from a deck is trivial.</li>
+</ul>
+
+<div class="example-box">
+  <strong>Blackjack as a motivating example (Sutton &amp; Barto, Example 5.1):</strong> Blackjack is naturally formulated as an episodic finite MDP with 200 states (defined by the player's current sum 12–21, the dealer's showing card ace–10, and whether the player holds a usable ace). Even with complete knowledge of the game rules, applying DP to compute the value function would require determining the distribution of next events — the probability of each possible dealer outcome given the player's action — which is combinatorially complex. Monte Carlo methods bypass this entirely: simply simulate many games following the policy and average the returns. After 500,000 simulated games, the value function is very well approximated.
+</div>
+
+
+<h1 class="chapter-title">3. Episodes, Returns, and the Experience Format</h1>
+
+<h2 class="section-title">7.5 What Is an Episode?</h2>
+
+<p>An episode is a complete trajectory from a starting state to a terminal state. It captures one full interaction sequence between the agent and the environment:</p>
+
+\[
+S_0, A_0, R_1, S_1, A_1, R_2, \ldots, S_{T-1}, A_{T-1}, R_T, S_T
+\]
+
+<p>where \(S_T\) is the terminal state, after which no further actions are possible. Each step records the state the agent was in, the action it took, the reward it received, and the next state it transitioned to.</p>
+
+<div class="important-note">
+  <strong>Monte Carlo methods require episodic tasks.</strong> Throughout this module, we assume that every episode eventually reaches a terminal state. Methods for continuing (non-episodic) tasks will be addressed in later lectures on temporal-difference learning.
+</div>
+
+<p>Think of an episode as one complete "drive" from Bangalore to Chennai: you start at the origin, take actions (turn, accelerate, brake) at each junction, receive rewards or penalties along the way, and eventually reach the destination (terminal state). Another driver taking the same journey produces a second episode — possibly with different actions, different intermediate states, and different outcomes.</p>
+
+<h2 class="section-title">7.6 The Return \(G_t\)</h2>
+
+<p>For a given episode, the return following time step \(t\) is the discounted sum of all future rewards from that point onward:</p>
+
+\[
+G_t = R_{t+1} + \gamma R_{t+2} + \gamma^2 R_{t+3} + \cdots + \gamma^{T-t-1} R_T
+\]
+
+<p>where \(\gamma \in [0, 1]\) is the discount factor. When \(\gamma = 1\), the return is simply the sum of all future rewards — appropriate when all rewards are equally important regardless of when they occur. When \(\gamma \lt 1\), rewards further in the future are discounted, reflecting a preference for sooner rewards.</p>
+
+
+<h1 class="chapter-title">4. First-Visit Monte Carlo Policy Evaluation</h1>
+
+<h2 class="section-title">7.7 The Prediction Problem</h2>
+
+<p>Given a fixed policy \(\pi\), policy evaluation (also called prediction) asks: what is the expected return from each state if the agent follows \(\pi\)? Formally:</p>
+
+\[
+v_\pi(s) \doteq \mathbb{E}_\pi\left[ G_t \mid S_t = s \right]
+\]
+
+<p>In the model-free setting, we cannot compute this expectation analytically because we do not know the transition probabilities. Instead, we estimate it by averaging the returns actually observed after visiting state \(s\) across many episodes.</p>
+
+<h2 class="section-title">7.8 First-Visit MC Policy Evaluation Algorithm</h2>
+
+<div class="key-concept">
+  <strong>First-Visit Monte Carlo Policy Evaluation:</strong>
+  <ol>
+    <li><strong>Input:</strong> A policy \(\pi\) to be evaluated.</li>
+    <li><strong>Initialize:</strong> \(V(s)\) arbitrarily for all states; create an empty list \(\text{Returns}(s)\) for each state.</li>
+    <li><strong>Repeat</strong> for each episode:
+      <ol type="a">
+        <li>Generate one complete episode following \(\pi\).</li>
+        <li>Set \(G \leftarrow 0\).</li>
+        <li>Scan the episode backward from \(t = T-1\) down to 0:
+          <ul>
+            <li>Update \(G \leftarrow \gamma G + R_{t+1}\).</li>
+            <li>If \(S_t\) does not appear earlier in this episode (first visit):</li>
+            <ul>
+              <li>Append \(G\) to \(\text{Returns}(S_t)\).</li>
+              <li>Set \(V(S_t) \leftarrow \text{average}(\text{Returns}(S_t))\).</li>
+            </ul>
+          </ul>
+        </li>
+      </ol>
+    </li>
+  </ol>
+</div>
+
+<h2 class="section-title">7.9 Why Scan Backward?</h2>
+
+<p>Scanning the episode from the end to the beginning enables efficient computation of every return in a single pass. Starting with \(G = 0\) at the terminal state, we move leftward through the episode. At each step, we update \(G \leftarrow \gamma G + R_{t+1}\) — this accumulates the discounted sum recursively. The return after the first visit of each state is immediately available when we encounter that state during the backward scan.</p>
+
+<div class="example-box">
+  <strong>Backward scan illustration.</strong> Consider the episode:
+  \[
+  S \xrightarrow{A} R=4,\; X \xrightarrow{B} R=8,\; Y \xrightarrow{C} R=1,\; \text{Terminal}
+  \]
+  Assume \(\gamma = 0.9\). Scan backward from the end:
+  <ul>
+    <li>After terminal: \(G = 0\). Encounter \(Y\) with reward 1: \(G \leftarrow 0.9(0) + 1 = 1\). First visit of \(Y\) → return for \(Y\) is 1.</li>
+    <li>Move left: \(G \leftarrow 0.9(1) + 8 = 8.9\). First visit of \(X\) → return for \(X\) is 8.9.</li>
+    <li>Move left: \(G \leftarrow 0.9(8.9) + 4 = 12.01\). First visit of \(S\) → return for \(S\) is 12.01.</li>
+  </ul>
+  In one backward pass, we computed returns for all three states.
+</div>
+
+<h2 class="section-title">7.10 Worked Example: Five-State Grid</h2>
+
+<p>Consider an environment with states A, B, C, D, E. States A and D are terminal: exiting from D gives +10, exiting from A gives -10. Ordinary transitions cost -1 reward. A fixed policy \(\pi\) directs the agent: from B go East to C, from E go North to C, from C go East to D. Assume \(\gamma = 1\).</p>
+
+<div class="example-box">
+  <strong>Four observed episodes with \(\gamma = 1\):</strong>
+  <table style="width:100%; border-collapse:collapse; margin:12px 0;">
+    <tr style="background:var(--surface-secondary);">
+      <th style="padding:8px; border:1px solid var(--border); text-align:left;">Episode</th>
+      <th style="padding:8px; border:1px solid var(--border); text-align:left;">Trajectory</th>
+      <th style="padding:8px; border:1px solid var(--border); text-align:left;">First-Visit Returns</th>
+    </tr>
+    <tr>
+      <td style="padding:8px; border:1px solid var(--border);">1</td>
+      <td style="padding:8px; border:1px solid var(--border);">B → (E, -1) → C → (E, -1) → D → (Exit, +10) → T</td>
+      <td style="padding:8px; border:1px solid var(--border);">G(B) = 8, G(C) = 9, G(D) = 10</td>
+    </tr>
+    <tr>
+      <td style="padding:8px; border:1px solid var(--border);">2</td>
+      <td style="padding:8px; border:1px solid var(--border);">B → (E, -1) → C → (E, -1) → D → (Exit, +10) → T</td>
+      <td style="padding:8px; border:1px solid var(--border);">G(B) = 8, G(C) = 9, G(D) = 10</td>
+    </tr>
+    <tr>
+      <td style="padding:8px; border:1px solid var(--border);">3</td>
+      <td style="padding:8px; border:1px solid var(--border);">E → (N, -1) → C → (N, -1) → A → (Exit, -10) → T</td>
+      <td style="padding:8px; border:1px solid var(--border);">G(E) = -12, G(C) = -11, G(A) = -10</td>
+    </tr>
+    <tr>
+      <td style="padding:8px; border:1px solid var(--border);">4</td>
+      <td style="padding:8px; border:1px solid var(--border);">E → (N, -1) → C → (E, -1) → D → (Exit, +10) → T</td>
+      <td style="padding:8px; border:1px solid var(--border);">G(E) = 8, G(C) = 9, G(D) = 10</td>
+    </tr>
+  </table>
+
+  <strong>Running value estimates after each episode:</strong>
+  <table style="width:100%; border-collapse:collapse; margin:12px 0;">
+    <tr style="background:var(--surface-secondary);">
+      <th style="padding:8px; border:1px solid var(--border);">After Episode</th>
+      <th style="padding:8px; border:1px solid var(--border);">V(A)</th>
+      <th style="padding:8px; border:1px solid var(--border);">V(B)</th>
+      <th style="padding:8px; border:1px solid var(--border);">V(C)</th>
+      <th style="padding:8px; border:1px solid var(--border);">V(D)</th>
+      <th style="padding:8px; border:1px solid var(--border);">V(E)</th>
+    </tr>
+    <tr><td style="padding:8px; border:1px solid var(--border);">1</td><td style="padding:8px; border:1px solid var(--border);">—</td><td style="padding:8px; border:1px solid var(--border);">8</td><td style="padding:8px; border:1px solid var(--border);">9</td><td style="padding:8px; border:1px solid var(--border);">10</td><td style="padding:8px; border:1px solid var(--border);">—</td></tr>
+    <tr><td style="padding:8px; border:1px solid var(--border);">2</td><td style="padding:8px; border:1px solid var(--border);">—</td><td style="padding:8px; border:1px solid var(--border);">8</td><td style="padding:8px; border:1px solid var(--border);">9</td><td style="padding:8px; border:1px solid var(--border);">10</td><td style="padding:8px; border:1px solid var(--border);">—</td></tr>
+    <tr><td style="padding:8px; border:1px solid var(--border);">3</td><td style="padding:8px; border:1px solid var(--border);">-10</td><td style="padding:8px; border:1px solid var(--border);">8</td><td style="padding:8px; border:1px solid var(--border);">(9+9-11)/3 = 2.33</td><td style="padding:8px; border:1px solid var(--border);">10</td><td style="padding:8px; border:1px solid var(--border);">-12</td></tr>
+    <tr><td style="padding:8px; border:1px solid var(--border);">4</td><td style="padding:8px; border:1px solid var(--border);">-10</td><td style="padding:8px; border:1px solid var(--border);">8</td><td style="padding:8px; border:1px solid var(--border);">(9+9-11+9)/4 = 4</td><td style="padding:8px; border:1px solid var(--border);">10</td><td style="padding:8px; border:1px solid var(--border);">(-12+8)/2 = -2</td></tr>
+  </table>
+
+  <strong>Final state values:</strong> \(V(A) = -10\), \(V(B) = 8\), \(V(C) = 4\), \(V(D) = 10\), \(V(E) = -2\).
+</div>
+
+<div class="important-note">
+  <strong>A note on averaging:</strong> V(s) is estimated as the average of returns <em>only from episodes where s was visited</em>. If a state does not appear in an episode, that episode contributes nothing to its estimate. In the table above, state A appears only in episode 3 — its value is based on a single return. State C appears in all four episodes, so its value is based on four returns. The estimate for each state reflects the expected return <em>conditional on reaching that state</em>.
+</div>
+
+<h2 class="section-title">7.11 Convergence Guarantees</h2>
+
+<p>Both first-visit MC and every-visit MC converge to \(v_\pi(s)\) as the number of visits (or first visits) to \(s\) goes to infinity. The convergence argument for first-visit MC is particularly clean:</p>
+
+<ul>
+  <li>Each first-visit return is an <strong>independent, identically distributed</strong> estimate of \(v_\pi(s)\) with finite variance.</li>
+  <li>By the <strong>law of large numbers</strong>, the sequence of averages of these estimates converges to their expected value — the true \(v_\pi(s)\).</li>
+  <li>Each average is itself an <strong>unbiased estimate</strong>, and the standard deviation of its error falls as \(1 / \sqrt{n}\), where \(n\) is the number of returns averaged.</li>
+</ul>
+
+<p>Every-visit MC is less straightforward theoretically — returns from the same episode are correlated — but its estimates also converge asymptotically to \(v_\pi(s)\).</p>
+
+<div class="key-concept">
+  <strong>Backup diagram for Monte Carlo estimation of \(v_\pi\):</strong> The root is a state node, and below it is the <em>entire trajectory</em> of transitions along one particular episode, ending at the terminal state. Unlike the DP backup diagram (which shows all possible one-step transitions), the MC diagram shows only those transitions sampled on a single episode, going all the way to termination. This visualization perfectly captures the fundamental difference: DP averages over all possibilities using expected updates, while MC follows a single sampled path to its conclusion.
+</div>
+
+<div class="example-box">
+  <strong>Computing V(B) step by step:</strong> B appears in episodes 1, 2, 3, and 4.
+  <ul>
+    <li>Episode 1: First visit is at the start. Return = (-1) + (-1) + 10 = 8.</li>
+    <li>Episode 2: Identical trajectory. Return = 8.</li>
+    <li>Episode 3: B does not appear in this episode.</li>
+    <li>Episode 4: B does not appear in this episode.</li>
+  </ul>
+  Therefore \(V(B) = (8 + 8) / 2 = 8\). Even though four total episodes were observed, only two contributed to V(B).
+</div>
+
+
+<h1 class="chapter-title">5. Every-Visit Monte Carlo and Practical Tradeoffs</h1>
+
+<p>The every-visit variant uses <em>every</em> occurrence of a state in each episode — not just the first. If state B appears twice in one episode, every-visit MC appends two returns (one after each visit) to the return list for B.</p>
+
+<div class="key-concept">
+  <strong>First-Visit vs Every-Visit Comparison:</strong>
+  <table style="width:100%; border-collapse:collapse; margin:12px 0;">
+    <tr style="background:var(--surface-secondary);">
+      <th style="padding:8px; border:1px solid var(--border);">Aspect</th>
+      <th style="padding:8px; border:1px solid var(--border);">First-Visit MC</th>
+      <th style="padding:8px; border:1px solid var(--border);">Every-Visit MC</th>
+    </tr>
+    <tr>
+      <td style="padding:8px; border:1px solid var(--border);">Returns per episode</td>
+      <td style="padding:8px; border:1px solid var(--border);">At most one per state</td>
+      <td style="padding:8px; border:1px solid var(--border);">One per occurrence</td>
+    </tr>
+    <tr>
+      <td style="padding:8px; border:1px solid var(--border);">Independence</td>
+      <td style="padding:8px; border:1px solid var(--border);">Returns are independent across visits</td>
+      <td style="padding:8px; border:1px solid var(--border);">Returns from the same episode are correlated</td>
+    </tr>
+    <tr>
+      <td style="padding:8px; border:1px solid var(--border);">Convergence analysis</td>
+      <td style="padding:8px; border:1px solid var(--border);">Well-studied, cleaner theoretically</td>
+      <td style="padding:8px; border:1px solid var(--border);">Less well-studied; higher variance early</td>
+    </tr>
+    <tr>
+      <td style="padding:8px; border:1px solid var(--border);">Data utilization</td>
+      <td style="padding:8px; border:1px solid var(--border);">Discards later visits</td>
+      <td style="padding:8px; border:1px solid var(--border);">Uses all visits</td>
+    </tr>
+  </table>
+</div>
+
+<div class="warning-box">
+  <strong>Both methods converge to \(v_\pi(s)\) under suitable conditions.</strong> However, every-visit MC reuses overlapping portions of the same episode, creating correlated samples that increase the variance of the estimate during early learning. The first-visit approach produces cleaner, statistically independent samples per episode and is therefore the default choice in textbook algorithms and the focus of this lecture.
+</div>
+
+
+<h1 class="chapter-title">6. From State Values to Action Values</h1>
+
+<h2 class="section-title">7.12 Why \(V(s)\) Alone Is Not Enough Without a Model</h2>
+
+<p>In dynamic programming, we could improve a policy using only state values \(V(s)\) because we had access to the model. The one-step lookahead allowed us to compute:</p>
+
+\[
+\pi(s) \in \arg\max_a \sum_{s', r} p(s', r \mid s, a) \left[ r + \gamma V(s') \right]
+\]
+
+<p>This computes the expected value of taking each action — without the transition probabilities \(p(s', r \mid s, a)\), this expectation cannot be evaluated. In a model-free setting, knowing \(V(s)\) tells us how good a state is, but it does not tell us <em>which action to take</em> from that state, because we cannot predict where each action will lead.</p>
+
+<h2 class="section-title">7.13 The Action-Value Function \(Q(s, a)\)</h2>
+
+<p>The action-value function \(q_\pi(s, a)\) directly estimates the expected return after taking a specific action \(a\) in state \(s\) and then following policy \(\pi\) thereafter:</p>
+
+\[
+q_\pi(s, a) \doteq \mathbb{E}_\pi\left[ G_t \mid S_t = s, A_t = a \right]
+\]
+
+<div class="key-concept">
+  <strong>Key insight:</strong> With \(Q(s, a)\) values available, action selection becomes trivial — simply choose the action with the highest Q-value: \(\pi(s) = \arg\max_a Q(s, a)\). No model, no lookahead, no transition probabilities required. This is why Monte Carlo control algorithms estimate action values rather than state values.
+</div>
+
+<p>In MC action-value estimation, returns are averaged after visits to <em>state-action pairs</em>, not merely after visits to states. A pair \((s, a)\) is visited at time \(t\) if \(S_t = s\) and \(A_t = a\).</p>
+
+<h2 class="section-title">7.14 The Maintaining-Exploration Problem</h2>
+
+<div class="warning-box">
+  <strong>If an action is never tried in a state, its Q-value cannot be estimated.</strong> This creates a chicken-and-egg problem: to learn which action is best, the agent must try all actions; but once it believes one action is best, it may stop trying others and never discover a potentially superior alternative.
+</div>
+
+<p>Consider a deterministic policy that always says "from state W, go East." If East leads to a dead end with a reward of -1, the agent will keep going East, keep getting -1, and never discover that going West leads to +10. The policy prevents exploration of other actions, and the lack of exploration prevents discovery of better actions — a self-reinforcing failure mode.</p>
+
+
+<h1 class="chapter-title">7. Exploration: Epsilon-Soft and Epsilon-Greedy Policies</h1>
+
+<h2 class="section-title">7.15 Exploring Starts - The Theoretical Solution</h2>
+
+<p>One theoretical approach called <em>exploring starts</em> assumes that every state-action pair has a non-zero probability of being selected as the <em>starting</em> state and action of an episode. If every episode begins with a randomly chosen \((s, a)\) pair, then over many episodes, all pairs are eventually sampled, and the policy can remain deterministic during the episode.</p>
+
+<div class="important-note">
+  <strong>Exploring starts are rarely feasible in practice.</strong> You cannot start a real car in 4th gear with the brake pressed to "explore" that state-action combination. Most real-world problems have fixed or limited starting states.
+</div>
+
+<h2 class="section-title">7.16 Epsilon-Soft Policies - The Practical Solution</h2>
+
+<p>An <strong>epsilon-soft policy</strong> ensures that <em>every action in every state</em> has a non-zero probability of being selected:</p>
+
+\[
+\pi(a \mid s) \geq \frac{\epsilon}{|A(s)|} \quad \text{for all } s \in \mathcal{S}, a \in \mathcal{A}(s)
+\]
+
+<p>This guarantees that the agent will eventually try every action in every state, regardless of how suboptimal some actions may appear. Exploration is baked into the policy itself — no special starting conditions are needed.</p>
+
+<h2 class="section-title">7.17 Epsilon-Greedy - A Special Case</h2>
+
+<p>The <strong>epsilon-greedy policy</strong> is the most common epsilon-soft variant. It allocates most of the probability to the greedy (best-known) action and distributes the remaining exploration budget equally among all actions:</p>
+
+\[
+\pi(a \mid s) =
+\begin{cases}
+1 - \epsilon + \frac{\epsilon}{|A(s)|}, & \text{if } a = A^*(s) \\[8pt]
+\frac{\epsilon}{|A(s)|}, & \text{if } a \neq A^*(s)
+\end{cases}
+\]
+
+<p>where \(A^*(s) = \arg\max_a Q(s, a)\) is the greedy action.</p>
+
+<div class="example-box">
+  <strong>Epsilon-greedy computation example:</strong> Consider a state with 3 actions \(\{a_1, a_2, a_3\}\) and \(\epsilon = 0.3\). Suppose after processing some episodes, the Q-values are: \(Q(s, a_1) = 4.0\), \(Q(s, a_2) = 6.0\), \(Q(s, a_3) = 5.0\).
+
+  The greedy action is \(a_2\) (Q = 6.0). The improved epsilon-greedy policy is:
+  \[
+  \pi(a_2 \mid s) = 1 - 0.3 + \frac{0.3}{3} = 0.7 + 0.1 = 0.8
+  \]
+  \[
+  \pi(a_1 \mid s) = \pi(a_3 \mid s) = \frac{0.3}{3} = 0.1
+  \]
+
+  Every action receives at least \(\epsilon/|A(s)| = 0.1\), satisfying the epsilon-soft requirement. The policy is stochastic, enabling continued exploration while favoring the currently best-known action.
+</div>
+
+<h2 class="section-title">7.18 Initialization and Update Conventions</h2>
+
+<div class="key-concept">
+  <strong>Initialization:</strong> The policy is initialized to be an <em>epsilon-soft</em> policy. For a state with 4 actions, this means generating any four non-negative numbers that sum to 1 and assigning them as the action probabilities — for example, (0.2, 0.3, 0.3, 0.2). Any policy that gives every action a non-zero probability qualifies.
+
+  <strong>Policy improvement</strong> (during the algorithm): The policy is updated using the <em>epsilon-greedy</em> rule with respect to the current Q-values. This moves the policy toward the greedy action while preserving exploration. Over many iterations, the policy transitions from an arbitrary epsilon-soft initialization to an epsilon-greedy policy near the optimal policy.
+</div>
+
+
+<h1 class="chapter-title">8. On-Policy First-Visit Monte Carlo Control</h1>
+
+<h2 class="section-title">7.19 The Control Problem</h2>
+
+<p>In the prediction (evaluation) problem, the policy was given and fixed. The control problem asks: starting from scratch, how can the agent learn an optimal (or near-optimal) policy through interaction with the environment? The agent must simultaneously estimate action values and use those estimates to improve its policy — the classic evaluate-improve cycle of Generalized Policy Iteration (GPI).</p>
+
+<h2 class="section-title">7.20 The Full Algorithm</h2>
+
+<div class="key-concept">
+  <strong>On-Policy First-Visit MC Control (for \(\epsilon\)-soft policies):</strong>
+  <p><strong>Parameters:</strong> a small \(\epsilon > 0\)</p>
+  <p><strong>Initialize:</strong></p>
+  <ul>
+    <li>\(\pi \leftarrow\) an arbitrary \(\epsilon\)-soft policy</li>
+    <li>\(Q(s, a) \in \mathbb{R}\) arbitrarily, for all \(s \in \mathcal{S}, a \in \mathcal{A}(s)\)</li>
+    <li>\(\text{Returns}(s, a) \leftarrow\) empty list, for all \(s \in \mathcal{S}, a \in \mathcal{A}(s)\)</li>
+  </ul>
+  <p><strong>Repeat forever</strong> (for each episode):</p>
+  <ol>
+    <li>Generate an episode following \(\pi\): \(S_0, A_0, R_1, S_1, A_1, \ldots, S_{T-1}, A_{T-1}, R_T\)</li>
+    <li>\(G \leftarrow 0\)</li>
+    <li>Loop for each step of episode, \(t = T-1, T-2, \ldots, 0\):</li>
+    <ul>
+      <li>\(G \leftarrow \gamma G + R_{t+1}\)</li>
+      <li>Unless the pair \(S_t, A_t\) appears in \(S_0, A_0, S_1, A_1, \ldots, S_{t-1}, A_{t-1}\):</li>
+      <ul>
+        <li>Append \(G\) to \(\text{Returns}(S_t, A_t)\)</li>
+        <li>\(Q(S_t, A_t) \leftarrow \text{average}(\text{Returns}(S_t, A_t))\)</li>
+        <li>\(A^* \leftarrow \arg\max_a Q(S_t, a)\), breaking ties arbitrarily</li>
+        <li>For all \(a \in \mathcal{A}(S_t)\):</li>
+        \[
+        \pi(a \mid S_t) \leftarrow
+        \begin{cases}
+        1 - \epsilon + \epsilon / |\mathcal{A}(S_t)|, & \text{if } a = A^* \\
+        \epsilon / |\mathcal{A}(S_t)|, & \text{if } a \neq A^*
+        \end{cases}
+        \]
+      </ul>
+    </ul>
+  </ol>
+</div>
+
+<h2 class="section-title">7.21 Understanding the Algorithm's Semantics</h2>
+
+<p>Three distinct operations occur within each iteration of the outer loop:</p>
+
+<ol>
+  <li><strong>Episode generation (step 1):</strong> Using the current policy \(\pi\), interact with the environment to produce one complete episode. This is not a numerical simulation — it involves actually executing actions in the environment (or simulator) and observing the resulting rewards and next states. The policy specifies action probabilities; at each step, an action is sampled from those probabilities.</li>
+
+  <li><strong>Q-value estimation (step 3, inner):</strong> Scan the episode backward, compute the return \(G\) following each first-visit state-action pair, append it to the return list, and recompute the average. The Q-value for \((s, a)\) is the average of all returns observed after visiting \((s, a)\) across all episodes processed so far.</li>
+
+  <li><strong>Policy improvement (step 3, innermost):</strong> After updating \(Q(S_t, A_t)\), identify the current greedy action \(A^*\) for state \(S_t\) and recompute the epsilon-greedy action probabilities. The policy is updated only for the state(s) whose Q-values changed.</li>
+</ol>
+
+<div class="important-note">
+  <strong>Interaction with environment is baked into the algorithm.</strong> The episode generation step — "generate an episode following \(\pi\)" — is where the agent actually interacts with the environment. The policy dictates which action to try; the environment responds with the actual reward and next state. This real feedback ultimately drives the learning. If the policy directs the agent to a bad action, the environment penalizes it; that penalty flows into the Q-value averages, which in turn shifts the policy away from that action.
+</div>
+
+<h2 class="section-title">7.22 GPI in the Model-Free Setting</h2>
+
+<p>The on-policy MC control algorithm is a direct realization of Generalized Policy Iteration:</p>
+
+<div class="example-box">
+  \[
+  \pi_0 \xrightarrow{\text{E}} Q^{\pi_0} \xrightarrow{\text{I}} \pi_1 \xrightarrow{\text{E}} Q^{\pi_1} \xrightarrow{\text{I}} \pi_2 \xrightarrow{\text{E}} \cdots \xrightarrow{\text{I}} \pi^*
+  \]
+
+  <strong>Evaluation (E):</strong> Generate episodes using \(\pi_k\), compute returns, and update Q-values by averaging — this makes the Q-function a better estimate of the true action values under \(\pi_k\).
+
+  <strong>Improvement (I):</strong> Make the policy \(\epsilon\)-greedy with respect to the updated Q-values — this shifts probability toward actions with higher estimated returns while preserving exploration.
+
+  The key difference from DP: <em>evaluation is done by sampling episodes</em>, not by solving the Bellman equations with known transition probabilities.
+</div>
+
+<h2 class="section-title">7.23 Formal Proof: Why ε-Greedy Improvement Is Guaranteed</h2>
+
+<p>The policy improvement theorem assures us that moving from any ε-soft policy \(\pi\) to the ε-greedy policy \(\pi'\) with respect to \(q_\pi\) yields a uniformly better or equal policy. Let \(\pi'\) be the ε-greedy policy derived from \(q_\pi\). Then for any state \(s \in \mathcal{S}\):</p>
+
+<div class="key-concept">
+  \[
+  \begin{aligned}
+  q_\pi(s, \pi'(s)) &= \sum_a \pi'(a \mid s) \, q_\pi(s, a) \\[6pt]
+  &= \frac{\epsilon}{|\mathcal{A}(s)|} \sum_a q_\pi(s, a) \;+\; (1 - \epsilon) \max_a q_\pi(s, a)
+  \end{aligned}
+  \]
+
+  <p>Now observe that \(\max_a q_\pi(s, a)\) must be greater than or equal to any weighted average of the \(q_\pi(s, a)\) values. In particular, for the ε-soft policy \(\pi\):</p>
+
+  \[
+  \max_a q_\pi(s, a) \;\geq\; \sum_a \frac{\pi(a \mid s) - \epsilon/|\mathcal{A}(s)|}{1 - \epsilon} \; q_\pi(s, a)
+  \]
+
+  <p>This is because the coefficients \(\frac{\pi(a|s) - \epsilon/|\mathcal{A}(s)|}{1 - \epsilon}\) are nonnegative (since \(\pi\) is ε-soft, \(\pi(a|s) \geq \epsilon/|\mathcal{A}(s)|\)) and sum to 1 — they form a valid probability distribution. A weighted average can never exceed the maximum. Substituting this bound:</p>
+
+  \[
+  \begin{aligned}
+  q_\pi(s, \pi'(s)) &\geq \frac{\epsilon}{|\mathcal{A}(s)|} \sum_a q_\pi(s, a) \;+\; (1 - \epsilon) \sum_a \frac{\pi(a \mid s) - \epsilon/|\mathcal{A}(s)|}{1 - \epsilon} \; q_\pi(s, a) \\[6pt]
+  &= \frac{\epsilon}{|\mathcal{A}(s)|} \sum_a q_\pi(s, a) \;-\; \frac{\epsilon}{|\mathcal{A}(s)|} \sum_a q_\pi(s, a) \;+\; \sum_a \pi(a \mid s) \, q_\pi(s, a) \\[6pt]
+  &= \sum_a \pi(a \mid s) \, q_\pi(s, a) \;=\; v_\pi(s)
+  \end{aligned}
+  \]
+
+  <p>Therefore, by the policy improvement theorem, \(\pi' \geq \pi\) — i.e., \(v_{\pi'}(s) \geq v_\pi(s)\) for all \(s \in \mathcal{S}\). Equality holds only when both \(\pi\) and \(\pi'\) are optimal among ε-soft policies.</p>
+
+  <p><strong>What this means in practice:</strong> Every time the algorithm updates Q-values from new experience and recomputes the ε-greedy policy, it is <em>guaranteed</em> to produce a policy that is at least as good as the previous one — and typically better. The agent cannot move backward in policy quality. As evaluation and improvement alternate, the policy converges to the best possible policy among all ε-soft policies. While this is not the globally optimal deterministic policy (some probability mass is permanently reserved for exploration), the ε parameter can be gradually reduced over time (e.g., \(\epsilon = 1/t\)) to approach the true optimal policy.</p>
+</div>
+
+
+<h1 class="chapter-title">9. Worked Examples of MC Control</h1>
+
+<h2 class="section-title">7.24 Example 1: Line-World with Extreme Rewards</h2>
+
+<p>Consider a line-world with states w, x, y, z. At the left end (w), exiting yields a penalty of -100. At the right end (z), exiting yields a reward of +10. States x and y each have two actions: Left (L) and Right (R). The discount factor is \(\gamma = 0.9\), and \(\epsilon = 0.2\).</p>
+
+<div class="example-box">
+  <strong>Episode 1:</strong> \(x \xrightarrow{R, 0} y \xrightarrow{R, 0} z \xrightarrow{\text{Exit}, +10} T\)
+
+  <strong>Backward scan (\(\gamma = 0.9\)):</strong>
+  <ul>
+    <li>\(G(z, \text{Exit}) = 10\)</li>
+    <li>\(G(y, R) = 0 + 0.9(10) = 9\)</li>
+    <li>\(G(x, R) = 0 + 0.9(9) = 8.1\)</li>
+  </ul>
+
+  <strong>Q-values after Episode 1:</strong> \(Q(w, \text{Exit}) = \text{unchanged}\), \(Q(x, R) = 8.1\), \(Q(y, R) = 9\), \(Q(z, \text{Exit}) = 10\).<br/>
+  <strong>Updated policy at x:</strong> \(\pi(R \mid x) = 1 - 0.2 + 0.2/2 = 0.9\), \(\pi(L \mid x) = 0.2/2 = 0.1\).
+</div>
+
+<div class="example-box">
+  <strong>Episode 2:</strong> \(x \xrightarrow{L, 0} w \xrightarrow{\text{Exit}, -100} T\)
+
+  <strong>Backward scan:</strong>
+  <ul>
+    <li>\(G(w, \text{Exit}) = -100\)</li>
+    <li>\(G(x, L) = 0 + 0.9(-100) = -90\)</li>
+  </ul>
+
+  <strong>Q-values after Episode 2:</strong> \(Q(w, \text{Exit}) = -100\), \(Q(x, L) = -90\), \(Q(x, R) = 8.1\).<br/>
+  <strong>Updated policy at x:</strong> Since \(Q(x, R) = 8.1 > Q(x, L) = -90\), the greedy action is R. Policy at x remains \(\pi(R \mid x) = 0.9\), \(\pi(L \mid x) = 0.1\).
+</div>
+
+<div class="example-box">
+  <strong>Episode 3:</strong> \(y \xrightarrow{L, 0} x \xrightarrow{R, 0} y \xrightarrow{R, 0} z \xrightarrow{\text{Exit}, +10} T\)
+
+  <strong>Backward scan (first-visit):</strong>
+  <ul>
+    <li>\(G(z, \text{Exit}) = 10\)</li>
+    <li>\(G(y, R) = 0 + 0.9(0) + 0.9^2(10) = 8.1\), but the first visit of \(y\) is at the start with action L — so \(G(y, L) = 0 + 0.9(0) + 0.9^2(0) + 0.9^3(10) = 7.29\)</li>
+    <li>\(G(x, R) = 0 + 0.9(0) + 0.9^2(10) = 8.1\)</li>
+  </ul>
+
+  <strong>Q-values after Episode 3:</strong> \(Q(x, R) = (8.1 + 8.1)/2 = 8.1\), \(Q(y, R) = 9\), \(Q(y, L) = 7.29\), \(Q(z, \text{Exit}) = 10\). Policy at y: since \(Q(y, R) > Q(y, L)\), greedy action is R.
+</div>
+
+<div class="example-box">
+  <strong>Episode 4:</strong> \(x \xrightarrow{R, 0} y \xrightarrow{L, 0} x \xrightarrow{R, 0} y \xrightarrow{R, 0} z \xrightarrow{\text{Exit}, +10} T\)
+
+  <strong>First-visit returns:</strong> First \((x, R)\) return = \(0 + 0.9(0) + 0.9^2(0) + 0.9^3(0) + 0.9^4(10) = 6.56\). First \((y, L)\) return = 7.29, first \((y, R)\) return = 9.
+
+  <strong>Q-values after Episode 4:</strong> \(Q(x, R) = (8.1 + 8.1 + 6.56)/3 = 7.59\), \(Q(y, R) = 9\), \(Q(y, L) = 7.29\).<br/>
+  <strong>Final policy</strong> (with \(\epsilon = 0.2\), \(|A| = 2\) at decision states): \(\pi(R \mid x) = 0.9\), \(\pi(L \mid x) = 0.1\); \(\pi(R \mid y) = 0.9\), \(\pi(L \mid y) = 0.1\).
+</div>
+
+<h2 class="section-title">7.25 Example 2: Grid Control</h2>
+
+<p>Revisiting the five-state grid with a slightly different setup. State D exits with +10, state A exits with -10. Ordinary moves incur -1 cost. Available actions: from B only East (E) to C; from E only North (N) to C; from C, two actions — East toward D or North toward A. Discount factor \(\gamma = 0.9\), \(\epsilon = 0.2\).</p>
+
+<div class="example-box">
+  <strong>Episode 1:</strong> \(B \xrightarrow{E, -1} C \xrightarrow{E, -1} D \xrightarrow{\text{Exit}, +10} T\)
+
+  Returns: \(G(C, E) = -1 + 0.9(10) = 8\), \(G(B, E) = -1 + 0.9(8) = 6.2\).<br/>
+  Q-values: \(Q(C, E) = 8\), \(Q(B, E) = 6.2\). Policy at C: \(\pi(E \mid C) = 0.9\), \(\pi(N \mid C) = 0.1\).
+
+  <br/><br/>
+
+  <strong>Episode 2:</strong> \(E \xrightarrow{N, -1} C \xrightarrow{N, -1} A \xrightarrow{\text{Exit}, -10} T\)
+
+  Returns: \(G(C, N) = -1 + 0.9(-10) = -10\), \(G(E, N) = -1 + 0.9(-10) = -10\).<br/>
+  Q-values: \(Q(C, N) = -10\), \(Q(E, N) = -10\). Policy at C unchanged (E remains greedy).
+
+  <br/><br/>
+
+  <strong>Episode 3:</strong> \(E \xrightarrow{N, -1} C \xrightarrow{E, -1} D \xrightarrow{\text{Exit}, +10} T\)
+
+  Returns: \(G(C, E) = 8\), \(G(E, N) = -1 + 0.9(-1 + 0.9(10)) = -1 + 0.9(8) = 6.2\).<br/>
+  Q-values: \(Q(C, E) = 8\) (unchanged), \(Q(E, N) = (-10 + 6.2)/2 = -1.9\).
+
+  <br/><br/>
+
+  <strong>Episode 4:</strong> \(B \xrightarrow{E, -1} C \xrightarrow{E, -1} D \xrightarrow{\text{Exit}, +10} T\)
+
+  Returns: \(G(C, E) = 8\), \(G(B, E) = 6.2\). Q-values now: \(Q(B, E) = 6.2\), \(Q(E, N) = -1.9\), \(Q(C, E) = 8\), \(Q(C, N) = -10\).
+
+  <br/><br/>
+
+  <strong>Final Q-values and policy:</strong>
+  <table style="width:100%; border-collapse:collapse; margin:12px 0;">
+    <tr style="background:var(--surface-secondary);">
+      <th style="padding:8px; border:1px solid var(--border);">Pair</th>
+      <th style="padding:8px; border:1px solid var(--border);">Returns</th>
+      <th style="padding:8px; border:1px solid var(--border);">Q-value</th>
+      <th style="padding:8px; border:1px solid var(--border);">Policy Implication</th>
+    </tr>
+    <tr><td style="padding:8px; border:1px solid var(--border);">(B, E)</td><td style="padding:8px; border:1px solid var(--border);">6.2, 6.2</td><td style="padding:8px; border:1px solid var(--border);">6.20</td><td style="padding:8px; border:1px solid var(--border);">Only action from B; choose E</td></tr>
+    <tr><td style="padding:8px; border:1px solid var(--border);">(E, N)</td><td style="padding:8px; border:1px solid var(--border);">-10, 6.2</td><td style="padding:8px; border:1px solid var(--border);">-1.90</td><td style="padding:8px; border:1px solid var(--border);">Only action from E; choose N</td></tr>
+    <tr><td style="padding:8px; border:1px solid var(--border);">(C, E)</td><td style="padding:8px; border:1px solid var(--border);">8, 8, 8</td><td style="padding:8px; border:1px solid var(--border);">8.00</td><td style="padding:8px; border:1px solid var(--border);">Greedy action at C</td></tr>
+    <tr><td style="padding:8px; border:1px solid var(--border);">(C, N)</td><td style="padding:8px; border:1px solid var(--border);">-10</td><td style="padding:8px; border:1px solid var(--border);">-10.00</td><td style="padding:8px; border:1px solid var(--border);">Non-greedy action at C</td></tr>
+  </table>
+
+  At C, with \(|A(C)| = 2\) and \(\epsilon = 0.2\): \(\pi(E \mid C) = 1 - 0.2 + 0.2/2 = 0.9\); \(\pi(N \mid C) = 0.2/2 = 0.1\). The policy strongly favors going East from C toward the +10 terminal, but maintains a 10% exploration probability of going North toward the -10 terminal.
+</div>
+
+<div class="important-note">
+  <strong>Policy convergence note:</strong> The policy improvement step only affects states whose Q-values were updated in the current episode. States not visited in the episode retain their previous policy. Over time, as episodes explore different regions of the state space, the policy for all states is gradually refined.
+</div>
+
+
+<h1 class="chapter-title">10. On-Policy vs Off-Policy: Setting the Stage</h1>
+
+<p>Monte Carlo (and RL more broadly) distinguishes between two fundamental paradigms for learning:</p>
+
+<div class="key-concept">
+  <table style="width:100%; border-collapse:collapse; margin:12px 0;">
+    <tr style="background:var(--surface-secondary);">
+      <th style="padding:8px; border:1px solid var(--border); text-align:left;">Aspect</th>
+      <th style="padding:8px; border:1px solid var(--border); text-align:left;">On-Policy</th>
+      <th style="padding:8px; border:1px solid var(--border); text-align:left;">Off-Policy</th>
+    </tr>
+    <tr>
+      <td style="padding:8px; border:1px solid var(--border);"><strong>Policy used for action selection (behaviour)</strong></td>
+      <td style="padding:8px; border:1px solid var(--border);">Same as the policy being learned</td>
+      <td style="padding:8px; border:1px solid var(--border);">Different from the policy being learned</td>
+    </tr>
+    <tr>
+      <td style="padding:8px; border:1px solid var(--border);"><strong>Target policy</strong></td>
+      <td style="padding:8px; border:1px solid var(--border);">The epsilon-soft policy itself — it is both evaluated and improved</td>
+      <td style="padding:8px; border:1px solid var(--border);">A greedy (deterministic) or near-optimal policy, learned from data generated by a more exploratory behaviour policy</td>
+    </tr>
+    <tr>
+      <td style="padding:8px; border:1px solid var(--border);"><strong>Exploration guarantee</strong></td>
+      <td style="padding:8px; border:1px solid var(--border);">Built into the policy via epsilon-softness</td>
+      <td style="padding:8px; border:1px solid var(--border);">Behaviour policy handles exploration; target policy can be fully greedy</td>
+    </tr>
+    <tr>
+      <td style="padding:8px; border:1px solid var(--border);"><strong>Correction needed?</strong></td>
+      <td style="padding:8px; border:1px solid var(--border);">No — the returns are unbiased for the evaluated policy</td>
+      <td style="padding:8px; border:1px solid var(--border);">Yes — importance sampling is required to correct for the mismatch between behaviour and target policies</td>
+    </tr>
+    <tr>
+      <td style="padding:8px; border:1px solid var(--border);"><strong>Example covered here</strong></td>
+      <td style="padding:8px; border:1px solid var(--border);">On-policy first-visit MC control</td>
+      <td style="padding:8px; border:1px solid var(--border);">Covered in the next lecture (Off-Policy Monte Carlo)</td>
+    </tr>
+  </table>
+</div>
+
+<div class="warning-box">
+  <strong>Why off-policy is more delicate:</strong> A return observed while following the behaviour policy is not automatically an unbiased return for the target policy, because the probability of observing that particular trajectory differs between the two policies. Off-policy MC methods use <em>importance sampling</em> — weighting each return by the ratio of trajectory probabilities under the target and behaviour policies — to obtain unbiased estimates. This correction increases variance but enables learning a deterministic optimal policy while still exploring.
+</div>
+
+<h2 class="section-title">7.26 The Importance Sampling Ratio</h2>
+
+<p>Importance sampling is a general technique for estimating expected values under one distribution given samples from another. In off-policy RL, we apply it by weighting each observed return by the relative probability of the trajectory under the target and behaviour policies.</p>
+
+<p>Given a starting state \(S_t\), the probability of the subsequent state–action trajectory \(A_t, S_{t+1}, A_{t+1}, \ldots, S_T\) occurring under any policy \(\pi\) is:</p>
+
+\[
+\prod_{k=t}^{T-1} \pi(A_k \mid S_k) \; p(S_{k+1} \mid S_k, A_k)
+\]
+
+<p>where \(p\) is the state-transition probability function. The <strong>importance-sampling ratio</strong> — the relative probability of the trajectory under the target policy \(\pi\) and behaviour policy \(\mu\) — is:</p>
+
+\[
+\rho_t^{T} \;=\; \frac{\prod_{k=t}^{T-1} \pi(A_k \mid S_k) \, p(S_{k+1} \mid S_k, A_k)}{\prod_{k=t}^{T-1} \mu(A_k \mid S_k) \, p(S_{k+1} \mid S_k, A_k)} \;=\; \prod_{k=t}^{T-1} \frac{\pi(A_k \mid S_k)}{\mu(A_k \mid S_k)}
+\]
+
+<div class="key-concept">
+  <strong>Critical simplification:</strong> Although the trajectory probabilities depend on the MDP's transition probabilities — which are generally unknown — <em>all the transition probabilities cancel and drop out entirely</em>. The importance-sampling ratio depends only on the two policies \(\pi\) and \(\mu\), and not at all on the MDP dynamics. This is what makes importance sampling practical in model-free settings.
+</div>
+
+<p>For the method to work, we require the <strong>assumption of coverage</strong>: every action taken under the target policy \(\pi\) must also be taken, at least occasionally, under the behaviour policy \(\mu\). Formally, \(\pi(a \mid s) > 0 \implies \mu(a \mid s) > 0\). This means the behaviour policy must be stochastic in states where it differs from the target policy.</p>
+
+<h2 class="section-title">7.27 Ordinary vs Weighted Importance Sampling</h2>
+
+<p>There are two ways to apply the importance-sampling ratio when averaging returns to estimate \(v_\pi(s)\):</p>
+
+<div class="key-concept">
+  <strong>Ordinary Importance Sampling</strong> — uses a simple average of the scaled returns:
+  \[
+  V(s) = \frac{\sum_{t \in \mathcal{T}(s)} \rho_t^{T(t)} G_t}{|\mathcal{T}(s)|}
+  \]
+
+  <strong>Weighted Importance Sampling</strong> — uses a weighted average:
+  \[
+  V(s) = \frac{\sum_{t \in \mathcal{T}(s)} \rho_t^{T(t)} G_t}{\sum_{t \in \mathcal{T}(s)} \rho_t^{T(t)}}
+  \]
+  (or zero if the denominator is zero)
+</div>
+
+<p>The critical differences between these two estimators:</p>
+
+<ul>
+  <li><strong>Ordinary importance sampling is unbiased</strong> — its expectation is exactly \(v_\pi(s)\). However, <strong>its variance is in general unbounded</strong> because the ratios themselves can have infinite variance. With a ratio of 10, a single observed return of 1 becomes an estimate of 10, even though the trajectory is considered very representative of the target policy.</li>
+  <li><strong>Weighted importance sampling is biased</strong> — for a single return, the estimate equals the observed return regardless of the ratio, so its expectation is \(v_\mu(s)\) rather than \(v_\pi(s)\). However, <strong>its variance is always finite</strong> and typically dramatically lower. In fact, the variance of the weighted estimator converges to zero even if the variance of the ratios themselves is infinite.</li>
+  <li><strong>In practice, weighted importance sampling is strongly preferred.</strong> It produces much lower error and is far more stable.</li>
+</ul>
+
+<div class="example-box">
+  <strong>Example: Off-policy Blackjack State Value (Sutton &amp; Barto, Example 5.4):</strong> Consider evaluating a single blackjack state — dealer showing a deuce, player sum 13 with a usable ace — using data generated by a random behaviour policy (hit or stick with equal probability). The target policy sticks only on 20 or 21 (the policy from Example 5.1). The true value under the target policy is approximately −0.27726. After only 1000 off-policy episodes, the weighted importance-sampling method closely approximated this value with far lower mean squared error than ordinary importance sampling. The weighted method's error was consistently and dramatically lower across all numbers of episodes.
+</div>
+
+<div class="warning-box">
+  <strong>The Infinite Variance Problem (Sutton &amp; Barto, Example 5.5):</strong> Ordinary importance sampling can have infinite variance whenever trajectories contain loops. Consider a one-state MDP with actions <em>end</em> (deterministically terminates with reward +1) and <em>back</em> (returns to the same state with probability 0.9, terminates with +1 with probability 0.1). The target policy always selects <em>back</em>, giving \(v_\pi(s) = 1\). The behaviour policy selects <em>end</em> or <em>back</em> with equal probability. With ordinary importance sampling, even after millions of episodes, the estimates fail to converge to the correct value of 1 — because the expected square of the importance-sampling-scaled return is infinite. In contrast, weighted importance sampling would give an estimate of exactly 1 after the very first episode consistent with the target policy.
+</div>
+
+
+<h1 class="chapter-title">11. Key Terms and Points to Remember</h1>
+
+<h2 class="section-title">7.28 Key Terms Glossary</h2>
+
+<div class="key-concept">
+  <table style="width:100%; border-collapse:collapse; margin:12px 0;">
+    <tr style="background:var(--surface-secondary);">
+      <th style="padding:8px; border:1px solid var(--border); text-align:left;">Term</th>
+      <th style="padding:8px; border:1px solid var(--border); text-align:left;">Definition</th>
+    </tr>
+    <tr><td style="padding:8px; border:1px solid var(--border);"><strong>Monte Carlo method</strong></td><td style="padding:8px; border:1px solid var(--border);">A method that estimates quantities by averaging outcomes from repeated random sampling.</td></tr>
+    <tr><td style="padding:8px; border:1px solid var(--border);"><strong>Model-free learning</strong></td><td style="padding:8px; border:1px solid var(--border);">Learning without requiring explicit knowledge of transition probabilities or reward dynamics.</td></tr>
+    <tr><td style="padding:8px; border:1px solid var(--border);"><strong>Model-based (planning)</strong></td><td style="padding:8px; border:1px solid var(--border);">An approach that requires the environment model \(p(s', r \mid s, a)\) to be known; DP is the canonical example.</td></tr>
+    <tr><td style="padding:8px; border:1px solid var(--border);"><strong>Episode</strong></td><td style="padding:8px; border:1px solid var(--border);">A complete trajectory \(S_0, A_0, R_1, \ldots, S_{T-1}, A_{T-1}, R_T, S_T\) from a starting state to a terminal state.</td></tr>
+    <tr><td style="padding:8px; border:1px solid var(--border);"><strong>Return \(G_t\)</strong></td><td style="padding:8px; border:1px solid var(--border);">The discounted sum of rewards following time step \(t\): \(G_t = R_{t+1} + \gamma R_{t+2} + \gamma^2 R_{t+3} + \cdots + \gamma^{T-t-1} R_T\).</td></tr>
+    <tr><td style="padding:8px; border:1px solid var(--border);"><strong>First-visit MC</strong></td><td style="padding:8px; border:1px solid var(--border);">Uses only the return following the <em>first</em> occurrence of a state (or state-action pair) in each episode.</td></tr>
+    <tr><td style="padding:8px; border:1px solid var(--border);"><strong>Every-visit MC</strong></td><td style="padding:8px; border:1px solid var(--border);">Uses the return following <em>every</em> occurrence of a state (or state-action pair) in each episode.</td></tr>
+    <tr><td style="padding:8px; border:1px solid var(--border);"><strong>Action-value function \(Q(s, a)\)</strong></td><td style="padding:8px; border:1px solid var(--border);">The expected return after taking action \(a\) in state \(s\) and then following policy \(\pi\). Essential for model-free control.</td></tr>
+    <tr><td style="padding:8px; border:1px solid var(--border);"><strong>Exploring starts</strong></td><td style="padding:8px; border:1px solid var(--border);">An assumption that every state-action pair can be selected as the starting state-action pair with non-zero probability. Theoretically clean but practically unrealistic.</td></tr>
+    <tr><td style="padding:8px; border:1px solid var(--border);"><strong>\(\epsilon\)-soft policy</strong></td><td style="padding:8px; border:1px solid var(--border);">A stochastic policy where every action in every state has probability at least \(\epsilon/|A(s)|\), ensuring continued exploration.</td></tr>
+    <tr><td style="padding:8px; border:1px solid var(--border);"><strong>\(\epsilon\)-greedy policy</strong></td><td style="padding:8px; border:1px solid var(--border);">A special case of epsilon-soft where the greedy action receives \(1 - \epsilon + \epsilon/|A(s)|\) and all others receive \(\epsilon/|A(s)|\).</td></tr>
+    <tr><td style="padding:8px; border:1px solid var(--border);"><strong>On-policy learning</strong></td><td style="padding:8px; border:1px solid var(--border);">Evaluating or improving the <em>same</em> policy that is used to generate behaviour.</td></tr>
+    <tr><td style="padding:8px; border:1px solid var(--border);"><strong>Off-policy learning</strong></td><td style="padding:8px; border:1px solid var(--border);">Evaluating or improving a target policy while data are generated by a different behaviour policy.</td></tr>
+    <tr><td style="padding:8px; border:1px solid var(--border);"><strong>Generalized Policy Iteration (GPI)</strong></td><td style="padding:8px; border:1px solid var(--border);">The framework in which policy evaluation and policy improvement interact — regardless of granularity — to drive the agent toward optimality.</td></tr>
+  </table>
+</div>
+
+<h2 class="section-title">7.29 Points to Remember</h2>
+
+<ul>
+  <li>Monte Carlo methods learn from <strong>complete returns</strong>, not from one-step expected backups. They wait until an episode ends before updating value estimates.</li>
+  <li>They are <strong>model-free</strong>: no transition probability model \(p(s', r \mid s, a)\) is required — only sampled episodes.</li>
+  <li>MC methods are applicable only to <strong>episodic tasks</strong> (tasks that eventually reach a terminal state).</li>
+  <li><strong>First-visit</strong> and <strong>every-visit</strong> MC differ in how they treat repeated visits within the same episode. First-visit is more commonly analyzed; both converge to the true value.</li>
+  <li>For control without a model, <strong>action values \(Q(s, a)\)</strong> are essential — state values \(V(s)\) alone cannot drive action selection without one-step lookahead.</li>
+  <li><strong>Maintaining exploration</strong> is non-negotiable in MC control. \(\epsilon\)-soft (specifically \(\epsilon\)-greedy) policies solve this by assigning every action a non-zero probability.</li>
+  <li><strong>On-policy MC control</strong> uses the same exploratory policy for acting, evaluation, and improvement — the evaluate-improve cycle of GPI operates entirely in a model-free manner.</li>
+  <li>The <strong>backward scan</strong> technique computes returns for all states in a single pass through the episode, using the recursive update \(G \leftarrow \gamma G + R_{t+1}\).</li>
+  <li>Value estimates for a state are averaged <em>only over episodes where that state was visited</em>. The denominator is the visit count, not the total episode count.</li>
+  <li><strong>Off-policy methods</strong> (covered in the next lecture) separate behaviour from learning, enabling the target policy to be deterministic, but require importance sampling corrections.</li>
+</ul>
+
+    </main>
+    <section class="quiz-section">
+      <h2>Test Your Knowledge</h2>
+      <div id="quiz-card-0" class="quiz-card" data-correct-index="1">
+    <p class="quiz-question">Q: What is the fundamental difference between dynamic programming and Monte Carlo methods for reinforcement learning?</p>
+    <div class="quiz-options">
+      <button id="quiz-0-option-0" class="quiz-option" onclick="checkAnswer(this, 0)">DP uses value functions; MC does not.</button>
+      <button id="quiz-0-option-1" class="quiz-option" onclick="checkAnswer(this, 1)">DP requires a complete model of the environment (p(s',r|s,a)); MC learns from sampled episodes without needing the model.</button>
+      <button id="quiz-0-option-2" class="quiz-option" onclick="checkAnswer(this, 2)">DP works only for episodic tasks; MC works only for continuing tasks.</button>
+      <button id="quiz-0-option-3" class="quiz-option" onclick="checkAnswer(this, 3)">DP uses the Bellman optimality equation; MC uses the Bellman expectation equation.</button>
+    </div>
+    <div class="quiz-explanation hidden"><strong>Explanation:</strong> DP performs expected Bellman backups using the known transition probabilities and reward dynamics. MC methods, in contrast, are model-free — they estimate values by averaging the complete returns observed after visits to states or state-action pairs across many sampled episodes. No transition probability model is required.</div>
+  </div><div id="quiz-card-1" class="quiz-card" data-correct-index="0">
+    <p class="quiz-question">Q: An episode is observed: S0=W, A0=East, R1=0, S1=X, A1=North, R2=0, S2=Z, A2=Exit, R3=-1, T. With γ=1 and using first-visit MC, what is the return appended for state W?</p>
+    <div class="quiz-options">
+      <button id="quiz-1-option-0" class="quiz-option" onclick="checkAnswer(this, 0)">-1</button>
+      <button id="quiz-1-option-1" class="quiz-option" onclick="checkAnswer(this, 1)">0</button>
+      <button id="quiz-1-option-2" class="quiz-option" onclick="checkAnswer(this, 2)">-2</button>
+      <button id="quiz-1-option-3" class="quiz-option" onclick="checkAnswer(this, 3)">1</button>
+    </div>
+    <div class="quiz-explanation hidden"><strong>Explanation:</strong> The first visit of W is at t=0. The return following W is the sum of rewards: R1 + R2 + R3 = 0 + 0 + (-1) = -1. The terminal state contributes no further reward.</div>
+  </div><div id="quiz-card-2" class="quiz-card" data-correct-index="2">
+    <p class="quiz-question">Q: In the five-state grid example with states A, B, C, D, E where D has exit +10 and A has exit -10 (ordinary moves cost -1, γ=1), four episodes produce first-visit returns for C of 9, 9, -11, and 9. What is V(C) after processing all four episodes?</p>
+    <div class="quiz-options">
+      <button id="quiz-2-option-0" class="quiz-option" onclick="checkAnswer(this, 0)">16 / 4 = 4</button>
+      <button id="quiz-2-option-1" class="quiz-option" onclick="checkAnswer(this, 1)">36 / 4 = 9</button>
+      <button id="quiz-2-option-2" class="quiz-option" onclick="checkAnswer(this, 2)">(9 + 9 - 11 + 9) / 4 = 4</button>
+      <button id="quiz-2-option-3" class="quiz-option" onclick="checkAnswer(this, 3)">9</button>
+    </div>
+    <div class="quiz-explanation hidden"><strong>Explanation:</strong> After all four episodes, V(C) = average of the four first-visit returns: (9 + 9 + (-11) + 9) / 4 = 16 / 4 = 4. This matches the final value from the worked example in the lecture.</div>
+  </div><div id="quiz-card-3" class="quiz-card" data-correct-index="1">
+    <p class="quiz-question">Q: Why are action values Q(s,a) essential for Monte Carlo control when no model of the environment is available?</p>
+    <div class="quiz-options">
+      <button id="quiz-3-option-0" class="quiz-option" onclick="checkAnswer(this, 0)">Q(s,a) is computationally cheaper to estimate than V(s).</button>
+      <button id="quiz-3-option-1" class="quiz-option" onclick="checkAnswer(this, 1)">Without a model, you cannot compute the one-step lookahead expectation Σ p(s',r|s,a)[r + γV(s')], so you cannot compare actions using V(s) alone.</button>
+      <button id="quiz-3-option-2" class="quiz-option" onclick="checkAnswer(this, 2)">Q(s,a) converges faster than V(s).</button>
+      <button id="quiz-3-option-3" class="quiz-option" onclick="checkAnswer(this, 3)">V(s) is undefined when the model is unknown.</button>
+    </div>
+    <div class="quiz-explanation hidden"><strong>Explanation:</strong> In DP, a model lets you use V(s) with one-step lookahead to compare actions. Without the transition probabilities p(s',r|s,a), this expectation cannot be computed. Q(s,a) directly stores the expected return after taking action a in state s, so actions can be compared instantly — arg maxₐ Q(s,a) — without any model.</div>
+  </div><div id="quiz-card-4" class="quiz-card" data-correct-index="1">
+    <p class="quiz-question">Q: Consider a state S with 4 available actions. Under an epsilon-greedy policy with ε = 0.4, where action A₁ is the greedy action, what probability is assigned to A₁?</p>
+    <div class="quiz-options">
+      <button id="quiz-4-option-0" class="quiz-option" onclick="checkAnswer(this, 0)">1 - ε = 0.6</button>
+      <button id="quiz-4-option-1" class="quiz-option" onclick="checkAnswer(this, 1)">1 - ε + ε/4 = 0.7</button>
+      <button id="quiz-4-option-2" class="quiz-option" onclick="checkAnswer(this, 2)">ε/4 = 0.1</button>
+      <button id="quiz-4-option-3" class="quiz-option" onclick="checkAnswer(this, 3)">0.4</button>
+    </div>
+    <div class="quiz-explanation hidden"><strong>Explanation:</strong> The greedy action receives (1 - ε) plus its share of the exploration budget: (1 - 0.4) + 0.4/4 = 0.6 + 0.1 = 0.7. Each of the three non-greedy actions receives ε/4 = 0.1. Every action has a non-zero probability, satisfying the epsilon-soft requirement.</div>
+  </div><div id="quiz-card-5" class="quiz-card" data-correct-index="1">
+    <p class="quiz-question">Q: What distinguishes on-policy learning from off-policy learning in Monte Carlo methods?</p>
+    <div class="quiz-options">
+      <button id="quiz-5-option-0" class="quiz-option" onclick="checkAnswer(this, 0)">On-policy uses first-visit MC; off-policy uses every-visit MC.</button>
+      <button id="quiz-5-option-1" class="quiz-option" onclick="checkAnswer(this, 1)">On-policy evaluates/improves the same policy used to generate episodes; off-policy uses a separate behaviour policy to generate data for a different target policy.</button>
+      <button id="quiz-5-option-2" class="quiz-option" onclick="checkAnswer(this, 2)">On-policy requires a model; off-policy is model-free.</button>
+      <button id="quiz-5-option-3" class="quiz-option" onclick="checkAnswer(this, 3)">On-policy converges faster; off-policy converges more slowly but to a better optimum.</button>
+    </div>
+    <div class="quiz-explanation hidden"><strong>Explanation:</strong> In on-policy learning, the same epsilon-soft policy generates episodes and is subsequently evaluated and improved. In off-policy learning, a behaviour policy (often more exploratory) collects data while a separate target policy (potentially greedy) is the one being learned. Off-policy methods need importance sampling to correct for the mismatch between the two policies.</div>
+  </div>
+    </section>
+  </div>
+  <script>
+    function checkAnswer(button, optionIndex) {
+      const card = button.closest('.quiz-card');
+      if (card.dataset.answered === "true") return;
+      card.dataset.answered = "true";
+      const correctIndex = parseInt(card.dataset.correctIndex);
+      const options = card.querySelectorAll('.quiz-option');
+      options.forEach((opt, idx) => {
+        opt.disabled = true;
+        if (idx === correctIndex) opt.classList.add('correct');
+        else if (idx === optionIndex) opt.classList.add('incorrect');
+      });
+      const explanation = card.querySelector('.quiz-explanation');
+      if (explanation) { explanation.classList.remove('hidden'); explanation.classList.add('fade-in'); }
+    }
+  </script>
+</body>
+</html>

@@ -1,0 +1,440 @@
+---
+// src/components/NewsletterForm.astro
+// Floating, interactive newsletter widget on bottom-left.
+// Shows full card first, then minimizes to a mailbox badge on scroll/idle/interaction.
+import { env } from 'cloudflare:workers';
+const turnstileSiteKey = (env as any).TURNSTILE_SITE_KEY || '1x00000000000000000000AA';
+---
+
+<div id="newsletter-floating-widget" class="newsletter-widget hidden">
+  
+  <!-- Minimized State: Clickable Mailbox Badge -->
+  <button type="button" id="nl-minimized-badge" class="newsletter-badge" aria-label="Open newsletter signup">
+    <svg class="badge-icon" fill="none" stroke="currentColor" stroke-width="2.2" viewBox="0 0 24 24">
+      <path stroke-linecap="round" stroke-linejoin="round" d="M21.75 6.75v10.5a2.25 2.25 0 01-2.25 2.25h-15a2.25 2.25 0 01-2.25-2.25V6.75m19.5 0A2.25 2.25 0 0019.5 4.5h-15a2.25 2.25 0 00-2.25 2.25m19.5 0v.243a2.25 2.25 0 01-1.07 1.916l-7.5 4.615a2.25 2.25 0 01-2.36 0L3.32 8.91a2.25 2.25 0 01-1.07-1.916V6.75"/>
+    </svg>
+    <!-- Small notification dot to draw subtle attention -->
+    <span class="badge-dot"></span>
+  </button>
+
+  <!-- Expanded State: Full Signup Card -->
+  <div id="newsletter-full-card" class="newsletter-card" role="dialog" aria-label="Newsletter signup">
+    <button type="button" id="nl-close-btn" class="newsletter-close" aria-label="Dismiss newsletter completely">
+      <svg width="15" height="15" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24">
+        <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12"/>
+      </svg>
+    </button>
+
+    <div class="newsletter-card-container">
+      <div class="newsletter-card-content">
+        <div class="newsletter-card-header">
+          <svg class="newsletter-icon" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M3 19.5h18M3 19.5v-15A2.25 2.25 0 015.25 2.25h13.5A2.25 2.25 0 0121 4.5v15M3 19.5l8.25-8.25 8.25 8.25M11.25 11.25l-2.25-2.25M11.25 11.25l2.25-2.25"/>
+          </svg>
+          <span class="newsletter-card-title">Stay updated</span>
+        </div>
+        <p class="newsletter-card-text">
+          Get notified when new lecture notes are published. No spam, unsubscribe anytime.
+        </p>
+      </div>
+
+      <form id="newsletter-form" class="relative">
+        <!-- Honeypot -->
+        <div style="position:absolute;left:-9999px" aria-hidden="true">
+          <label for="nl-website">Website</label>
+          <input type="text" id="nl-website" name="_website" tabindex="-1" autocomplete="off" />
+        </div>
+
+        <div class="flex flex-col gap-2">
+          <div class="w-full">
+            <label for="nl-email" class="sr-only">Email address</label>
+            <input
+              type="email"
+              id="nl-email"
+              name="email"
+              required
+              placeholder="you@university.edu"
+              class="block w-full px-3.5 py-2.5 border border-[var(--border)] bg-[var(--bg)] text-[var(--text)] placeholder-[var(--text-faint)] text-sm rounded-[var(--r-sm)] focus:outline-none focus:ring-2 focus:ring-[var(--focus-ring)] focus:border-[var(--accent)] transition-colors duration-150"
+            />
+          </div>
+          <!-- Cloudflare Turnstile widget container -->
+          <div id="nl-turnstile" data-sitekey={turnstileSiteKey} style="min-height:0;"></div>
+          <button
+            type="submit"
+            id="nl-submit-btn"
+            class="w-full px-5 py-2.5 bg-[var(--accent)] hover:bg-[var(--accent-hover)] text-white text-sm font-bold rounded-[var(--r-sm)] transition-colors cursor-pointer flex items-center justify-center gap-2"
+          >
+            Subscribe
+            <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24">
+              <path d="M14 5l7 7m0 0l-7 7m7-7H3"/>
+            </svg>
+          </button>
+        </div>
+
+        <!-- Feedback messages -->
+        <div id="nl-message" class="hidden mt-3 text-xs" role="alert"></div>
+      </form>
+    </div>
+  </div>
+</div>
+
+<style>
+  .newsletter-widget {
+    position: fixed;
+    bottom: 24px;
+    left: 24px;
+    right: 24px;
+    z-index: 99;
+    pointer-events: none; /* Let clicks pass through widget container */
+  }
+
+  @media (min-width: 640px) {
+    .newsletter-widget {
+      right: auto;
+      max-width: 360px;
+    }
+  }
+
+  /* --- Minimized State Badge --- */
+  .newsletter-badge {
+    position: absolute;
+    bottom: 0;
+    left: 0;
+    width: 56px;
+    height: 56px;
+    border-radius: 50%;
+    background-color: var(--bg-elevated);
+    border: 1px solid var(--border);
+    color: var(--accent);
+    box-shadow: var(--shadow-overlay);
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    pointer-events: auto;
+    opacity: 0;
+    transform: scale(0.6);
+    transition: opacity 0.3s var(--ease-out), transform 0.3s var(--ease-out), background-color 0.2s ease, border-color 0.2s ease, color 0.2s ease;
+  }
+
+  .newsletter-badge:hover {
+    background-color: var(--bg-subtle);
+    color: var(--accent-hover);
+    transform: scale(1.05) translateY(-2px);
+  }
+
+  .newsletter-badge:active {
+    transform: scale(0.95);
+  }
+
+  .badge-icon {
+    width: 24px;
+    height: 24px;
+  }
+
+  .badge-dot {
+    position: absolute;
+    top: 4px;
+    right: 4px;
+    width: 8px;
+    height: 8px;
+    background-color: var(--callout-note-border); /* nice amber dot */
+    border-radius: 50%;
+    border: 1.5px solid var(--bg-elevated);
+  }
+
+  /* --- Expanded State Card --- */
+  .newsletter-card {
+    position: relative;
+    background-color: var(--bg-elevated);
+    border: 1px solid var(--border);
+    border-radius: var(--r-md);
+    box-shadow: var(--shadow-overlay);
+    overflow: hidden;
+    pointer-events: auto;
+    opacity: 0;
+    transform: translateY(20px) scale(0.95);
+    transform-origin: bottom left;
+    transition: opacity 0.3s var(--ease-out), transform 0.3s var(--ease-out);
+  }
+
+  .newsletter-card-container {
+    padding: 20px;
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+  }
+
+  .newsletter-card-content {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    padding-right: 20px;
+  }
+
+  .newsletter-card-header {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    color: var(--accent);
+  }
+
+  .newsletter-icon {
+    width: 20px;
+    height: 20px;
+  }
+
+  .newsletter-card-title {
+    font-family: var(--font-display);
+    font-size: 1.05rem;
+    font-weight: 700;
+    color: var(--text);
+  }
+
+  .newsletter-card-text {
+    font-size: 0.8rem;
+    color: var(--text-muted);
+    line-height: 1.4;
+  }
+
+  .newsletter-close {
+    position: absolute;
+    top: 14px;
+    right: 14px;
+    color: var(--text-faint);
+    background: transparent;
+    border: none;
+    cursor: pointer;
+    padding: 4px;
+    border-radius: var(--r-sm);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: color var(--duration-fast) ease, background-color var(--duration-fast) ease;
+  }
+
+  .newsletter-close:hover {
+    color: var(--text);
+    background-color: var(--bg-subtle);
+  }
+
+  /* --- Toggle States --- */
+  .newsletter-widget.is-expanded .newsletter-card {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+    pointer-events: auto;
+  }
+
+  .newsletter-widget.is-expanded .newsletter-badge {
+    opacity: 0;
+    transform: scale(0.6);
+    pointer-events: none;
+  }
+
+  .newsletter-widget.is-minimized .newsletter-card {
+    opacity: 0;
+    transform: translateY(20px) scale(0.95);
+    pointer-events: none;
+  }
+
+  .newsletter-widget.is-minimized .newsletter-badge {
+    opacity: 1;
+    transform: scale(1);
+    pointer-events: auto;
+  }
+
+  .hidden {
+    display: none !important;
+  }
+</style>
+
+<!-- Cloudflare Turnstile: explicit render mode so we control init timing -->
+<script src="https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit" async defer></script>
+
+<script is:inline>
+  (function() {
+    function initNewsletterWidget() {
+      var widget = document.getElementById('newsletter-floating-widget');
+      var card = document.getElementById('newsletter-full-card');
+      var badge = document.getElementById('nl-minimized-badge');
+      var form = document.getElementById('newsletter-form');
+      var messageEl = document.getElementById('nl-message');
+      var submitBtn = document.getElementById('nl-submit-btn');
+      var closeBtn = document.getElementById('nl-close-btn');
+
+      if (!widget || !card || !badge || !form || !messageEl || !submitBtn || !closeBtn) return;
+
+      var isSubscribed = localStorage.getItem('bitsnotes-newsletter-subscribed');
+      var isDismissed = localStorage.getItem('bitsnotes-newsletter-dismissed');
+
+      // Do not display if already subscribed or fully dismissed
+      if (isSubscribed || isDismissed) {
+        widget.classList.add('hidden');
+        return;
+      }
+
+      var minimizeTimeout = null;
+      var hasInteracted = false;
+      var turnstileWidgetId = null;
+      var turnstileRendered = false;
+
+      // Delayed slide-up entry (expanded by default)
+      // Render Turnstile widget when the card is visible
+      function renderTurnstile() {
+        if (turnstileRendered) return;
+        var container = document.getElementById('nl-turnstile');
+        if (!container || typeof turnstile === 'undefined') return;
+        try {
+          turnstileWidgetId = turnstile.render(container, {
+            sitekey: container.getAttribute('data-sitekey') || '1x00000000000000000000AA',
+            theme: 'auto',
+            size: 'flexible',
+          });
+          turnstileRendered = true;
+        } catch (err) {
+          console.warn('[Newsletter] Turnstile render failed:', err);
+        }
+      }
+
+      setTimeout(function() {
+        if (!localStorage.getItem('bitsnotes-newsletter-subscribed') && !localStorage.getItem('bitsnotes-newsletter-dismissed')) {
+          widget.classList.remove('hidden');
+          widget.classList.add('is-expanded');
+          renderTurnstile();
+          startAutoMinimizeSequence();
+        }
+      }, 4000);
+
+      // --- Minimization Logic ---
+      function minimize() {
+        if (widget.classList.contains('is-expanded')) {
+          widget.classList.remove('is-expanded');
+          widget.classList.add('is-minimized');
+          stopTrackingInteractions();
+        }
+      }
+
+      function expand() {
+        if (widget.classList.contains('is-minimized')) {
+          widget.classList.remove('is-minimized');
+          widget.classList.add('is-expanded');
+          renderTurnstile();
+          // Restart automatic minimize on new page activity
+          startAutoMinimizeSequence();
+        }
+      }
+
+      function handleUserAction(e) {
+        // If the action occurred inside our card, do not minimize.
+        // Instead, extend the 10-second idle timer.
+        if (e && e.target && card.contains(e.target)) {
+          clearTimeout(minimizeTimeout);
+          if (!localStorage.getItem('bitsnotes-newsletter-subscribed')) {
+            minimizeTimeout = setTimeout(minimize, 10000);
+          }
+          return;
+        }
+        minimize();
+      }
+
+      function startAutoMinimizeSequence() {
+        // Auto-minimize after 10 seconds of absolute idle
+        clearTimeout(minimizeTimeout);
+        minimizeTimeout = setTimeout(minimize, 10000);
+
+        // Bind immediate minimize on scroll or general page interaction
+        window.addEventListener('scroll', handleUserAction, { passive: true });
+        document.addEventListener('click', handleUserAction, { passive: true });
+        document.addEventListener('keydown', handleUserAction, { passive: true });
+        document.addEventListener('touchstart', handleUserAction, { passive: true });
+      }
+
+      function stopTrackingInteractions() {
+        clearTimeout(minimizeTimeout);
+        window.removeEventListener('scroll', handleUserAction);
+        document.removeEventListener('click', handleUserAction);
+        document.removeEventListener('keydown', handleUserAction);
+        document.removeEventListener('touchstart', handleUserAction);
+      }
+
+      // --- Click Handlers ---
+      badge.addEventListener('click', function(e) {
+        e.stopPropagation(); // Avoid triggering immediate minimize click listener
+        expand();
+      });
+
+      closeBtn.addEventListener('click', function(e) {
+        e.stopPropagation();
+        widget.classList.add('hidden');
+        stopTrackingInteractions();
+        localStorage.setItem('bitsnotes-newsletter-dismissed', 'true');
+      });
+
+      // --- Form Submit Handler ---
+      var originalBtnHTML = submitBtn.innerHTML;
+
+      form.addEventListener('submit', async function(e) {
+        e.preventDefault();
+        e.stopPropagation();
+
+        submitBtn.disabled = true;
+        submitBtn.classList.add('opacity-70', 'cursor-not-allowed');
+        submitBtn.innerHTML = 'Subscribing\u2026 <svg class="animate-spin w-3.5 h-3.5" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"/></svg>';
+
+        messageEl.classList.add('hidden');
+
+        var email = document.getElementById('nl-email').value;
+        var honeypot = document.getElementById('nl-website').value;
+        var turnstileResponse = (typeof turnstile !== 'undefined' && turnstileWidgetId != null)
+          ? turnstile.getResponse(turnstileWidgetId)
+          : '';
+
+        try {
+          var response = await fetch('/api/subscribe', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ email: email, _website: honeypot, turnstileToken: turnstileResponse }),
+          });
+
+          var data = await response.json();
+
+          if (response.ok && data.success) {
+            // Success state
+            messageEl.className = 'mt-3 text-xs border-l-3 border-[var(--callout-concept-border)] bg-[var(--callout-concept-bg)] rounded-r-[var(--r-sm)] p-3 text-[var(--callout-concept-text)]';
+            messageEl.textContent = data.message || 'Check your email to confirm your subscription!';
+            messageEl.classList.remove('hidden');
+            form.reset();
+
+            // Set subscribed flag in localStorage
+            localStorage.setItem('bitsnotes-newsletter-subscribed', 'true');
+            stopTrackingInteractions();
+
+            // Keep it expanded showing success until closed manually
+          } else {
+            messageEl.className = 'mt-3 text-xs border-l-3 border-[var(--callout-warning-border)] bg-[var(--callout-warning-bg)] rounded-r-[var(--r-sm)] p-3 text-[var(--callout-warning-text)]';
+            messageEl.textContent = data.error || 'Something went wrong. Please try again.';
+            messageEl.classList.remove('hidden');
+          }
+        } catch (err) {
+          messageEl.className = 'mt-3 text-xs border-l-3 border-[var(--callout-warning-border)] bg-[var(--callout-warning-bg)] rounded-r-[var(--r-sm)] p-3 text-[var(--callout-warning-text)]';
+          messageEl.textContent = 'Network error. Please check your connection and try again.';
+          messageEl.classList.remove('hidden');
+        } finally {
+          submitBtn.disabled = false;
+          submitBtn.classList.remove('opacity-70', 'cursor-not-allowed');
+          submitBtn.innerHTML = originalBtnHTML;
+          // Reset Turnstile widget for potential retry
+          if (typeof turnstile !== 'undefined' && turnstileWidgetId != null) {
+            try { turnstile.reset(turnstileWidgetId); } catch (_) {}
+          }
+        }
+      });
+    }
+
+    // Run on init
+    initNewsletterWidget();
+
+    // Support Astro View Transitions
+    document.addEventListener('astro:after-swap', initNewsletterWidget);
+  })();
+</script>

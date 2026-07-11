@@ -1,0 +1,759 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="description" content="This lecture completes the multi-armed bandit unit and connects diagnostic skills, learning dynamics under changing rewards, and smarter exploration strategies. The effect of reward variance is analysed: zero-variance rewards can make greedy methods appear successful while hiding uncertainty, whereas high variance demands sustained exploration. Non-stationary bandits model realistic settings — shifting user preferences, drifting ad click rates, changing clinical efficacy — where true action values evolve over time. The standard sample-average update weights all past rewards equally, reacting too slowly to changes. The generalised form Q ← Q + α(R − Q) with constant step-size α implements exponential recency weighting, letting estimates track drifting distributions. The Robbins–Monro conditions clarify convergence requirements for stationary vs non-stationary settings. Optimistic initial values encourage early exploration by making all arms look attractive, but this exploration diminishes as estimates converge. Upper Confidence Bound (UCB) action selection adds an explicit uncertainty bonus: Q_t(a) + c√(ln t / N_t(a)), favouring arms tried less often. Worked numerics show how the bonus shrinks as arms are sampled more. The lecture wraps up with contextual bandits, which condition action values on context features (user profile, time, sensor readings) — forming the bridge to full MDP-based RL where states evolve over time.">
+  <title>Non-Stationary Bandits, UCB and Contextual Bandits</title>
+  <link rel="stylesheet" href="/lecture-notes.css">
+  <script type="application/json" id="lecture-metadata">{"title": "Non-Stationary Bandits, UCB and Contextual Bandits", "subject": "Deep Reinforcement Learning", "gradeLevel": "postgraduate", "datePublished": "2026-06-02", "targetAudience": "Postgraduate students completing the bandit unit: non-stationary estimation, UCB exploration, and the bridge to contextual bandits and full RL.", "summary": "This lecture completes the multi-armed bandit unit and connects diagnostic skills, learning dynamics under changing rewards, and smarter exploration strategies.\n\nThe effect of reward variance is analysed: zero-variance rewards can make greedy methods appear successful while hiding uncertainty, whereas high variance demands sustained exploration. Non-stationary bandits model realistic settings — shifting user preferences, drifting ad click rates, changing clinical efficacy — where true action values evolve over time.\n\nThe standard sample-average update weights all past rewards equally, reacting too slowly to changes. The generalised form \\(Q \\leftarrow Q + \\alpha(R - Q)\\) with constant step-size \\(\\alpha\\) implements exponential recency weighting, letting estimates track drifting distributions. The Robbins–Monro conditions clarify convergence requirements for stationary vs non-stationary settings.\n\nOptimistic initial values encourage early exploration by making all arms look attractive, but this exploration diminishes as estimates converge. Upper Confidence Bound (UCB) action selection adds an explicit uncertainty bonus: \\(Q_t(a) + c\\sqrt{\\frac{\\ln t}{N_t(a)}}\\), favouring arms tried less often. Worked numerics show how the bonus shrinks as arms are sampled more.\n\nThe lecture wraps up with contextual bandits, which condition action values on context features (user profile, time, sensor readings) — forming the bridge to full MDP-based RL where states evolve over time.", "keyConcepts": ["Reverse-engineer \\(\\epsilon\\)-greedy action choices and incremental sample-average updates from bandit traces.", "Explain how reward variance and non-stationarity affect learning and why constant step-size \\(\\alpha\\) is used.", "Derive and apply the incremental update \\(Q \\leftarrow Q + \\alpha(R - Q)\\) and relate it to exponential weighting.", "Describe optimistic initial values and UCB selection, including the role of the confidence bonus term.", "Contrast vanilla MAB, contextual bandits, and full RL for problems with and without state/context."], "quiz": [{"question": "Why is a constant step-size \\(\\alpha\\) often preferred over the sample-average (1/n) update in non-stationary bandits?", "options": ["It weights recent rewards more heavily so estimates can track drifting true values", "It guarantees finding the optimal arm in finite pulls", "It removes the need for any exploration", "It makes all arms have identical true values"], "answerIndex": 0, "explanation": "With 1/n weighting, old rewards dominate and estimates adapt slowly to change. Constant \\(\\alpha\\) implements exponential recency weighting, allowing \\(Q(a)\\) to respond to new data — essential when true values drift."}, {"question": "In UCB1 action selection, why is the term \\(\\sqrt{\\frac{\\ln t}{N_t(a)}}\\) added to \\(Q_t(a)\\)?", "options": ["To favour actions tried less often, reducing uncertainty about their true value", "To normalise rewards to zero mean", "To enforce a uniform random policy", "To replace the need for any value estimates"], "answerIndex": 0, "explanation": "The bonus grows when an arm has been selected few times relative to total steps, encouraging exploration of uncertain arms while exploiting high \\(Q\\) estimates as evidence accumulates."}, {"question": "When is a contextual bandit more appropriate than a vanilla multi-armed bandit?", "options": ["When the best action depends on observable context such as user features or time", "When there is only one action available", "When rewards are always deterministic and known in advance", "When the agent must model long-term state transitions across many time steps"], "answerIndex": 0, "explanation": "Contextual bandits condition action values on context \\(x\\): \\(Q(a \\mid x)\\). Vanilla MAB assumes the same distributions every step. Full RL is needed when earlier actions change future states, not just immediate context."}]}</script>
+</head>
+<body>
+  <div class="container">
+    <header class="hero-header">
+      <span class="subject-badge">Deep Reinforcement Learning</span>
+      <h1 class="lecture-title">Non-Stationary Bandits, UCB and Contextual Bandits</h1>
+      <div class="meta-info">
+        <div class="meta-item">&#x1F4C5; <strong>Published:</strong> June 2, 2026</div>
+        <div class="meta-item">&#x1F393; <strong>Level:</strong> postgraduate</div>
+        <div class="meta-item">&#x1F465; <strong>Audience:</strong> Postgraduate students completing the bandit unit: non-stationary estimation, UCB exploration, and the bridge to contextual bandits and full RL.</div>
+      </div>
+    </header>
+    <section class="summary-card">
+      <h3>Lecture Summary</h3>
+      <div class="summary-text">This lecture completes the multi-armed bandit unit and connects diagnostic skills, learning dynamics under changing rewards, and smarter exploration strategies.<br/><br/>The effect of reward variance is analysed: zero-variance rewards can make greedy methods appear successful while hiding uncertainty, whereas high variance demands sustained exploration. Non-stationary bandits model realistic settings — shifting user preferences, drifting ad click rates, changing clinical efficacy — where true action values evolve over time.<br/><br/>The standard sample-average update weights all past rewards equally, reacting too slowly to changes. The generalised form \(Q \leftarrow Q + \alpha(R - Q)\) with constant step-size \(\alpha\) implements exponential recency weighting, letting estimates track drifting distributions. The Robbins–Monro conditions clarify convergence requirements for stationary vs non-stationary settings.<br/><br/>Optimistic initial values encourage early exploration by making all arms look attractive, but this exploration diminishes as estimates converge. Upper Confidence Bound (UCB) action selection adds an explicit uncertainty bonus: \(Q_t(a) + c\sqrt{\frac{\ln t}{N_t(a)}}\), favouring arms tried less often. Worked numerics show how the bonus shrinks as arms are sampled more.<br/><br/>The lecture wraps up with contextual bandits, which condition action values on context features (user profile, time, sensor readings) — forming the bridge to full MDP-based RL where states evolve over time.</div>
+      <h3 style="margin-top:24px; margin-bottom:8px;">Key Learning Objectives</h3>
+      <ul class="key-concepts-list">
+          <li>Reverse-engineer \(\epsilon\)-greedy action choices and incremental sample-average updates from bandit traces.</li>
+          <li>Explain how reward variance and non-stationarity affect learning and why constant step-size \(\alpha\) is used.</li>
+          <li>Derive and apply the incremental update \(Q \leftarrow Q + \alpha(R - Q)\) and relate it to exponential weighting.</li>
+          <li>Describe optimistic initial values and UCB selection, including the role of the confidence bonus term.</li>
+          <li>Contrast vanilla MAB, contextual bandits, and full RL for problems with and without state/context.</li>
+      </ul>
+    </section>
+    <main>
+<h2 class="section-title">3.1 Recap: Where We Stand</h2>
+<div class="key-concept">
+  <strong>Key Idea: The Story So Far</strong>
+  <ol>
+    <li><strong>Model:</strong> A \(K\)-armed bandit — \(K\) actions, no state, reward drawn from a hidden distribution per arm.</li>
+    <li><strong>Estimate values:</strong> \(Q_t(a)\) is the sample average of rewards observed for arm \(a\).</li>
+    <li><strong>Select actions:</strong> Greedy (\(\arg\max_a Q(a)\)) or \(\epsilon\)-greedy (random with prob. \(\epsilon\), greedy otherwise).</li>
+    <li><strong>Open issues:</strong> How does reward variance affect things? What if the environment is non-stationary? Are there better ways to explore than \(\epsilon\)-greedy?</li>
+  </ol>
+  <p>In this lecture we close out these open issues and step beyond the vanilla MAB toward problems that involve context.</p>
+</div>
+<h2 class="section-title">3.2 Reverse Engineering ε-Greedy Choices</h2>
+<p>A common exam-style question is to look at a sequence of observed actions and rewards and identify which steps must have been a random (ε) exploration step, which steps may have been random, and which were definitely greedy. This forces you to internalize how the ε-greedy decision rule actually works.</p>
+<h3 class="subsection-title">3.2.1 The Two-Phase Decision Rule</h3>
+<div class="key-concept">
+  <strong>Key Idea: Entry Point of &epsilon;-Greedy</strong>
+  <p>The \(\epsilon\)-greedy algorithm does not look at the \(Q\)-values first. Its entry point is a coin flip:</p>
+  <ul>
+    <li>Draw \(u \sim \text{Uniform}(0, 1)\).</li>
+    <li>If \(u \le \epsilon \Rightarrow\) pick a random arm (explore).</li>
+    <li>If \(u > \epsilon \Rightarrow\) pick the greedy arm \(\arg\max_a Q(a)\) (exploit).</li>
+  </ul>
+  <p>This matters for the reverse-engineering exercise because a chosen action could have been produced by either branch:</p>
+  <ul>
+    <li>In the greedy branch, only the highest-\(Q\) arm can be picked (ties are broken arbitrarily).</li>
+    <li>In the random branch, any arm can be picked with probability \(1/K\).</li>
+  </ul>
+</div>
+<h3 class="subsection-title">3.2.2 Worked Problem: A 4-Armed Bandit Trace</h3>
+<p>Consider a \(K = 4\) bandit with \(\epsilon\)-greedy and sample-average estimates. All initial estimates are \(Q_1(a) = 0\) for all \(a\). We observe the following trace:</p>
+<table>
+  <thead>
+    <tr>
+      <th>Step \(t\)</th>
+      <th>Action \(A_t\)</th>
+      <th>Reward \(R_t\)</th>
+      <th>Status before step</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td>1</td>
+      <td>\(A_1\)</td>
+      <td>1</td>
+      <td>all \(Q = 0\)</td>
+    </tr>
+    <tr>
+      <td>2</td>
+      <td>\(A_2\)</td>
+      <td>1</td>
+      <td>\(Q(A_1) = 1\), others 0</td>
+    </tr>
+    <tr>
+      <td>3</td>
+      <td>\(A_2\)</td>
+      <td>2</td>
+      <td>\(Q(A_1) = 1\), \(Q(A_2) = 1\), others 0</td>
+    </tr>
+    <tr>
+      <td>4</td>
+      <td>\(A_2\)</td>
+      <td>2</td>
+      <td>\(Q(A_1) = 1\), \(Q(A_2) = 1.5\), others 0</td>
+    </tr>
+    <tr>
+      <td>5</td>
+      <td>\(A_3\)</td>
+      <td>&mdash;</td>
+      <td>\(Q(A_1) = 1\), \(Q(A_2) \approx 1.67\), others 0</td>
+    </tr>
+  </tbody>
+</table>
+<p><strong>Question:</strong> On which steps did the &epsilon; (random) branch definitely occur, and on which did it only possibly occur?</p>
+
+<h3 class="subsection-title">3.2.3 Step-by-step Analysis</h3>
+<ul>
+  <li><strong>Step 1:</strong> All \(Q\)-values are tied at 0. In the greedy branch ties are broken randomly — so picking \(A_1\) is consistent with greedy. In the random branch, \(A_1\) also has probability \(1/4\).
+    <br/><strong>Conclusion:</strong> maybe-\(\epsilon\), cannot tell either way.
+  </li>
+  <li><strong>Step 2:</strong> Now \(Q(A_1) = 1\) and \(Q(A_2) = Q(A_3) = Q(A_4) = 0\). The greedy choice is unambiguously \(A_1\). But the agent picked \(A_2\). The greedy branch cannot have produced \(A_2\). Therefore the random branch must have been triggered.
+    <br/><strong>Conclusion:</strong> certainly-\(\epsilon\).
+  </li>
+  <li><strong>Step 3:</strong> After step 2 we have \(Q(A_1) = 1\) and \(Q(A_2) = 1\) (tied highest). Picking \(A_2\) is consistent with the greedy branch (with a random tie-break) and with the random branch.
+    <br/><strong>Conclusion:</strong> maybe-\(\epsilon\).
+  </li>
+  <li><strong>Step 4:</strong> After step 3, \(Q(A_2) = 1.5\) is the unique highest. Picking \(A_2\) is the greedy choice — but it could also have come from the random branch. The random branch can produce any arm, including the greedy one.
+    <br/><strong>Conclusion:</strong> maybe-\(\epsilon\).
+  </li>
+  <li><strong>Step 5:</strong> After step 4, \(Q(A_2) \approx 1.67\) is strictly highest. The agent picked \(A_3\) instead. The greedy branch cannot have produced \(A_3\).
+    <br/><strong>Conclusion:</strong> certainly-\(\epsilon\).
+  </li>
+</ul>
+<div class="key-concept">
+  <strong>Key Idea: Master Rule</strong>
+  <p>You can say “certainly \(\epsilon\)” only when the agent selected an action that is not the highest-valued one. If the agent picked an action that is (or is tied for) the highest, either branch could have produced it — so you can only say “maybe \(\epsilon\)”. You can never say “certainly greedy”, because the random branch can always coincidentally pick the greedy arm.</p>
+</div>
+<div class="important-note"><strong>Intuition:</strong> Classroom Analogy There is a clear topper in the class. The teacher selects a student for a competition. • If the teacher picks the topper, you do not know whether she chose deliberately (greedy) or by accident (random). • If the teacher picks anyone else, you know for sure the choice was not based on rank — it must have been random.</div>
+<h2 class="section-title">3.3 The Effect of Reward Variance</h2>
+<p>So far we have not paid attention to how noisy the rewards from each arm are. The standard 10-armed testbed used unit variance — \(R_t \sim \mathcal{N}(q^*(a), 1)\). But what happens if that variance changes? This question has practical implications for how aggressively you should explore.</p>
+<h3 class="subsection-title">3.3.1 Three Variance Regimes</h3>
+<table>
+  <thead>
+    <tr>
+      <th>Regime</th>
+      <th>Reward behavior</th>
+      <th>What it means for learning</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><strong>Zero variance</strong></td>
+      <td>Reward = true value, deterministic</td>
+      <td>Pull each arm once; you know everything.</td>
+    </tr>
+    <tr>
+      <td><strong>Low (unit) variance</strong></td>
+      <td>Mild noise around true value</td>
+      <td>A handful of pulls per arm gives a reliable estimate.</td>
+    </tr>
+    <tr>
+      <td><strong>High variance</strong></td>
+      <td>Large fluctuations around the mean</td>
+      <td>Need many pulls before estimates settle; cannot stop exploring too early.</td>
+    </tr>
+  </tbody>
+</table>
+
+<h3 class="subsection-title">3.3.2 Zero Variance: A Tempting Trap</h3>
+<div class="important-note">
+  <strong>Intuition: Zero-Variance MAB</strong>
+  <p>If every pull of arm \(a\) returns exactly \(q^*(a)\) with no noise, the optimal strategy looks deceptively simple:</p>
+  <ol>
+    <li>Pull each of the \(K\) arms once.</li>
+    <li>From step \(K + 1\) onward, always pull the arm with the largest observed reward.</li>
+  </ol>
+  <p>You have effectively reduced the bandit problem to a finite enumeration.</p>
+</div>
+
+<div class="warning-box">
+  <strong>Caution: Why Textbooks Still Discourage Pure Greedy</strong>
+  <p>On paper zero-variance solves to a clean answer. In practice however:</p>
+  <ul>
+    <li>Real environments almost never have truly zero variance — some hidden noise always leaks in (measurement error, time effects, etc.).</li>
+    <li>Even if the underlying reward is deterministic, the model of the environment may be wrong.</li>
+  </ul>
+  <p>So Sutton &amp; Barto recommend keeping a small \(\epsilon > 0\) as insurance even when theory suggests greedy is optimal.</p>
+</div>
+
+<h3 class="subsection-title">3.3.3 High Variance: Stay Curious Longer</h3>
+<p>When the variance is large, a single positive reward might be a fluke. To distinguish a truly good arm from a lucky bad arm, you need many samples per arm.</p>
+
+<div class="key-concept">
+  <strong>Key Idea: Variance vs. \(\epsilon\)</strong>
+  <p>The higher the reward variance, the longer you should keep \(\epsilon\) large. Do not decay your exploration too fast — you cannot yet trust the running averages.</p>
+</div>
+<div class="example-box">
+  <strong>Empirical Evidence: 10-Armed Testbed with Different Reward Variances</strong>
+  <p>Sutton &amp; Barto's 10-armed testbed averaged over 2000 randomly generated bandit tasks. With unit-variance rewards (\(R_t \sim \mathcal{N}(q^*(a), 1)\)), the greedy method achieved only ~1.0 average reward per step compared to the best possible ~1.55, because it often got stuck on suboptimal arms — it found the optimal arm in only about one-third of the 2000 tasks. The \(\epsilon = 0.1\) method explored more and usually found the optimal arm earlier, but never selected it more than 91% of the time. The \(\epsilon = 0.01\) method improved more slowly but eventually outperformed \(\epsilon = 0.1\) on both average reward and optimal-action rate.</p>
+  <p>Suppose the reward variance were larger — say 10 instead of 1. With noisier rewards it takes more exploration to identify the optimal action, and \(\epsilon\)-greedy methods fare even better relative to greedy. On the other hand, with zero variance the greedy method would know the true value of each action after trying it once and might perform best. But even in the deterministic case, exploration is valuable if the problem is nonstationary or if initial estimates are misleading — the learner faces bandit-like decisions that change over time due to the learning process itself.</p>
+</div>
+<h2 class="section-title">3.4 Non-Stationary Bandit Problems</h2>
+<p>So far we have implicitly assumed that each arm’s reward distribution is fixed over time — a stationary problem. We now lift that assumption.</p>
+<h3 class="subsection-title">3.4.1 Definition</h3>
+<div class="key-concept">
+  <strong>Definition: Non-Stationary Reward Distribution</strong>
+  <p>A bandit problem is non-stationary if the reward distribution of at least one action changes over time:</p>
+  \[ p(r \mid A_t = a) \neq p(r \mid A_{t'} = a) \quad \text{for some } t \neq t' \]
+  <p>Notice the important distinction:</p>
+  <ul>
+    <li>The variance can be high or low — this only controls how noisy each draw is.</li>
+    <li>Non-stationarity changes the mean (and possibly the entire distribution) over time.</li>
+  </ul>
+</div>
+<h3 class="subsection-title">3.4.2 Stationary vs. Non-Stationary - A Side-by-Side View</h3>
+<p>Before diving into examples, it helps to compare the same domain under both assumptions:</p>
+<table>
+  <thead>
+    <tr>
+      <th>Setting</th>
+      <th>Stationary Version</th>
+      <th>Non-Stationary Version</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><strong>Slot-Machine Style Bandit</strong></td>
+      <td>Each arm has a fixed payout distribution throughout the experiment. A long sequence of plays gives better estimates of fixed action values.</td>
+      <td>The payout pattern changes after maintenance, a rule change, or a change in operating conditions. Older observations may no longer represent the present arm values.</td>
+    </tr>
+    <tr>
+      <td><strong>Online Advertisement</strong></td>
+      <td>During a short A/B experiment, the click probability for each advertisement is assumed nearly fixed. Each ad can be treated as having a stable average reward.</td>
+      <td>User attention changes with season, festival period, repeated exposure, competitor campaigns, or current news. An ad that worked well earlier may later become less effective.</td>
+    </tr>
+    <tr>
+      <td><strong>Treatment Choice</strong></td>
+      <td>A controlled study compares a few treatment protocols for a clearly defined patient group over a short period. If patient characteristics and clinical conditions are stable, each treatment may be viewed as having an approximately fixed outcome distribution.</td>
+      <td>The mix of patients, disease variants, co-medications, adherence, and hospital practice can change. The observed outcome distribution of a treatment may drift, so older evidence should not dominate forever.</td>
+    </tr>
+    <tr>
+      <td><strong>Cloud Configuration</strong></td>
+      <td>A service is tested under a stable workload and fixed infrastructure. Each configuration has a roughly stable distribution of throughput or latency.</td>
+      <td>Workload, traffic mix, background jobs, network congestion, and hardware contention vary across time. A configuration that was best in the morning may not be best during peak load.</td>
+    </tr>
+  </tbody>
+</table>
+<div class="important-note"><strong>Intuition:</strong> In real deployments, it is safer to expect some degree of non-stationarity. User populations change, systems are upgraded, demand fluctuates, and external conditions shift. Therefore, practical bandit methods need to track action values rather than merely converge once and stop adapting.</div>
+<div class="key-concept"><strong>Key Insight from Sutton &amp; Barto: Effective Nonstationarity</strong><p>Even if the underlying environment is strictly stationary and deterministic, the agent often faces <em>effectively nonstationary</em> decision tasks. Why? Because as the agent learns, its own estimates change — the "problem" as seen by the agent evolves. As the book puts it: "Even if the underlying task is stationary and deterministic, the learner faces a set of banditlike decision tasks each of which changes over time due to the learning process itself." This is why <em>reinforcement learning requires a permanent balance between exploration and exploitation</em> — not just an initial exploration phase.</p></div>
+<h3 class="subsection-title">3.4.3 Real-World Examples</h3>
+<div class="example-box"><strong>Example:</strong> Online Advertising You decide which ad to show a user. The user’s mood, interests, and life stage drift constantly. An ad that converted last month may bore the same user today. If you froze your estimates, you would slowly become useless.</div>
+<div class="example-box"><strong>Example:</strong> Managing a Boss with Mood Swings A manager approves your proposals on some days and rejects identical ones on others. The reward of the action “submit proposal” drifts with the manager’s mood, workload, and recent events. To get your goodies, you must keep re-learning the current reward.</div>
+<div class="example-box"><strong>Example:</strong> Industry Skill Demand The career value of a particular technical skill is non-stationary. Five years ago, deep learning was the hot skill; ten years ago, big data; now it might be LLM and agentic systems. An engineer’s lifetime “reward” for any skill choice depends on continual updates to estimates — never lock in.</div>
+<h3 class="subsection-title">3.4.4 The Naive Fix: Keep \(\epsilon\) Permanently Positive</h3>
+<p>The simplest reaction to non-stationarity is to refuse to decay \(\epsilon\):</p>
+<ul>
+  <li>Set \(\epsilon\) to a moderate constant (say 0.05 or 0.1).</li>
+  <li>Never let it drop to zero.</li>
+</ul>
+<p>This ensures the agent is always sampling sub-optimal-looking arms, so it can notice when their value rises.</p>
+<div class="key-concept">
+  <strong>Key Idea: The Real Issue</strong>
+  <p>Even with \(\epsilon > 0\), the sample-average estimator gives too much weight to the distant past. Recent observations get diluted in the average.</p>
+  <p><strong>Why?</strong> Suppose you are at step \(t = 10{,}000\) and the current estimate is \(Q(a) = 30\). A new reward \(R = 5\) arrives. The updated average is:</p>
+  \[ Q_{\text{new}}(a) = Q(a) + \frac{1}{10{,}001} (5 - 30) = 30 + \left(-\frac{25}{10{,}001}\right) \approx 29.9975 \]
+  <p>The estimate barely budged! But if the environment just shifted so that the true mean is now 5, this slow reaction is disastrous. We need an estimator that puts more weight on recent rewards. This is the motivation for the incremental update with a constant step size, which we develop next.</p>
+</div>
+<h2 class="section-title">3.5 Incremental Update of the Sample Average</h2>
+<p>Before solving the non-stationary problem, we rewrite the sample average in a form that exposes the right “handle” to modify.</p>
+<h3 class="subsection-title">3.5.1 Derivation</h3>
+<p>The sample average after \(n\) rewards is:</p>
+\[ Q_{n+1} = \frac{1}{n} \sum_{i=1}^{n} R_i \]
+<p>Split off the most recent reward:</p>
+\[ Q_{n+1} = \frac{1}{n} \left[ R_n + \sum_{i=1}^{n-1} R_i \right] = \frac{1}{n} \left[ R_n + (n-1) Q_n \right] \]
+<p>where we used the fact that \(\sum_{i=1}^{n-1} R_i = (n-1) Q_n\). Expanding:</p>
+\[ Q_{n+1} = \frac{R_n + n Q_n - Q_n}{n} = Q_n + \frac{1}{n} [ R_n - Q_n ] \]
+
+<div class="key-concept">
+  <strong>Key Idea: Incremental Sample Average</strong>
+  \[ Q_{n+1} = Q_n + \frac{1}{n} [ R_n - Q_n ] \]
+  <p>This is exactly the sample average — but expressed as an online update that needs only \(O(1)\) memory. The naive implementation (storing all past rewards for each action) would have memory and computation that grow without bound. This incremental form requires only \(Q_n\) and \(n\), and constant computation per new reward. Sutton &amp; Barto note that this holds even for \(n = 1\), obtaining \(Q_2 = R_1\) for arbitrary \(Q_1\).</p>
+</div>
+<h3 class="subsection-title">3.5.2 The General Update Form</h3>
+<p>Stare at the rewritten expression. It has the very general structure:</p>
+\[ \text{NewEstimate} = \text{OldEstimate} + \text{StepSize} \times [ \text{Target} - \text{OldEstimate} ] \]
+<p>This template will appear over and over in RL: Q-learning, SARSA, TD(0), policy gradient — everything ultimately resembles this update.</p>
+<ul>
+  <li><strong>Step size \(\alpha_n\):</strong> How much we move toward the target. For the exact sample average, \(\alpha_n = 1/n\).</li>
+  <li><strong>Target \(R_n\):</strong> Where we’d like the estimate to be in the light of the new evidence.</li>
+  <li><strong>Old estimate \(Q_n\):</strong> Our prior belief.</li>
+</ul>
+<p>Sutton &amp; Barto call the expression \(\left[\text{Target} - \text{OldEstimate}\right]\) an <strong>error in the estimate</strong>. The error is reduced by taking a step toward the target — though the target itself may be noisy. This notion of error as a <em>directed</em> quantity (not an absolute loss) is a recurring motif throughout the book.</p>
+<h3 class="subsection-title">3.5.3 A Tiny Numerical Walk-Through</h3>
+<p>Let \(Q_n = 10\), and suppose at step \(n = 5\) we observe \(R = 5\). Then \(Q_{n+1} = 10 + \frac{1}{5}(5 - 10) = 10 - 1 = 9\). The estimate moved toward the new reward.</p>
+<div class="important-note"><strong>Intuition:</strong> Interpreting \(\text{Target} - \text{Estimate}\) The term \(R_n - Q_n\) is the gap between what we just saw and what we believed. It is not an error in the supervised-learning sense, because the target \(R_n\) itself is noisy and possibly time-varying. A reward of 5 today does not mean future rewards will be 5. We are not trying to “reduce the error to zero”; we are trying to track a moving (and noisy) target.</div>
+<h3 class="subsection-title">3.5.4 Why Is This Useful?</h3>
+<p>The rewrite seems trivial. The payoff is that we can now change the step size:</p>
+<ul>
+  <li>Keep \(\alpha_n = 1/n \Rightarrow\) exact sample average (good for stationary).</li>
+  <li>Use a constant \(\alpha_n = \alpha \Rightarrow\) exponentially-weighted average that forgets the past (good for non-stationary).</li>
+</ul>
+<p>The next section explores the constant-step-size case.</p>
+<h2 class="section-title">3.6 Constant Step Size for Non-Stationary Problems</h2>
+<p>Set the step size to a small constant \(\alpha \in (0, 1]\): \(Q_{n+1} = Q_n + \alpha [ R_n - Q_n ]\)</p>
+<h3 class="subsection-title">3.6.1 Why It Adapts to Change</h3>
+<p>When \(\alpha = 1/n\), the influence of a fresh reward shrinks as \(n\) grows — the agent becomes increasingly stubborn. When \(\alpha\) is a fixed constant (say 0.1), every reward, regardless of when it arrives, carries the same weight.</p>
+<div class="key-concept">
+  <strong>Key Idea: Constant Step Size Effect</strong>
+  <p>A constant \(\alpha\) implements an exponential recency weighting: recent rewards strongly influence the estimate, while old rewards exponentially decay in their contribution. The agent keeps learning forever.</p>
+</div>
+<h3 class="subsection-title">3.6.2 Mathematical View: Exponential Recency-Weighted Average</h3>
+<p>Unrolling the recursion (you should verify this on paper at home):</p>
+\[ Q_{n+1} = (1-\alpha)^n Q_1 + \sum_{i=1}^{n} \alpha (1-\alpha)^{n-i} R_i \]
+<p>The weights on past rewards \(R_i\) decay geometrically with age. The initial value \(Q_1\) also fades exponentially. Contrast this with the sample-average estimator, where every \(R_i\) gets weight \(1/n\) regardless of age.</p>
+<p>Sutton &amp; Barto note a key verification: the sum of all weights is exactly 1 — \((1-\alpha)^n + \sum_{i=1}^{n} \alpha(1-\alpha)^{n-i} = 1\) — confirming this is a true weighted average. In the extreme, if \(1-\alpha = 0\) (i.e., \(\alpha = 1\)), all weight goes to the very last reward \(R_n\) alone (using the convention \(0^0 = 1\)), making the estimate equal to that single reward.</p>
+
+<h3 class="subsection-title">3.6.3 Intuitive Example: A Simple Tracking Illustration</h3>
+<div class="important-note">
+  <strong>Intuition: A Simple Tracking Illustration</strong>
+  <p><strong>Case 1 — Reward level increases:</strong> Suppose \(Q = 10\) and \(\alpha = 0.2\). If the next rewards are \(14\) and \(16\):</p>
+  \[ Q \leftarrow 10 + 0.2(14 - 10) = 10.8 \]
+  \[ Q \leftarrow 10.8 + 0.2(16 - 10.8) = 11.84 \]
+  <p>The estimate begins moving upward, which is appropriate if the action's reward distribution has improved.</p>
+  <p><strong>Case 2 — Reward level decreases:</strong> Suppose \(Q = 12\) and \(\alpha = 0.2\). If the next rewards are \(8\) and \(7\):</p>
+  \[ Q \leftarrow 12 + 0.2(8 - 12) = 11.2 \]
+  \[ Q \leftarrow 11.2 + 0.2(7 - 11.2) = 10.36 \]
+  <p>The estimate moves downward, which is useful when older high rewards no longer represent current performance. The constant \(\alpha\) keeps the estimate responsive in both directions — the step size never shrinks with time.</p>
+</div>
+
+<h3 class="subsection-title">3.6.4 Intuitive Example: The 50-Year-Old Engineer</h3>
+<div class="important-note">
+  <strong>Intuition: Two Engineers, Same Age</strong>
+  <p><strong>Engineer A:</strong> “I’m 50 years old, my learning days are behind me.” This is the \(1/n\) step size — each new input gets vanishingly small weight relative to a lifetime of past experience. Behavior calcifies.</p>
+  <p><strong>Engineer B:</strong> “Age is just a number, I keep learning.” This is the constant-\(\alpha\) step size — every new input gets the same attention, so the engineer adapts continually to a changing world.</p>
+</div>
+
+<h3 class="subsection-title">3.6.5 Trade-Off: Bias-vs-Variance with \(\alpha\)</h3>
+<p>A constant \(\alpha\) is not without cost:</p>
+<table>
+  <thead>
+    <tr>
+      <th>Step size</th>
+      <th>Pros</th>
+      <th>Cons</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><strong>\(\alpha_n = 1/n\)</strong></td>
+      <td>Converges exactly to true mean in stationary case (provable).</td>
+      <td>Stops adapting once \(n\) is large; useless if true value drifts.</td>
+    </tr>
+    <tr>
+      <td><strong>Constant \(\alpha\)</strong></td>
+      <td>Always responsive to fresh rewards; tracks drift.</td>
+      <td>Never fully converges; estimates jitter around the true value.</td>
+    </tr>
+  </tbody>
+</table>
+<h3 class="subsection-title">3.6.6 Choosing \(\alpha\): Student Question</h3>
+<p>A common student question: "If \(\alpha\) is constant, doesn't the very first reward get undue weight?" Answer: Yes, in some sense. With \(Q_1 = 0\) and a first reward of \(R_1 = 10\) and \(\alpha = 0.2\), the very first update gives \(Q_2 = 0 + 0.2 \cdot (10 - 0) = 2\). The estimate is heavily biased by that single data point until many more come in. In practice you can: • Use a higher \(\alpha\) early and decay it (similar to decaying \(\epsilon\)). • Or simply accept that early estimates are imprecise — the constant \(\alpha\) guarantees later evidence will dominate.</p>
+<h3 class="subsection-title">3.6.7 Theoretical Note: Robbins-Monro Conditions</h3>
+<p>When does a stochastic averaging procedure converge? A general result from stochastic approximation theory says \(Q_n \to q^*(a)\) almost surely if the step size sequence satisfies:</p>
+\[ \sum_{n=1}^{\infty} \alpha_n = \infty \quad \text{and} \quad \sum_{n=1}^{\infty} \alpha_n^2 < \infty \]
+<ul>
+  <li>\(\alpha_n = 1/n\) satisfies both \(\Rightarrow\) guaranteed convergence (stationary).</li>
+  <li>Constant \(\alpha_n = \alpha\) violates the second condition \(\Rightarrow\) does not converge but does track.</li>
+</ul>
+<p>This is exactly the reason we deliberately violate convergence in non-stationary problems.</p>
+<div class="important-note"><strong>Practical Note from Sutton &amp; Barto:</strong> Although step-size sequences that meet the Robbins–Monro conditions are often used in theoretical work, they <strong>are seldom used in applications and empirical research</strong>. Sequences satisfying the conditions often converge very slowly or need considerable tuning to obtain a satisfactory convergence rate. In nonstationary environments — which are the norm in reinforcement learning — permanent tracking at the cost of full convergence is exactly what we want.</div>
+<h3 class="subsection-title">3.6.8 The \(\epsilon\)-Greedy Algorithm with Constant \(\alpha\)</h3>
+<div class="example-box">
+  <strong>Algorithm 1: \(\epsilon\)-Greedy with Constant Step Size</strong>
+  <pre><code>1: Initialize: Q(a) &larr; 0 for all a; choose &epsilon; &isin; (0, 1) and &alpha; &isin; (0, 1]
+2: for each time step t = 1, 2, ... do
+3:     Draw u ~ Uniform(0, 1)
+4:     if u &gt; &epsilon; then
+5:         A<sub>t</sub> &larr; arg max<sub>a</sub> Q(a)    ▷ exploit
+6:     else
+7:         A<sub>t</sub> &larr; random arm         ▷ explore
+8:     end if
+9:     Pull arm A<sub>t</sub> and observe reward R<sub>t</sub>
+10:    Q(A<sub>t</sub>) &larr; Q(A<sub>t</sub>) + &alpha; [ R<sub>t</sub> &minus; Q(A<sub>t</sub>) ]    ▷ constant step
+11: end for</code></pre>
+</div>
+<div class="key-concept">
+  <strong>Key Idea: Two Knobs for Non-Stationary MAB</strong>
+  <ul>
+    <li>Keep \(\epsilon > 0\) always so the agent continues to discover changes.</li>
+    <li>Use a constant \(\alpha\) so the agent continues to learn from those discoveries.</li>
+  </ul>
+  <p>\(\epsilon\) feeds the agent fresh experience; \(\alpha\) ensures that experience actually moves the estimate. Either alone is insufficient.</p>
+</div>
+<h2 class="section-title">3.7 Optimistic Initial Values</h2>
+<p>We now look at the first of two alternative ways to encourage exploration without \(\epsilon\).</p>
+<h3 class="subsection-title">3.7.1 The Trick</h3>
+<p>Set the initial \(Q\)-values to a number that is much higher than any reward the environment can plausibly return.</p>
+<div class="example-box"><strong>Example:</strong> Optimistic Init in the 10-Armed Testbed The true rewards are roughly in the range \([-3, +3]\). Instead of initializing \(Q(a) = 0\) for all \(a\), set \(Q(a) = +5\).</div>
+<h3 class="subsection-title">3.7.2 Why It Drives Exploration</h3>
+<p>Suppose we run pure greedy (\(\epsilon = 0\)) starting from \(Q(a) = 5\) everywhere.</p>
+<ol>
+  <li><strong>Step 1:</strong> All \(Q\) tied. Ties broken arbitrarily \(\Rightarrow\) pick some arm, say \(A_1\). The reward arrives, e.g. \(+0.4\), which is much lower than the optimistic prior. So \(Q(A_1)\) drops (to \(\approx 4.6\) with \(\alpha = 0.1\)).</li>
+  <li><strong>Step 2:</strong> Now \(Q(A_2), Q(A_3), \dots = 5\) are all above \(Q(A_1) = 4.6\). Greedy picks among them \(\Rightarrow\) tries a new arm.</li>
+  <li>This continues. Every time greedy picks an arm, the reward disappoints relative to the optimistic prior, and the next greedy step naturally rotates to a different arm.</li>
+</ol>
+<p><strong>Net effect:</strong> Without any explicit randomness, the agent thoroughly samples every arm in the early steps. Exploration is essentially baked into the initial conditions.</p>
+<h3 class="subsection-title">3.7.3 Why It Eventually Stops Working</h3>
+<p>Once all the \(Q\)-values have come down close to their true means, the agent has settled into pure exploitation. There is no longer any built-in pressure to revisit arms.</p>
+<div class="warning-box">
+  <strong>Caution: Optimistic Init is a One-Shot Trick</strong>
+  <p>Optimistic initialization drives exploration only transiently. After the values converge, exploration ceases.</p>
+  <ul>
+    <li>Fine if the problem is stationary and you only need to find the best arm once.</li>
+    <li>Fails miserably if the problem is non-stationary — you cannot detect later changes.</li>
+  </ul>
+</div>
+<div class="key-concept"><strong>Why It's Not a General Solution: The "Beginning of Time" Critique</strong><p>Sutton &amp; Barto note two deeper limitations. First, with a constant step size \(\alpha\), the bias from optimistic initial values is <strong>permanent</strong> — it decays over time (as shown in the unrolled form, \((1-\alpha)^n Q_1\)) but never vanishes entirely, unlike in the sample-average case where the bias disappears after each action has been selected at least once. This is usually not a problem in practice, and can sometimes even be helpful as a way of encoding prior knowledge about reward levels.</p><p>More fundamentally, the method treats the <strong>beginning of time as a special event</strong>. As the book argues: "If the task changes, creating a renewed need for exploration, this method cannot help. Indeed, any method that focuses on the initial state in any special way is unlikely to help with the general nonstationary case." The beginning of time occurs only once — relying on it as the sole source of exploration pressure is a fragile strategy.</p></div>
+<h3 class="subsection-title">3.7.4 Empirical Comparison</h3>
+<p>In the 10-armed testbed, comparing <strong>Realistic (\(Q_1=0, \epsilon=0.1\))</strong> vs <strong>Optimistic (\(Q_1=5, \epsilon=0\))</strong>:</p>
+<ul>
+  <li><strong>Optimistic + greedy (\(\epsilon=0\)):</strong> climbs faster early and reaches a high optimal-action rate.</li>
+  <li><strong>Realistic + \(\epsilon\)-greedy (\(\epsilon=0.1\)):</strong> starts more slowly but keeps a permanent exploration cushion — safer in case the environment changes.</li>
+</ul>
+<div class="key-concept">
+  <strong>Key Idea: When To Use Optimistic Init</strong>
+  <p>A clever idea, but narrow. Use it when:</p>
+  <ul>
+    <li>The problem is firmly stationary.</li>
+    <li>You know an upper bound on plausible rewards.</li>
+    <li>You want a parameter-free way to encourage early exploration.</li>
+  </ul>
+  <p>Otherwise, prefer \(\epsilon\)-greedy or UCB (next section).</p>
+</div>
+<h2 class="section-title">3.8 Upper Confidence Bound (UCB) Action Selection</h2>
+<p>UCB is one of the most influential exploration strategies in RL. It replaces the parameter \(\epsilon\) with a principled, automatic exploration bonus based on uncertainty.</p>
+<h3 class="subsection-title">3.8.1 Worked UCB Numerics from the Lecture</h3>
+<h4>Example 1: Two Actions</h4>
+<p>At time \(t = 20\), suppose \(Q_t(a_1) = 1.0\) with \(N_t(a_1) = 10\), \(Q_t(a_2) = 0.8\) with \(N_t(a_2) = 2\), and \(c = 2\):</p>
+\[ \text{score}(a_1) = 1.0 + 2 \times \sqrt{\frac{\ln 20}{10}} \approx 1.0 + 1.095 = 2.095 \]
+\[ \text{score}(a_2) = 0.8 + 2 \times \sqrt{\frac{\ln 20}{2}} \approx 0.8 + 2.448 = 3.248 \]
+<p>UCB selects \(a_2\) even though its current estimate is lower, because it has been tried much less often. If the observed reward is \(R = 1.4\), the sample-average update after its third selection is:</p>
+\[ Q(a_2) \leftarrow 0.8 + \frac{1}{3}(1.4 - 0.8) = 1.0 \]
+
+<h4>Example 2: Four Actions</h4>
+<p>At time \(t = 50\), let \(c = 1\) and:</p>
+<table>
+  <thead><tr><th>Action</th><th>\(Q_t(a)\)</th><th>\(N_t(a)\)</th></tr></thead>
+  <tbody>
+    <tr><td>\(a_1\)</td><td>1.10</td><td>25</td></tr>
+    <tr><td>\(a_2\)</td><td>1.20</td><td>20</td></tr>
+    <tr><td>\(a_3\)</td><td>0.70</td><td>4</td></tr>
+    <tr><td>\(a_4\)</td><td>0.90</td><td>1</td></tr>
+  </tbody>
+</table>
+<p>The UCB scores are:</p>
+<table>
+  <thead><tr><th>Action</th><th>\(Q_t(a) + \sqrt{\frac{\ln 50}{N_t(a)}}\)</th></tr></thead>
+  <tbody>
+    <tr><td>\(a_1\)</td><td>\(\approx 1.50\)</td></tr>
+    <tr><td>\(a_2\)</td><td>\(\approx 1.64\)</td></tr>
+    <tr><td>\(a_3\)</td><td>\(\approx 1.69\)</td></tr>
+    <tr><td>\(a_4\)</td><td>\(\approx 2.88\)</td></tr>
+  </tbody>
+</table>
+<p>UCB selects \(a_4\). Although \(a_4\) is far from greedy by \(Q_t(a)\) alone, it has been selected only once, so its uncertainty term dominates. The algorithm gives a nearly-untried arm a chance before writing it off.</p>
+
+<div class="example-box"><strong>Empirical Performance: 10-Armed Testbed (Figure 2.3)</strong><p>On the 10-armed testbed, UCB with \(c = 2\) generally outperforms \(\epsilon\)-greedy with \(\epsilon = 0.1\), except in the very first steps when it selects randomly among the as-yet-unplayed actions. A notable feature: UCB shows a <strong>prominent spike in performance on the 11th play</strong>. Here's why: after each of the 10 arms has been tried once, \(N_t(a) = 1\) for all arms, and the uncertainty term is \(\sqrt{\ln 11 / 1} \approx 1.55\). The arm with the highest single-sample reward gets both a high \(Q_t(a)\) and a high uncertainty bonus, producing a temporary "super-optimistic" peak before estimates stabilize.</p></div>
+
+<h3 class="subsection-title">3.8.2 UCB Intuition: Why the Exploration Bonus Matters</h3>
+<p>Consider the following snapshot:</p>
+<table>
+  <thead>
+    <tr>
+      <th>Arm</th>
+      <th>\(Q(a)\)</th>
+      <th>\(N(a)\) (# pulls)</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td>\(A_1\)</td>
+      <td>7</td>
+      <td>10</td>
+    </tr>
+    <tr>
+      <td>\(A_2\)</td>
+      <td>9</td>
+      <td>30</td>
+    </tr>
+    <tr>
+      <td>\(A_3\)</td>
+      <td>1</td>
+      <td>5</td>
+    </tr>
+    <tr>
+      <td>\(A_4\)</td>
+      <td>20</td>
+      <td>15</td>
+    </tr>
+  </tbody>
+</table>
+<p>Pure greedy would always pick \(A_4\). But notice that \(A_3\) has been pulled only 5 times — our estimate of \(Q(A_3) = 1\) is based on very little data. Maybe its true value is much higher and we just got unlucky. Fairness, in a statistical sense, says \(A_3\) deserves more chances before we write it off.</p>
+
+<div class="key-concept">
+  <strong>Key Idea: UCB’s Insight</strong>
+  <p>Choose actions based on a combination of:</p>
+  <ol>
+    <li>Their current estimated value \(Q_t(a)\), and</li>
+    <li>How uncertain we are about that estimate.</li>
+  </ol>
+  <p>Arms that have been sampled rarely have high uncertainty \(\Rightarrow\) they deserve a bonus.</p>
+</div>
+\[ A_t = \arg\max_a \left[ Q_t(a) + c \sqrt{\frac{\ln t}{N_t(a)}} \right] \]
+<div class="key-concept">
+  <strong>Key Idea: Summary of All Action-Selection Methods</strong>
+  <table>
+    <thead>
+      <tr><th>Method</th><th>Rule and Parameters</th><th>Exploration Behaviour</th></tr>
+    </thead>
+    <tbody>
+      <tr><td><strong>Greedy</strong></td><td>\(A_t = \arg\max_a Q_t(a)\); no exploration parameter.</td><td>Pure exploitation. Useful as a baseline, but can settle on suboptimal action after misleading early rewards.</td></tr>
+      <tr><td><strong>\(\epsilon\)-greedy</strong></td><td>Select greedy with prob. \(1-\epsilon\); random from all \(K\) actions with prob. \(\epsilon\).</td><td>Simple continuing exploration. Larger \(\epsilon\) explores more; smaller \(\epsilon\) exploits more.</td></tr>
+      <tr><td><strong>Optimistic Init</strong></td><td>Set \(Q_1(a)\) high for all actions, then act greedily.</td><td>Encourages early exploration because untried arms remain attractive. Most suitable when an initial burst of exploration is enough.</td></tr>
+      <tr><td><strong>UCB</strong></td><td>\(A_t = \arg\max_a \left[Q_t(a) + c\sqrt{\frac{\ln t}{N_t(a)}}\right]\). Parameter: \(c\).</td><td>Selects using both estimated value and uncertainty. Favours arms close to greedy or with fewer samples; extension beyond bandits is less direct.</td></tr>
+    </tbody>
+  </table>
+  <p><strong>Choosing between methods:</strong> There is no single best rule independent of the task. Greedy is mainly a baseline. \(\epsilon\)-greedy is simple and robust when continuing exploration is desired. Optimistic initialization is useful when early exploration is valuable and reasonable optimistic estimates can be chosen. UCB is more directed because it prefers actions with high estimates or high uncertainty, but relies on meaningful action counts and is most natural in bandit settings.</p>
+  <p><strong>Sutton &amp; Barto's parameter study (Figure 2.5):</strong> Averaging over 1000 steps on the 10-armed testbed, all algorithms show a characteristic inverted-U shape — they perform best at an intermediate parameter value. UCB generally performs best, but \(\epsilon\)-greedy and gradient bandits are also strong. All methods are fairly insensitive to their parameter choice, performing well over about an order of magnitude range.</p>
+  <p><strong>Limitations:</strong> UCB is more difficult than \(\epsilon\)-greedy to extend beyond bandits to the full RL setting. Two key challenges: (1) <em>nonstationary problems</em> — the simple UCB method presented here does not track drifting values well without modifications more complex than Section 2.4's approach; (2) <em>large state spaces with function approximation</em> — in the more advanced settings of Part III of the book, there is currently no known practical way of utilizing the UCB idea.</p>
+</div>
+
+<h2 class="section-title">3.9 A Brief Look at Policy-Based / Gradient Bandits</h2>
+<p>So far, every method we have studied has the same structure: 1. Estimate values \(Q(a)\) from rewards. 2. Choose actions based on those values (greedy, \(\epsilon\)-greedy, UCB, . . . ). These are called value-based methods.</p>
+<h3 class="subsection-title">3.9.1 An Alternative: Learn the Action Directly</h3>
+<p>What if we skipped the value-estimation step entirely?</p>
+<div class="key-concept">
+  <strong>Definition: Policy-Based Approach</strong>
+  <p>Instead of learning \(Q(a)\) and deriving a policy, we directly learn a parameterized policy \(\pi_{\theta}(a)\) – a probability distribution over actions – and update its parameters \(\theta\) to maximize expected reward.</p>
+  <p>In the bandit setting this is called a <strong>gradient bandit algorithm</strong>: maintain a numerical preference \(H_t(a)\) for each arm, convert preferences to probabilities via a softmax:</p>
+  \[ \pi_t(a) = \frac{e^{H_t(a)}}{\sum_{b} e^{H_t(b)}} \]
+  <p>and update preferences using a stochastic gradient ascent on the expected reward.</p>
+</div>
+<h3 class="subsection-title">3.9.2 Worked Examples</h3>
+<h4>Reward Above Baseline</h4>
+<p>Suppose there are three actions, \(H_t(a_1) = H_t(a_2) = H_t(a_3) = 0\), so \(\pi_t(a_i) = 1/3\). Let \(\alpha = 0.1\), selected action \(A_t = a_2\), reward \(R_t = 2.0\), and baseline \(\bar{R}_t = 1.0\). Then \(R_t - \bar{R}_t = 1.0\):</p>
+<ul>
+  <li>\(\Delta H(a_2) = 0.1 \times 1.0 \times (1 - 1/3) = 0.0667\)</li>
+  <li>\(\Delta H(a_1) = \Delta H(a_3) = -0.1 \times 1.0 \times (1/3) = -0.0333\)</li>
+</ul>
+<p>The selected action becomes more likely because it performed better than the baseline. The unselected actions become slightly less likely.</p>
+
+<h4>Reward Below Baseline</h4>
+<p>Suppose \(\pi_t(a_1) = 0.5\), \(\pi_t(a_2) = 0.3\), \(\pi_t(a_3) = 0.2\), selected \(A_t = a_1\), \(R_t = 0.4\), \(\bar{R}_t = 1.0\), \(\alpha = 0.1\). Then \(R_t - \bar{R}_t = -0.6\):</p>
+<ul>
+  <li>\(\Delta H(a_1) = 0.1 \times (-0.6) \times (1 - 0.5) = -0.03\)</li>
+  <li>\(\Delta H(a_2) = -0.1 \times (-0.6) \times 0.3 = 0.018\)</li>
+  <li>\(\Delta H(a_3) = -0.1 \times (-0.6) \times 0.2 = 0.012\)</li>
+</ul>
+<p>The selected action becomes less likely because it performed worse than the baseline. The unselected actions gain preference — a form of indirect exploration that compensates for the poor outcome.</p>
+
+<h3 class="subsection-title">3.9.3 Why We Skip the Details Here</h3>
+<p>Policy-gradient methods require a careful mathematical setup (gradient of expectations, log-derivative trick, baselines, etc.). The instructor’s plan is to develop them properly later, in the context of policy gradient and actor-critic methods for full RL. For now, simply remember the taxonomy: • Value-based: Estimate \(Q \Rightarrow\) derive action. • Policy-based: Directly parameterize and optimize the policy. • Actor-Critic: Both — a value network (critic) helps a policy network (actor).</p>
+<div class="key-concept"><strong>Key Insight from Sutton &amp; Barto: The Baseline's Role</strong><p>The expected update of the gradient-bandit algorithm is equal to the gradient of expected reward, making it an instance of <strong>stochastic gradient ascent</strong> — this guarantees robust convergence properties. Critically, nothing is required of the reward baseline \(\bar{R}_t\) other than that it not depend on the selected action. The choice of baseline does not affect the <em>expected</em> update of the algorithm, but it dramatically affects the <strong>variance</strong> of the update and thus the <strong>rate of convergence</strong>. Sutton &amp; Barto's Figure 2.4 shows that with a baseline, the \(\alpha = 0.4\) variant performs well; without a baseline, performance degrades significantly. Using the average reward as the baseline is simple and works well in practice, though it may not be the very best choice.</p></div>
+<h2 class="section-title">3.10 Contextual Bandits: Bridging MAB and Full RL</h2>
+<p>We are now ready to relax the most restrictive assumption of MAB: that there is no notion of state or context.</p>
+<h3 class="subsection-title">3.10.1 Three Layers of Decision-Making</h3>
+<p><table>
+  <thead>
+    <tr>
+      <th>Setting</th>
+      <th>Inputs to action selection</th>
+      <th>Does action affect future situation?</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><strong>Vanilla MAB</strong></td>
+      <td>Nothing (stateless)</td>
+      <td>No</td>
+    </tr>
+    <tr>
+      <td><strong>Contextual Bandit</strong></td>
+      <td>A context \(x_t\) observed before acting</td>
+      <td>No (context evolves on its own)</td>
+    </tr>
+    <tr>
+      <td><strong>Full RL</strong></td>
+      <td>A state \(s_t\) that the agent’s actions influence</td>
+      <td>Yes — actions move you to new states</td>
+    </tr>
+  </tbody>
+</table></p>
+<h3 class="subsection-title">3.10.2 Associative vs. Non-Associative Search</h3>
+<div class="key-concept"><strong>Definition:</strong> Associative Search The action depends on (is associated with) some observation about the current situation. Both contextual bandits and full RL are associative. Sutton &amp; Barto note that the term "associative search" was introduced by Barto, Sutton, and Brouwer (1981), and the modern literature uses the term <strong>contextual bandits</strong> for this problem. Thorndike's Law of Effect (quoted in Chapter 1 of the book) describes associative search by referring to the formation of associative links between situations (states) and actions.</div>
+<div class="key-concept"><strong>Definition:</strong> Non-Associative Search The action does not depend on any observed situation — the agent uses the same decision rule every step. Vanilla MAB is non-associative.</div>
+<h3 class="subsection-title">3.10.3 What is a Contextual Bandit?</h3>
+<div class="key-concept">
+  <strong>Definition: Contextual Bandit</strong>
+  <p>At each step \(t\):</p>
+  <ol>
+    <li>Observe a context \(x_t\) from the environment.</li>
+    <li>Select an action \(A_t\) based on \(x_t\).</li>
+    <li>Receive a reward \(R_t\) from the environment.</li>
+  </ol>
+  <p><strong>Critical property:</strong> The action \(A_t\) does not change \(x_{t+1}\). The context evolves exogenously. The agent must learn a separate “mini-bandit” for each possible context — or, more practically, a function \(\pi(a \mid x)\) that generalizes across contexts.</p>
+</div>
+<h3 class="subsection-title">3.10.4 Examples of Contextual Bandits</h3>
+<p>The table below formalizes how key applications map to the contextual bandit framework — identifying what constitutes the context, the action set, and the reward signal:</p>
+<table>
+  <thead>
+    <tr><th>Application</th><th>Context</th><th>Actions</th><th>Reward &amp; Why Contextual</th></tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><strong>Online Advertising</strong></td>
+      <td>User profile, device, query, page type, time of day.</td>
+      <td>Candidate advertisements.</td>
+      <td>Click, purchase, or revenue. The best advertisement depends on the observed user and page context.</td>
+    </tr>
+    <tr>
+      <td><strong>News / Content&nbsp;Recommendation</strong></td>
+      <td>User interests, recent browsing, location, and current session features.</td>
+      <td>Articles, videos, or posts.</td>
+      <td>Click, dwell time, or completion. Different users should receive different recommendations.</td>
+    </tr>
+    <tr>
+      <td><strong>Clinical Decision Support</strong></td>
+      <td>Patient record, symptoms, history, age, and risk indicators.</td>
+      <td>Candidate treatments or interventions.</td>
+      <td>Recovery indicator or improvement score. Treatment choice depends on patient-specific context.</td>
+    </tr>
+    <tr>
+      <td><strong>Information Retrieval</strong></td>
+      <td>Search query, intent features, and previous interaction signals.</td>
+      <td>Ranking policy or selected result group.</td>
+      <td>Click satisfaction or relevance signal. The useful action depends on the query and user intent.</td>
+    </tr>
+    <tr>
+      <td><strong>Adaptive Tutoring</strong></td>
+      <td>Learner profile, recent answers, and estimated mastery level.</td>
+      <td>Next exercise, hint, or explanation type.</td>
+      <td>Correctness or learning gain. The best instructional action depends on the learner's current context.</td>
+    </tr>
+  </tbody>
+</table>
+<div class="key-concept"><strong>Key Idea:</strong> These examples are contextual bandits because the learner receives side information before acting, but receives reward only for the chosen action. They are intermediate between ordinary bandits and full reinforcement learning: more expressive than a single-situation bandit, but still simpler than a multi-state sequential decision process.</div>
+<h3 class="subsection-title">3.10.5 When MAB / Contextual Bandit / Full RL?</h3>
+<div class="key-concept">
+  <strong>Key Idea: A Three-Question Decision Tree</strong>
+  <p>When asked to model a problem, ask:</p>
+  <ol>
+    <li>Does the optimal action depend on observable situational information?
+      <br/>&bull; No &rArr; Vanilla MAB.
+      <br/>&bull; Yes &rArr; go to Question 2.
+    </li>
+    <li>Does my action affect what information I’ll see next?
+      <br/>&bull; No &rArr; Contextual Bandit.
+      <br/>&bull; Yes &rArr; Full RL.
+    </li>
+  </ol>
+</div>
+<div class="example-box"><strong>Example:</strong> Why Driving Is Full RL Driving a car requires looking at the current state (speed, road, surrounding traffic) before acting. Moreover, your action (accelerate, brake, turn) changes the next state you will see. Both conditions for full RL are met. You cannot model this as a bandit.</div>
+<div class="example-box"><strong>Example:</strong> Why Chess Is Full RL Chess has a clear state (the board). Each move you make changes the board for the next decision. The opponent also responds based on your move. Full RL.</div>
+<h2 class="section-title">3.11 Summary & Key Takeaways</h2>
+<div class="key-concept">
+  <strong>Key Idea: Concepts From This Lecture</strong>
+  <ol>
+    <li><strong>Reverse-engineering \(\epsilon\)-greedy:</strong> You can say “certainly \(\epsilon\)” only when a non-greedy action is observed.</li>
+    <li><strong>Reward variance:</strong> The higher the variance, the longer you must explore.</li>
+    <li><strong>Non-stationary problems:</strong> Reward distributions drift. Keep \(\epsilon > 0\) and use a constant step size.</li>
+    <li><strong>Incremental update:</strong> The sample average rewrites as \(Q_{n+1} = Q_n + \frac{1}{n} [ R_n - Q_n ]\).</li>
+    <li><strong>General update form:</strong> \(\text{New} = \text{Old} + \alpha [ \text{Target} - \text{Old} ]\) — a template used everywhere in RL.</li>
+    <li><strong>Constant step size \(\alpha\):</strong> Yields exponential recency weighting; tracks change in non-stationary problems.</li>
+    <li><strong>Optimistic initial values:</strong> Cheap, parameter-free, but only transient exploration; only works for stationary problems.</li>
+    <li><strong>UCB:</strong> Adds an uncertainty bonus \(c \sqrt{\frac{\ln t}{N(a)}}\) to each value. Empirically strong; no \(\epsilon\) needed.</li>
+    <li><strong>Value-based vs. policy-based:</strong> Two big families of RL algorithms. Gradient bandits are the policy-based MAB.</li>
+    <li><strong>Contextual bandit:</strong> Action depends on observed context, but action does not affect future context.</li>
+    <li><strong>Full RL:</strong> Action depends on state and affects future state.</li>
+  </ol>
+</div>
+<h3 class="subsection-title">3.11.1 Self-Check Questions</h3>
+<ol>
+  <li>In an \(\epsilon\)-greedy trace, what condition guarantees that a particular time step was a random exploration step?</li>
+  <li>Why does a fixed step size \(\alpha\) make an agent better at non-stationary problems?</li>
+  <li>Derive the incremental update \(Q_{n+1} = Q_n + \frac{1}{n} [ R_n - Q_n ]\) from the sample-average definition.</li>
+  <li>Compute the UCB score for an arm with \(Q(a) = 2.5\), \(N(a) = 8\), \(t = 64\), \(c = 1\).</li>
+  <li>Argue whether each of the following is best modeled as MAB, contextual bandit, or full RL:
+    <ul>
+      <li>(a) A daily news feed picking 5 stories for each user.</li>
+      <li>(b) Playing Atari Breakout.</li>
+      <li>(c) Choosing a route home given traffic, when your choice does not affect traffic.</li>
+      <li>(d) Treatment of a chronic patient over months.</li>
+    </ul>
+  </li>
+  <li>Why does optimistic initialization fail in non-stationary environments?</li>
+  <li>Sketch the long-run behavior of \(\epsilon\)-greedy vs. UCB on a stationary 10-armed testbed.</li>
+</ol>
+
+<h3 class="subsection-title">3.11.2 Practice Numerical Problems</h3>
+<ol>
+  <li>A non-stationary 3-armed bandit uses \(\alpha = 0.2\). Currently \(Q(A_1) = 4\). The next three pulls of \(A_1\) yield rewards 6, 5, 7. Compute \(Q(A_1)\) after each step.</li>
+  <li>A 5-armed bandit at \(t = 100\) has \(N(a) = (20, 25, 5, 30, 20)\) and \(Q(a) = (1.2, 1.5, 0.7, 1.1, 1.0)\). Using \(c = 1\), compute the UCB score of each arm and identify which arm is selected next.</li>
+  <li>Optimistic init: 4 arms, \(Q_1 = 10\) everywhere, true means (2, 1, 3, 0), deterministic rewards, \(\alpha = 0.5\), pure greedy. Simulate the first 8 actions and the resulting \(Q\) table.</li>
+  <li>Reverse engineer: For the trace \((A_1, 1)\), \((A_2, 1)\), \((A_2, 2)\), \((A_3, 0)\) on a 3-armed bandit with all \(Q_1 = 0\) and \(\epsilon\)-greedy, classify each step as certainly-\(\epsilon\), maybe-\(\epsilon\), or certainly-greedy.</li>
+</ol>
+
+<h3 class="subsection-title">3.11.3 Further Reading</h3>
+<ul>
+  <li>Sutton &amp; Barto, <em>Reinforcement Learning: An Introduction</em>, 2nd Edition — Chapter 2 in full, especially Sections 2.5–2.7 (non-stationary, UCB, gradient bandits) and Section 2.9 (associative search).</li>
+  <li>Auer, Cesa-Bianchi, Fischer (2002), <em>Finite-time Analysis of the Multiarmed Bandit Problem</em> — the original UCB1 paper.</li>
+</ul>
+<p style="margin-top: 40px; font-style: italic; color: #64748b; text-align: center;">End of Lecture 3 Notes</p>
+
+    </main>
+    <section class="quiz-section">
+      <h2>Test Your Knowledge</h2>
+      <div id="quiz-card-0" class="quiz-card" data-correct-index="0">
+        <p class="quiz-question">Q1: Why is a constant step-size \(\alpha\) often preferred over the sample-average (\(1/n\)) update in non-stationary bandits?</p>
+        <div class="quiz-options">
+            <button id="quiz-0-option-0" class="quiz-option" onclick="checkAnswer(this, 0)">It weights recent rewards more heavily so estimates can track drifting true values</button>
+            <button id="quiz-0-option-1" class="quiz-option" onclick="checkAnswer(this, 1)">It guarantees finding the optimal arm in finite pulls</button>
+            <button id="quiz-0-option-2" class="quiz-option" onclick="checkAnswer(this, 2)">It removes the need for any exploration</button>
+            <button id="quiz-0-option-3" class="quiz-option" onclick="checkAnswer(this, 3)">It makes all arms have identical true values</button>
+        </div>
+        <div class="quiz-explanation hidden"><strong>Explanation:</strong> With \(1/n\) weighting, old rewards dominate and estimates adapt slowly to change. Constant \(\alpha\) implements exponential recency weighting, allowing \(Q(a)\) to respond to new data — essential when true values drift.</div>
+      </div>
+      <div id="quiz-card-1" class="quiz-card" data-correct-index="0">
+        <p class="quiz-question">Q2: In UCB1 action selection, why is the term \(\sqrt{\frac{\ln t}{N_t(a)}}\) added to \(Q_t(a)\)?</p>
+        <div class="quiz-options">
+            <button id="quiz-1-option-0" class="quiz-option" onclick="checkAnswer(this, 0)">To favour actions tried less often, reducing uncertainty about their true value</button>
+            <button id="quiz-1-option-1" class="quiz-option" onclick="checkAnswer(this, 1)">To normalise rewards to zero mean</button>
+            <button id="quiz-1-option-2" class="quiz-option" onclick="checkAnswer(this, 2)">To enforce a uniform random policy</button>
+            <button id="quiz-1-option-3" class="quiz-option" onclick="checkAnswer(this, 3)">To replace the need for any value estimates</button>
+        </div>
+        <div class="quiz-explanation hidden"><strong>Explanation:</strong> The bonus grows when an arm has been selected few times relative to total steps, encouraging exploration of uncertain arms while exploiting high \(Q\) estimates as evidence accumulates.</div>
+      </div>
+      <div id="quiz-card-2" class="quiz-card" data-correct-index="0">
+        <p class="quiz-question">Q3: When is a contextual bandit more appropriate than a vanilla multi-armed bandit?</p>
+        <div class="quiz-options">
+            <button id="quiz-2-option-0" class="quiz-option" onclick="checkAnswer(this, 0)">When the best action depends on observable context such as user features or time</button>
+            <button id="quiz-2-option-1" class="quiz-option" onclick="checkAnswer(this, 1)">When there is only one action available</button>
+            <button id="quiz-2-option-2" class="quiz-option" onclick="checkAnswer(this, 2)">When rewards are always deterministic and known in advance</button>
+            <button id="quiz-2-option-3" class="quiz-option" onclick="checkAnswer(this, 3)">When the agent must model long-term state transitions across many time steps</button>
+        </div>
+        <div class="quiz-explanation hidden"><strong>Explanation:</strong> Contextual bandits condition action values on context \(x\): \(Q(a \mid x)\). Vanilla MAB assumes the same distributions every step. Full RL is needed when earlier actions change future states, not just immediate context.</div>
+      </div>
+    </section>
+  </div>
+  <script>
+    function checkAnswer(button, optionIndex) {
+      const card = button.closest('.quiz-card');
+      if (card.dataset.answered === "true") return;
+      card.dataset.answered = "true";
+      const correctIndex = parseInt(card.dataset.correctIndex);
+      const options = card.querySelectorAll('.quiz-option');
+      options.forEach((opt, idx) => {
+        opt.disabled = true;
+        if (idx === correctIndex) opt.classList.add('correct');
+        else if (idx === optionIndex) opt.classList.add('incorrect');
+      });
+      const explanation = card.querySelector('.quiz-explanation');
+      if (explanation) { explanation.classList.remove('hidden'); explanation.classList.add('fade-in'); }
+    }
+  </script>
+</body>
+</html>

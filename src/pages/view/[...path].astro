@@ -1,0 +1,745 @@
+---
+import BaseLayout from '../../layouts/BaseLayout.astro';
+import { getFallbackMetadata } from '../../utils/metadata';
+import type { QuizQuestion } from '../../utils/metadata';
+import { listSubjects, listLectures, getLectureContent } from '../../utils/notesLoader';
+import { parseLectureHtml } from '../../utils/htmlParser';
+import PomodoroTimer from '../../components/PomodoroTimer.astro';
+
+export const prerender = false;
+
+const { path } = Astro.params;
+if (!path) return Astro.redirect('/');
+
+const segments = path.split('/').map(decodeURIComponent);
+if (segments.length < 2) return Astro.redirect('/');
+
+const subjectName = segments[0];
+const lectureFolderName = segments[1];
+
+let errorMsg = '';
+let customMetadata = null;
+let htmlContent = '';
+let hasHtmlContent = false;
+
+const lectureContent = await getLectureContent(subjectName, lectureFolderName);
+if (lectureContent) {
+  htmlContent = lectureContent.htmlContent;
+  hasHtmlContent = true;
+  customMetadata = lectureContent.metadata;
+} else {
+  errorMsg = `No notes found for "${subjectName}/${lectureFolderName}". Check that the HTML file exists in src/content/notes/.`;
+}
+
+let bodyContent = '';
+let hasRevisionSection = false;
+let revisionSectionContent = '';
+let hasQuizSection = false;
+let quizSectionContent = '';
+
+if (hasHtmlContent) {
+  const parsed = parseLectureHtml(htmlContent);
+  bodyContent = parsed.bodyContent;
+  hasRevisionSection = parsed.hasRevisionSection;
+  revisionSectionContent = parsed.revisionSectionContent;
+  hasQuizSection = parsed.hasQuizSection;
+  quizSectionContent = parsed.quizSectionContent;
+}
+
+const metadata = customMetadata || getFallbackMetadata(lectureFolderName, subjectName);
+const lectureName = (lectureContent?.fileName || lectureFolderName).replace(/_/g, ' ');
+
+const showRevisionTab = hasRevisionSection || !!(metadata.examRevisionNotes && metadata.examRevisionNotes.length > 0);
+const showQuizTab = hasQuizSection || !!(metadata.quiz && metadata.quiz.length > 0);
+
+const subjects = await listSubjects();
+const lectures = await listLectures(subjectName);
+
+let prevUrl = '', prevLabel = '', nextUrl = '', nextLabel = '';
+const currentLectureIndex = lectures.findIndex(l => l.folderName === lectureFolderName);
+const currentSubjectIndex = subjects.findIndex(s => s.name === subjectName);
+
+if (currentLectureIndex !== -1 && currentSubjectIndex !== -1) {
+  if (currentLectureIndex > 0) {
+    const p = lectures[currentLectureIndex - 1];
+    prevUrl = `/view/${encodeURIComponent(subjectName)}/${encodeURIComponent(p.folderName)}`;
+    prevLabel = p.name;
+  } else {
+    const prevSubjectIdx = (currentSubjectIndex - 1 + subjects.length) % subjects.length;
+    const prevSubject = subjects[prevSubjectIdx];
+    const prevLectures = await listLectures(prevSubject.name);
+    if (prevLectures.length > 0) {
+      const last = prevLectures[prevLectures.length - 1];
+      prevUrl = `/view/${encodeURIComponent(prevSubject.name)}/${encodeURIComponent(last.folderName)}`;
+      prevLabel = `${prevSubject.name} - ${last.name}`;
+    }
+  }
+
+  if (currentLectureIndex < lectures.length - 1) {
+    const n = lectures[currentLectureIndex + 1];
+    nextUrl = `/view/${encodeURIComponent(subjectName)}/${encodeURIComponent(n.folderName)}`;
+    nextLabel = n.name;
+  } else {
+    const nextSubjectIdx = (currentSubjectIndex + 1) % subjects.length;
+    const nextSubject = subjects[nextSubjectIdx];
+    const nextLectures = await listLectures(nextSubject.name);
+    if (nextLectures.length > 0) {
+      const first = nextLectures[0];
+      nextUrl = `/view/${encodeURIComponent(nextSubject.name)}/${encodeURIComponent(first.folderName)}`;
+      nextLabel = `${nextSubject.name} - ${first.name}`;
+    }
+  }
+}
+
+const seoDescription = metadata.summary
+  ? (metadata.summary.length > 155 ? metadata.summary.slice(0, 152) + "..." : metadata.summary)
+  : `Access study notes and resources for ${lectureName} in ${subjectName} on BitsNotes.`;
+
+const seoKeywords = [
+  metadata.title, subjectName, lectureName,
+  "lecture notes", "study guide", "practice quiz",
+  ...(metadata.keyConcepts || []).map((k: string) => k.split(' ').slice(0, 3).join(' ').replace(/[^\w\s]/g, '')),
+].filter(Boolean).join(", ");
+
+const learningResourceSchema = {
+  "@context": "https://schema.org",
+  "@type": "LearningResource",
+  "name": `${lectureName} | ${subjectName} Lecture Notes`,
+  "description": metadata.summary,
+  "learningResourceType": "Lecture Notes",
+  "educationalLevel": metadata.gradeLevel,
+  "teaches": metadata.keyConcepts?.join(", ") || "",
+  "audience": { "@type": "Audience", "audienceType": metadata.targetAudience },
+  "datePublished": metadata.datePublished,
+  "inLanguage": "en",
+  "author": { "@type": "Organization", "name": "BitsNotes" },
+  "publisher": { "@type": "Organization", "name": "BitsNotes" }
+};
+
+const quizSchema = metadata.quiz && metadata.quiz.length > 0 ? {
+  "@context": "https://schema.org",
+  "@type": "Quiz",
+  "name": `${lectureName} Practice Quiz`,
+  "description": `Interactive practice quiz covering ${lectureName} concepts.`,
+  "about": { "@type": "Thing", "name": lectureName },
+  "hasPart": (metadata.quiz as QuizQuestion[]).map((q: QuizQuestion, idx: number) => ({
+    "@type": "Question",
+    "name": `Question ${idx + 1}`,
+    "text": q.question,
+    "suggestedAnswer": q.options.map((o: string, oi: number) => ({ "@type": "Answer", "text": o, "position": oi + 1 })),
+    "acceptedAnswer": { "@type": "Answer", "text": q.options[q.answerIndex] }
+  }))
+} : null;
+
+const learningResourceJson = JSON.stringify(learningResourceSchema);
+const quizJson = quizSchema ? JSON.stringify(quizSchema) : null;
+---
+
+<BaseLayout
+  title={`${lectureName} | ${subjectName} | BitsNotes`}
+  description={seoDescription}
+  keywords={seoKeywords}
+  ogType="article"
+  robots="index, follow"
+>
+  <Fragment slot="head">
+    <link rel="preload" href="/fonts/inter-latin.woff2" as="font" type="font/woff2" crossorigin />
+    <link rel="stylesheet" href="/lecture-notes.css?v=1.0.3" />
+    <script type="application/ld+json" set:html={learningResourceJson} />
+    {quizJson && <script type="application/ld+json" set:html={quizJson} />}
+    <script async src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js?client=ca-pub-2602136383267308" crossorigin="anonymous"></script>
+    <script defer src="/auth-features.js"></script>
+  </Fragment>
+
+  <div class="flex-grow w-full flex flex-col bg-[var(--bg)]">
+    {errorMsg && (
+      <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 w-full">
+        <div class="border-l-3 border-[var(--callout-warning-border)] bg-[var(--callout-warning-bg)] rounded-r-[var(--r-sm)] p-4 text-sm text-[var(--callout-warning-text)]">
+          <h3 class="font-bold">Error Loading Lecture Notes</h3>
+          <p class="mt-1">{errorMsg}</p>
+        </div>
+      </div>
+    )}
+
+    {hasHtmlContent && (
+      <div class="max-w-[1400px] mx-auto w-full px-4 sm:px-6 lg:px-8 py-6 flex-grow relative">
+        <div class="flex gap-0 lg:gap-8 items-start">
+          <!-- Mobile toggle -->
+          <button id="sidebar-toggle" aria-label="Toggle lecture list">
+            <svg fill="none" stroke="currentColor" stroke-width="2.2" viewBox="0 0 24 24">
+              <path d="M4 6h16M4 12h16M4 18h16"/>
+            </svg>
+          </button>
+          <div id="sidebar-overlay" class="fixed inset-0 z-40 bg-black/40 hidden lg:hidden"></div>
+
+          <!-- ========== LEFT SIDEBAR ========== -->
+          <aside id="lecture-sidebar" class="lecture-sidebar w-[260px] shrink-0 sticky top-20 max-h-[calc(100vh-100px)] overflow-y-auto lg:block" style="scrollbar-width:thin">
+            <div class="pb-4 mb-4 border-b border-[var(--border)]">
+              <span class="text-xs text-[var(--text-muted)] uppercase tracking-wider font-semibold">Subject</span>
+              <h2 class="font-display text-base font-bold text-[var(--text)] mt-0.5">{subjectName}</h2>
+            </div>
+            <nav class="flex flex-col gap-0.5">
+              {lectures.map((lec, idx) => {
+                const active = lec.folderName === lectureFolderName;
+                const url = active ? '#' : `/view/${encodeURIComponent(subjectName)}/${encodeURIComponent(lec.folderName)}`;
+                return (
+                  <a href={url}
+                    data-astro-reload={active ? undefined : ''}
+                    class={`flex items-center gap-2.5 px-3 py-2 rounded-[var(--r-sm)] text-sm transition-colors no-underline
+                      ${active ? 'bg-[var(--accent-subtle)] text-[var(--accent)] font-semibold border-l-[3px] border-[var(--accent)]' : 'text-[var(--text-muted)] hover:bg-[var(--bg-subtle)] hover:text-[var(--text)] border-l-[3px] border-transparent'}`}>
+                    <span class={`w-5 h-5 rounded-[4px] flex items-center justify-center text-[10px] font-bold shrink-0 ${active ? 'bg-[var(--accent)] text-[var(--accent-contrast)]' : 'bg-[var(--bg-subtle)] text-[var(--text-muted)]'}`}>
+                      {idx + 1}
+                    </span>
+                    <span class="line-clamp-2 leading-snug flex-1">{lec.name}</span>
+                  </a>
+                );
+              })}
+            </nav>
+          </aside>
+
+          <!-- ========== CENTER CONTENT ========== -->
+          <div class="flex-1 min-w-0 flex flex-col">
+            <!-- Pomodoro timer (toggle + status) -->
+            <PomodoroTimer />
+
+            <!-- Underline tabs -->
+            <nav class="flex gap-0 justify-center border-b border-[var(--border)] mb-6 overflow-x-auto -mx-4 sm:mx-0 px-4 sm:px-0" role="tablist" aria-label="Lecture viewer tabs">
+              {[
+                { id: 'notes', label: 'Lecture Notes' },
+                { id: 'guide', label: 'Study Guide' },
+                ...(showRevisionTab ? [{ id: 'revision', label: 'Exam Revision' }] : []),
+                ...(showQuizTab ? [{ id: 'quiz', label: 'Practice Quiz' }] : []),
+              ].map((tab, i) => (
+                <button
+                  role="tab"
+                  aria-selected={i === 0 ? 'true' : 'false'}
+                  data-tab={tab.id}
+                  class={`shrink-0 px-4 py-2.5 text-sm font-medium whitespace-nowrap border-b-2 transition-colors -mb-[1px]
+                    ${i === 0 ? 'text-[var(--accent)] border-[var(--accent)]' : 'text-[var(--text-muted)] border-transparent hover:text-[var(--text)] hover:border-[var(--border-strong)]'}`}
+                >
+                  {tab.label}
+                </button>
+              ))}
+            </nav>
+
+            <!-- Toolbar row: bookmark + notes toggle (always in DOM, shown by JS when logged in) -->
+            <div class="flex items-center justify-between mb-4">
+              <div class="flex items-center gap-2">
+                <button type="button" id="bn-bookmark-toggle"
+                  class="hidden items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium rounded-[var(--r-sm)] border border-[var(--border)] text-[var(--text-muted)] hover:border-[var(--accent)] hover:text-[var(--accent)] transition-colors"
+                  data-subject={subjectName}
+                  data-lecture={lectureFolderName}
+                  data-display-name={lectureName}
+                  data-bookmarked="false"
+                >
+                  <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/></svg>
+                  <svg class="w-3.5 h-3.5 hidden" fill="currentColor" viewBox="0 0 24 24"><path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/></svg>
+                  <span>Save</span>
+                </button>
+              </div>
+            </div>
+
+            <!-- Tab panels -->
+            <!-- Notes panel -->
+            <div class="tab-panel active" id="panel-notes" role="tabpanel" aria-labelledby="tab-notes">
+              <div class="lecture-notes-wrapper" id="lecture-content" data-subject={subjectName} data-lecture={lectureFolderName}>
+                <span class="content-watermark" aria-hidden="true">&copy; BitsNotes bitsnotes.com - Unauthorized reproduction prohibited</span>
+                <Fragment set:html={bodyContent} />
+                <span class="content-watermark" aria-hidden="true">&copy; BitsNotes bitsnotes.com</span>
+              </div>
+            </div>
+
+            <!-- Study Guide panel -->
+            <div class="tab-panel study-guide-panel" id="panel-guide" role="tabpanel" aria-labelledby="tab-guide">
+              <div class="guide-header">
+                <h2>{lectureName}</h2>
+                <div class="guide-meta">
+                  <span>{subjectName}</span>
+                  {metadata.gradeLevel && <span>&middot; {metadata.gradeLevel}</span>}
+                  {metadata.datePublished && <span>&middot; {metadata.datePublished}</span>}
+                </div>
+              </div>
+
+              {metadata.summary && (
+                <div class="guide-summary"><h3>Summary</h3><p>{metadata.summary}</p></div>
+              )}
+
+              {metadata.keyConcepts && metadata.keyConcepts.length > 0 && (
+                <div class="objectives">
+                  <h3>Learning Objectives</h3>
+                  {metadata.keyConcepts.map((concept: string, idx: number) => (
+                    <div class="objective-item">
+                      <span class="objective-marker">{idx + 1}</span>
+                      <span class="objective-text">{concept}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {metadata.sections && metadata.sections.length > 0 && (
+                <div class="sections-breakdown">
+                  <h3>Sections Breakdown</h3>
+                  {metadata.sections.map((section: any, idx: number) => (
+                    <div class="section-card">
+                      <div class="section-card-header">
+                        <span class="section-card-number">{idx + 1}</span>
+                        <span class="section-card-title">{section.title}</span>
+                      </div>
+                      {section.pages && <span class="section-card-pages">{section.pages}</span>}
+                      {section.description && <p class="section-card-desc">{section.description}</p>}
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {metadata.targetAudience && (
+                <div class="audience-badge">
+                  <svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 00-3-3.87"/><path d="M16 3.13a4 4 0 010 7.75"/></svg>
+                  {metadata.targetAudience}
+                </div>
+              )}
+            </div>
+
+            <!-- Exam Revision panel -->
+            {showRevisionTab && (
+              <div class="tab-panel revision-panel" id="panel-revision" role="tabpanel" aria-labelledby="tab-revision">
+                {hasRevisionSection ? (
+                  <Fragment set:html={revisionSectionContent} />
+                ) : (
+                  <>
+                    <div class="guide-header">
+                      <h2>Exam Revision Notes</h2>
+                      <div class="guide-meta">
+                        <span>Key Topics</span><span>&middot; Must Knows</span><span>&middot; Formulas</span><span>&middot; Quick Checks</span>
+                      </div>
+                    </div>
+                    <div class="flex flex-col gap-6">
+                      {metadata.examRevisionNotes?.map((item: any, idx: number) => (
+                        <div class="section-card">
+                          <div class="flex items-center gap-3.5 mb-4 pb-3 border-b border-[var(--border)]">
+                            <span class="section-card-number">{idx + 1}</span>
+                            <span class="section-card-title text-lg">{item.topic}</span>
+                          </div>
+                          <div class="flex flex-col gap-4">
+                            {item.mustKnow && (
+                              <div class="revision-mustknow"><strong>Must Know</strong><p>{item.mustKnow}</p></div>
+                            )}
+                            {item.keyFormula && (
+                              <div class="revision-formula">
+                                <strong class="text-[0.7rem] font-bold text-[var(--accent)] uppercase tracking-wider block mb-2">Key Formula</strong>
+                                <div>{(item.keyFormula.startsWith('\\[') || item.keyFormula.startsWith('$$') || item.keyFormula.startsWith('\\(')) ? item.keyFormula : `\\[ ${item.keyFormula} \\]`}</div>
+                              </div>
+                            )}
+                            {item.commonPitfall && (
+                              <div class="revision-pitfall"><strong>Common Pitfall</strong><p>{item.commonPitfall}</p></div>
+                            )}
+                            {item.quickCheck && (
+                              <div class="revision-check"><strong>Quick Check</strong><p>{item.quickCheck}</p></div>
+                            )}
+                            {item.connections && item.connections.length > 0 && (
+                              <div class="revision-connections"><strong>Connections:</strong>
+                                {item.connections.map((conn: string) => (
+                                  <span class="px-2.5 py-1 bg-[var(--accent-subtle)] rounded-[var(--r-sm)] text-xs font-semibold text-[var(--accent)]">{conn}</span>
+                                ))}
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </>
+                )}
+              </div>
+            )}
+
+            <!-- Quiz panel -->
+            {showQuizTab && (
+              <div class="tab-panel quiz-panel" id="panel-quiz" role="tabpanel" aria-labelledby="tab-quiz">
+                {hasQuizSection ? (
+                  <Fragment set:html={quizSectionContent} />
+                ) : (
+                  <>
+                    <div class="quiz-header">
+                      <h2>Practice Quiz</h2>
+                      <p>Test your understanding of {lectureName}. Select an answer for each question — results are instant.</p>
+                    </div>
+                    <div class="quiz-grid" id="quiz-grid">
+                      {metadata.quiz.map((q: any, qIdx: number) => (
+                        <div class="quiz-card" data-correct-index={q.answerIndex} id={`quiz-card-${qIdx}`}>
+                          <div class="quiz-card-header">
+                            <span class="quiz-card-number">{qIdx + 1}</span>
+                            <p class="quiz-question">{q.question}</p>
+                          </div>
+                          <div class="quiz-options">
+                            {q.options.map((opt: string, optIdx: number) => (
+                              <button class="quiz-option" onclick={`window.checkQuizAnswer(this, ${optIdx}, ${qIdx})`}>{opt}</button>
+                            ))}
+                          </div>
+                          <div class="quiz-explanation hidden"><strong>Explanation:</strong> {q.explanation}</div>
+                        </div>
+                      ))}
+                    </div>
+                    <div class="quiz-score hidden" id="quiz-score">
+                      <h3 id="quiz-score-text">0 / {metadata.quiz.length}</h3>
+                      <p id="quiz-score-label">Keep going! Review the questions you missed.</p>
+                      <div class="progress-bar"><div class="progress-fill" id="quiz-progress-fill" style="width:0%"></div></div>
+                      <button class="quiz-retry" onclick="window.resetQuiz()">
+                        <svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 11-2.12-9.36L23 10"/></svg>
+                        Try Again
+                      </button>
+                    </div>
+                  </>
+                )}
+              </div>
+            )}
+
+            <!-- Prev / Next navigation -->
+            <div class="flex gap-3 mt-8 pt-6 border-t border-[var(--border)]">
+              {prevUrl ? (
+                <a href={prevUrl} class="flex-1 flex items-center gap-3 px-4 py-3 border border-[var(--border)] rounded-[var(--r-sm)] hover:border-[var(--accent)] hover:bg-[var(--accent-subtle)] transition-colors no-underline group">
+                  <svg class="w-4 h-4 text-[var(--text-muted)] shrink-0 group-hover:text-[var(--accent)] transition-colors" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24">
+                    <path d="M15 19l-7-7 7-7"/>
+                  </svg>
+                  <div class="min-w-0">
+                    <span class="block text-[10px] text-[var(--text-muted)] uppercase tracking-widest font-bold">Previous</span>
+                    <span class="block text-sm font-semibold text-[var(--text)] line-clamp-1 group-hover:text-[var(--accent)] transition-colors">{prevLabel}</span>
+                  </div>
+                </a>
+              ) : <div class="flex-1"></div>}
+              {nextUrl ? (
+                <a href={nextUrl} class="flex-1 flex items-center justify-end gap-3 px-4 py-3 border border-[var(--border)] rounded-[var(--r-sm)] hover:border-[var(--accent)] hover:bg-[var(--accent-subtle)] transition-colors no-underline group text-right">
+                  <div class="min-w-0">
+                    <span class="block text-[10px] text-[var(--text-muted)] uppercase tracking-widest font-bold">Next</span>
+                    <span class="block text-sm font-semibold text-[var(--text)] line-clamp-1 group-hover:text-[var(--accent)] transition-colors">{nextLabel}</span>
+                  </div>
+                  <svg class="w-4 h-4 text-[var(--text-muted)] shrink-0 group-hover:text-[var(--accent)] transition-colors" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24">
+                    <path d="M9 5l7 7-7 7"/>
+                  </svg>
+                </a>
+              ) : <div class="flex-1"></div>}
+            </div>
+          </div>
+
+
+
+        </div>
+      </div>
+    )}
+  </div>
+</BaseLayout>
+
+<script is:inline data-astro-rerun>
+  // ===================== TAB SWITCHING (delegated + page-load safe) =====================
+  var mathjaxLoaded = false;
+
+  function loadMathJax(cb) {
+    if (window.MathJax && window.MathJax.typesetPromise) { if (cb) cb(); return; }
+    if (document.getElementById('MathJax-script')) {
+      var id = setInterval(function() {
+        if (window.MathJax && window.MathJax.typesetPromise) { clearInterval(id); if (cb) cb(); }
+      }, 100);
+      return;
+    }
+    window.MathJax = {
+      startup: {
+        typeset: false
+      }
+    };
+    var s = document.createElement('script');
+    s.id = 'MathJax-script';
+    s.async = true;
+    s.src = 'https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js';
+    if (cb) s.onload = cb;
+    document.head.appendChild(s);
+  }
+
+  function initTabs() {
+    var tabNav = document.querySelector('[role="tablist"]');
+    if (!tabNav || tabNav.dataset.tabsInited) return;
+    tabNav.dataset.tabsInited = 'true';
+
+    tabNav.addEventListener('click', function(e) {
+      var btn = e.target.closest('[role="tab"][data-tab]');
+      if (!btn) return;
+      var tabId = btn.getAttribute('data-tab');
+
+      // Update tab styling
+      tabNav.querySelectorAll('[role="tab"][data-tab]').forEach(function(t) {
+        t.classList.remove('text-[var(--accent)]', 'border-[var(--accent)]');
+        t.classList.add('text-[var(--text-muted)]', 'border-transparent');
+        t.setAttribute('aria-selected', 'false');
+      });
+      btn.classList.add('text-[var(--accent)]', 'border-[var(--accent)]');
+      btn.classList.remove('text-[var(--text-muted)]', 'border-transparent');
+      btn.setAttribute('aria-selected', 'true');
+
+      // Show the target panel, hide others
+      var panelIds = ['panel-notes', 'panel-guide', 'panel-revision', 'panel-quiz'];
+      panelIds.forEach(function(id) {
+        var p = document.getElementById(id);
+        if (p) p.classList.remove('active');
+      });
+      var panel = document.getElementById('panel-' + tabId);
+      if (panel) {
+        panel.classList.add('active');
+        typesetNotes(panel);
+      }
+    });
+
+    // Auto-load MathJax if Notes tab is already active on page load
+    var notesPanel = document.getElementById('panel-notes');
+    if (notesPanel && notesPanel.classList.contains('active')) {
+      typesetNotes(notesPanel);
+    }
+  }
+
+  function typesetNotes(panel) {
+    if (!mathjaxLoaded) {
+      mathjaxLoaded = true;
+      loadMathJax(function() {
+        if (window.MathJax && window.MathJax.typesetPromise) {
+          window.MathJax.typesetPromise([panel]).catch(function() {});
+        }
+      });
+    } else if (window.MathJax && window.MathJax.typesetPromise) {
+      window.MathJax.typesetPromise([panel]).catch(function() {});
+    }
+  }
+
+  // ===================== MOBILE SIDEBAR =====================
+  function initSidebar() {
+    var toggleBtn = document.getElementById('sidebar-toggle');
+    var sidebar = document.getElementById('lecture-sidebar');
+    var overlay = document.getElementById('sidebar-overlay');
+    if (!toggleBtn || !sidebar || !overlay) return;
+    if (toggleBtn.dataset.sidebarInited) return;
+    toggleBtn.dataset.sidebarInited = 'true';
+
+    function toggleSidebar() {
+      if (window.innerWidth < 1024) {
+        sidebar.classList.toggle('open');
+        overlay.classList.toggle('hidden');
+        document.body.classList.toggle('overflow-hidden');
+      }
+    }
+    toggleBtn.addEventListener('click', toggleSidebar);
+    overlay.addEventListener('click', toggleSidebar);
+  }
+
+  // ===================== CODE COPY BUTTONS =====================
+  function initCodeCopy() {
+    var panel = document.getElementById('panel-notes');
+    if (!panel) return;
+    panel.querySelectorAll('pre:not([data-copy-inited])').forEach(function(p) {
+      if (p.querySelector('.copy-btn') || p.parentElement.classList.contains('code-block-wrapper')) return;
+      p.setAttribute('data-copy-inited', 'true');
+      var b = document.createElement('button');
+      b.className = 'copy-btn';
+      b.setAttribute('aria-label', 'Copy code');
+      b.innerHTML = '<svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg>';
+      var d = document.createElement('div');
+      d.className = 'code-block-wrapper';
+      p.parentNode.insertBefore(d, p);
+      d.appendChild(p);
+      d.appendChild(b);
+      b.addEventListener('click', async function() {
+        var code = p.querySelector('code') || p;
+        try {
+          await navigator.clipboard.writeText(code.textContent || '');
+          b.classList.add('copied');
+          b.innerHTML = '<svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><path d="M20 6L9 17l-5-5"/></svg>';
+          setTimeout(function() {
+            b.classList.remove('copied');
+            b.innerHTML = '<svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg>';
+          }, 2000);
+        } catch (_) {}
+      });
+    });
+  }
+
+  // Run initializers on load / view transitions
+  initTabs();
+  initSidebar();
+  initCodeCopy();
+</script>
+
+<script is:inline data-astro-rerun>
+  // ===================== QUIZ =====================
+  window.quizState = { answered: 0, correct: 0, total: 0 };
+
+  window.checkQuizAnswer = function(button, optionIndex, questionIndex) {
+    var card = document.getElementById('quiz-card-' + questionIndex);
+    if (!card || card.dataset.answered === 'true') return;
+    card.dataset.answered = 'true';
+    var correctIndex = parseInt(card.getAttribute('data-correct-index'));
+    var options = card.querySelectorAll('.quiz-option');
+    var isCorrect = optionIndex === correctIndex;
+    options.forEach(function(opt, idx) {
+      opt.disabled = true;
+      if (idx === correctIndex) opt.classList.add('correct');
+      else if (idx === optionIndex) opt.classList.add('incorrect');
+    });
+    var explanation = card.querySelector('.quiz-explanation');
+    if (explanation) { explanation.classList.remove('hidden'); explanation.classList.add('fade-in'); }
+
+    var totalCards = document.querySelectorAll('#quiz-grid .quiz-card').length;
+    window.quizState.total = totalCards;
+    window.quizState.answered = document.querySelectorAll('#quiz-grid .quiz-card[data-answered="true"]').length;
+    if (isCorrect) window.quizState.correct++;
+    if (window.quizState.answered >= window.quizState.total) window.showQuizScore();
+  };
+
+  window.showQuizScore = function() {
+    var scoreEl = document.getElementById('quiz-score');
+    var textEl = document.getElementById('quiz-score-text');
+    var labelEl = document.getElementById('quiz-score-label');
+    var fillEl = document.getElementById('quiz-progress-fill');
+    if (!scoreEl) return;
+    scoreEl.classList.remove('hidden');
+    var pct = window.quizState.total > 0 ? Math.round((window.quizState.correct / window.quizState.total) * 100) : 0;
+    textEl.textContent = window.quizState.correct + ' / ' + window.quizState.total;
+    fillEl.style.width = pct + '%';
+    if (pct === 100) labelEl.textContent = 'Perfect score! You mastered this material.';
+    else if (pct >= 70) labelEl.textContent = 'Great job! Review the explanations for questions you missed.';
+    else labelEl.textContent = 'Keep going! Review the lecture notes and try again.';
+  };
+
+  window.resetQuiz = function() {
+    document.querySelectorAll('#quiz-grid .quiz-card').forEach(function(card) {
+      card.dataset.answered = 'false';
+      card.querySelectorAll('.quiz-option').forEach(function(opt) {
+        opt.disabled = false;
+        opt.classList.remove('correct', 'incorrect');
+      });
+      var expl = card.querySelector('.quiz-explanation');
+      if (expl) { expl.classList.add('hidden'); expl.classList.remove('fade-in'); }
+    });
+    var scoreEl = document.getElementById('quiz-score');
+    if (scoreEl) scoreEl.classList.add('hidden');
+    window.quizState = { answered: 0, correct: 0, total: 0 };
+  };
+
+  // Legacy inline quiz handler
+  window.checkAnswer = function(button, optionIndex) {
+    var card = button.closest('.quiz-card');
+    if (!card || card.dataset.answered === 'true') return;
+    card.dataset.answered = 'true';
+    var correctIndex = parseInt(card.getAttribute('data-correct-index') || card.dataset.correctIndex);
+    var options = card.querySelectorAll('.quiz-option');
+    options.forEach(function(opt, idx) {
+      opt.disabled = true;
+      if (idx === correctIndex) opt.classList.add('correct');
+      else if (idx === optionIndex) opt.classList.add('incorrect');
+    });
+    var explanation = card.querySelector('.quiz-explanation');
+    if (explanation) { explanation.classList.remove('hidden'); explanation.classList.add('fade-in'); }
+  };
+</script>
+
+<script is:inline data-astro-rerun>
+  // ===================== ANTI-SCRAPING PROTECTION =====================
+  (function() {
+    var content = document.querySelector('.lecture-notes-wrapper');
+    if (!content) return;
+
+    // 1. Disable right-click context menu on notes
+    content.addEventListener('contextmenu', function(e) {
+      e.preventDefault();
+      return false;
+    });
+
+    // 2. Block copy/select-all/save/print/view-source shortcuts
+    document.addEventListener('keydown', function(e) {
+      var key = e.key ? e.key.toLowerCase() : '';
+      if ((e.ctrlKey || e.metaKey) && ['a','c','s','p','u'].indexOf(key) !== -1) {
+        // Only block if notes panel is active or selection is in notes
+        var notesPanel = document.getElementById('panel-notes');
+        var isNotesActive = notesPanel && notesPanel.classList.contains('active');
+        var sel = window.getSelection();
+        var selInContent = sel && sel.toString().length > 0 && content.contains(sel.anchorNode);
+
+        if (isNotesActive || selInContent) {
+          e.preventDefault();
+          e.stopPropagation();
+          return false;
+        }
+      }
+    });
+
+    // 3. Block drag to prevent text extraction via drag-and-drop
+    content.addEventListener('dragstart', function(e) {
+      e.preventDefault();
+      return false;
+    });
+
+    // 4. Intercept copy event and inject watermark
+    content.addEventListener('copy', function(e) {
+      e.preventDefault();
+      return false;
+    });
+
+    // 5. Inject zero-width characters as invisible fingerprint
+    // These persist in copied text and prove content was taken from BitsNotes
+    var zw = ['\u200B','\u200C','\u200D','\uFEFF'];
+    var headers = content.querySelectorAll('h1, h2, h3, h4, h5, h6');
+    for (var i = 0; i < headers.length; i++) {
+      var txt = headers[i].textContent || '';
+      if (txt.length > 3) {
+        var zwSpan = document.createElement('span');
+        zwSpan.setAttribute('aria-hidden', 'true');
+        zwSpan.style.cssText = 'font-size:0;position:absolute;opacity:0;pointer-events:none';
+        // Encode a small fingerprint using zero-width chars
+        var fp = '';
+        for (var j = 0; j < 6; j++) {
+          fp += zw[Math.floor(Math.random() * zw.length)];
+        }
+        zwSpan.textContent = fp;
+        headers[i].appendChild(zwSpan);
+      }
+    }
+  })();
+  // ===================== AUTH FEATURES (bookmarks, progress) ================
+  (function () {
+    var BN = window.BitsNotes;
+    if (!BN) return;
+
+    // Check if user is logged in by trying to fetch bookmarks list
+    fetch('/api/bookmarks/list', { credentials: 'same-origin' }).then(function (r) {
+      if (r.status === 401) return false;
+      return r.json().then(function () { return true; });
+    }).then(function (loggedIn) {
+      if (!loggedIn) return;
+
+      // Show bookmark button
+      var bmBtn = document.getElementById('bn-bookmark-toggle');
+      if (bmBtn) bmBtn.classList.remove('hidden');
+
+      // Check bookmark state
+      if (bmBtn) {
+        BN.json('/api/bookmarks/list').then(function (data) {
+          if (!data || !data.bookmarks) return;
+          var subject = bmBtn.dataset.subject;
+          var lecture = bmBtn.dataset.lecture;
+          var allBookmarks = Object.values(data.bookmarks).flat();
+          var isBm = allBookmarks.some(function (b) { return b.subject === subject && b.lecture === lecture; });
+          bmBtn.dataset.bookmarked = isBm ? 'true' : 'false';
+          if (isBm) {
+            bmBtn.classList.add('border-[var(--accent)]', 'bg-[var(--accent-subtle)]', 'text-[var(--accent)]');
+            bmBtn.classList.remove('border-[var(--border)]', 'text-[var(--text-muted)]');
+            bmBtn.querySelector('span:last-child').textContent = 'Saved';
+          }
+        });
+
+        bmBtn.addEventListener('click', function () {
+          BN.toggleBookmark(bmBtn);
+        });
+      }
+
+      // Setup reading progress
+      var contentEl = document.getElementById('lecture-content');
+      if (contentEl && contentEl.dataset.subject) {
+        BN.setupProgress(contentEl.dataset.subject, contentEl.dataset.lecture);
+      }
+    });
+  })();
+</script>

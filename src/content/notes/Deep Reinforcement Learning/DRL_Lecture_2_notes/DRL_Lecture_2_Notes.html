@@ -1,0 +1,754 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="description" content="This lecture deepens the RL vocabulary and introduces the multi-armed bandit problem as the simplest setting for studying action-value estimation and exploration.">
+  <title>Elements of RL and Multi-Armed Bandits</title>
+  <link rel="stylesheet" href="/lecture-notes.css">
+  <script type="application/json" id="lecture-metadata">{"title":"Elements of RL and Multi-Armed Bandits","subject":"Deep Reinforcement Learning","gradeLevel":"postgraduate","datePublished": "2026-06-02","targetAudience":"Postgraduate students studying bandit algorithms and value-based decision making before full MDP-based reinforcement learning.","summary":"This lecture deepens the RL vocabulary and introduces the multi-armed bandit (MAB) problem as the simplest setting for studying action-value estimation and exploration. The five RL elements &mdash; agent, environment, reward signal, value function, and optional model &mdash; are explained, with emphasis on why values (long-term return expectations) matter more than immediate rewards.\n\nThe state-value function V(s) answers 'how good is it to be in this state?', while the action-value function Q(s,a) answers 'how good is it to take this action here?' Q is often preferred when action outcomes are stochastic, since it avoids averaging over all possible next states at decision time. The environment model p(s&prime;, r | s, a) enables planning when known, but even in games like chess, the state space is so large that model-free approaches become necessary.\n\nThe MAB formulation removes states entirely: K arms, each pull yields a reward from an unknown distribution, and the goal is to maximise cumulative reward. True values q*(a) are estimated with sample averages using efficient incremental updates. Greedy selection (always pick the best-looking arm) risks locking onto a suboptimal choice due to noisy early samples. &epsilon;-greedy fixes this by exploring randomly with probability &epsilon;.\n\nThe classic 10-armed testbed shows that moderate &epsilon; (like 0.1) outperforms pure greedy early on. Real applications include online advertising, A/B testing, and clinical trials &mdash; demonstrating that bandits are far from just a casino analogy.","keyConcepts":["Compare state-value V(s) and action-value Q(s,a) and explain when Q is preferable under stochastic transitions.","Define the environment model p(s&prime;, r | s, a) and contrast model-based with model-free reinforcement learning.","Formulate the K-armed bandit problem and estimate q*(a) using sample-average and incremental update rules.","Implement and analyse greedy versus &epsilon;-greedy action selection, including selection probabilities.","Interpret the 10-armed testbed results and relate bandit applications to recommendation, testing, and clinical trials."],"sections":[{"title":"Recap and RL Elements","pages":"Pages 2-3","description":"RL definition, paradigm comparison, agent&ndash;environment interface, and five core elements."},{"title":"Value Functions V and Q","pages":"Pages 4-5","description":"Definitions, grid-world example, stochastic outcomes, and exploration loops with initial values."},{"title":"Environment Model and Deep RL Preview","pages":"Pages 6-6","description":"Transition model, model-based vs model-free RL, and neural value approximation."},{"title":"Multi-Armed Bandit Setup","pages":"Pages 7-8","description":"Casino analogy, formal K-armed bandit, statelessness, true values, and sample-average estimation."},{"title":"Greedy and &epsilon;-Greedy Selection","pages":"Pages 9-10","description":"Greedy pitfalls, &epsilon;-greedy rule, pseudocode, incremental averages, and probability calculations."},{"title":"Exploration Trade-off and Testbed","pages":"Pages 11-12","description":"Exploration vs exploitation, 10-armed testbed setup, empirical curves, and stationary vs non-stationary rewards."},{"title":"Applications and Summary","pages":"Pages 13-15","description":"Advertising, coin bias, clinical trials, contextual bandits, key takeaways, and self-check questions."}],"quiz":[{"question":"In a 5-armed bandit with &epsilon; = 0.2 where arm 1 is the current greedy arm, what is Pr(selecting arm 1)?","options":["0.84","0.20","0.25","1.00"],"answerIndex":0,"explanation":"Under &epsilon;-greedy, Pr(greedy arm) = (1&minus;&epsilon;) + &epsilon;/K = 0.8 + 0.2/5 = 0.84. Non-greedy arms each get probability &epsilon;/K = 0.04."},{"question":"Why can pure greedy (&epsilon; = 0) perform poorly on the 10-armed testbed?","options":["Early random samples can make a suboptimal arm look best, and the agent never explores alternatives","Greedy always violates the Markov property","Sample averages cannot be computed without a model","Rewards are always deterministic in the testbed"],"answerIndex":0,"explanation":"With &epsilon;=0 the agent commits to whichever arm looked best after a few pulls. Unlucky early draws cause permanent suboptimal exploitation without any further exploration."},{"question":"When is Q(s,a) typically preferred over V(s) for action selection?","options":["When actions lead to stochastic outcomes and averaging successors at decision time is costly","Only when the state space has a single state","When rewards are always zero except at termination","When the discount factor equals 1"],"answerIndex":0,"explanation":"Q(s,a) stores the expected return for taking action a directly. With stochastic transitions, using V(s) would require evaluating all possible next states at each decision &mdash; Q avoids that overhead."}]}</script>
+</head>
+<body>
+  <div class="container">
+    <header class="hero-header">
+      <span class="subject-badge">Deep Reinforcement Learning</span>
+      <h1 class="lecture-title">Elements of RL and Multi-Armed Bandits</h1>
+      <div class="meta-info">
+        <div class="meta-item">📅 <strong>Published:</strong> June 2, 2026</div>
+        <div class="meta-item">🎓 <strong>Level:</strong> postgraduate</div>
+        <div class="meta-item">👥 <strong>Audience:</strong> Postgraduate students studying bandit algorithms and value-based decision making before full MDP-based reinforcement learning.</div>
+      </div>
+    </header>
+    <section class="summary-card">
+      <h3>Lecture Summary</h3>
+      <div class="summary-text">This lecture deepens the RL vocabulary and introduces the multi-armed bandit (MAB) problem as the simplest setting for studying action-value estimation and exploration. The five RL elements &mdash; agent, environment, reward signal, value function, and optional model &mdash; are explained, with emphasis on why values (long-term return expectations) matter more than immediate rewards.<br/>
+<br/>
+The state-value function V(s) answers 'how good is it to be in this state?', while the action-value function Q(s,a) answers 'how good is it to take this action here?' Q is often preferred when action outcomes are stochastic, since it avoids averaging over all possible next states at decision time. The environment model p(s&prime;, r | s, a) enables planning when known, but even in games like chess, the state space is so large that model-free approaches become necessary.<br/>
+<br/>
+The MAB formulation removes states entirely: K arms, each pull yields a reward from an unknown distribution, and the goal is to maximise cumulative reward. True values q*(a) are estimated with sample averages using efficient incremental updates. Greedy selection (always pick the best-looking arm) risks locking onto a suboptimal choice due to noisy early samples. &epsilon;-greedy fixes this by exploring randomly with probability &epsilon;.<br/>
+<br/>
+The classic 10-armed testbed shows that moderate &epsilon; (like 0.1) outperforms pure greedy early on. Real applications include online advertising, A/B testing, and clinical trials &mdash; demonstrating that bandits are far from just a casino analogy.</div>
+      <h3 style="margin-top:24px; margin-bottom:8px;">Key Learning Objectives</h3>
+      <ul class="key-concepts-list"><li>Compare state-value V(s) and action-value Q(s,a) and explain when Q is preferable under stochastic transitions.</li><li>Define the environment model p(s&prime;, r | s, a) and contrast model-based with model-free reinforcement learning.</li><li>Formulate the K-armed bandit problem and estimate q*(a) using sample-average and incremental update rules.</li><li>Implement and analyse greedy versus &epsilon;-greedy action selection, including selection probabilities.</li><li>Interpret the 10-armed testbed results and relate bandit applications to recommendation, testing, and clinical trials.</li></ul>
+    </section>
+    <main>
+
+<h1 class="chapter-title">1. Recap: What is Reinforcement Learning?</h1>
+
+<p>Reinforcement Learning (RL) is a learning paradigm in which an agent learns by interacting with an environment so as to maximize a notion of cumulative reward. It mirrors the way humans naturally learn &mdash; through trial, error, and feedback.</p>
+
+<div class="key-concept">
+<strong>Definition: Reinforcement Learning</strong><br/>
+A computational approach to learning whereby an agent tries to maximize the total amount of reward it receives while interacting with a complex, uncertain environment.
+</div>
+
+<h2 class="section-title">2.1 How RL Differs From Other Paradigms</h2>
+
+<table>
+<thead><tr><th>Paradigm</th><th>Training Signal</th><th>Goal</th></tr></thead>
+<tbody>
+<tr><td>Supervised</td><td>Labeled (input, output) pairs given by a teacher</td><td>Learn input &rarr; output mapping</td></tr>
+<tr><td>Unsupervised</td><td>No labels &mdash; only raw data</td><td>Find patterns / structure</td></tr>
+<tr><td>Reinforcement</td><td>Scalar rewards from environment (often delayed, sparse)</td><td>Learn behavior (policy) that maximizes long-term reward</td></tr>
+</tbody>
+</table>
+
+<div class="key-concept">
+<strong>Evaluative vs. Instructive Feedback</strong><br/>
+In supervised learning, the feedback is <strong>instructive</strong> &mdash; it tells you the correct output directly. In RL, the feedback is <strong>evaluative</strong> &mdash; it only tells you how good or bad your chosen action was, not which action would have been better. The agent does not know that a different action should have been chosen; it only knows the outcome was poor. This creates the fundamental need for exploration and credit assignment.
+</div>
+
+<div class="key-concept">
+<strong>Three Distinguishing Features of RL (Sutton &amp; Barto, §1.1)</strong><br/>
+Reinforcement learning problems are set apart by three characteristics that do not arise in pure supervised or unsupervised learning:
+<ol>
+<li><strong>Closed-loop interaction:</strong> The agent's actions influence its subsequent inputs. The learning system is not a passive observer &mdash; the data it learns from depends on the actions it has previously chosen.</li>
+<li><strong>No instructive supervision:</strong> The agent is not told which actions to take. It must discover which actions yield the most reward by trying them out. There are no labeled training examples of correct behavior.</li>
+<li><strong>Extended temporal consequences:</strong> Actions may affect not only the immediate reward but also the next situation and, through that, all subsequent rewards. Delayed effects and long-term credit assignment are central &mdash; a good move now may set up a win many steps later.</li>
+</ol>
+</div>
+
+<h1 class="chapter-title">2. Elements of Reinforcement Learning</h1>
+
+<p>At the heart of any RL system are several key building blocks. Understanding these is essential before moving to algorithms.</p>
+
+<h2 class="section-title">2.2 The Agent-Environment Interface</h2>
+
+<p>The cycle of interaction at every discrete time step <em>t</em> is:</p>
+
+<ol>
+<li>The agent observes the current state <em>S<sub>t</sub></em> of the environment.</li>
+<li>The agent chooses an action <em>A<sub>t</sub></em>.</li>
+<li>The environment transitions to a new state <em>S<sub>t+1</sub></em> and returns a reward <em>R<sub>t+1</sub></em>.</li>
+<li>The cycle repeats.</li>
+</ol>
+
+<h2 class="section-title">2.3 Core Elements</h2>
+
+<div class="key-concept">
+<strong>Definition: The Five Elements of RL</strong>
+<ol>
+<li><strong>Agent</strong> &mdash; the learner / decision maker.</li>
+<li><strong>Environment</strong> &mdash; everything outside the agent that it interacts with.</li>
+<li><strong>Reward Signal</strong> &mdash; a scalar feedback indicating how good or bad an action was at a particular moment. It defines the <em>immediate</em> goal of the RL problem. The agent's sole objective is to maximize the total reward it receives over the long run. The reward signal depends on the agent's current action and the current state of the environment; crucially, the agent cannot alter the process that generates rewards — it can only influence rewards through its actions. If an action is selected by the policy and followed by low reward, then the policy may be changed to select some other action in that situation in the future. In general, reward signals may be stochastic functions of the state and the actions taken.</li>
+<li><strong>Value Function</strong> &mdash; captures the <em>long-term</em> desirability of a state (or of taking an action in a state). Reward tells what is immediately good, while value tells what is good in the long run. A state may give low immediate reward but still have high value if it commonly leads to better future states.</li>
+<li><strong>Model of the Environment</strong> (optional) &mdash; an internal representation that predicts how the environment will respond to actions. A model mimics the behaviour of the environment: given a state and action, it may predict the resultant next state and reward. Models support <strong>planning</strong>, where the agent considers possible future situations before actually experiencing them.</li>
+</ol>
+</div>
+
+<div class="key-concept">
+<strong>Key Distinction: Policy vs. Value Function</strong><br/>
+A <strong>policy</strong> &pi; defines the agent's behaviour at a given time. It maps states to actions (deterministic) or to probabilities over actions (stochastic, written as &pi;(a|s)). The policy is central because it alone is sufficient to determine behaviour &mdash; once the current state and policy are known, the agent's action-selection rule is specified. The policy corresponds to what in psychology would be called a set of stimulus&ndash;response rules or associations.<br/><br/>
+The <strong>value function</strong> does not directly specify behaviour. Instead, it estimates long-term desirability. RL decisions are usually based on value judgments, not only on immediate rewards &mdash; because once you have accurate values, choosing the best action becomes easy: pick the action that leads to the highest-value future. Rewards are primary (given directly by the environment), whereas values, as predictions of rewards, are secondary. Yet it is values with which we are most concerned when making decisions &mdash; we seek actions that bring about states of highest value, not highest immediate reward.
+</div>
+
+<h1 class="chapter-title">3. Value Functions: The Heart of RL</h1>
+
+<div class="key-concept">
+<strong>Key Idea: Why values matter</strong><br/>
+Reward tells you the immediate consequence of an action. Value tells you the long-term consequence. Most RL algorithms are about estimating good values, because once you have accurate values, choosing the best action becomes easy &mdash; pick the action that leads to the highest-value future.
+</div>
+
+<p>There are two fundamental kinds of value functions you must distinguish very clearly.</p>
+
+<h2 class="section-title">2.4 State Value Function V(s)</h2>
+
+<div class="key-concept">
+<strong>Definition: State Value Function</strong><br/>
+V(s) is the expected long-term return when the agent is in state s (and follows some policy thereafter).
+
+<p style="text-align:center; font-size:1.1em; margin:12px 0;">
+V(s) = &#x1D53C; [ &sum;<sub>k=0</sub><sup>&infin;</sup> &gamma;<sup>k</sup> R<sub>t+k+1</sub> | S<sub>t</sub> = s ]
+</p>
+
+Intuitively: <em>"How good is it just to BE in this state?"</em>
+</div>
+
+<h2 class="section-title">2.5 Action Value Function Q(s, a)</h2>
+
+<div class="key-concept">
+<strong>Definition: Action Value Function</strong><br/>
+Q(s, a) is the expected long-term return when the agent takes action a in state s and follows some policy afterwards.
+
+<p style="text-align:center; font-size:1.1em; margin:12px 0;">
+Q(s, a) = &#x1D53C; [ &sum;<sub>k=0</sub><sup>&infin;</sup> &gamma;<sup>k</sup> R<sub>t+k+1</sub> | S<sub>t</sub> = s, A<sub>t</sub> = a ]
+</p>
+
+Intuitively: <em>"How good is it to TAKE action a in this state?"</em><br/><br/>
+<strong>Notation convention:</strong> Letter V &rArr; State Value Function (V(s)). Letter Q &rArr; Action Value Function (Q(s, a)).
+</div>
+
+<h2 class="section-title">2.6 Worked Example: 4×4 Grid World</h2>
+
+<p>Consider a 4 &times; 4 grid where each cell is a state. The agent starts at the bottom-left "Start" cell and must reach the top-right "Goal" cell. Each cell has a (learned) value attached to it.</p>
+
+<div class="example-box">
+<table style="border-collapse:collapse; margin:0 auto; text-align:center;">
+<tr><td style="border:1px solid var(--border); padding:8px;">20</td><td style="border:1px solid var(--border); padding:8px;">10</td><td style="border:1px solid var(--border); padding:8px;">10</td><td style="border:1px solid var(--border); padding:8px; background:#c8e6c9;">100</td></tr>
+<tr><td style="border:1px solid var(--border); padding:8px;">10</td><td style="border:1px solid var(--border); padding:8px;">1</td><td style="border:1px solid var(--border); padding:8px;">10</td><td style="border:1px solid var(--border); padding:8px;">10</td></tr>
+<tr><td style="border:1px solid var(--border); padding:8px;">7</td><td style="border:1px solid var(--border); padding:8px;">8</td><td style="border:1px solid var(--border); padding:8px;">9</td><td style="border:1px solid var(--border); padding:8px;">6</td></tr>
+<tr><td style="border:1px solid var(--border); padding:8px; background:#ffcdd2;">S 9</td><td style="border:1px solid var(--border); padding:8px;">6</td><td style="border:1px solid var(--border); padding:8px;">10</td><td style="border:1px solid var(--border); padding:8px;">100</td></tr>
+</table>
+<p style="text-align:center; margin-top:8px;"><small>Goal (top-right) | Start (bottom-left)</small></p>
+</div>
+
+<p><strong>Decision-making with V:</strong> From the Start state, the agent inspects the values of all neighbors (Up gives V = 7, Right gives V = 9) and moves toward the higher-valued cell. With V, you must look one step ahead to evaluate every possible successor before deciding.</p>
+
+<p><strong>Decision-making with Q:</strong> If we instead had Q(Start, Up) = 10 and Q(Start, Right) = 11, we could directly compare actions without a look-ahead. Just pick the action with the highest Q.</p>
+
+<h2 class="section-title">2.7 Why Q is Often Preferred: The Stochastic Outcome Problem</h2>
+
+<div class="example-box">
+<strong>Intuition: Car Braking Example</strong><br/>
+You are driving and apply the action <em>brake</em>. The outcome is not deterministic:
+<ul>
+<li>With probability 0.90: the car stops (good outcome).</li>
+<li>With probability 0.07: the car skids (bad).</li>
+<li>With probability 0.03: the brake fails (very bad).</li>
+</ul>
+</div>
+
+<p>A single action can lead to multiple possible next states. Looking one step ahead with V(s) becomes complicated &mdash; you'd need to compute a weighted average over all possible outcomes every time you decide. The Q-function Q(s, brake) pre-summarizes this weighted average. You just look up the Q-value and act.</p>
+
+<div class="key-concept">
+<strong>Key Idea: V vs. Q</strong>
+<ul>
+<li>Use <strong>V</strong> when outcomes of actions are simple / deterministic and the look-ahead is cheap (e.g., chess &mdash; a move clearly leads to a known board position).</li>
+<li>Use <strong>Q</strong> when outcomes are stochastic or look-ahead is expensive. Q "bakes in" the uncertainty of the outcome into a single number per (state, action) pair.</li>
+</ul>
+</div>
+
+<h2 class="section-title">2.8 Initial Values, Exploration, and Loops - A Student's Doubt</h2>
+
+<div class="important-note">
+<strong>Question:</strong> If we always follow the greedy move based on initial values, won't we get stuck in a cycle in the grid?<br/><br/>
+<strong>Answer:</strong> The values shown in the grid above are merely initial (often random) values. The whole point of RL is to update these values through experience until the values reflect true desirability. To do this updating, the agent must occasionally make exploratory (non-greedy) moves. This is the exploration vs. exploitation trade-off, which we discuss in detail later.
+</div>
+
+<h1 class="chapter-title">4. Model of the Environment</h1>
+
+<div class="key-concept">
+<strong>Definition: Model of the Environment</strong><br/>
+A model is an abstract mathematical description of how the environment behaves in response to actions. Formally, the model is the joint probability distribution:
+<p style="text-align:center; font-size:1.1em; margin:12px 0;">
+p(s&prime;, r | s, a) = Pr{S<sub>t+1</sub> = s&prime;, R<sub>t+1</sub> = r | S<sub>t</sub> = s, A<sub>t</sub> = a}
+</p>
+That is: given current state s and action a, what is the probability of landing in state s&prime; with reward r?
+</div>
+
+<h2 class="section-title">2.9 Why Models Matter</h2>
+<ul>
+<li>If you have a perfect model, you can plan <em>on paper</em> without ever interacting with the real environment.</li>
+<li>You can compute theoretically optimal values using algorithmic approaches like dynamic programming.</li>
+<li>Models are also used for simulation &mdash; generate synthetic experience cheaply.</li>
+</ul>
+
+<h2 class="section-title">2.10 Model-Based vs. Model-Free RL</h2>
+
+<table>
+<thead><tr><th>Category</th><th>Description</th></tr></thead>
+<tbody>
+<tr>
+<td><strong>Model-Based</strong></td>
+<td>The algorithm uses (or first learns) a model of the environment. Two sub-flavors:<br/>&bull; Model is given (e.g., the rules of chess).<br/>&bull; Model is learned from experience and then used for planning.</td>
+</tr>
+<tr>
+<td><strong>Model-Free</strong></td>
+<td>No explicit model is constructed. The agent directly learns values or policies from raw experience. Examples: Q-learning, policy-gradient methods.</td>
+</tr>
+</tbody>
+</table>
+
+<div class="key-concept">
+<strong>Key Taxonomy: Model-Based vs. Model-Free</strong><br/>
+<ul>
+<li><strong>Model-based methods</strong> use a model for <strong>planning</strong> &mdash; choosing actions by considering possible future situations before they are experienced. The model predicts the next state and reward given a state and action, enabling the agent to simulate and reason about consequences.</li>
+<li><strong>Model-free methods</strong> learn directly from experience without an explicit environment model. They rely on trial-and-error interaction to estimate values or improve policies. These are more widely deployed in practice for large-scale problems.</li>
+</ul>
+</div>
+
+<div class="important-note">
+<strong>Practical reality:</strong> In theory, the environment of tic-tac-toe (and even chess) can be modeled exactly &mdash; we know all rules and outcomes. But for chess, the state space is so enormous that exact computation is infeasible. So practitioners typically use model-free approaches even when a theoretical model exists.
+</div>
+
+<h1 class="chapter-title">5. From RL to Deep RL: A Quick Glimpse</h1>
+
+<p>So far, value functions have been stored in a table &mdash; one entry per state (or per state&ndash;action pair). This is fine for tic-tac-toe but impossible for problems like Go, robotics, or video games where the state space is astronomical.</p>
+
+<div class="key-concept">
+<strong>Definition: Deep Reinforcement Learning</strong><br/>
+We replace the value table with a neural network parameterized by weights &theta;:
+<p style="text-align:center; font-size:1.1em; margin:12px 0;">
+V(s; &theta;) &emsp; or &emsp; Q(s, a; &theta;)
+</p>
+The neural network takes a state (or state&ndash;action pair) as input and outputs the value. The objective of learning is to find weights &theta; such that the network's output is as close as possible to the true value.
+</div>
+
+<div class="example-box">
+<strong>Example:</strong> For tic-tac-toe, instead of a giant lookup table over all board configurations, we feed the 3 &times; 3 board into a neural network whose output is a single number &mdash; the value of that state. As we play games, we update &theta; via gradient descent.
+</div>
+
+<p>In a full Deep RL system, you may have multiple neural networks: one for value, one for policy, one for the model, etc.</p>
+
+<h1 class="chapter-title">6. The Multi-Armed Bandit (MAB) Problem</h1>
+
+<p>The MAB problem is the simplest possible RL setup. It strips away the notion of state so we can focus purely on the exploration&ndash;exploitation trade-off and on the mechanics of learning action values. Crucially, the bandit setting isolates <strong>evaluative feedback</strong> in its purest form: the agent receives only a reward that evaluates the action taken, not any instruction about which action would have been correct. Purely evaluative feedback depends entirely on the action taken (the reward reveals how good the chosen action was), whereas instructive feedback indicates the correct action independently of the one taken. All the complexity of the exploration&ndash;exploitation dilemma flows from this single property &mdash; the agent must actively try actions just to discover whether they are good or bad.</p>
+
+<h2 class="section-title">2.11 The Casino Analogy</h2>
+
+<p>Imagine walking into a casino with a stack of coins. In front of you are K slot machines (one-armed bandits), each with its own lever. Each pull of a lever costs one coin and gives back some reward (often zero, sometimes positive, perhaps even negative on average) drawn from that machine's hidden reward distribution.</p>
+
+<h2 class="section-title">2.12 Formal Setup</h2>
+
+<div class="key-concept">
+<strong>Definition: K-Armed Bandit</strong>
+<ul>
+<li>There are <strong>K actions</strong> ("arms"): a<sub>1</sub>, a<sub>2</sub>, &hellip;, a<sub>K</sub>.</li>
+<li>At each time step t, the agent selects one action A<sub>t</sub> and receives a reward R<sub>t</sub> drawn from the (unknown) reward distribution of that arm.</li>
+<li>There is <strong>no state</strong>. The same set of actions is available at every step.</li>
+<li><strong>Goal:</strong> maximize the total (expected) reward accumulated over time.</li>
+</ul>
+</div>
+
+<h2 class="section-title">2.13 Why MAB is "Stateless"</h2>
+
+<p>In the casino, the machines don't remember anything about you, and you have no varying context. The reward distribution is fixed and the agent's choice depends only on what it has learned about each arm &mdash; not on any external state. This is the key simplification.</p>
+
+<div class="important-note">
+<strong>Notation in MAB:</strong> Because there is no state, we write Q(a) instead of Q(s, a). This is an exception only for MAB; in the full RL setting, Q is always a function of both state and action.
+</div>
+
+<h2 class="section-title">2.14 The True Value of an Action</h2>
+
+<div class="key-concept">
+<strong>Definition: True Value q<sub>*</sub>(a)</strong><br/>
+The true value of action a is the expected reward when a is selected:
+<p style="text-align:center; font-size:1.1em; margin:12px 0;">
+q<sub>*</sub>(a) = &#x1D53C;[R<sub>t</sub> | A<sub>t</sub> = a]
+</p>
+If we knew q<sub>*</sub>(a) for every action, the problem would be trivial: always pick the arm with the highest q<sub>*</sub>.<br/><br/>
+<strong>The catch:</strong> The agent does not know q<sub>*</sub>(a). It must estimate it through experience.
+</div>
+
+<h2 class="section-title">2.15 Sample-Average Estimation</h2>
+
+<p>A natural way to estimate q<sub>*</sub>(a) is to average all rewards observed so far when action a was chosen:</p>
+
+<p style="text-align:center; font-size:1.1em; margin:12px 0;">
+Q<sub>t</sub>(a) = <span style="display:inline-block; text-align:center;">&sum;<sub>i=1</sub><sup>t&minus;1</sup> R<sub>i</sub> &middot; &#x1D7D9;<sub>A<sub>i</sub>=a</sub><br/><span style="border-top:1px solid var(--text-body); display:block;">&sum;<sub>i=1</sub><sup>t&minus;1</sup> &#x1D7D9;<sub>A<sub>i</sub>=a</sub></span></span>
+</p>
+
+<p>where &#x1D7D9;<sub>A<sub>i</sub>=a</sub> is the indicator function (1 if A<sub>i</sub> = a, else 0). This is just the sample mean of rewards for action a.</p>
+
+<div class="example-box">
+<strong>Example: Numerical Walk-Through</strong><br/>
+Suppose after 10 pulls, the history is:
+<table style="margin:8px 0;">
+<thead><tr><th>Arm</th><th>Rewards observed</th><th>Estimated Q</th></tr></thead>
+<tbody>
+<tr><td>1</td><td>&minus;1, &minus;1, 5</td><td>(&minus;1&minus;1+5)/3 = 1.0</td></tr>
+<tr><td>2</td><td>&minus;1, 0</td><td>(&minus;1+0)/2 = &minus;0.5</td></tr>
+<tr><td>3</td><td>0, &minus;1, &minus;0.5</td><td>(0&minus;1&minus;0.5)/3 &asymp; &minus;0.5</td></tr>
+<tr><td>4</td><td>&minus;2, &minus;2</td><td>(&minus;2&minus;2)/2 = &minus;2</td></tr>
+</tbody>
+</table>
+At t = 11, the highest Q is for Arm 1. A greedy agent would pull Arm 1 again.<br/><br/>
+<strong>Important nuance:</strong> The sample average is computed per arm, using only the rewards observed for that arm &mdash; not a global average across all arms.
+</div>
+
+<h1 class="chapter-title">7. Action Selection: Greedy vs. &epsilon;-Greedy</h1>
+
+<p>How does the agent choose which arm to pull at each step? This is the action-selection problem and it embodies the exploration&ndash;exploitation trade-off.</p>
+
+<h2 class="section-title">2.16 Greedy Action Selection</h2>
+
+<div class="key-concept">
+<strong>Definition: Greedy Selection</strong><br/>
+Always pick the arm with the highest current estimate:
+<p style="text-align:center; font-size:1.1em; margin:12px 0;">
+A<sub>t</sub> = arg max<sub>a</sub> Q<sub>t</sub>(a)
+</p>
+<strong>Problem with pure greedy:</strong> You may get unlucky early and stick to a sub-optimal arm forever.
+</div>
+
+<div class="warning-box">
+<strong>Example: Why Pure Greedy Can Fail</strong><br/>
+Suppose Arm 1's true value is &minus;0.5 (bad), but the first few rewards you happen to observe are +1 each. The estimate Q(1) shoots up. Meanwhile, Arm 2's true value is +1 (good), but the first few pulls happen to give &minus;2. The estimate Q(2) becomes very low. A pure greedy agent will now keep pulling Arm 1 forever, never giving Arm 2 a chance to reveal its true (better) value. This is called <strong>premature convergence</strong>.
+</div>
+
+<h2 class="section-title">2.17 ε-Greedy Action Selection</h2>
+
+<p>To avoid getting trapped, we mix in a small fraction of random exploration:</p>
+
+<div class="key-concept">
+<strong>Definition: &epsilon;-Greedy</strong><br/>
+With probability <strong>1 &minus; &epsilon;</strong>: pick the greedy action (exploit).<br/>
+With probability <strong>&epsilon;</strong>: pick an arm uniformly at random (explore).
+<p style="text-align:center; font-size:1.1em; margin:12px 0;">
+A<sub>t</sub> = { arg max<sub>a</sub> Q<sub>t</sub>(a) &emsp; with probability 1 &minus; &epsilon;<br/>random arm &emsp;&emsp;&emsp;&emsp; with probability &epsilon;
+</p>
+The parameter &epsilon; is a small hyperparameter (e.g., 0.01 or 0.1) that controls how often the agent explores.
+</div>
+
+<h2 class="section-title">2.18 Pseudocode</h2>
+
+<div class="example-box">
+<strong>Algorithm 1: &epsilon;-Greedy Action Selection</strong>
+<pre><code> 1: Initialize: Q(a) &larr; 0 for all a; N(a) &larr; 0 for all a; &epsilon; &larr; 0.05
+ 2: for each time step t = 1, 2, ... do
+ 3:     u &larr; random.uniform(0, 1)    &#9655; sample uniform in [0, 1]
+ 4:     if u > &epsilon; then
+ 5:         A<sub>t</sub> &larr; arg max<sub>a</sub> Q(a)    &#9655; exploit
+ 6:     else
+ 7:         A<sub>t</sub> &larr; random arm         &#9655; explore
+ 8:     end if
+ 9:     Pull arm A<sub>t</sub> and observe reward R<sub>t</sub>
+10:     N(A<sub>t</sub>) &larr; N(A<sub>t</sub>) + 1
+11:     Q(A<sub>t</sub>) &larr; Q(A<sub>t</sub>) + 1/N(A<sub>t</sub>) &times; (R<sub>t</sub> &minus; Q(A<sub>t</sub>))    &#9655; incremental average
+12: end for</code></pre>
+</div>
+
+<p><strong>Incremental update trick:</strong> Instead of storing all past rewards, we update the running average online:</p>
+
+<p style="text-align:center; font-size:1.1em; margin:12px 0;">
+Q<sub>n+1</sub> = Q<sub>n</sub> + (1/n)(R<sub>n</sub> &minus; Q<sub>n</sub>)
+</p>
+
+<p>This is mathematically equivalent to the sample average but requires O(1) memory per arm.</p>
+
+<h1 class="chapter-title">8. Computing Action-Selection Probabilities</h1>
+
+<p>A frequently-tested concept: what is the probability that a specific arm is selected by an &epsilon;-greedy policy?</p>
+
+<h2 class="section-title">2.19 Worked Example 1: Two Actions, ε = 0.5</h2>
+
+<p>Suppose A<sub>1</sub> is the greedy (highest-Q) action and A<sub>2</sub> is the non-greedy one.</p>
+
+<div class="example-box">
+<strong>Method &mdash; Decompose by selection mode:</strong>
+<p style="margin:4px 0;">Pr(A<sub>1</sub>) = Pr(A<sub>1</sub> | greedy mode) &middot; Pr(greedy mode) + Pr(A<sub>1</sub> | random mode) &middot; Pr(random mode)</p>
+<p style="margin:4px 0;">= 1 &middot; (1 &minus; &epsilon;) + (1/K) &middot; &epsilon;</p>
+<p style="margin:4px 0;">= 1 &middot; 0.5 + (1/2) &middot; 0.5 = <strong>0.75</strong></p>
+<p style="margin:4px 0;">Pr(A<sub>2</sub>) = 0 &middot; (1 &minus; &epsilon;) + (1/2) &middot; 0.5 = <strong>0.25</strong></p>
+</div>
+
+<h2 class="section-title">2.20 Worked Example 2: Four Actions, ε = 0.4</h2>
+
+<div class="example-box">
+<p style="margin:4px 0;"><strong>Greedy action A<sub>1</sub>:</strong> Pr(A<sub>1</sub>) = 1 &middot; (1 &minus; 0.4) + (1/4) &middot; 0.4 = 0.6 + 0.1 = <strong>0.7</strong></p>
+<p style="margin:4px 0;"><strong>Each non-greedy action:</strong> Pr(A<sub>i</sub>) = 0 &middot; (1 &minus; 0.4) + (1/4) &middot; 0.4 = <strong>0.1</strong> &emsp; (i = 2, 3, 4)</p>
+<p style="margin:4px 0;"><strong>Sanity check:</strong> 0.7 + 0.1 + 0.1 + 0.1 = 1.0 ✓</p>
+</div>
+
+<div class="key-concept">
+<strong>Key Idea: General Formula</strong><br/>
+For K arms with &epsilon;-greedy:
+<p style="margin:8px 0;">Pr(greedy arm) = (1 &minus; &epsilon;) + &epsilon;/K, &emsp; Pr(non-greedy arm) = &epsilon;/K</p>
+The greedy arm gets the lion's share plus an equal slice of the exploration budget.
+</div>
+
+<h1 class="chapter-title">8B. Incremental Updates and Step-Size Choices</h1>
+
+<p>The sample-average method requires storing all past rewards. An <strong>incremental update</strong> avoids this by updating online using only the current estimate and the latest reward.</p>
+
+<h2 class="section-title">2.21 Derivation of the Incremental Update</h2>
+
+<div class="key-concept">
+<strong>Incremental Sample-Average Update Rule</strong>
+<p style="text-align:center; font-size:1.1em; margin:12px 0;">
+Q<sub>n+1</sub> = Q<sub>n</sub> + (1/n)(R<sub>n</sub> &minus; Q<sub>n</sub>)
+</p>
+<strong>General Form:</strong> NewEstimate &larr; OldEstimate + StepSize &times; [Target &minus; OldEstimate]<br/><br/>
+This form appears repeatedly in RL. The term [Target &minus; OldEstimate] is the <strong>estimation error</strong> &mdash; how far the old estimate is from the target. The step-size determines how strongly the newest reward affects the estimate.
+</div>
+
+<div class="example-box">
+<strong>Derivation Walk-Through</strong>
+<pre>Q<sub>n+1</sub> = (1/n) &Sigma;<sub>i=1</sub><sup>n</sup> R<sub>i</sub>
+      = (1/n)[R<sub>n</sub> + &Sigma;<sub>i=1</sub><sup>n-1</sup> R<sub>i</sub>]
+      = (1/n)[R<sub>n</sub> + (n-1)(1/(n-1))&Sigma;<sub>i=1</sub><sup>n-1</sup> R<sub>i</sub>]
+      = (1/n)[R<sub>n</sub> + (n-1)Q<sub>n</sub>]
+      = (1/n)[R<sub>n</sub> + nQ<sub>n</sub> &minus; Q<sub>n</sub>]
+      = Q<sub>n</sub> + (1/n)(R<sub>n</sub> &minus; Q<sub>n</sub>)</pre>
+The learner does not need to store all earlier rewards &mdash; just the current estimate Q<sub>n</sub> and the count n.
+</div>
+
+<h2 class="section-title">2.22 Sample-Average vs. Constant Step-Size</h2>
+
+<table>
+<thead><tr><th>Choice</th><th>Update Rule</th><th>Interpretation</th></tr></thead>
+<tbody>
+<tr><td><strong>Sample-average step-size</strong></td><td>Q<sub>n+1</sub> = Q<sub>n</sub> + (1/n)[R<sub>n</sub> &minus; Q<sub>n</sub>]</td><td>Each reward contributes equally. As n grows, the step-size shrinks and the estimate becomes progressively more stable. Natural when the reward distribution is <strong>stationary</strong>.</td></tr>
+<tr><td><strong>Constant step-size</strong></td><td>Q<sub>n+1</sub> = Q<sub>n</sub> + &alpha;[R<sub>n</sub> &minus; Q<sub>n</sub>]</td><td>Recent rewards keep receiving noticeable influence. The estimate always adapts. Natural when the reward distribution is <strong>non-stationary</strong> and may drift over time.</td></tr>
+</tbody>
+</table>
+
+<div class="key-concept">
+<strong>Exponential Recency-Weighted Average</strong><br/>
+With a constant step-size &alpha;, the estimate Q<sub>k+1</sub> is a weighted average of all past rewards and the initial estimate Q<sub>1</sub>:
+<p style="text-align:center; font-size:1.05em; margin:12px 0;">
+Q<sub>k+1</sub> = (1 &minus; &alpha;)<sup>k</sup>Q<sub>1</sub> + &sum;<sub>i=1</sub><sup>k</sup> &alpha;(1 &minus; &alpha;)<sup>k&minus;i</sup>R<sub>i</sub>
+</p>
+The weight &alpha;(1 &minus; &alpha;)<sup>k&minus;i</sup> given to reward R<sub>i</sub> decays exponentially as the age of the reward (k &minus; i) increases. Recent rewards contribute far more to the estimate than distant ones. This is why a constant step-size is suitable for tracking a changing environment — old data fades away automatically.
+</div>
+
+<div class="key-concept">
+<strong>Convergence Conditions for Step-Size Sequences</strong><br/>
+From stochastic approximation theory, a sequence {&alpha;<sub>k</sub>} guarantees convergence with probability 1 to the true action values if:
+<p style="text-align:center; font-size:1.05em; margin:12px 0;">
+&sum;<sub>k=1</sub><sup>&infin;</sup> &alpha;<sub>k</sub> = &infin; &emsp; and &emsp; &sum;<sub>k=1</sub><sup>&infin;</sup> &alpha;<sub>k</sub><sup>2</sup> &lt; &infin;
+</p>
+<strong>First condition:</strong> The sum of steps diverges &mdash; steps must remain large enough to eventually overcome any initial estimation error or random fluctuation.<br/>
+<strong>Second condition:</strong> The sum of squared steps converges &mdash; eventually steps must become small enough to assure the estimate settles.<br/><br/>
+Note that &alpha;<sub>k</sub> = 1/k (sample-average) satisfies both conditions. Constant &alpha;<sub>k</sub> = &alpha; satisfies the first (diverges) but violates the second (sum of squares does not converge) &mdash; meaning the estimates never fully converge and continue to fluctuate in response to recent rewards. This continual fluctuation is <em>desirable</em> in non-stationary environments. In practice, sequences that meet these conditions often converge too slowly and are seldom used in applications.
+</div>
+
+<div class="example-box">
+<strong>Numerical Tracking Illustration</strong><br/>
+<em>Case 1: Reward level increases.</em> Q = 10, &alpha; = 0.2. Rewards: 14, 16.<br/>
+Q &larr; 10 + 0.2(14 &minus; 10) = 10.8<br/>
+Q &larr; 10.8 + 0.2(16 &minus; 10.8) = 11.84 &mdash; estimate moves upward appropriately.<br/><br/>
+<em>Case 2: Reward level decreases.</em> Q = 12, &alpha; = 0.2. Rewards: 8, 7.<br/>
+Q &larr; 12 + 0.2(8 &minus; 12) = 11.2<br/>
+Q &larr; 11.2 + 0.2(7 &minus; 11.2) = 10.36 &mdash; estimate moves downward, reflecting current performance.
+</div>
+
+<div class="important-note">
+<strong>Practical Rule:</strong> For stationary problems, use sample-average (1/n) because you want equal weight on all data. For non-stationary problems, use a constant step-size &alpha; so the estimate stays responsive to recent changes. In real deployments, some degree of non-stationarity is almost always present (user populations change, systems are upgraded, demand fluctuates), so constant or slowly-decaying step-sizes are safer.
+</div>
+
+<h1 class="chapter-title">9. Exploration vs. Exploitation Trade-off</h1>
+
+<div class="key-concept">
+<strong>Definition: The Dilemma</strong><br/>
+<strong>Exploit:</strong> Use what you currently know to maximize immediate reward.<br/>
+<strong>Explore:</strong> Try less-tested actions to potentially discover something better.<br/><br/>
+These two are inherently in conflict: every step you spend exploring is a step you didn't spend exploiting, and vice versa.
+</div>
+
+<h2 class="section-title">2.23 Why You Must Explore</h2>
+<ul>
+<li>Early estimates of Q(a) are based on very few samples and may be wildly off.</li>
+<li>Pure exploitation can lock you into a sub-optimal arm forever.</li>
+<li>Even after long learning, the world may change (non-stationary problems).</li>
+</ul>
+
+<h2 class="section-title">2.24 Why You Must Exploit</h2>
+<ul>
+<li>Always exploring is wasteful &mdash; you never reap the benefits of what you learn.</li>
+<li>In real applications (e.g., medical trials, ad serving), every exploration step has a real cost.</li>
+</ul>
+
+<div class="example-box">
+<strong>Intuition: Restaurant Choice</strong><br/>
+Imagine your favorite Italian restaurant near home. You know it's great. But there's a new Thai place that opened last week &mdash; maybe it's even better, maybe much worse. Do you go to the safe favorite (exploit), or take a chance on the new one (explore)? This everyday choice is the exploration&ndash;exploitation trade-off.
+</div>
+
+<h1 class="chapter-title">10. The 10-Armed Testbed Experiment</h1>
+
+<p>To compare action-selection strategies empirically, researchers use a standard 10-armed testbed.</p>
+
+<h2 class="section-title">2.25 Setup</h2>
+<ul>
+<li>Generate a problem with K = 10 arms.</li>
+<li>For each arm a, the true value q<sub>*</sub>(a) is drawn from N(0, 1).</li>
+<li>When arm a is pulled, the reward is drawn from N(q<sub>*</sub>(a), 1).</li>
+<li>Run the agent for 1000 steps. Track the average reward per step.</li>
+<li>Repeat the entire experiment for 2000 independent problems and average the curves to smooth out randomness.</li>
+</ul>
+
+<h2 class="section-title">2.26 Empirical Results</h2>
+
+<p>The classic comparison plots average reward over 1000 steps for three settings: &epsilon; = 0 (pure greedy), &epsilon; = 0.1, and &epsilon; = 0.01.</p>
+
+<div class="example-box" style="text-align:center;">
+<p style="margin:4px 0;"><small>Average reward over 1000 steps</small></p>
+<div style="background:#f5f5f5; border:1px solid var(--border); padding:20px; margin:8px 0;">
+<p style="font-size:0.85em; margin:2px 0;">&epsilon; = 0.1 &mdash; highest throughout</p>
+<p style="font-size:0.85em; margin:2px 0;">&epsilon; = 0.01 &mdash; slow but steady improvement</p>
+<p style="font-size:0.85em; margin:2px 0;">&epsilon; = 0 (greedy) &mdash; plateaus early</p>
+</div>
+</div>
+
+<h2 class="section-title">2.27 Interpretation</h2>
+
+<ul>
+<li><strong>&epsilon; = 0 (Greedy):</strong> Rises quickly but plateaus early at a sub-optimal level. With no exploration, the agent commits to whatever first looked good &mdash; even if it was misleading.</li>
+<li><strong>&epsilon; = 0.1:</strong> Keeps improving for a long time and ends up the clear winner in the short term. 10% exploration is aggressive enough to keep discovering better arms.</li>
+<li><strong>&epsilon; = 0.01:</strong> Improves slowly (only 1% exploration), but if you ran for many more steps it would eventually surpass &epsilon; = 0.1. Why? Because once you know the best arm, you want to exploit it almost all the time &mdash; 10% wasted exploration becomes a constant drag on performance.</li>
+</ul>
+
+<div class="key-concept">
+<strong>Key Idea: Practical Lesson</strong><br/>
+A common strategy: start with a large &epsilon; and decay it over time. Explore a lot early when you know nothing, and exploit more aggressively once your estimates are reliable.
+</div>
+
+<h2 class="section-title">2.28 Stationary vs. Non-Stationary Rewards</h2>
+
+<table>
+<thead><tr><th>Type</th><th>Description</th></tr></thead>
+<tbody>
+<tr><td><strong>Stationary</strong></td><td>The true reward distributions q<sub>*</sub>(a) do not change over time.</td></tr>
+<tr><td><strong>Non-stationary</strong></td><td>The distributions drift (e.g., user preferences change).</td></tr>
+</tbody>
+</table>
+
+<ul>
+<li>For stationary problems, you could eventually decay &epsilon; &rarr; 0. But in practice, since you can never be 100% sure you've found the truth, keep a small positive &epsilon; forever.</li>
+<li>For non-stationary problems, never set &epsilon; = 0. You must keep exploring to detect changes.</li>
+</ul>
+
+<div class="important-note"><strong>Note:</strong> Advanced exploration strategies (Optimistic Initial Values, UCB, and Gradient Bandits) are covered in detail in Lecture 3: <em>Non-Stationary Bandits, UCB and Contextual Bandits</em>.</div>
+
+<h1 class="chapter-title">11. Real-World Applications of MAB</h1>
+
+<p>Although the casino setup is a toy example, MAB models a huge number of real problems where decisions are stateless and feedback is the reward.</p>
+
+<h2 class="section-title">2.29 Application 1: Online Advertising / Recommendation</h2>
+
+<div class="example-box">
+<strong>Example: Na&iuml;ve Amazon Banner</strong><br/>
+An e-commerce site shows 10 product banners. Each banner = an arm. Reward = 1 if user clicks (or buys), 0 otherwise. The system doesn't know which products users will love &mdash; it must learn through interaction.
+<ul>
+<li>Start with Q(a) = 0 for all banners.</li>
+<li>Each visitor click updates the estimate.</li>
+<li>Banners with low estimated CTR get phased out; new banners are introduced (exploration).</li>
+</ul>
+The reward distribution is hidden in users' minds &mdash; no engineer can tell you in advance which banner converts best.
+</div>
+
+<h2 class="section-title">2.30 Application 2: A/B Testing / Web Layout Optimization</h2>
+
+<div class="example-box">
+<strong>Arms:</strong> Alternative page layouts, button positions, or message variants.<br/>
+<strong>Reward:</strong> Conversion, sign-up, or successful task completion.<br/><br/>
+Traditional A/B testing splits traffic evenly between variants. A bandit approach adaptively allocates more traffic to better-performing variants while still exploring others, achieving higher cumulative reward during the test itself.
+</div>
+
+<h2 class="section-title">2.31 Application 3: Detecting a Biased Coin</h2>
+<p>A single coin can be thought of as a 1-armed bandit. "Pulling" = flipping. Reward = 1 if heads, 0 if tails.</p>
+<ul>
+<li>Average &asymp; 0.5: fair coin.</li>
+<li>Average &gt; 0.5: biased toward heads.</li>
+<li>Average &lt; 0.5: biased toward tails.</li>
+</ul>
+<p>This trivially illustrates the sample-average estimation.</p>
+
+<h2 class="section-title">2.32 Application 4: Clinical Trials</h2>
+<p>Suppose you have K candidate drugs and want to find the most effective one. Each patient is a single trial; reward = treatment success. You must balance:</p>
+<ul>
+<li><strong>Exploiting</strong> the drug that currently looks best (so patients get the best known treatment).</li>
+<li><strong>Exploring</strong> other drugs (so you don't miss a better cure).</li>
+</ul>
+
+<h2 class="section-title">2.33 Application 5: Simple Portfolio Management</h2>
+<p>A toy model: 3 actions = {Buy, Sell, Hold} a single asset. Reward = realized return. The MAB model is a simplification; the full problem is properly modeled as a full RL problem because the optimal action depends on the current market state.</p>
+
+<h2 class="section-title">2.34 When MAB is Not Enough: Contextual Bandits</h2>
+<p>If the best action depends on contextual information (user identity, location, time of day, etc.), the vanilla MAB no longer suffices. We then move to <strong>Contextual Bandits</strong> &mdash; the next step toward full RL.</p>
+
+<div class="example-box">
+<strong>Textbook Motivating Example: Colored Slot Machine (Sutton &amp; Barto, §2.8)</strong><br/>
+Imagine a slot machine that changes the color of its display when it changes its hidden action values. Without the color signal, you'd face a nonstationary bandit where the true values jump randomly &mdash; methods that rely on slow tracking of a single estimate would fail. With the color signal, you can learn an <strong>associative policy</strong>: "if red, play arm 1; if green, play arm 2." Each color (context) tells you which situation you're in, and the policy associates each situation with its best action. This shift from "find one best action" to "learn which action is best in which situation" is the key leap toward full reinforcement learning &mdash; the very idea Thorndike's Law of Effect described as forming associative links between situations and actions.
+</div>
+
+<div class="key-concept">
+<strong>Definition: Contextual Bandit (Associative Search)</strong><br/>
+At each time step, the learner observes a <strong>context</strong> x<sub>t</sub> (side information about the situation), selects an action A<sub>t</sub>, and receives a reward for that selected action. The objective is to learn <strong>which actions work well in which contexts</strong> &mdash; associating different situations with different useful actions.
+</div>
+
+<div class="important-note">
+<strong>Contextual Bandit vs. Full RL:</strong> A contextual bandit is <strong>not yet</strong> full RL because the action affects only the immediate reward &mdash; it is not treated as changing the next context in a controlled sequential process. In full RL, actions can affect future states and future rewards, so delayed consequences and long-term credit assignment become central.
+</div>
+
+<h2 class="section-title">2.35 Contextual Bandit Examples</h2>
+
+<table>
+<thead><tr><th>Application</th><th>Context</th><th>Actions</th><th>Reward</th></tr></thead>
+<tbody>
+<tr>
+<td><strong>Online advertising</strong></td>
+<td>User profile, device, query, page type, time of day</td>
+<td>Candidate advertisements</td>
+<td>Click, purchase, or revenue. Best ad depends on user and page context.</td>
+</tr>
+<tr>
+<td><strong>News recommendation</strong></td>
+<td>User interests, recent browsing, location, session features</td>
+<td>Articles, videos, or posts</td>
+<td>Click, dwell time, or completion. Different users need different recommendations.</td>
+</tr>
+<tr>
+<td><strong>Clinical decision support</strong></td>
+<td>Patient record, symptoms, history, age, risk indicators</td>
+<td>Candidate treatments or interventions</td>
+<td>Recovery indicator or improvement score. Treatment depends on patient-specific context.</td>
+</tr>
+<tr>
+<td><strong>Information retrieval</strong></td>
+<td>Search query, intent features, interaction signals</td>
+<td>Ranking policy or result group</td>
+<td>Click satisfaction or relevance. Best action depends on query and intent.</td>
+</tr>
+<tr>
+<td><strong>Adaptive tutoring</strong></td>
+<td>Learner profile, recent answers, estimated mastery level</td>
+<td>Next exercise, hint, or explanation type</td>
+<td>Correctness or learning gain. Best instructional action depends on learner's current context.</td>
+</tr>
+</tbody>
+</table>
+
+<div class="important-note">
+<strong>Intuition: Life Stage Changes</strong><br/>
+Amazon's recommendations for a single user shift over time &mdash; college days, marriage, kids, retirement. Even if the user is "the same person", the underlying reward distribution changes with context. Pure MAB cannot capture this; contextual bandits and full RL can.
+</div>
+
+<h1 class="chapter-title">12. Summary &amp; Key Takeaways</h1>
+
+<div class="key-concept">
+<strong>Key Concepts of This Lecture</strong>
+<ol>
+<li><strong>Elements of RL:</strong> Agent, Environment, Reward, Value Function, Model.</li>
+<li><strong>State value V(s) vs. Action value Q(s, a):</strong> Q pre-summarizes future rewards and is preferred when outcomes are stochastic.</li>
+<li><strong>Model of the environment:</strong> The distribution p(s&prime;, r | s, a). If known, you can plan optimally; usually unknown.</li>
+<li><strong>Deep RL:</strong> Replace value tables with neural networks.</li>
+<li><strong>Multi-Armed Bandit:</strong> A stateless simplification of RL &mdash; pure focus on action-value estimation and exploration.</li>
+<li><strong>Sample-average estimation:</strong> Q<sub>t</sub>(a) is the running average of rewards from arm a.</li>
+<li><strong>Greedy</strong> is myopic and risks premature convergence.</li>
+<li><strong>&epsilon;-greedy</strong> balances exploration (&epsilon;) and exploitation (1 &minus; &epsilon;).</li>
+<li>For stationary problems, &epsilon; may decay over time. For non-stationary problems, keep &epsilon; &gt; 0 always.</li>
+<li><strong>Real-world bandit applications:</strong> ad serving, recommendation, A/B testing, clinical trials.</li>
+</ol>
+</div>
+
+<h2 class="section-title">2.36 Self-Check Questions</h2>
+<ol>
+<li>In a 5-armed bandit with &epsilon; = 0.2, what is the probability of selecting the greedy arm? (Answer: 0.8 + 0.04 = 0.84.)</li>
+<li>Why is Q(s, a) often more useful than V(s) in practice?</li>
+<li>What is the difference between a stationary and a non-stationary bandit?</li>
+<li>Why does pure greedy (&epsilon; = 0) plateau in the 10-armed testbed?</li>
+<li>Describe a real-world scenario you would model as a vanilla MAB and another that requires a contextual bandit.</li>
+</ol>
+
+<h2 class="section-title">2.37 Further Reading</h2>
+<ul>
+<li>Sutton &amp; Barto, <em>Reinforcement Learning: An Introduction</em>, 2nd Edition &mdash; the standard textbook. Specifically: <strong>Chapter 1</strong> (Sections 1.1&ndash;1.5) for the RL elements and tic-tac-toe example; <strong>Chapter 2</strong> (Sections 2.1&ndash;2.9) for the full treatment of multi-armed bandits including incremental updates, optimistic initialization, UCB, gradient bandits, and contextual bandits.</li>
+<li>Bouneffouf, D., Rish, I., and Aggarwal, C. (2020). <em>Survey on Applications of Multi-Armed and Contextual Bandits.</em> IEEE Congress on Evolutionary Computation (CEC), 1&ndash;8.</li>
+</ul>
+
+<p style="text-align:center; margin-top:40px; opacity:0.6;"><em>End of Lecture 2 Notes</em></p>
+
+    </main>
+    <section class="quiz-section">
+      <h2>Test Your Knowledge</h2>
+      <div id="quiz-card-0" class="quiz-card" data-correct-index="0">
+        <p class="quiz-question">Q: In a 5-armed bandit with ε = 0.2 where arm 1 is the current greedy arm, what is Pr(selecting arm 1)?</p>
+        <div class="quiz-options">
+          <button id="quiz-0-option-0" class="quiz-option" onclick="checkAnswer(this, 0)">0.84</button>
+          <button id="quiz-0-option-1" class="quiz-option" onclick="checkAnswer(this, 1)">0.20</button>
+          <button id="quiz-0-option-2" class="quiz-option" onclick="checkAnswer(this, 2)">0.25</button>
+          <button id="quiz-0-option-3" class="quiz-option" onclick="checkAnswer(this, 3)">1.00</button>
+        </div>
+        <div class="quiz-explanation hidden"><strong>Explanation:</strong> Under ε-greedy, Pr(greedy arm) = (1−ε) + ε/K = 0.8 + 0.2/5 = 0.84. Non-greedy arms each get probability ε/K = 0.04.</div>
+      </div>
+      <div id="quiz-card-1" class="quiz-card" data-correct-index="0">
+        <p class="quiz-question">Q: Why can pure greedy (ε = 0) perform poorly on the 10-armed testbed?</p>
+        <div class="quiz-options">
+          <button id="quiz-1-option-0" class="quiz-option" onclick="checkAnswer(this, 0)">Early random samples can make a suboptimal arm look best, and the agent never explores alternatives</button>
+          <button id="quiz-1-option-1" class="quiz-option" onclick="checkAnswer(this, 1)">Greedy always violates the Markov property</button>
+          <button id="quiz-1-option-2" class="quiz-option" onclick="checkAnswer(this, 2)">Sample averages cannot be computed without a model</button>
+          <button id="quiz-1-option-3" class="quiz-option" onclick="checkAnswer(this, 3)">Rewards are always deterministic in the testbed</button>
+        </div>
+        <div class="quiz-explanation hidden"><strong>Explanation:</strong> With ε=0 the agent commits to whichever arm looked best after a few pulls. Unlucky early draws cause permanent suboptimal exploitation without any further exploration.</div>
+      </div>
+      <div id="quiz-card-2" class="quiz-card" data-correct-index="0">
+        <p class="quiz-question">Q: When is Q(s,a) typically preferred over V(s) for action selection?</p>
+        <div class="quiz-options">
+          <button id="quiz-2-option-0" class="quiz-option" onclick="checkAnswer(this, 0)">When actions lead to stochastic outcomes and averaging successors at decision time is costly</button>
+          <button id="quiz-2-option-1" class="quiz-option" onclick="checkAnswer(this, 1)">Only when the state space has a single state</button>
+          <button id="quiz-2-option-2" class="quiz-option" onclick="checkAnswer(this, 2)">When rewards are always zero except at termination</button>
+          <button id="quiz-2-option-3" class="quiz-option" onclick="checkAnswer(this, 3)">When the discount factor equals 1</button>
+        </div>
+        <div class="quiz-explanation hidden"><strong>Explanation:</strong> Q(s,a) stores the expected return for taking action a directly. With stochastic transitions, using V(s) would require evaluating all possible next states at each decision — Q avoids that overhead.</div>
+      </div>
+    </section>
+  </div>
+  <script>
+    function checkAnswer(button, optionIndex) {
+      const card = button.closest('.quiz-card');
+      if (card.dataset.answered === "true") return;
+      card.dataset.answered = "true";
+      const correctIndex = parseInt(card.dataset.correctIndex);
+      const options = card.querySelectorAll('.quiz-option');
+      options.forEach((opt, idx) => {
+        opt.disabled = true;
+        if (idx === correctIndex) opt.classList.add('correct');
+        else if (idx === optionIndex) opt.classList.add('incorrect');
+      });
+      const explanation = card.querySelector('.quiz-explanation');
+      if (explanation) { explanation.classList.remove('hidden'); explanation.classList.add('fade-in'); }
+    }
+  </script>
+</body>
+</html>
