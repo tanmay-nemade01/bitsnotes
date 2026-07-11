@@ -244,8 +244,8 @@ def check_writing_style(text, report):
     # 2. Reading Ease
     score, n_words, n_sent = PL.flesch_reading_ease(prose)
     if n_words > 50:
-        if score < 45:
-            report.warned("Flesch reading ease", f"Score is {score}/100 (<45 is hard, college-level). Aim for simpler prose.")
+        if score < 60:
+            report.warned("Flesch reading ease", f"Score is {score}/100 (<60 is below plain English level). Aim to improve the readability of the surrounding prose as much as possible, but do not force changes on mathematical statements (leave math formulas and symbols as is).")
         else:
             report.passed("Flesch reading ease", f"Score is {score}/100.")
 

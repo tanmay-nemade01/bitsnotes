@@ -20,48 +20,32 @@ Does: exhaustive extraction,    Does: teaching spine        Does: section-by-sec
       preservation                 worked examples,             exam revision,
                                    pitfalls,                    topic mapping (same-subject),
                                    domain connections,          prerequisite HTML section,
-                                   readability & style gate     YAML write-back,
-                                   (processed per-section)      HTML/SEO lint gate,
-                                                                rubric self-score
+                                   readability & style gate,    HTML/SEO lint gate,
+                                   topic mapping YAML update    rubric self-score
+                                   (processed per-section)
 
-Output: dense draft         Output: enriched sections    Output: <Lecture>.html
-        (markdown)          (markdown + :::annotations)   + updated topic_mappings/*.yaml
+Output: dense draft         Output: enriched sections    Output: <LecturePrefix>_notes.html
+        (markdown)          (markdown + :::annotations)
+                            + updated topic_mappings/*.yaml
 ```
 
 ## Topic Mapping
 
-The `topic_mappings/` directory (at the workspace root) contains YAML files
-cataloguing every topic covered in every lecture. Topic mapping is handled
-entirely by **Agent 3** — Agents 1 and 2 stay focused on extraction and
-enrichment without any YAML interaction.
+The `topic_mappings/` directory (at the workspace root) contains YAML files cataloguing every topic covered in every lecture. Topic mapping is a collaborative effort between **Agent 2** (which writes topics to the YAML) and **Agent 3** (which reads topics to build prerequisite references).
 
-### What Agent 3 does with topic mapping
-- Reads **only** the YAML file for the **same subject** as the transcript
-  (handles acronym filenames like `ML.yaml` for "Machine Learning")
-- If no YAML exists (new subject), skips prerequisite detection and just
-  creates the YAML file during write-back
-- Identifies which topics in this lecture overlap with previous lectures
-  in the same subject
-- Generates a **Prerequisite Knowledge** HTML section listing prior coverage
-- Writes this lecture's topics back to the YAML file so future lectures
-  can detect overlap
-- Does NOT scan other subjects' YAML files
-
-### Why Agent 3 (not a separate agent)
-- Topic mapping is structured data lookup, not creative generation — it
-  does not need a smart/expensive model
-- Agents 1 and 2 give full treatment to every concept regardless of
-  prior coverage — students get thorough explanations, and the
-  prerequisite section is just a helpful cross-reference
-- Keeps the pipeline at 3 agents with clean separation of concerns
+### Topic Mapping Flow
+1. **Agent 2 (Enricher)**:
+   - Scans the completed enriched draft to compile all `##` and `###` heading titles.
+   - Updates the subject's YAML file (`topic_mappings/<Subject>.yaml`) with this lecture's topics by running the `update_topic_mapping.py` script.
+2. **Agent 3 (Formatter)**:
+   - Reads the YAML file for the same subject to identify overlapping topics in previous lectures (lectures with a lower number).
+   - Generates the **Prerequisite Knowledge** HTML section listing prior coverage.
+   - Does NOT write back to the YAML (Agent 2 has already updated it).
 
 ### Benefits
-- **Students see the full map** — every "this was covered in Lecture N"
-  reference is explicit, making the curriculum navigable
-- **Auto-growing knowledge base** — each new lecture enriches the topic
-  map, so later lectures get better prerequisite detection
-- **No distraction for Agents 1-2** — zero topic mapping overhead in the
-  extraction and enrichment phases
+- **Students see the full map** — every "this was covered in Lecture N" reference is explicit and complete.
+- **No Agent 3 YAML write-back** — simplifies Phase 3 and avoids late-pipeline write-back errors.
+- **Accurate mapping** — topics are extracted directly from the finalized enriched markdown.
 
 ## Output Structure
 
@@ -87,7 +71,7 @@ Run the process in the following sequence:
 
 2. "Use Agent 2 (enricher) to split <LecturePrefix>_notes_dense.md (creating the sections/ directory), apply the teaching spine section-by-section, resolve all *[verify]* markers, optimize readability (sentence splitting, plain language), assemble into <LecturePrefix>_notes_enriched.md, and run lint_dense.py with --phase enriched."
 
-3. "Use Agent 3 (formatter) to split <LecturePrefix>_notes_enriched.md, convert the sections into HTML, assemble them, read topic_mappings/<Subject>.yaml for prerequisite detection, update the YAML, run lint.py (style/readability warnings are downgraded), and self-score to produce the final html under a newly created <LecturePrefix>_notes/ folder."
+3. "Use Agent 3 (formatter) to split <LecturePrefix>_notes_enriched.md, convert the sections into HTML, assemble them, read topic_mappings/<Subject>.yaml for prerequisite detection, run lint.py (style/readability warnings are downgraded), and self-score to produce the final html under a newly created <LecturePrefix>_notes/ folder."
 ```
 
 ## What's inside
@@ -104,7 +88,7 @@ make-transcript-notes-kit-3agent/
 │   ├── _plain_language.py     ← Shared word lists for lint
 │   ├── section_splitter.py    ← Splits enriched MD into per-section files + reassembles HTML
 │   ├── topic_mapping_utils.py ← YAML parser + coverage search (acronym-aware)
-│   └── update_topic_mapping.py ← YAML updater (called by Agent 3)
+│   └── update_topic_mapping.py ← YAML updater (called by Agent 2)
 └── references/
     └── prompts.md             ← Prompt cookbook
 

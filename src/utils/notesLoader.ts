@@ -40,16 +40,17 @@ interface NotesManifest {
   subjects: SubjectEntry[];
 }
 
-// ─── Node.js imports for local development ───────────────────────────────────
-// We load these dynamically at runtime during dev using top-level imports.
-// In production (Cloudflare), these imports will be evaluated but not executed,
-// and we avoid bundler errors by using dynamic string variables.
-const fsModule = 'node:fs';
-const pathModule = 'node:path';
-const fs = import.meta.env.DEV ? await import(fsModule) : null;
-const path = import.meta.env.DEV ? await import(pathModule) : null;
+// ─── Vite Glob Imports for local development ─────────────────────────────────
+// This allows loading notes in the dev environment without node:fs, which fails
+// inside the sandboxed Cloudflare workerd runtime.
+const htmlFiles = import.meta.env.DEV
+  ? import.meta.glob('/src/content/notes/**/*.html', { query: '?raw', import: 'default' })
+  : {};
 
-const NOTES_DIR = import.meta.env.DEV ? path!.join(process.cwd(), 'src/content/notes') : '';
+const jsonFiles = import.meta.env.DEV
+  ? import.meta.glob('/src/content/notes/**/*.json', { import: 'default' })
+  : {};
+
 
 // ─── Shared Helpers ──────────────────────────────────────────────────────────
 
@@ -116,86 +117,80 @@ export async function getManifest(): Promise<NotesManifest> {
 
 // Scans local notes directory and builds in-memory manifest for development
 async function buildLocalManifest(): Promise<NotesManifest> {
-  const subjectsList: SubjectEntry[] = [];
+  const subjectsMap = new Map<string, LectureEntry[]>();
   let totalLectures = 0;
 
-  if (!fs || !path || !fs.existsSync(NOTES_DIR)) {
-    return { version: 'dev-empty', subjects_count: 0, total_lectures: 0, updatedAt: '', subjects: [] };
-  }
+  for (const key of Object.keys(htmlFiles)) {
+    // Key format: /src/content/notes/Subject Name/Lecture Folder/File Name.html
+    const match = key.match(/^\/src\/content\/notes\/([^\/]+)\/([^\/]+)\/([^\/]+)\.html$/);
+    if (!match) continue;
 
-  try {
-    const subjectFolders = fs.readdirSync(NOTES_DIR, { withFileTypes: true })
-      .filter((dirent: any) => dirent.isDirectory())
-      .map((dirent: any) => dirent.name);
+    const subjectName = match[1];
+    const lectureFolder = match[2];
+    const fileName = match[3];
 
-    for (const subjectName of subjectFolders) {
-      const subjectPath = path.join(NOTES_DIR, subjectName);
-      const lectureFolders = fs.readdirSync(subjectPath, { withFileTypes: true })
-        .filter((dirent: any) => dirent.isDirectory())
-        .map((dirent: any) => dirent.name);
+    const defaultDisplayName = fileName.replace(/_/g, ' ');
 
-      const lecturesList: LectureEntry[] = [];
-
-      for (const lectureFolder of lectureFolders) {
-        const lecturePath = path.join(subjectPath, lectureFolder);
-        const files = fs.readdirSync(lecturePath);
-        
-        const htmlFile = files.find((f: any) => f.endsWith('.html'));
-        if (!htmlFile) continue;
-
-        const htmlPath = path.join(lecturePath, htmlFile);
-        const htmlContent = fs.readFileSync(htmlPath, 'utf-8');
-        const fileName = htmlFile.replace(/\.html?$/i, '');
-        const defaultDisplayName = fileName.replace(/_/g, ' ');
-
-        let metadata = null;
-        const jsonFile = files.find((f: any) => f.endsWith('.json'));
-        if (jsonFile) {
-          try {
-            metadata = JSON.parse(fs.readFileSync(path.join(lecturePath, jsonFile), 'utf-8'));
-          } catch {}
-        }
-        
-        if (!metadata) {
-          metadata = extractEmbeddedMetadata(htmlContent);
-        }
-        if (!metadata) {
-          metadata = getFallbackMetadata(defaultDisplayName, subjectName);
-        }
-
-        const displayName = defaultDisplayName;
-
-        lecturesList.push({
-          name: displayName,
-          folderName: lectureFolder,
-          fileName: fileName,
-          metadata: metadata
-        });
-
-        totalLectures++;
+    // Look for companion JSON
+    const jsonKey = `/src/content/notes/${subjectName}/${lectureFolder}/${fileName}.json`;
+    let metadata = null;
+    if (jsonFiles[jsonKey]) {
+      try {
+        metadata = await jsonFiles[jsonKey]() as any;
+      } catch (err: any) {
+        console.error(`[notesLoader] Error loading local json for ${subjectName}/${lectureFolder}:`, err.message);
       }
-
-      // Sort lectures numerically by lecture number in folder name
-      lecturesList.sort((a, b) => {
-        const numA = a.folderName.match(/(\d+)/);
-        const numB = b.folderName.match(/(\d+)/);
-        if (numA && numB) {
-          return parseInt(numA[1]) - parseInt(numB[1]);
-        }
-        return a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' });
-      });
-
-      subjectsList.push({
-        name: subjectName,
-        lectureCount: lecturesList.length,
-        lectures: lecturesList
-      });
     }
 
-    subjectsList.sort((a, b) => a.name.localeCompare(b.name));
-  } catch (err: any) {
-    console.error('[notesLoader] Error building local notes manifest:', err.message);
+    if (!metadata) {
+      try {
+        const htmlContent = await htmlFiles[key]() as string;
+        metadata = extractEmbeddedMetadata(htmlContent);
+      } catch (err: any) {
+        console.error(`[notesLoader] Error loading local html for ${subjectName}/${lectureFolder}:`, err.message);
+      }
+    }
+
+    if (!metadata) {
+      metadata = getFallbackMetadata(defaultDisplayName, subjectName);
+    }
+
+    const displayName = defaultDisplayName;
+
+    if (!subjectsMap.has(subjectName)) {
+      subjectsMap.set(subjectName, []);
+    }
+
+    subjectsMap.get(subjectName)!.push({
+      name: displayName,
+      folderName: lectureFolder,
+      fileName: fileName,
+      metadata: metadata
+    });
+
+    totalLectures++;
   }
+
+  const subjectsList: SubjectEntry[] = [];
+  for (const [subjectName, lecturesList] of subjectsMap.entries()) {
+    // Sort lectures numerically by lecture number in folder name
+    lecturesList.sort((a, b) => {
+      const numA = a.folderName.match(/(\d+)/);
+      const numB = b.folderName.match(/(\d+)/);
+      if (numA && numB) {
+        return parseInt(numA[1]) - parseInt(numB[1]);
+      }
+      return a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' });
+    });
+
+    subjectsList.push({
+      name: subjectName,
+      lectureCount: lecturesList.length,
+      lectures: lecturesList
+    });
+  }
+
+  subjectsList.sort((a, b) => a.name.localeCompare(b.name));
 
   return {
     version: 'dev-manifest',
@@ -240,10 +235,15 @@ export async function getLectureContent(subjectName: string, lectureFolderName: 
   let htmlContent = '';
   
   if (import.meta.env.DEV) {
-    // Development: read directly from local filesystem
+    // Development: load using Vite glob import
     try {
-      const htmlPath = path!.join(NOTES_DIR, subjectName, lectureFolderName, `${lecture.fileName}.html`);
-      htmlContent = fs!.readFileSync(htmlPath, 'utf-8');
+      const key = `/src/content/notes/${subjectName}/${lectureFolderName}/${lecture.fileName}.html`;
+      if (htmlFiles[key]) {
+        htmlContent = await htmlFiles[key]() as string;
+      } else {
+        console.error(`[notesLoader] Local file not found in glob: ${key}`);
+        return null;
+      }
     } catch (err: any) {
       console.error(`[notesLoader] Error reading local note: ${err.message}`);
       return null;

@@ -80,13 +80,28 @@ Do not process multiple sections in parallel — do them one at a time to mainta
    python scripts/lint_dense.py outputs/<Subject>/<LecturePrefix>/<LecturePrefix>_notes_enriched.md \
        --lecture-num <lecture_number> --phase enriched
    ```
-   You MUST resolve all FAIL items (such as too many long sentences, banned hand-waving, academic/fancy words, and unresolved verify markers) flagged by the lint gate. Modify the corresponding section files, re-assemble, and re-run until it passes with zero FAILs.
+   You MUST resolve all FAIL items (such as too many long sentences, banned hand-waving, academic/fancy words, and unresolved verify markers) flagged by the lint gate. Modify the corresponding section files, re-assemble, and re-run until it passes with zero FAILs. Do NOT assume or claim that downstream phases or Agent 3 will split sentences or resolve readability failures. You are fully responsible for resolving all readability and sentence-length lint failures in this phase.
 4. **Run the verification script** against the manifest:
    ```bash
    python scripts/verify_manifest.py outputs/<Subject>/<LecturePrefix>/<LecturePrefix>_extraction_manifest.json \
        outputs/<Subject>/<LecturePrefix>/<LecturePrefix>_notes_enriched.md
    ```
    If any failures are flagged, locate the relevant `section_XX.md` files, correct the missing content/markup, re-assemble, and run the verification again until it passes.
+5. **Update the Topic Mapping YAML file** for this subject with the lecture's covered topics:
+   a. Scan the assembled `<LecturePrefix>_notes_enriched.md` (or the section files) and compile a flat list of every major topic covered using the section hierarchy.
+      - Every `##` (section title) becomes a topic entry, formatted as `lecture_number.topic_number Title` (e.g., `5.1 Concept Name` if processing Lecture 5).
+      - Every `###` (subsection title) becomes a sub-topic entry, formatted as `lecture_number.topic_number.sub_topic_number Title` (e.g., `5.1.1 Sub-concept Name`).
+      - Only include real topics (skip appendices like "Exam Guidance Summary" and "Key Industry Applications").
+   b. Write these formatted topics (one per line) to a temporary text file named `topics_list.txt` in the workspace root.
+   c. Run the topic mapping update script:
+      ```bash
+      python scripts/update_topic_mapping.py "<Subject>" "<LectureNumber>" \
+          "<Lecture Topic>" "<Subject>/<LecturePrefix>_notes/<LecturePrefix>_notes.html" \
+          topics_list.txt
+      ```
+      Where `<Subject>` is the full subject name, `<LectureNumber>` is the lecture number, `<Lecture Topic>` is the clean main lecture topic (from the `#` header), and the HTML path parameter is standardized as `<Subject>/<LecturePrefix>_notes/<LecturePrefix>_notes.html`.
+   d. Delete the temporary `topics_list.txt` file.
+   e. Confirm that `topic_mappings/<Subject>.yaml` is successfully updated or created.
 
 Clean up any other intermediate helper files, drafts, or scripts created during this phase (but do NOT delete the `sections/` directory or the `section_XX_summary.json` summaries, as Agent 3 will clean them up):
 Ensure that ONLY `<LecturePrefix>_notes_dense.md`, `<LecturePrefix>_notes_enriched.md`, `<LecturePrefix>_extraction_manifest.json`, and the `sections/` directory (with section files and summaries) remain in the lecture folder.
@@ -99,7 +114,7 @@ Ensure that ONLY `<LecturePrefix>_notes_dense.md`, `<LecturePrefix>_notes_enrich
 2. **Analogies that stick** — Every tricky idea gets a concrete everyday analogy BEFORE any math. Use the analogy bank below; invent fresh ones when needed.
 3. **Math intuition** — Build every formula step by step. Every symbol named. Explain WHY, not just WHAT. Never "it can be shown that."
 4. **Fully worked examples** — Every example from the transcript must be worked in full: every step, real numbers, final answer highlighted, sense-check at end.
-5. **Writing style — sound human, not AI** — Write like a knowledgeable person explaining things to a friend. Short sentences (aim ~15 words, cap at ~22). Active voice. Conversational tone — starting with "and" or "but" is fine. Address the reader as "you." Vary sentence length for rhythm. Define every term on first use. Cut filler phrases ("it is important to note that" → just say the thing). Cut literary flourishes and marketing-speak. If a sentence reads like it came from a corporate press release or an AI chatbot, rewrite it. But use your judgment — technical terms are fine when they are the right word (e.g., "Fourier transform" is not marketing-speak). Words like "could" and "may" are appropriate when expressing genuine uncertainty.
+5. **Writing style — sound human, not AI** — Write like a knowledgeable person explaining things to a friend. Short sentences (aim ~15 words, cap at ~22). Active voice. Conversational tone — starting with "and" or "but" is fine. Address the reader as "you." Vary sentence length for rhythm. Define every term on first use. Cut filler phrases ("it is important to note that" → just say the thing). Cut literary flourishes and marketing-speak. If a sentence reads like it came from a corporate press release or an AI chatbot, rewrite it. But use your judgment — technical terms are fine when they are the right word (e.g., "Fourier transform" is not marketing-speak). Words like "could" and "may" are appropriate when expressing genuine uncertainty. You are fully responsible for splitting long sentences and resolving sentence length issues in this phase; Agent 3 does not split sentences or fix readability failures, so all prose editing must be completed by you. If the Flesch reading ease score is flagged below 60, improve the readability of the surrounding prose as much as you can, but do not force changes on mathematical statements (leave math formulas and symbols as is).
 6. **Strict File Attachment Guard Rail** — Focus *only and only* on the files attached to the prompt/context. Do *not* search for or read other files in the workspace (such as other drafts or notes) unless you are absolutely certain that the attached files do not match the expected context at all (e.g., they are completely blank, corrupted, or clearly belong to a different course/lecture, suggesting an accidental attachment). Only under that absolute certainty may you check for other files in the workspace; otherwise, restrict your processing and enrichment strictly to the attached files and local companion documents.
 7. **Strict Script Creation Guard Rail** — You are strictly prohibited from creating or writing any script (Python, Bash, JS, etc.) inside the toolkit folder (`make-transcript-notes-kit-3agent` or its subfolders) during the process. Any intermediate or temporary scripts created in the workspace for testing or content parsing must be cleaned up and deleted before completing the task.
 8. **🚫 Student-Facing Output Guardrail** — Your output will eventually become student-facing notes. **Do NOT inject any pipeline-internal text** into the output:
@@ -112,7 +127,7 @@ Ensure that ONLY `<LecturePrefix>_notes_dense.md`, `<LecturePrefix>_notes_enrich
     - Think like a student: if any text would make a reader think "this was generated by a bot", remove or rewrite it
 
 9. **Strict Dotted Numbering System** — You must strictly maintain the topic and sub-topic numbering system `lecture_number.topic_number` for all `##` headings, and `lecture_number.topic_number.sub_topic_number` for all `###` headings (e.g., `## 5.1 [Concept Title]` and `### 5.1.1 [Sub-concept Title]` if you are processing Lecture 5). Never strip, alter, or renumber these dotted numbers.
-10. **Do NOT delegate tasks to Agent 3** — You are strictly prohibited from leaving unresolved task instructions, placeholders, or TODOs for Agent 3 in the enriched draft (e.g., 'Define Logistic Regression in revision notes' or 'TODO: add worked example here'). You must resolve all core content and math questions yourself during this enrichment phase. If you identify a concept as highly examinable, use the `:::key-takeaway` callout with the label `**Exam note:**` in the core text. Never insert instructions directed at the downstream pipeline.
+10. **Do NOT delegate tasks to Agent 3** — You are strictly prohibited from leaving unresolved task instructions, placeholders, or TODOs for Agent 3 in the enriched draft (e.g., 'Define Logistic Regression in revision notes' or 'TODO: add worked example here'). You must resolve all core content and math questions yourself during this enrichment phase. You must also resolve all readability and sentence-length lint failures yourself; you are strictly prohibited from leaving sentence-splitting or prose editing for Agent 3, as Agent 3's role is strictly conversion and template layout, not content editing. If you identify a concept as highly examinable, use the `:::key-takeaway` callout with the label `**Exam note:**` in the core text. Never insert instructions directed at the downstream pipeline.
 
 ---
 

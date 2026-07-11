@@ -663,12 +663,11 @@ def check_flesch(parser, report):
     elif score >= 45:
         report.warned("Flesch reading ease",
                       f"Score {score}/100 (45-59 = fairly hard, ~grade 10-12). "
-                      "Consider shorter sentences and simpler words.")
+                      "Aim to improve the readability of the surrounding prose, but do not force changes on mathematical statements.")
     else:
         report.warned("Flesch reading ease",
                       f"Score {score}/100 (<45 = hard, ~college level). "
-                      "The easy-language mandate requires simpler prose. "
-                      "Consider shortening sentences and swapping academic words for plain ones.")
+                      "Aim to improve the readability of the surrounding prose as much as possible, but do not force changes on mathematical statements (leave math formulas and symbols as is).")
 
 
 def check_long_tokens(parser, report):
@@ -1039,6 +1038,61 @@ def check_writing_style(parser, report):
                       "No obvious AI-cliché or formatting issues in prose.")
 
 
+def check_html_formatting(raw, report):
+    """Detect if the HTML code is minified or written on a single line (or very few lines).
+    Well-formatted HTML must have line breaks and proper indentation.
+    """
+    # Extract the textbook content and exam revision content
+    main_match = re.search(r'<main[^>]*>(.*?)</main>', raw, re.DOTALL | re.IGNORECASE)
+    exam_match = re.search(r'<section\s+class\s*=\s*["\']exam-revision-section["\'][^>]*>(.*?)</section>', raw, re.DOTALL | re.IGNORECASE)
+    
+    parts_to_check = []
+    if main_match:
+        parts_to_check.append(("main textbook content (<main>)", main_match.group(1)))
+    if exam_match:
+        parts_to_check.append(("exam revision notes (<section class=\"exam-revision-section\">)", exam_match.group(1)))
+        
+    failures = []
+    
+    for name, content in parts_to_check:
+        stripped_content = content.strip()
+        if not stripped_content:
+            continue
+            
+        lines = stripped_content.splitlines()
+        num_lines = len(lines)
+        total_len = len(stripped_content)
+        
+        # 1. Check if a non-empty section is written in just 1 or 2 lines
+        if num_lines <= 2 and total_len > 400:
+            failures.append(
+                f"The {name} section is written in only {num_lines} line(s) despite being {total_len} "
+                "characters long. HTML must be pretty-printed with line breaks and proper indentation, "
+                "never minified or compressed into a single line."
+            )
+            continue
+            
+        # 2. Check if individual lines are excessively long and contain multiple block or formatting tags.
+        # This catches when a single topic/section is compressed onto a single line.
+        block_tag_re = re.compile(r'</?(?:div|p|li|ul|ol|h[1-6]|section|blockquote)\b(?:\s+[^>]*)?>', re.IGNORECASE)
+        for i, line in enumerate(lines):
+            # If a line is longer than 1000 characters and contains tag boundaries
+            if len(line) > 1000 and ('<' in line and '>' in line):
+                # Count block HTML tags on this line
+                block_tags = block_tag_re.findall(line)
+                if len(block_tags) > 2:
+                    failures.append(
+                        f"Line {i+1} in {name} is extremely long ({len(line)} characters) and contains "
+                        f"{len(block_tags)} block-level HTML tags. Block-level HTML elements must start on new lines for readability."
+                    )
+                    break
+                    
+    if failures:
+        report.failed("HTML formatting consistency", "\n".join(failures))
+    else:
+        report.passed("HTML formatting consistency", "HTML is pretty-printed with appropriate line breaks and nesting.")
+
+
 # ---------------------------------------------------------------------------
 # Driver
 # ---------------------------------------------------------------------------
@@ -1075,6 +1129,7 @@ def lint_file(path):
     check_pipeline_jargon(raw, parser, report)
     check_placeholder_tasks(raw, parser, report)
     check_writing_style(parser, report)
+    check_html_formatting(raw, report)
     return report
 
 

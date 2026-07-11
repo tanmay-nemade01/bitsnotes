@@ -53,6 +53,7 @@ description: >-
 11. **Strict Dotted Numbering System** — You must strictly enforce the topic and sub-topic numbering system `lecture_number.topic_number` for all `h2` headings, and `lecture_number.topic_number.sub_topic_number` for all `h3` headings (e.g., `## 5.1 [Concept Title]` and `### 5.1.1 [Sub-concept Title]` if you are processing Lecture 5). Never strip, alter, or renumber these dotted numbers.
 12. **Content-Aware Conversion (Resolve Placeholder Instructions and TODOs)** — The conversion process must be content-aware, not a mechanical or automated translation of markdown. If you encounter any placeholder instructions, tasks, or TODO markers left by Agent 2 (for example, "Define [Concept] in revision notes", "TODO: add worked example here", "placeholder for formula", etc.), you must **NOT** output them literally in the HTML. Instead, you must dynamically resolve and complete the requested action using the core lecture notes, generating professional, textbook-quality content in the final output (e.g., actually defining the concept in the revision notes). The final HTML must never contain raw instructions, placeholders, or TODO text.
 13. **Writing style — sound human, not AI** — Any text you generate (exam revision entries, resolved placeholders, prerequisite sections) must sound like a knowledgeable person explaining things, not like a chatbot. Short sentences, active voice, conversational tone, no filler phrases, no marketing-speak. Use your judgment — technical terms are the right word when they describe the concept precisely. The lint gate will softly flag common AI-cliché patterns, but the real test is: would a student reading this think "a human wrote this"?
+14. **HTML Code Formatting (No Single-Line HTML)** — The output HTML must be pretty-printed, indented, and formatted with proper line breaks. Never compress or minify the HTML into a single line or a few extremely long lines. Block elements (e.g., `<div>`, `<p>`, `<li>`, `h2`, `h3`, `ul`, `ol`) must start on a new line and be indented according to their nesting depth. This keeps the code human-readable and maintainable. The lint gate will fail if the HTML is not well-formatted.
 
 ---
 
@@ -154,6 +155,8 @@ Plus structural classes: `.chapter-title` (h1), `.section-title` (h2), `.subsect
 ### 2e — Write the section HTML
 
 Write the converted HTML to `section_NN.html` in the same `_sections/` directory. The file must contain ONLY the HTML for this section — no `<html>`, `<head>`, or `<body>` tags. Just the content that will go inside `<main>`.
+
+**HTML Formatting Requirement:** The output HTML must be pretty-printed, indented, and well-formatted with appropriate line breaks (never output the HTML as a single line or a few compressed lines). Every block-level HTML element (e.g. `<div>`, `<p>`, `<ul>`, `<li>`, `h2`, `h3`) should start on its own line and be properly indented relative to its parent container.
 
 ### 2f — Move to the next section
 
@@ -351,15 +354,14 @@ Each entry = one `<div class="exam-revision-entry">`:
 
 ## Step 8 — Topic Mapping (same-subject only)
 
-This step reads the topic mapping YAML for the **same subject only**, generates the prerequisite HTML section, and writes back this lecture's topics.
+This step reads the topic mapping YAML for the **same subject only** (which has already been updated by Agent 2) and generates the prerequisite HTML section.
 
 ### 8.1 — Find the YAML file for this subject
 
 Look for `topic_mappings/<Subject>.yaml`. The filename may use an acronym (e.g., `ML.yaml` for "Machine Learning"). The helper function `load_topic_map()` in `scripts/topic_mapping_utils.py` handles this — it tries the direct filename first, then falls back to scanning all YAML files and matching by the `subject_name` field inside each file.
 
-**If no YAML file exists for this subject** (new subject with no prior lectures):
-- Set `{{PREREQUISITE_KNOWLEDGE}}` to an empty string (section will be omitted)
-- Skip to Step 8.4 (write-back) to create the YAML file for this subject
+**If no YAML file exists for this subject** (or no previous lectures exist):
+- Set `{{PREREQUISITE_KNOWLEDGE}}` to an empty string (section will be omitted).
 
 **Do NOT scan other subjects' YAML files.** Cross-subject prerequisite detection is not part of this step.
 
@@ -393,29 +395,6 @@ If matches were found, generate the `{{PREREQUISITE_KNOWLEDGE}}` HTML:
 
 If no matches found, set `{{PREREQUISITE_KNOWLEDGE}}` to an empty string.
 
-### 8.4 — Write back this lecture's topics to the YAML
-
-From the completed HTML core, compile a flat list of every major topic covered using the section hierarchy:
-
-- Every `h2` (section title) becomes a topic entry
-- Every `h3` (subsection title) becomes a sub-topic entry
-
-Format each topic (h2) using the standard format: `lecture_number.topic_number Title` (e.g., if this is Lecture 5, a topic is formatted as `5.1 Title`). Format each subtopic (h3) using the standard format: `lecture_number.topic_number.sub_topic_number Title` (e.g., a subtopic under that is formatted as `5.1.1 Title`). The first number must always match the current lecture number. Then run:
-
-```bash
-python scripts/update_topic_mapping.py "<Subject>" "<LectureNumber>" \
-    "<Lecture Topic>" "<file_name>" <topics_file>
-```
-
-Where `<topics_file>` is a temporary text file containing one topic per line. If the subject's YAML file doesn't exist yet, the script creates it.
-
-### 8.5 — Verify the update
-
-Open the updated YAML file and confirm:
-- The new lecture entry exists with correct lecture_number, topic, file_name
-- The topics_covered list is complete
-- No previous lectures were accidentally modified
-
 ---
 
 ## Step 9 — Run the lint gate
@@ -426,7 +405,7 @@ python scripts/lint.py outputs/<Subject>/<LecturePrefix>/<LecturePrefix>_notes/<
 
 Fix **every FAIL**. Re-run until clean. Note that readability (sentence length), hand-waving, Flesch reading ease, and fancy/academic words checks in `lint.py` have been downgraded to warnings (`WARN`) for this phase, as they are fully handled and verified by Agent 2 during Phase 2. Your focus is strictly on fixing HTML-related failures, template hygiene, SEO metadata, metadata JSON structure, and CSS class rules. Fix any WARNs where appropriate, but do not spend time manually editing or splitting sentences in the main content as that was already optimized by Agent 2.
 
-The lint checks: template hygiene (no surviving `{{PLACEHOLDER}}`), viewport meta, metadata completeness, SEO (OG, Twitter, canonical, robots, keywords, JSON-LD, description length), callout box usage (all 5 types present), style separation (no `<style>`/inline `style`/Google Fonts), math delimiters (no `\\(`), PII/secrets, readability (sentence length), long tokens, exam revision entries, content structure.
+The lint checks: template hygiene (no surviving `{{PLACEHOLDER}}`), viewport meta, metadata completeness, SEO (OG, Twitter, canonical, robots, keywords, JSON-LD, description length), callout box usage (all 5 types present), style separation (no `<style>`/inline `style`/Google Fonts), math delimiters (no `\\(`), PII/secrets, readability (sentence length), long tokens, exam revision entries, content structure, HTML formatting consistency (no single-line or minified HTML).
 
 ---
 
@@ -478,6 +457,7 @@ The lint checks: template hygiene (no surviving `{{PLACEHOLDER}}`), viewport met
 
 - [ ] All sections converted individually with heading numbers verified against `_inventory.json`
 - [ ] Section HTMLs assembled mechanically (no content changes during assembly)
+- [ ] HTML code formatting: All HTML files are pretty-printed, indented, and well-formatted with proper line breaks; no single-line HTML is generated.
 - [ ] Intermediate `_body.html` cleaned up (while preserving sections/ folder and md drafts)
 - [ ] Every concept present in teaching order; every transcript example worked in full
 - [ ] All core spine steps per major concept (or procedural spine for algorithms); correct callout per step; situational steps where the transcript provides them
@@ -492,7 +472,7 @@ The lint checks: template hygiene (no surviving `{{PLACEHOLDER}}`), viewport met
 - [ ] **Student-facing guardrail**: No pipeline jargon ("Enriched", agent names, callout legends, course codes) in any visible text — title, headings, body, metadata title, OG/Twitter titles
 - [ ] Metadata JSON complete with examRevisionNotes; **no** `summary`, `keyConcepts`, or `quiz` fields
 - [ ] **Content-Aware check**: All placeholders, TODOs, and task instructions (e.g. 'Define ... in revision notes') resolved or stripped; none remain in the final HTML
-- [ ] Topic mapping: YAML updated for this lecture; prerequisite section populated (or omitted for new subjects)
+- [ ] Topic mapping: Prerequisite section populated (or omitted for new subjects/first lectures) based on subject's YAML
 - [ ] Professor intuition preserved (analogies, stories, confusion flags — not generic substitutes)
 - [ ] Exam revision: one entry per major concept, built from core only, every formula renders
 - [ ] SEO: description 100-155 chars, unique, keyword-rich; OG, Twitter, canonical, robots, keywords, JSON-LD all present
