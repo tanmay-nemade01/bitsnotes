@@ -155,6 +155,10 @@ export const onRequest = defineMiddleware(async (context, next) => {
   // Build mutable headers from the response
   const headers = new Headers(response.headers);
 
+  // Delete Content-Length and Content-Encoding to prevent Cloudflare edge from truncating the body
+  headers.delete('content-length');
+  headers.delete('content-encoding');
+
   // ─── Apply security headers to all responses ─────────────────────────
   for (const [key, value] of Object.entries(securityHeaders)) {
     headers.set(key, value);
