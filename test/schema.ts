@@ -37,11 +37,16 @@ CREATE TABLE IF NOT EXISTS comments (
   page_type         TEXT NOT NULL,
   subject           TEXT NOT NULL,
   lecture           TEXT,
+  parent_id         TEXT,
+  depth             INTEGER NOT NULL DEFAULT 0,
   display_name      TEXT NOT NULL,
   body              TEXT NOT NULL,
   status            TEXT NOT NULL DEFAULT 'published',
   moderation_reason TEXT,
   author_token_hash TEXT NOT NULL,
+  author_user_id    TEXT,
+  author_email_hash TEXT,
+  score             INTEGER NOT NULL DEFAULT 0,
   report_count      INTEGER NOT NULL DEFAULT 0,
   created_at        INTEGER NOT NULL,
   updated_at        INTEGER NOT NULL,
@@ -52,6 +57,20 @@ CREATE INDEX IF NOT EXISTS idx_comments_page
   ON comments (page_type, subject, lecture, status, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_comments_status
   ON comments (status, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_comments_parent
+  ON comments (parent_id, created_at ASC);
+
+CREATE TABLE IF NOT EXISTS comment_votes (
+  id            TEXT PRIMARY KEY,
+  comment_id    TEXT NOT NULL REFERENCES comments(id) ON DELETE CASCADE,
+  voter_hash    TEXT NOT NULL,
+  value         INTEGER NOT NULL,
+  created_at    INTEGER NOT NULL,
+  UNIQUE(comment_id, voter_hash)
+);
+
+CREATE INDEX IF NOT EXISTS idx_comment_votes_comment
+  ON comment_votes (comment_id, created_at DESC);
 
 CREATE TABLE IF NOT EXISTS comment_reports (
   id            TEXT PRIMARY KEY,

@@ -19,6 +19,7 @@ import type { AuthDb } from '../src/lib/auth/db';
 import { setTestEnv } from './cloudflare-shim';
 import { POST as commentsPost, GET as commentsGet } from '../src/pages/api/comments/index';
 import { DELETE as commentsDelete } from '../src/pages/api/comments/[id]';
+import { POST as votePost } from '../src/pages/api/comments/[id]/vote';
 import { createComment } from '../src/lib/comments';
 
 const BASE = 'https://bitsnotes.com';
@@ -247,5 +248,97 @@ describe('DELETE /api/comments/[id]', () => {
     });
     const res = await commentsDelete(ctx as any);
     expect(res.status).toBe(403);
+  });
+});
+
+describe('POST /api/comments/[id]/vote', () => {
+  it('records an upvote and returns score', async () => {
+    const { comment } = await createComment(db, { pageType: 'lecture', subject: 'NLP', lecture: 'Lecture_01', displayName: 'A', body: 'x', status: 'published' });
+    const ctx = makeContext({
+      method: 'POST',
+      url: BASE + '/api/comments/' + comment.id + '/vote',
+      origin: BASE,
+      body: { value: 1 },
+      params: { id: comment.id },
+    });
+    const res = await votePost(ctx as any);
+    expect(res.status).toBe(200);
+    const data = await res.json();
+    expect(data.score).toBe(1);
+    expect(data.myVote).toBe(1);
+  });
+
+  it('rejects invalid value (400)', async () => {
+    const { comment } = await createComment(db, { pageType: 'lecture', subject: 'NLP', lecture: 'Lecture_01', displayName: 'A', body: 'x', status: 'published' });
+    const ctx = makeContext({
+      method: 'POST',
+      url: BASE + '/api/comments/' + comment.id + '/vote',
+      origin: BASE,
+      body: { value: 5 },
+      params: { id: comment.id },
+    });
+    const res = await votePost(ctx as any);
+    expect(res.status).toBe(400);
+  });
+
+  it('rejects CSRF (403)', async () => {
+    const { comment } = await createComment(db, { pageType: 'lecture', subject: 'NLP', lecture: 'Lecture_01', displayName: 'A', body: 'x', status: 'published' });
+    const ctx = makeContext({
+      method: 'POST',
+      url: BASE + '/api/comments/' + comment.id + '/vote',
+      origin: 'https://evil.com',
+      body: { value: 1 },
+      params: { id: comment.id },
+    });
+    const res = await votePost(ctx as any);
+    expect(res.status).toBe(403);
+  });
+});
+
+describe('POST /api/comments (replies)', () => {
+  it('creates a reply to a published comment (201)', async () => {
+    const { comment: top } = await createComment(db, { pageType: 'lecture', subject: 'NLP', lecture: 'Lecture_01', displayName: 'A', body: 'top', status: 'published' });
+    const ctx = makeContext({
+      method: 'POST',
+      url: BASE + '/api/comments',
+      origin: BASE,
+      body: {
+        pageType: 'lecture', subject: 'NLP', lecture: 'Lecture_01',
+        displayName: 'Bob', body: 'a reply', parentId: top.id, formStartedAt: Date.now() - 5000,
+      },
+    });
+    const res = await commentsPost(ctx as any);
+    expect(res.status).toBe(201);
+    const data = await res.json();
+    expect(data.parentId).toBe(top.id);
+  });
+
+  it('rejects reply whose parent is on a different page (400)', async () => {
+    const { comment: top } = await createComment(db, { pageType: 'lecture', subject: 'NLP', lecture: 'Lecture_01', displayName: 'A', body: 'top', status: 'published' });
+    const ctx = makeContext({
+      method: 'POST',
+      url: BASE + '/api/comments',
+      origin: BASE,
+      body: {
+        pageType: 'subject', subject: 'NLP',
+        displayName: 'B', body: 'a reply', parentId: top.id, formStartedAt: Date.now() - 5000,
+      },
+    });
+    const res = await commentsPost(ctx as any);
+    expect(res.status).toBe(400);
+  });
+
+  it('rejects reply to unknown parent (400)', async () => {
+    const ctx = makeContext({
+      method: 'POST',
+      url: BASE + '/api/comments',
+      origin: BASE,
+      body: {
+        pageType: 'lecture', subject: 'NLP', lecture: 'Lecture_01',
+        displayName: 'B', body: 'a reply', parentId: '00000000-0000-0000-0000-000000000000', formStartedAt: Date.now() - 5000,
+      },
+    });
+    const res = await commentsPost(ctx as any);
+    expect(res.status).toBe(400);
   });
 });

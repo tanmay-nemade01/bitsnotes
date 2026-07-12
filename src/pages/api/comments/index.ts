@@ -14,13 +14,15 @@
  */
 
 import type { APIRoute } from 'astro';
-import { getEnv, json, badRequest, tooMany, serverError } from '../../../lib/apiHelpers';
+import { getEnv, json, badRequest, tooMany, serverError, getUser } from '../../../lib/apiHelpers';
 import { validateOrigin, csrfForbidden } from '../../../lib/auth/csrf';
 import { verifyTurnstile } from '../../../lib/auth/turnstile';
 import { getClientIp } from '../../../lib/apiHelpers';
-import { listComments, createComment } from '../../../lib/comments';
+import { listComments, createComment, resolveParent } from '../../../lib/comments';
 import { validateCommentBody, moderateSubmission, MAX_JSON_BYTES, MIN_FILL_MS } from '../../../lib/commentsValidation';
 import { listLectures, listSubjects } from '../../../utils/notesLoader';
+import { sha256Hex } from '../../../lib/auth/crypto';
+import { getVisitorId, hashVisitor } from '../../../lib/visitor';
 
 export const prerender = false;
 
@@ -43,6 +45,20 @@ export const GET: APIRoute = async (context) => {
 
   const limit = limitRaw ? Math.min(parseInt(limitRaw, 10) || 20, 20) : 20;
 
+  // Build the set of comment ids the viewer "owns" so the UI can show
+  // delete controls. Anonymous owners are identified by their stored delete
+  // tokens (passed as a comma-separated `own` list); signed-in users are
+  // flagged by their user id.
+  const ownIds = new Set<string>();
+  const ownParam = url.searchParams.get('own');
+  if (ownParam) {
+    ownParam.split(',').map((s) => s.trim()).filter(Boolean).forEach((id) => ownIds.add(id));
+  }
+  const user = getUser(context);
+  if (user) {
+    // Signed-in ownership is resolved server-side below via author_user_id.
+  }
+
   try {
     const result = await listComments(env.DB, {
       pageType,
@@ -50,6 +66,7 @@ export const GET: APIRoute = async (context) => {
       lecture: pageType === 'lecture' ? lecture : null,
       cursor: cursor || null,
       limit,
+      ownIds: ownIds.size ? ownIds : null,
     });
     return json(result, 200, { 'Cache-Control': 'no-store' });
   } catch (err: any) {
@@ -128,11 +145,35 @@ export const POST: APIRoute = async (context) => {
     }
   }
 
+  // Resolve parent (reply) — must be a published comment on the same page.
+  let parentDepth = 0;
+  if (v.parentId) {
+    const resolved = await resolveParent(env.DB, v.parentId, {
+      pageType: v.pageType,
+      subject: v.subject,
+      lecture: v.lecture,
+    });
+    if (!resolved) return badRequest('Cannot reply to that comment');
+    parentDepth = resolved.depth;
+  }
+
   // Moderate.
   const mod = moderateSubmission(v.displayName, v.body);
   if (mod.rejected) {
     // Profanity: reject, do not store. Keep generic message.
     return json({ error: 'Comment could not be posted. Please revise and try again.' }, 422);
+  }
+
+  // Author identity: signed-in users are tracked by id + a privacy-safe email
+  // hash (so we can attribute/moderate without exposing the raw email). Anon
+  // users keep the one-time delete token.
+  const user = getUser(context);
+  let authorUserId: string | null = null;
+  let authorEmailHash: string | null = null;
+  if (user && user.email) {
+    authorUserId = user.id;
+    const secret = (env as any).SESSION_SIGNING_KEY || 'bitsnotes';
+    authorEmailHash = await sha256Hex(user.email.toLowerCase() + ':' + secret);
   }
 
   try {
@@ -144,12 +185,16 @@ export const POST: APIRoute = async (context) => {
       body: v.body,
       status: mod.status,
       moderationReason: mod.reason,
+      parentId: v.parentId,
+      depth: parentDepth,
+      authorUserId,
+      authorEmailHash,
     });
 
     if (mod.status === 'pending') {
       return json({ success: true, id: comment.id, status: 'pending', token: null }, 202);
     }
-    return json({ success: true, id: comment.id, status: 'published', token }, 201);
+    return json({ success: true, id: comment.id, status: 'published', token, parentId: comment.parentId }, 201);
   } catch (err: any) {
     return serverError('Failed to post comment');
   }

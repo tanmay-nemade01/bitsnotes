@@ -1,10 +1,17 @@
 ---
 /**
- * CommentsSection.astro — Anonymous comments for lecture + subject pages.
+ * CommentsSection.astro — Reddit-style threaded comments for lecture + subject pages.
  *
  * Mounts below prev/next (lecture) or below resource list (subject).
  * Lazy-loaded via IntersectionObserver so it never blocks lecture LCP.
  * All user-submitted text is rendered with textContent only (no innerHTML).
+ *
+ * Features:
+ *  - Threaded replies (nested, depth-capped)
+ *  - Up/down voting (Reddit-style score)
+ *  - Collapsible threads
+ *  - Signed-in users get name pre-filled + email tracked server-side
+ *  - Anonymous users keep a one-time delete token in localStorage
  */
 import { getEnv } from '../lib/apiHelpers';
 
@@ -15,7 +22,10 @@ interface Props {
 }
 
 const { pageType, subject, lecture } = Astro.props;
-const turnstileSiteKey = (await getEnv(Astro)).TURNSTILE_SITE_KEY || '';
+const env = await getEnv(Astro);
+const turnstileSiteKey = env.TURNSTILE_SITE_KEY || '';
+// Signed-in user (resolved by middleware) — used to pre-fill name + flag ownership.
+const user = (Astro.locals as any)?.user ?? null;
 const sectionId = `comments-${pageType}-${encodeURIComponent(subject)}${lecture ? '-' + encodeURIComponent(lecture) : ''}`;
 ---
 
@@ -26,6 +36,7 @@ const sectionId = `comments-${pageType}-${encodeURIComponent(subject)}${lecture 
   data-subject={subject}
   data-lecture={lecture ?? ''}
   data-turnstile-key={turnstileSiteKey}
+  data-user={user ? JSON.stringify({ id: user.id, displayName: user.displayName || '', email: user.email }) : ''}
   aria-label="Comments"
 >
   <div class="bn-comments__placeholder flex items-center gap-3 text-sm text-[var(--text-muted)]">
@@ -41,6 +52,15 @@ const sectionId = `comments-${pageType}-${encodeURIComponent(subject)}${lecture 
 
     var LS_NAME = 'bitsnotes-comment-name';
     var LS_TOKEN_PREFIX = 'bitsnotes-comment-token:';
+    var MAX_DEPTH = 6;
+
+    // Signed-in user (from data-user attribute, set server-side).
+    function currentUser() {
+      var el = document.querySelector('.bn-comments');
+      var raw = el && el.dataset.user;
+      if (!raw) return null;
+      try { return JSON.parse(raw); } catch (e) { return null; }
+    }
 
     function escAttr(s) { return String(s).replace(/"/g, '&quot;'); }
 
@@ -56,13 +76,68 @@ const sectionId = `comments-${pageType}-${encodeURIComponent(subject)}${lecture 
       return new Date(ts).toLocaleDateString();
     }
 
-    function renderComment(c) {
+    function initials(name) {
+      var parts = String(name).trim().split(/\s+/).slice(0, 2);
+      return parts.map(function (p) { return p.charAt(0).toUpperCase(); }).join('') || '?';
+    }
+
+    // Deterministic accent color from a string (for avatar background).
+    function avatarColor(seed) {
+      var palette = ['#0F766E', '#7C3AED', '#DB2777', '#D97706', '#2563EB', '#059669', '#DC2626', '#4F46E5'];
+      var h = 0;
+      for (var i = 0; i < seed.length; i++) h = (h * 31 + seed.charCodeAt(i)) >>> 0;
+      return palette[h % palette.length];
+    }
+
+    function makeAvatar(name) {
+      var av = document.createElement('div');
+      av.className = 'bn-comment__avatar';
+      av.setAttribute('aria-hidden', 'true');
+      av.textContent = initials(name);
+      av.style.background = avatarColor(name || '?');
+      return av;
+    }
+
+    /** Build a single comment node (article) with vote rail + actions. */
+    function renderComment(c, opts) {
+      opts = opts || {};
       var wrap = document.createElement('article');
       wrap.className = 'bn-comment';
       wrap.dataset.id = c.id;
+      wrap.dataset.parent = c.parentId || '';
+      wrap.dataset.depth = String(c.depth || 0);
+
+      // ── Vote rail (Reddit-style) ──
+      var rail = document.createElement('div');
+      rail.className = 'bn-comment__rail';
+
+      var up = document.createElement('button');
+      up.type = 'button';
+      up.className = 'bn-vote bn-vote--up';
+      up.setAttribute('aria-label', 'Upvote');
+      up.innerHTML = '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M12 5l7 7H5z"/></svg>';
+
+      var score = document.createElement('span');
+      score.className = 'bn-comment__score';
+      score.textContent = String(c.score || 0);
+
+      var down = document.createElement('button');
+      down.type = 'button';
+      down.className = 'bn-vote bn-vote--down';
+      down.setAttribute('aria-label', 'Downvote');
+      down.innerHTML = '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M12 19l-7-7h14z"/></svg>';
+
+      rail.appendChild(up);
+      rail.appendChild(score);
+      rail.appendChild(down);
+
+      // ── Main column ──
+      var main = document.createElement('div');
+      main.className = 'bn-comment__main';
 
       var head = document.createElement('div');
       head.className = 'bn-comment__head';
+      head.appendChild(makeAvatar(c.displayName));
       var name = document.createElement('span');
       name.className = 'bn-comment__name';
       name.textContent = c.displayName; // textContent only — XSS safe
@@ -78,39 +153,115 @@ const sectionId = `comments-${pageType}-${encodeURIComponent(subject)}${lecture 
       body.style.whiteSpace = 'pre-wrap';
       body.textContent = c.body; // textContent only — XSS safe
 
-      wrap.appendChild(head);
-      wrap.appendChild(body);
+      // ── Action row ──
+      var actions = document.createElement('div');
+      actions.className = 'bn-comment__actions';
 
-      // Owned? show delete if token stored.
+      var replyBtn = document.createElement('button');
+      replyBtn.type = 'button';
+      replyBtn.className = 'bn-comment__action';
+      replyBtn.textContent = 'Reply';
+      replyBtn.addEventListener('click', function () { toggleReplyForm(wrap, c); });
+      actions.appendChild(replyBtn);
+
+      // Owned? show delete if token stored (anon) or signed-in owner.
       var token = localStorage.getItem(LS_TOKEN_PREFIX + c.id);
-      if (token) {
+      var user = currentUser();
+      var owned = !!token || (user && c.authorUserId === user.id);
+      if (owned) {
         var del = document.createElement('button');
         del.type = 'button';
-        del.className = 'bn-comment__delete';
+        del.className = 'bn-comment__action bn-comment__action--danger';
         del.textContent = 'Delete';
-        del.setAttribute('aria-label', 'Delete your comment');
         del.addEventListener('click', function () { deleteComment(c.id, token, wrap); });
-        wrap.appendChild(del);
+        actions.appendChild(del);
       } else {
         var rep = document.createElement('button');
         rep.type = 'button';
-        rep.className = 'bn-comment__report';
+        rep.className = 'bn-comment__action';
         rep.textContent = 'Report';
-        rep.setAttribute('aria-label', 'Report this comment');
         rep.addEventListener('click', function () { reportComment(c.id, rep); });
-        wrap.appendChild(rep);
+        actions.appendChild(rep);
       }
+
+      main.appendChild(head);
+      main.appendChild(body);
+      main.appendChild(actions);
+
+      // Reply container (lazy form injected here).
+      var replySlot = document.createElement('div');
+      replySlot.className = 'bn-comment__replyslot';
+      main.appendChild(replySlot);
+
+      wrap.appendChild(rail);
+      wrap.appendChild(main);
+
+      // Wire voting.
+      up.addEventListener('click', function () { castVote(c.id, 1, score, up, down); });
+      down.addEventListener('click', function () { castVote(c.id, -1, score, up, down); });
+
       return wrap;
     }
 
+    /** Insert a comment into the correct place in the tree (top-level or nested). */
+    function insertComment(section, c) {
+      var list = section.querySelector('.bn-comments__list');
+      if (!list) { fetchComments(section, null); return; }
+      var node = renderComment(c);
+      if (!c.parentId) {
+        list.insertBefore(node, list.firstChild);
+      } else {
+        var parent = list.querySelector('.bn-comment[data-id="' + cssEscape(c.parentId) + '"]');
+        if (!parent) { fetchComments(section, null); return; }
+        var children = parent.querySelector(':scope > .bn-comment__children');
+        if (!children) {
+          children = document.createElement('div');
+          children.className = 'bn-comment__children';
+          parent.appendChild(children);
+        }
+        children.insertBefore(node, children.firstChild);
+      }
+      bumpCount(section, 1);
+    }
+
+    function cssEscape(s) {
+      if (window.CSS && CSS.escape) return CSS.escape(s);
+      return String(s).replace(/["\\]/g, '\\$&');
+    }
+
+    function bumpCount(section, delta) {
+      var count = section.querySelector('.bn-comments__count');
+      if (count) count.textContent = String((parseInt(count.textContent, 10) || 0) + delta);
+    }
+
+    /** Build the nested tree from a flat list (parentId/depth). */
     function renderList(section, data) {
       var list = section.querySelector('.bn-comments__list');
       if (!list) {
         list = document.createElement('div');
-        list.className = 'bn-comments__list space-y-4';
+        list.className = 'bn-comments__list';
         section.appendChild(list);
       }
-      data.comments.forEach(function (c) { list.appendChild(renderComment(c)); });
+      // Map of id -> node, then nest.
+      var nodes = {};
+      data.comments.forEach(function (c) {
+        var node = renderComment(c);
+        nodes[c.id] = node;
+      });
+      data.comments.forEach(function (c) {
+        var node = nodes[c.id];
+        if (c.parentId && nodes[c.parentId]) {
+          var children = nodes[c.parentId].querySelector(':scope > .bn-comment__main > .bn-comment__children');
+          if (!children) {
+            children = document.createElement('div');
+            children.className = 'bn-comment__children';
+            nodes[c.parentId].querySelector(':scope > .bn-comment__main').appendChild(children);
+          }
+          children.appendChild(node);
+        } else {
+          list.appendChild(node);
+        }
+      });
 
       var count = section.querySelector('.bn-comments__count');
       if (count) count.textContent = String(data.total);
@@ -121,11 +272,9 @@ const sectionId = `comments-${pageType}-${encodeURIComponent(subject)}${lecture 
           more = document.createElement('button');
           more.type = 'button';
           more.className = 'bn-comments__more mt-4 text-sm font-medium text-[var(--accent)] hover:underline';
-          more.textContent = 'Load more';
+          more.textContent = 'Load more comments';
           section.appendChild(more);
-          more.addEventListener('click', function () {
-            loadMore(section, data.nextCursor);
-          });
+          more.addEventListener('click', function () { loadMore(section, data.nextCursor); });
         }
         more.dataset.cursor = data.nextCursor || '';
       } else if (more) {
@@ -144,21 +293,79 @@ const sectionId = `comments-${pageType}-${encodeURIComponent(subject)}${lecture 
       var qs = new URLSearchParams({ pageType: pt, subject: subj });
       if (pt === 'lecture') qs.set('lecture', lec);
       if (cursor) qs.set('cursor', cursor);
+      // Tell the server which comments we own (anon delete tokens).
+      var own = [];
+      try {
+        for (var i = 0; i < localStorage.length; i++) {
+          var k = localStorage.key(i);
+          if (k && k.indexOf(LS_TOKEN_PREFIX) === 0) own.push(k.slice(LS_TOKEN_PREFIX.length));
+        }
+      } catch (e) {}
+      if (own.length) qs.set('own', own.join(','));
       fetch('/api/comments?' + qs.toString(), { credentials: 'same-origin', headers: { 'Accept': 'application/json' } })
         .then(function (r) { return r.json(); })
         .then(function (data) { renderList(section, data); })
         .catch(function () {});
     }
 
-    function buildForm(section) {
+    function castVote(id, value, scoreEl, upBtn, downBtn) {
+      fetch('/api/comments/' + encodeURIComponent(id) + '/vote', {
+        method: 'POST',
+        credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ value: value }),
+      })
+        .then(function (r) { return r.json().then(function (d) { return { status: r.status, data: d }; }); })
+        .then(function (res) {
+          if (res.status === 200) {
+            scoreEl.textContent = String(res.data.score);
+            var my = res.data.myVote;
+            upBtn.classList.toggle('is-active', my === 1);
+            downBtn.classList.toggle('is-active', my === -1);
+          }
+        })
+        .catch(function () {});
+    }
+
+    /** Toggle an inline reply form under a comment. */
+    function toggleReplyForm(parentWrap, parentComment) {
+      var slot = parentWrap.querySelector(':scope > .bn-comment__main > .bn-comment__replyslot');
+      if (!slot) return;
+      if (slot.firstChild) { slot.innerHTML = ''; return; }
+      slot.appendChild(buildForm(parentWrap.closest('.bn-comments'), {
+        parentId: parentComment.id,
+        compact: true,
+        onPosted: function (c) {
+          slot.innerHTML = '';
+          // Insert into the tree.
+          var list = parentWrap.closest('.bn-comments__list') || parentWrap.parentNode;
+          var section = parentWrap.closest('.bn-comments');
+          var node = renderComment(c);
+          var children = parentWrap.querySelector(':scope > .bn-comment__main > .bn-comment__children');
+          if (!children) {
+            children = document.createElement('div');
+            children.className = 'bn-comment__children';
+            parentWrap.querySelector(':scope > .bn-comment__main').appendChild(children);
+          }
+          children.insertBefore(node, children.firstChild);
+          bumpCount(section, 1);
+        }
+      }));
+      var ta = slot.querySelector('textarea');
+      if (ta) ta.focus();
+    }
+
+    function buildForm(section, opts) {
+      opts = opts || {};
       var form = document.createElement('form');
-      form.className = 'bn-comments__form mt-6 space-y-3';
+      form.className = 'bn-comments__form mt-3 space-y-3' + (opts.compact ? ' bn-comments__form--compact' : ' mt-6');
       form.noValidate = true;
 
+      var user = currentUser();
       var nameWrap = document.createElement('div');
       var nameLabel = document.createElement('label');
       nameLabel.className = 'block text-xs font-semibold text-[var(--text-muted)] mb-1';
-      nameLabel.textContent = 'Display name';
+      nameLabel.textContent = user ? 'Commenting as' : 'Display name';
       var nameInput = document.createElement('input');
       nameInput.type = 'text';
       nameInput.name = 'displayName';
@@ -166,22 +373,27 @@ const sectionId = `comments-${pageType}-${encodeURIComponent(subject)}${lecture 
       nameInput.required = true;
       nameInput.className = 'block w-full px-3 py-2 border border-[var(--border)] text-[var(--text)] bg-[var(--bg-input)] placeholder-[var(--input-placeholder)] text-sm rounded-[var(--r-sm)] focus:outline-none focus:ring-2 focus:ring-[var(--focus-ring)] focus:border-[var(--accent)]';
       nameInput.placeholder = 'e.g. Anonymous Student';
-      var savedName = localStorage.getItem(LS_NAME);
-      if (savedName) nameInput.value = savedName;
+      // Pre-fill: signed-in display name, else remembered anon name.
+      if (user && user.displayName) nameInput.value = user.displayName;
+      else {
+        var savedName = localStorage.getItem(LS_NAME);
+        if (savedName) nameInput.value = savedName;
+      }
+      if (user) { nameInput.readOnly = true; nameInput.classList.add('bn-comments__name--locked'); }
       nameWrap.appendChild(nameLabel);
       nameWrap.appendChild(nameInput);
 
       var bodyWrap = document.createElement('div');
       var bodyLabel = document.createElement('label');
       bodyLabel.className = 'block text-xs font-semibold text-[var(--text-muted)] mb-1';
-      bodyLabel.textContent = 'Comment';
+      bodyLabel.textContent = opts.parentId ? 'Write a reply' : 'Comment';
       var bodyEl = document.createElement('textarea');
       bodyEl.name = 'body';
-      bodyEl.rows = 4;
+      bodyEl.rows = opts.compact ? 3 : 4;
       bodyEl.required = true;
       bodyEl.maxLength = 1500;
       bodyEl.className = 'block w-full px-3 py-2 border border-[var(--border)] text-[var(--text)] bg-[var(--bg-input)] placeholder-[var(--input-placeholder)] text-sm rounded-[var(--r-sm)] focus:outline-none focus:ring-2 focus:ring-[var(--focus-ring)] focus:border-[var(--accent)]';
-      bodyEl.placeholder = 'Share a correction, thanks, or a helpful note…';
+      bodyEl.placeholder = opts.parentId ? 'Add to the discussion…' : 'Share a correction, thanks, or a helpful note…';
       var counter = document.createElement('span');
       counter.className = 'block text-right text-xs text-[var(--text-faint)] mt-1';
       counter.textContent = '0 / 1500';
@@ -207,88 +419,47 @@ const sectionId = `comments-${pageType}-${encodeURIComponent(subject)}${lecture 
       started.name = 'formStartedAt';
       started.value = String(Date.now());
 
+      var row = document.createElement('div');
+      row.className = 'flex items-center gap-3 flex-wrap';
+
       var submit = document.createElement('button');
       submit.type = 'submit';
       submit.className = 'inline-flex items-center gap-2 px-4 py-2 text-sm font-semibold rounded-[var(--r-sm)] bg-[var(--accent)] text-[var(--accent-contrast)] hover:bg-[var(--accent-hover)] transition-colors disabled:opacity-60';
-      submit.textContent = 'Post comment';
+      submit.textContent = opts.parentId ? 'Post reply' : 'Post comment';
+
+      row.appendChild(submit);
+
+      if (opts.parentId) {
+        var cancel = document.createElement('button');
+        cancel.type = 'button';
+        cancel.className = 'text-sm text-[var(--text-muted)] hover:underline';
+        cancel.textContent = 'Cancel';
+        cancel.addEventListener('click', function () {
+          var slot = form.parentNode;
+          if (slot) slot.innerHTML = '';
+        });
+        row.appendChild(cancel);
+      }
 
       var status = document.createElement('p');
       status.className = 'bn-comments__status text-sm text-[var(--text-muted)]';
       status.setAttribute('role', 'status');
       status.setAttribute('aria-live', 'polite');
 
-      // Turnstile container (lazy, with dynamic API loading + theme-change re-render)
-      var tsKey = section.dataset.turnstileKey;
-      var tsBox = document.createElement('div');
-      tsBox.className = 'bn-comments__turnstile';
-      var tsRendered = false;
-      var tsWidgetId = null;
-      var tsApiLoading = false;
-      var tsApiLoaded = false;
-
-      /** Dynamically load the Turnstile API script if not already present. */
-      function loadTurnstileApi(onReady) {
-        if (tsApiLoaded) { onReady(); return; }
-        if (window.turnstile) { tsApiLoaded = true; onReady(); return; }
-        if (tsApiLoading) {
-          // Script already loading — poll until it arrives.
-          var attempts = 0;
-          var check = setInterval(function () {
-            attempts++;
-            if (window.turnstile) { clearInterval(check); tsApiLoaded = true; onReady(); }
-            else if (attempts > 100) { clearInterval(check); tsApiLoading = false; }
-          }, 100);
-          return;
-        }
-        tsApiLoading = true;
-        var s = document.createElement('script');
-        s.src = 'https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit';
-        s.async = true;
-        s.onload = function () { tsApiLoaded = true; onReady(); };
-        s.onerror = function () { tsApiLoading = false; };
-        document.head.appendChild(s);
+      // Turnstile container (only on the top-level form).
+      var tsBox = null;
+      if (!opts.compact) {
+        tsBox = document.createElement('div');
+        tsBox.className = 'bn-comments__turnstile';
       }
-
-      /** Actually render the Turnstile widget (requires API to be loaded). */
-      function doRenderTurnstile() {
-        if (!tsKey) return;
-        // Reset previous render if any (theme change).
-        if (tsRendered && tsWidgetId != null) {
-          try { window.turnstile.remove(tsWidgetId); } catch (e) {}
-          tsRendered = false;
-          tsWidgetId = null;
-        }
-        if (tsRendered) return;
-        tsRendered = true;
-        tsWidgetId = window.turnstile.render(tsBox, {
-          sitekey: tsKey,
-          theme: document.documentElement.dataset.theme === 'dark' ? 'dark' : 'light',
-          callback: function () {}
-        });
-      }
-
-      function renderTurnstile() {
-        if (!tsKey) return;
-        if (!window.turnstile) {
-          loadTurnstileApi(doRenderTurnstile);
-          return;
-        }
-        doRenderTurnstile();
-      }
-
-      // Re-render Turnstile on theme change so the widget matches.
-      window.addEventListener('bitsnotes:theme-changed', function () {
-        if (!tsBox.parentNode) return; // form not yet in DOM
-        renderTurnstile();
-      });
 
       form.appendChild(nameWrap);
       form.appendChild(bodyWrap);
       form.appendChild(hp);
       form.appendChild(started);
-      form.appendChild(tsBox);
+      if (tsBox) form.appendChild(tsBox);
+      form.appendChild(row);
       form.appendChild(status);
-      form.appendChild(submit);
 
       form.addEventListener('submit', function (e) {
         e.preventDefault();
@@ -304,13 +475,11 @@ const sectionId = `comments-${pageType}-${encodeURIComponent(subject)}${lecture 
           lecture: section.dataset.lecture || undefined,
           displayName: name,
           body: text,
+          parentId: opts.parentId || undefined,
           _website: hp.value,
           formStartedAt: started.value,
         };
-        if (window.turnstile && tsRendered) {
-          var wt = document.querySelector('.bn-comments__turnstile iframe');
-          // Turnstile stores response in a hidden input it injects; read via widget.
-          // Simpler: use window.turnstile.getResponse if available.
+        if (!opts.compact && window.turnstile && tsRendered) {
           try { payload.turnstileToken = window.turnstile.getResponse(); } catch (e) {}
         }
 
@@ -329,14 +498,14 @@ const sectionId = `comments-${pageType}-${encodeURIComponent(subject)}${lecture 
               localStorage.setItem(LS_NAME, name);
               bodyEl.value = '';
               counter.textContent = '0 / 1500';
-              status.textContent = 'Thanks! Your comment is live.';
-              // Prepend the new comment.
-              var list = section.querySelector('.bn-comments__list');
-              if (!list) { fetchComments(section, null); }
-              else { list.insertBefore(renderComment({
+              status.textContent = 'Thanks! Your reply is live.';
+              var posted = {
                 id: res.data.id, pageType: section.dataset.pageType, subject: section.dataset.subject,
-                lecture: section.dataset.lecture || null, displayName: name, body: text, createdAt: Date.now()
-              }), list.firstChild); }
+                lecture: section.dataset.lecture || null, parentId: res.data.parentId || null,
+                displayName: name, body: text, score: 0, createdAt: Date.now()
+              };
+              if (opts.onPosted) opts.onPosted(posted);
+              else insertComment(section, posted);
             } else if (res.status === 202) {
               localStorage.setItem(LS_NAME, name);
               bodyEl.value = '';
@@ -353,15 +522,68 @@ const sectionId = `comments-${pageType}-${encodeURIComponent(subject)}${lecture 
           .finally(function () { submit.disabled = false; });
       });
 
-      section.appendChild(form);
-      // Lazy render Turnstile when form scrolls into view.
-      if (tsKey) {
-        var io = new IntersectionObserver(function (entries) {
-          entries.forEach(function (en) { if (en.isIntersecting) { renderTurnstile(); io.disconnect(); } });
-        }, { threshold: 0.1 });
-        io.observe(form);
+      // Lazy render Turnstile when the top-level form scrolls into view.
+      if (!opts.compact && section.dataset.turnstileKey) {
+        renderTurnstileInto(tsBox, section);
       }
+
+      return form;
     }
+
+    // ── Turnstile (shared loader) ──
+    var tsRendered = false;
+    var tsWidgetId = null;
+    var tsApiLoading = false;
+    var tsApiLoaded = false;
+
+    function loadTurnstileApi(onReady) {
+      if (tsApiLoaded) { onReady(); return; }
+      if (window.turnstile) { tsApiLoaded = true; onReady(); return; }
+      if (tsApiLoading) {
+        var attempts = 0;
+        var check = setInterval(function () {
+          attempts++;
+          if (window.turnstile) { clearInterval(check); tsApiLoaded = true; onReady(); }
+          else if (attempts > 100) { clearInterval(check); tsApiLoading = false; }
+        }, 100);
+        return;
+      }
+      tsApiLoading = true;
+      var s = document.createElement('script');
+      s.src = 'https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit';
+      s.async = true;
+      s.onload = function () { tsApiLoaded = true; onReady(); };
+      s.onerror = function () { tsApiLoading = false; };
+      document.head.appendChild(s);
+    }
+
+    function renderTurnstileInto(tsBox, section) {
+      var tsKey = section.dataset.turnstileKey;
+      if (!tsKey) return;
+      function doRender() {
+        if (tsRendered && tsWidgetId != null) {
+          try { window.turnstile.remove(tsWidgetId); } catch (e) {}
+          tsRendered = false; tsWidgetId = null;
+        }
+        if (tsRendered) return;
+        tsRendered = true;
+        tsWidgetId = window.turnstile.render(tsBox, {
+          sitekey: tsKey,
+          theme: document.documentElement.dataset.theme === 'dark' ? 'dark' : 'light',
+          callback: function () {}
+        });
+      }
+      if (!window.turnstile) { loadTurnstileApi(doRender); return; }
+      doRender();
+    }
+
+    window.addEventListener('bitsnotes:theme-changed', function () {
+      var s = document.querySelector('.bn-comments');
+      if (s && s.dataset.turnstileKey && tsRendered) {
+        var box = s.querySelector('.bn-comments__turnstile');
+        if (box) renderTurnstileInto(box, s);
+      }
+    });
 
     function deleteComment(id, token, wrap) {
       if (!confirm('Delete your comment? This cannot be undone.')) return;
@@ -369,11 +591,18 @@ const sectionId = `comments-${pageType}-${encodeURIComponent(subject)}${lecture 
         method: 'DELETE',
         credentials: 'same-origin',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ token: token }),
+        body: JSON.stringify({ token: token || '' }),
       }).then(function (r) {
         if (r.ok) {
           localStorage.removeItem(LS_TOKEN_PREFIX + id);
-          wrap.remove();
+          // Replace with a "deleted" placeholder to preserve thread structure.
+          wrap.classList.add('bn-comment--deleted');
+          var main = wrap.querySelector(':scope > .bn-comment__main');
+          if (main) {
+            main.innerHTML = '<p class="bn-comment__deleted-note text-sm text-[var(--text-faint)] italic">[deleted]</p>';
+          }
+          var rail = wrap.querySelector(':scope > .bn-comment__rail');
+          if (rail) rail.remove();
         } else {
           alert('Could not delete comment.');
         }
@@ -403,7 +632,7 @@ const sectionId = `comments-${pageType}-${encodeURIComponent(subject)}${lecture 
       header.className = 'flex items-center justify-between mb-4';
       var h = document.createElement('h2');
       h.className = 'font-display text-lg font-bold text-[var(--text)]';
-      h.textContent = 'Comments';
+      h.textContent = 'Discussion';
       var count = document.createElement('span');
       count.className = 'bn-comments__count text-sm text-[var(--text-muted)]';
       count.textContent = '0';
@@ -412,7 +641,7 @@ const sectionId = `comments-${pageType}-${encodeURIComponent(subject)}${lecture 
       section.appendChild(header);
 
       fetchComments(section, null);
-      buildForm(section);
+      section.appendChild(buildForm(section, {}));
     }
 
     // Lazy-load each section when it scrolls into view (don't block LCP).
@@ -438,6 +667,73 @@ const sectionId = `comments-${pageType}-${encodeURIComponent(subject)}${lecture 
     align-items: baseline;
     gap: 0.5rem;
   }
+  .bn-comments__list {
+    display: flex;
+    flex-direction: column;
+    gap: 1rem;
+    margin-top: 1rem;
+  }
+
+  /* ── A single comment: vote rail + main column ── */
+  .bn-comment {
+    display: flex;
+    gap: 0.625rem;
+    align-items: flex-start;
+  }
+  .bn-comment__rail {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 0.125rem;
+    padding-top: 0.125rem;
+    width: 1.75rem;
+    flex-shrink: 0;
+  }
+  .bn-vote {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 1.5rem;
+    height: 1.5rem;
+    border-radius: 9999px;
+    border: none;
+    background: none;
+    color: var(--text-faint);
+    cursor: pointer;
+    transition: color var(--duration-fast) var(--ease-out), background var(--duration-fast) var(--ease-out);
+  }
+  .bn-vote:hover { background: var(--bg-subtle); color: var(--text-muted); }
+  .bn-vote--up.is-active { color: var(--accent); }
+  .bn-vote--down.is-active { color: var(--danger); }
+  .bn-comment__score {
+    font-size: 0.75rem;
+    font-weight: 700;
+    color: var(--text-muted);
+    font-variant-numeric: tabular-nums;
+  }
+
+  .bn-comment__main {
+    flex: 1;
+    min-width: 0;
+  }
+  .bn-comment__head {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+  }
+  .bn-comment__avatar {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 1.5rem;
+    height: 1.5rem;
+    border-radius: 9999px;
+    color: #fff;
+    font-size: 0.625rem;
+    font-weight: 700;
+    flex-shrink: 0;
+    text-transform: uppercase;
+  }
   .bn-comment__name {
     font-weight: 600;
     color: var(--text);
@@ -454,17 +750,50 @@ const sectionId = `comments-${pageType}-${encodeURIComponent(subject)}${lecture 
     line-height: 1.5;
     overflow-wrap: anywhere;
   }
-  .bn-comment__delete,
-  .bn-comment__report {
-    margin-top: 0.5rem;
+  .bn-comment__actions {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    margin-top: 0.375rem;
+  }
+  .bn-comment__action {
     font-size: 0.75rem;
+    font-weight: 600;
     color: var(--text-muted);
     background: none;
     border: none;
     cursor: pointer;
     padding: 0;
-    text-decoration: underline;
   }
-  .bn-comment__delete:hover { color: var(--danger-text); }
-  .bn-comment__report:hover { color: var(--accent); }
+  .bn-comment__action:hover { color: var(--accent); text-decoration: underline; }
+  .bn-comment__action--danger:hover { color: var(--danger-text); }
+
+  /* ── Nested replies ── */
+  .bn-comment__children {
+    margin-top: 0.75rem;
+    margin-left: 0.875rem;
+    padding-left: 0.875rem;
+    border-left: 2px solid var(--border);
+    display: flex;
+    flex-direction: column;
+    gap: 0.875rem;
+  }
+  .bn-comment__replyslot:empty { display: none; }
+  .bn-comment__replyslot:not(:empty) {
+    margin-top: 0.625rem;
+  }
+  .bn-comments__form--compact {
+    background: var(--bg-subtle);
+    border: 1px solid var(--border);
+    border-radius: var(--r-md);
+    padding: 0.75rem;
+  }
+  .bn-comments__name--locked {
+    background: var(--bg-subtle);
+    color: var(--text-muted);
+    cursor: not-allowed;
+  }
+  .bn-comment--deleted .bn-comment__deleted-note {
+    padding: 0.25rem 0;
+  }
 </style>

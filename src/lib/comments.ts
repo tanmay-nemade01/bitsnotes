@@ -1,8 +1,13 @@
 /**
- * Comments data-access layer (Phase 4: Anonymous comments).
+ * Comments data-access layer (Phase 6: Reddit-style threaded comments).
  *
  * All queries are parameterized. Comments are soft-deleted (status='deleted',
  * deleted_at set) — never hard-deleted — so reports/audit history is retained.
+ *
+ * Threading model: every comment has an optional `parent_id`. Top-level
+ * comments have parent_id = NULL and depth = 0. Replies nest under a parent
+ * and inherit depth = parent.depth + 1 (capped at MAX_DEPTH). The public API
+ * returns a flat list with `parentId`/`depth` so the client can build the tree.
  */
 
 import type { AuthDb } from './auth/db';
@@ -11,16 +16,24 @@ import { uuidv7, sha256Hex } from './auth/crypto';
 export type CommentStatus = 'published' | 'pending' | 'hidden' | 'deleted';
 export type PageType = 'lecture' | 'subject';
 
+/** Maximum visual nesting depth. Deeper replies are flattened to this level. */
+export const MAX_DEPTH = 6;
+
 export interface CommentRow {
   id: string;
   page_type: PageType;
   subject: string;
   lecture: string | null;
+  parent_id: string | null;
+  depth: number;
   display_name: string;
   body: string;
   status: CommentStatus;
   moderation_reason: string | null;
   author_token_hash: string;
+  author_user_id: string | null;
+  author_email_hash: string | null;
+  score: number;
   report_count: number;
   created_at: number;
   updated_at: number;
@@ -32,8 +45,12 @@ export interface PublicComment {
   pageType: PageType;
   subject: string;
   lecture: string | null;
+  parentId: string | null;
+  depth: number;
   displayName: string;
   body: string;
+  score: number;
+  isOwn: boolean;
   createdAt: number;
 }
 
@@ -46,20 +63,28 @@ export interface ListResult {
 
 const PAGE_SIZE = 20;
 
-function toPublic(row: CommentRow): PublicComment {
+function toPublic(row: CommentRow, opts?: { isOwn?: boolean }): PublicComment {
   return {
     id: row.id,
     pageType: row.page_type,
     subject: row.subject,
     lecture: row.lecture,
+    parentId: row.parent_id,
+    depth: row.depth,
     displayName: row.display_name,
     body: row.body,
+    score: row.score,
+    isOwn: opts?.isOwn ?? false,
     createdAt: row.created_at,
   };
 }
 
 /**
  * Insert a new comment. Returns the raw delete token (shown once) + public row.
+ *
+ * For replies, pass `parentId` (and the resolved `depth`). For signed-in
+ * authors, pass `authorUserId` + `authorEmailHash` so we can track identity
+ * without exposing the email publicly. Anonymous authors get a delete token.
  */
 export async function createComment(
   db: AuthDb,
@@ -71,28 +96,39 @@ export async function createComment(
     body: string;
     status: CommentStatus;
     moderationReason?: string | null;
+    parentId?: string | null;
+    depth?: number;
+    authorUserId?: string | null;
+    authorEmailHash?: string | null;
   },
 ): Promise<{ token: string; comment: PublicComment }> {
   const id = uuidv7();
   const now = Date.now();
   const token = crypto.randomUUID().replace(/-/g, '') + crypto.randomUUID().replace(/-/g, '');
   const tokenHash = await sha256Hex(token);
+  const parentId = input.parentId ?? null;
+  const depth = Math.min(input.depth ?? 0, MAX_DEPTH);
 
   await db.prepare(
     `INSERT INTO comments
-      (id, page_type, subject, lecture, display_name, body, status, moderation_reason, author_token_hash, report_count, created_at, updated_at, deleted_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, NULL)`,
+      (id, page_type, subject, lecture, parent_id, depth, display_name, body, status, moderation_reason,
+       author_token_hash, author_user_id, author_email_hash, score, report_count, created_at, updated_at, deleted_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 0, ?, ?, NULL)`,
   )
     .bind(
       id,
       input.pageType,
       input.subject,
       input.lecture,
+      parentId,
+      depth,
       input.displayName,
       input.body,
       input.status,
       input.moderationReason ?? null,
       tokenHash,
+      input.authorUserId ?? null,
+      input.authorEmailHash ?? null,
       now,
       now,
     )
@@ -110,10 +146,22 @@ export async function getCommentById(db: AuthDb, id: string): Promise<CommentRow
 /**
  * List published comments for a page, cursor-paginated on (created_at, id).
  * `cursor` is a base64 of `${created_at}:${id}`.
+ *
+ * `voterHash` (optional) marks which comments the current viewer "owns"
+ * (anonymous delete token stored locally, or signed-in user id) so the UI can
+ * show delete controls. We compute ownership client-side via the stored token
+ * for anon users; for signed-in users we pass their id to flag ownership.
  */
 export async function listComments(
   db: AuthDb,
-  opts: { pageType: PageType; subject: string; lecture: string | null; cursor?: string | null; limit?: number },
+  opts: {
+    pageType: PageType;
+    subject: string;
+    lecture: string | null;
+    cursor?: string | null;
+    limit?: number;
+    ownIds?: Set<string> | null;
+  },
 ): Promise<ListResult> {
   const limit = Math.min(opts.limit ?? PAGE_SIZE, PAGE_SIZE);
   const lec = opts.lecture ?? null;
@@ -155,7 +203,7 @@ export async function listComments(
   const nextCursor = hasMore && last ? btoa(`${last.created_at}:${last.id}`) : null;
 
   return {
-    comments: page.map(toPublic),
+    comments: page.map((r) => toPublic(r, { isOwn: opts.ownIds ? opts.ownIds.has(r.id) : false })),
     total: totalRow?.c ?? 0,
     nextCursor,
     hasMore,
@@ -178,6 +226,90 @@ export async function deleteCommentByToken(db: AuthDb, id: string, token: string
     .bind(Date.now(), Date.now(), id)
     .run();
   return true;
+}
+
+/**
+ * Resolve a parent comment for a reply. Returns the parent row (must be a
+ * published, non-deleted comment on the same page) or null. Also returns the
+ * depth to assign the new reply (parent.depth + 1, capped at MAX_DEPTH).
+ */
+export async function resolveParent(
+  db: AuthDb,
+  parentId: string,
+  page: { pageType: PageType; subject: string; lecture: string | null },
+): Promise<{ parent: CommentRow; depth: number } | null> {
+  const parent = await getCommentById(db, parentId);
+  if (!parent || parent.status === 'deleted') return null;
+  if (
+    parent.page_type !== page.pageType ||
+    parent.subject !== page.subject ||
+    (parent.lecture ?? null) !== (page.lecture ?? null)
+  ) {
+    return null;
+  }
+  return { parent, depth: Math.min((parent.depth ?? 0) + 1, MAX_DEPTH) };
+}
+
+export interface VoteResult {
+  ok: boolean;
+  score: number;
+  myVote: number; // 1 | -1 | 0 (current state after toggle)
+}
+
+/**
+ * Apply (or toggle) an up/down vote on a comment. `voterHash` uniquely
+ * identifies the voter (hashed visitor id for anon, or user id when signed in).
+ * Voting again with the same value removes the vote (toggle). Returns the new
+ * net score and the voter's resulting vote state.
+ */
+export async function voteComment(
+  db: AuthDb,
+  commentId: string,
+  voterHash: string,
+  value: 1 | -1,
+): Promise<VoteResult | null> {
+  const row = await getCommentById(db, commentId);
+  if (!row || row.status === 'deleted') return null;
+
+  const existing = await db.prepare(
+    'SELECT id, value FROM comment_votes WHERE comment_id = ? AND voter_hash = ?',
+  )
+    .bind(commentId, voterHash)
+    .first<{ id: string; value: number }>();
+
+  const now = Date.now();
+  let delta = 0;
+  let myVote: number;
+
+  if (!existing) {
+    await db.prepare(
+      'INSERT INTO comment_votes (id, comment_id, voter_hash, value, created_at) VALUES (?, ?, ?, ?, ?)',
+    )
+      .bind(uuidv7(), commentId, voterHash, value, now)
+      .run();
+    delta = value;
+    myVote = value;
+  } else if (existing.value === value) {
+    // Same vote again → toggle off.
+    await db.prepare('DELETE FROM comment_votes WHERE id = ?').bind(existing.id).run();
+    delta = -value;
+    myVote = 0;
+  } else {
+    // Switch direction.
+    await db.prepare('UPDATE comment_votes SET value = ?, created_at = ? WHERE id = ?')
+      .bind(value, now, existing.id)
+      .run();
+    delta = value * 2;
+    myVote = value;
+  }
+
+  const res = await db.prepare(
+    'UPDATE comments SET score = score + ?, updated_at = ? WHERE id = ? RETURNING score',
+  )
+    .bind(delta, now, commentId)
+    .first<{ score: number }>();
+
+  return { ok: true, score: res?.score ?? row.score + delta, myVote };
 }
 
 /**
@@ -237,7 +369,7 @@ export async function listAdminComments(
 ): Promise<AdminCommentView[]> {
   const clause = filter === 'all' ? '' : 'WHERE status = ?';
   const rows = await db.prepare(
-    `SELECT id, page_type, subject, lecture, display_name, body, status, moderation_reason, report_count, created_at, updated_at
+    `SELECT id, page_type, subject, lecture, parent_id, depth, display_name, body, status, moderation_reason, author_user_id, score, report_count, created_at, updated_at
      FROM comments ${clause} ORDER BY created_at DESC`,
   )
     .bind(...(filter === 'all' ? [] : [filter]))

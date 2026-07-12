@@ -10,6 +10,8 @@ import {
   setCommentStatus,
   isAdmin,
   addAdmin,
+  resolveParent,
+  voteComment,
 } from '../src/lib/comments';
 
 let db: AuthDb;
@@ -122,5 +124,81 @@ describe('comments data layer', () => {
     expect(await isAdmin(db, 'u1')).toBe(false);
     await addAdmin(db, 'u1');
     expect(await isAdmin(db, 'u1')).toBe(true);
+  });
+});
+
+describe('comment threading + votes', () => {
+  it('creates a reply with correct parent + depth', async () => {
+    const { comment: top } = await createComment(db, { pageType: 'lecture', subject: 'NLP', lecture: 'L1', displayName: 'A', body: 'top', status: 'published' });
+    const resolved = await resolveParent(db, top.id, { pageType: 'lecture', subject: 'NLP', lecture: 'L1' });
+    expect(resolved).not.toBeNull();
+    expect(resolved!.depth).toBe(1);
+
+    const { comment: reply } = await createComment(db, {
+      pageType: 'lecture', subject: 'NLP', lecture: 'L1', displayName: 'B', body: 'reply',
+      status: 'published', parentId: top.id, depth: resolved!.depth,
+    });
+    expect(reply.parentId).toBe(top.id);
+    expect(reply.depth).toBe(1);
+
+    const list = await listComments(db, { pageType: 'lecture', subject: 'NLP', lecture: 'L1' });
+    expect(list.comments).toHaveLength(2);
+    const replyRow = list.comments.find((c) => c.id === reply.id)!;
+    expect(replyRow.parentId).toBe(top.id);
+    expect(replyRow.depth).toBe(1);
+  });
+
+  it('rejects reply to a comment on a different page', async () => {
+    const { comment: top } = await createComment(db, { pageType: 'lecture', subject: 'NLP', lecture: 'L1', displayName: 'A', body: 'top', status: 'published' });
+    const resolved = await resolveParent(db, top.id, { pageType: 'subject', subject: 'NLP', lecture: null });
+    expect(resolved).toBeNull();
+  });
+
+  it('caps depth at MAX_DEPTH', async () => {
+    let parentId: string | null = null;
+    let depth = 0;
+    for (let i = 0; i < 10; i++) {
+      const { comment } = await createComment(db, {
+        pageType: 'lecture', subject: 'NLP', lecture: 'L1', displayName: 'A', body: 'n' + i,
+        status: 'published', parentId, depth,
+      });
+      const resolved = await resolveParent(db, comment.id, { pageType: 'lecture', subject: 'NLP', lecture: 'L1' });
+      parentId = comment.id;
+      depth = resolved!.depth;
+    }
+    expect(depth).toBeLessThanOrEqual(6);
+  });
+
+  it('tracks signed-in author id + email hash', async () => {
+    const { comment } = await createComment(db, {
+      pageType: 'lecture', subject: 'NLP', lecture: 'L1', displayName: 'A', body: 'x',
+      status: 'published', authorUserId: 'user-123', authorEmailHash: 'abc',
+    });
+    expect(comment.displayName).toBe('A');
+    const row = await (await import('../src/lib/comments')).getCommentById(db, comment.id);
+    expect(row!.author_user_id).toBe('user-123');
+    expect(row!.author_email_hash).toBe('abc');
+  });
+
+  it('upvotes then toggles off, and switches direction', async () => {
+    const { comment } = await createComment(db, { pageType: 'lecture', subject: 'NLP', lecture: 'L1', displayName: 'A', body: 'x', status: 'published' });
+
+    const v1 = await voteComment(db, comment.id, 'voter1', 1);
+    expect(v1!.score).toBe(1);
+    expect(v1!.myVote).toBe(1);
+
+    // Same vote again → toggle off.
+    const v2 = await voteComment(db, comment.id, 'voter1', 1);
+    expect(v2!.score).toBe(0);
+    expect(v2!.myVote).toBe(0);
+
+    // Downvote.
+    const v3 = await voteComment(db, comment.id, 'voter1', -1);
+    expect(v3!.score).toBe(-1);
+    expect(v3!.myVote).toBe(-1);
+
+    // Second voter upvotes → net 0.
+    const v4 = await voteComment(db, comment.id, 'voter2', 1);
+    expect(v4!.score).toBe(0);
   });
 });

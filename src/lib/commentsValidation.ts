@@ -16,7 +16,7 @@ export const MIN_FILL_MS = 2000;
 export const MAX_JSON_BYTES = 16 * 1024; // 16KB cap before parse
 
 export type ValidationOutcome =
-  | { ok: true; pageType: 'lecture' | 'subject'; subject: string; lecture: string | null; displayName: string; body: string }
+  | { ok: true; pageType: 'lecture' | 'subject'; subject: string; lecture: string | null; displayName: string; body: string; parentId: string | null }
   | { ok: false; error: string; status: number };
 
 /**
@@ -37,6 +37,15 @@ export function validateCommentBody(body: Record<string, unknown>): ValidationOu
   if (pageType === 'lecture') {
     lecture = sanitizeString(body.lecture, 200);
     if (!lecture) return { ok: false, error: 'Lecture is required', status: 400 };
+  }
+
+  // Optional parent (reply). Must be a non-empty string id if present.
+  let parentId: string | null = null;
+  if (body.parentId !== undefined && body.parentId !== null && body.parentId !== '') {
+    if (typeof body.parentId !== 'string' || !/^[0-9a-f-]{36}$/.test(body.parentId)) {
+      return { ok: false, error: 'Invalid parent comment', status: 400 };
+    }
+    parentId = body.parentId;
   }
 
   // Reject over-length input before sanitizing (do not silently truncate).
@@ -77,6 +86,7 @@ export function validateCommentBody(body: Record<string, unknown>): ValidationOu
     lecture,
     displayName,
     body: cleanBody,
+    parentId,
   };
 }
 

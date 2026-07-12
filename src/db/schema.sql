@@ -110,16 +110,37 @@ CREATE TABLE IF NOT EXISTS comments (
   page_type         TEXT NOT NULL,
   subject           TEXT NOT NULL,
   lecture           TEXT,
+  parent_id         TEXT,                        -- Self-referential: NULL = top-level, else a comment id (reply)
+  depth             INTEGER NOT NULL DEFAULT 0,  -- Nesting depth (0 = top-level)
   display_name      TEXT NOT NULL,
   body              TEXT NOT NULL,
   status            TEXT NOT NULL DEFAULT 'published',
   moderation_reason TEXT,
   author_token_hash TEXT NOT NULL,
+  author_user_id    TEXT,                        -- NULL for anon; user.id when signed in
+  author_email_hash TEXT,                        -- SHA-256 of email+secret when signed in (privacy-safe tracking)
+  score             INTEGER NOT NULL DEFAULT 0,  -- Net votes (up − down)
   report_count      INTEGER NOT NULL DEFAULT 0,
   created_at        INTEGER NOT NULL,
   updated_at        INTEGER NOT NULL,
   deleted_at        INTEGER
 );
+
+CREATE INDEX IF NOT EXISTS idx_comments_parent
+  ON comments (parent_id, created_at ASC);
+
+-- ─── Comment Votes (Reddit-style up/down) ─────────────────────────────────
+CREATE TABLE IF NOT EXISTS comment_votes (
+  id            TEXT PRIMARY KEY,
+  comment_id    TEXT NOT NULL REFERENCES comments(id) ON DELETE CASCADE,
+  voter_hash    TEXT NOT NULL,                   -- Hashed visitor id or user id
+  value         INTEGER NOT NULL,                -- 1 (up) | -1 (down)
+  created_at    INTEGER NOT NULL,
+  UNIQUE(comment_id, voter_hash)
+);
+
+CREATE INDEX IF NOT EXISTS idx_comment_votes_comment
+  ON comment_votes (comment_id, created_at DESC);
 
 CREATE INDEX IF NOT EXISTS idx_comments_page
   ON comments (page_type, subject, lecture, status, created_at DESC);
