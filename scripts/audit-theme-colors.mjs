@@ -84,7 +84,16 @@ const NEUTRAL_OVERLAY_PATTERNS = [
   '#333',           // print-only disabled message
 ];
 
-// 8. Runtime string comparisons in JS (not color assignments). The ripple
+// 8. Deterministic avatar palette (CommentsSection.astro). These are
+//    decorative per-user avatar background fills chosen by a hash of the
+//    display name. They are intentional brand-adjacent accent colors that
+//    read acceptably on both themes and are not part of the chrome theme
+//    system, so they are allowlisted rather than converted to tokens.
+const AVATAR_PALETTE_PATTERNS = [
+  '#0F766E', '#7C3AED', '#DB2777', '#D97706', '#2563EB', '#059669', '#DC2626', '#4F46E5',
+];
+
+// 9. Runtime string comparisons in JS (not color assignments). The ripple
 //    handler in BaseLayout.astro inspects computed text color to pick a
 //    ripple tint; these are string literals compared at runtime, not colors.
 const RUNTIME_COMPARE_PATTERNS = [
@@ -107,6 +116,7 @@ const ALLOWED_LITERALS = new Set([
   ...CODE_COLOR_PATTERNS,
   ...THEME_META_PATTERNS,
   ...NEUTRAL_OVERLAY_PATTERNS,
+  ...AVATAR_PALETTE_PATTERNS,
 ].map((s) => s.toLowerCase()));
 
 // A literal is allowed if it exactly matches an entry OR starts with an
