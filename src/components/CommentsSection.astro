@@ -217,14 +217,41 @@ const sectionId = `comments-${pageType}-${encodeURIComponent(subject)}${lecture 
       status.setAttribute('role', 'status');
       status.setAttribute('aria-live', 'polite');
 
-      // Turnstile container (lazy, with theme-change re-render)
+      // Turnstile container (lazy, with dynamic API loading + theme-change re-render)
       var tsKey = section.dataset.turnstileKey;
       var tsBox = document.createElement('div');
       tsBox.className = 'bn-comments__turnstile';
       var tsRendered = false;
       var tsWidgetId = null;
-      function renderTurnstile() {
-        if (!tsKey || !window.turnstile) return;
+      var tsApiLoading = false;
+      var tsApiLoaded = false;
+
+      /** Dynamically load the Turnstile API script if not already present. */
+      function loadTurnstileApi(onReady) {
+        if (tsApiLoaded) { onReady(); return; }
+        if (window.turnstile) { tsApiLoaded = true; onReady(); return; }
+        if (tsApiLoading) {
+          // Script already loading — poll until it arrives.
+          var attempts = 0;
+          var check = setInterval(function () {
+            attempts++;
+            if (window.turnstile) { clearInterval(check); tsApiLoaded = true; onReady(); }
+            else if (attempts > 100) { clearInterval(check); tsApiLoading = false; }
+          }, 100);
+          return;
+        }
+        tsApiLoading = true;
+        var s = document.createElement('script');
+        s.src = 'https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit';
+        s.async = true;
+        s.onload = function () { tsApiLoaded = true; onReady(); };
+        s.onerror = function () { tsApiLoading = false; };
+        document.head.appendChild(s);
+      }
+
+      /** Actually render the Turnstile widget (requires API to be loaded). */
+      function doRenderTurnstile() {
+        if (!tsKey) return;
         // Reset previous render if any (theme change).
         if (tsRendered && tsWidgetId != null) {
           try { window.turnstile.remove(tsWidgetId); } catch (e) {}
@@ -238,6 +265,15 @@ const sectionId = `comments-${pageType}-${encodeURIComponent(subject)}${lecture 
           theme: document.documentElement.dataset.theme === 'dark' ? 'dark' : 'light',
           callback: function () {}
         });
+      }
+
+      function renderTurnstile() {
+        if (!tsKey) return;
+        if (!window.turnstile) {
+          loadTurnstileApi(doRenderTurnstile);
+          return;
+        }
+        doRenderTurnstile();
       }
 
       // Re-render Turnstile on theme change so the widget matches.

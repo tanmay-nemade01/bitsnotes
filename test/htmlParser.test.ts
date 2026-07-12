@@ -59,4 +59,10 @@ describe('parseLectureHtml', () => {
     const { bodyContent } = parseLectureHtml(LECTURE);
     expect(bodyContent).toContain('Hello');
   });
+
+  it('wraps prepended inline styles in a <style> tag', () => {
+    const { bodyContent } = parseLectureHtml(LECTURE);
+    expect(bodyContent.trim().startsWith('<style>')).toBe(true);
+    expect(bodyContent).toContain('</style>');
+  });
 });

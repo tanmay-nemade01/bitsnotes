@@ -176,7 +176,7 @@ export function parseLectureHtml(htmlContent: string): ParsedLectureHtml {
 
   // Prepend inline styles if extracted
   if (inlineStyles) {
-    bodyContent = inlineStyles + bodyContent;
+    bodyContent = `<style>${inlineStyles}</style>` + bodyContent;
   }
 
   return {
