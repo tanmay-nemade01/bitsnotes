@@ -84,7 +84,7 @@
 
   BN.setupProgress = function (subject, lecture) {
     var sent = false;
-    window.addEventListener('scroll', function () {
+    var handler = function () {
       if (sent) return;
       var scrollTop = window.scrollY || document.documentElement.scrollTop;
       var scrollHeight = document.documentElement.scrollHeight - document.documentElement.clientHeight;
@@ -94,7 +94,12 @@
         sent = true;
         BN.post('/api/progress/mark-read', { subject: subject, lecture: lecture, readPct: pct });
       }
-    });
+    };
+    window.addEventListener('scroll', handler, { passive: true });
+    // Clean up on SPA navigation so the listener doesn't leak across pages.
+    document.addEventListener('astro:before-swap', function () {
+      window.removeEventListener('scroll', handler);
+    }, { once: true });
   };
 
   window.BitsNotes = BN;

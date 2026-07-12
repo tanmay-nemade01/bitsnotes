@@ -16,9 +16,12 @@ export interface EnvBindings {
   GITHUB_CLIENT_ID: string;
   GITHUB_CLIENT_SECRET: string;
   TURNSTILE_SECRET_KEY: string;
+  TURNSTILE_SITE_KEY: string;
   APP_BASE_URL: string;
   API_SECRET_KEY?: string;
   SEND_EMAIL: any;
+  COMMENT_RATE_LIMITER?: { limit: (opts: { key: string }) => Promise<{ success: boolean }> };
+  FEEDBACK_RATE_LIMITER?: { limit: (opts: { key: string }) => Promise<{ success: boolean }> };
 }
 
 export async function getEnv(context?: APIContext): Promise<EnvBindings> {

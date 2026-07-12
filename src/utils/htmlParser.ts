@@ -8,6 +8,76 @@ export interface ParsedLectureHtml {
 }
 
 /**
+ * Wrap every top-level selector in a content <style> block with
+ * `.lecture-notes-wrapper` so the lecture's own CSS cannot leak into the
+ * site chrome and so the canonical lecture-notes.css (loaded after the
+ * content styles) can override it for theming.
+ *
+ * Only top-level selectors are prefixed; nested rules and @-rules (keyframes,
+ * media queries) are left untouched. Selectors that already reference the
+ * wrapper are skipped to avoid double-prefixing.
+ */
+function scopeStylesToWrapper(css: string): string {
+  const WRAPPER = '.lecture-notes-wrapper';
+  // Split into top-level rules. We walk char-by-char to respect braces.
+  let out = '';
+  let i = 0;
+  const n = css.length;
+
+  while (i < n) {
+    // Find next rule start (selector) up to first '{' that is not inside a string.
+    let depth = 0;
+    let selectorEnd = -1;
+    let j = i;
+    // Skip leading whitespace
+    while (j < n && /\s/.test(css[j])) j++;
+    const ruleStart = j;
+    // Find the matching opening brace for the top-level rule
+    while (j < n) {
+      const ch = css[j];
+      if (ch === '{') { depth++; if (depth === 1) { selectorEnd = j; break; } }
+      else if (ch === '}') depth--;
+      else if (ch === '(') { /* skip paren groups (e.g. :not(...)) */ while (j < n && css[j] !== ')') j++; }
+      j++;
+    }
+    if (selectorEnd === -1) {
+      // No more rules; append remainder (likely trailing whitespace/comments)
+      out += css.slice(ruleStart);
+      break;
+    }
+    const selector = css.slice(ruleStart, selectorEnd).trim();
+    // Find matching closing brace
+    let braceDepth = 1;
+    let k = selectorEnd + 1;
+    while (k < n && braceDepth > 0) {
+      const ch = css[k];
+      if (ch === '{') braceDepth++;
+      else if (ch === '}') braceDepth--;
+      k++;
+    }
+    const block = css.slice(selectorEnd, k); // includes outer braces
+
+    // Only scope real selector rules (skip @-rules like @media, @keyframes, @font-face).
+    // For @-rules we must keep the at-rule keyword + its prelude (e.g.
+    // `@media (max-width: 600px)`), which lives in `selector`, so we emit
+    // `selector + block` rather than just `block`.
+    if (selector.startsWith('@')) {
+      out += `${selector} ${block}`;
+    } else {
+      const scopedSelector = selector
+        .split(',')
+        .map((s) => s.trim())
+        .filter(Boolean)
+        .map((s) => (s.startsWith(WRAPPER) ? s : `${WRAPPER} ${s}`))
+        .join(', ');
+      out += `${scopedSelector} ${block}`;
+    }
+    i = k;
+  }
+  return out;
+}
+
+/**
  * Parse a raw lecture HTML file into the components needed by the viewer.
  *
  * Extracts:
@@ -39,9 +109,16 @@ export function parseLectureHtml(htmlContent: string): ParsedLectureHtml {
   let inlineStyles = '';
   if (headStyleMatch) {
     const headContent = headStyleMatch[0];
-    const styleMatches = headContent.match(/<style[^>]*>[\s\S]*?<\/style>/gi);
+    const styleMatches = headContent.match(/<style[^>]*>([\s\S]*?)<\/style>/gi);
     if (styleMatches) {
-      inlineStyles = styleMatches.join('');
+      // Extract only the CSS between the <style> tags. Passing the raw
+      // `<style>`/`</style>` wrappers into scopeStylesToWrapper would turn the
+      // opening tag into a malformed selector (e.g. `.lecture-notes-wrapper
+      // <style> .x { ... }`), silently dropping the first rule and breaking
+      // theme isolation.
+      inlineStyles = styleMatches
+        .map((m) => m.replace(/^<style[^>]*>/i, '').replace(/<\/style>$/i, ''))
+        .join('\n');
     }
   }
 
@@ -54,6 +131,11 @@ export function parseLectureHtml(htmlContent: string): ParsedLectureHtml {
       .replace(/\.container\s*\{[^}]*\}/gi, '')
       .replace(/\.hidden\s*\{[^}]*\}/gi, '')
       .replace(/:root\s*\{[^}]*\}/gi, '');
+
+    // Scope the remaining content-specific rules to .lecture-notes-wrapper so they
+    // cannot leak into the chrome and so canonical lecture-notes.css (loaded after)
+    // can override them for theming. We wrap each top-level rule's selector.
+    inlineStyles = scopeStylesToWrapper(inlineStyles);
   }
 
   // Remove duplicate stylesheet link and duplicate body tags to prevent double loading

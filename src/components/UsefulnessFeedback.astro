@@ -1,0 +1,236 @@
+---
+/**
+ * UsefulnessFeedback.astro — "Was this useful?" voting (Phase 5).
+ *
+ * No login. Mounts after lecture prev/next, before the comments section.
+ * Vote is remembered via the functional visitor cookie (server resolves
+ * myVote from the cookie hash). Reason input appears only for "Not yet".
+ * All user-submitted text is rendered with textContent only (no innerHTML).
+ */
+interface Props {
+  pageType: 'lecture' | 'subject';
+  subject: string;
+  lecture?: string;
+}
+
+const { pageType, subject, lecture } = Astro.props;
+const sectionId = `usefulness-${pageType}-${encodeURIComponent(subject)}${lecture ? '-' + encodeURIComponent(lecture) : ''}`;
+---
+
+<section
+  id={sectionId}
+  class="bn-usefulness mt-8 pt-6 border-t border-[var(--border)]"
+  data-page-type={pageType}
+  data-subject={subject}
+  data-lecture={lecture ?? ''}
+  aria-label="Was this useful?"
+>
+  <div class="bn-usefulness__inner">
+    <h2 class="bn-usefulness__title font-display text-lg font-bold text-[var(--text)]">
+      Was this {pageType === 'lecture' ? 'lecture' : 'page'} useful?
+    </h2>
+
+    <div class="bn-usefulness__buttons mt-3" role="group" aria-label="Usefulness vote">
+      <button
+        type="button"
+        class="bn-usefulness__btn bn-usefulness__yes"
+        data-value="1"
+        aria-pressed="false"
+      >
+        <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2.2" viewBox="0 0 24 24" aria-hidden="true">
+          <path stroke-linecap="round" stroke-linejoin="round" d="M7 11v9H4a1 1 0 01-1-1v-7a1 1 0 011-1h3zm0 0l4-7a2 2 0 013.7 1.3L14 9h4.5a2 2 0 011.95 2.45l-1.4 6A2 2 0 0117.1 19H7"/>
+        </svg>
+        <span>Yes</span>
+      </button>
+      <button
+        type="button"
+        class="bn-usefulness__btn bn-usefulness__no"
+        data-value="-1"
+        aria-pressed="false"
+      >
+        <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2.2" viewBox="0 0 24 24" aria-hidden="true">
+          <path stroke-linecap="round" stroke-linejoin="round" d="M17 13V4h3a1 1 0 011 1v7a1 1 0 01-1 1h-3zm0 0l-4 7a2 2 0 01-3.7-1.3L10 15H5.5a2 2 0 01-1.95-2.45l1.4-6A2 2 0 016.9 5H17"/>
+        </svg>
+        <span>Not yet</span>
+      </button>
+    </div>
+
+    <p class="bn-usefulness__count mt-3 text-sm text-[var(--text-muted)]" aria-live="polite"></p>
+
+    <div class="bn-usefulness__reason mt-3 hidden">
+      <label class="block text-xs font-semibold text-[var(--text-muted)] mb-1" for={`${sectionId}-reason`}>
+        What was missing? (optional, not public)
+      </label>
+      <textarea
+        id={`${sectionId}-reason`}
+        name="reason"
+        rows="3"
+        maxlength="300"
+        class="block w-full max-w-md px-3 py-2 border border-[var(--border)] text-[var(--text)] bg-[var(--bg-input)] placeholder-[var(--input-placeholder)] text-sm rounded-[var(--r-sm)] focus:outline-none focus:ring-2 focus:ring-[var(--focus-ring)] focus:border-[var(--accent)]"
+        placeholder="A quick note helps us improve…"
+      ></textarea>
+      <div class="flex items-center gap-3 mt-2">
+        <button type="button" class="bn-usefulness__reason-submit inline-flex items-center gap-2 px-4 py-2 text-sm font-semibold rounded-[var(--r-sm)] bg-[var(--accent)] text-[var(--accent-contrast)] hover:bg-[var(--accent-hover)] transition-colors disabled:opacity-60">
+          Send feedback
+        </button>
+        <span class="bn-usefulness__reason-status text-xs text-[var(--text-muted)]"></span>
+      </div>
+    </div>
+  </div>
+</section>
+
+<script is:inline data-astro-rerun>
+  (function () {
+    var SECTIONS = document.querySelectorAll('.bn-usefulness');
+    if (!SECTIONS.length) return;
+
+    function qsParams(section) {
+      var pt = section.dataset.pageType;
+      var qs = new URLSearchParams({ pageType: pt, subject: section.dataset.subject });
+      if (pt === 'lecture') qs.set('lecture', section.dataset.lecture);
+      return qs;
+    }
+
+    function setPressed(section, value) {
+      section.querySelectorAll('.bn-usefulness__btn').forEach(function (b) {
+        var v = b.getAttribute('data-value');
+        b.setAttribute('aria-pressed', String(v === String(value)));
+      });
+    }
+
+    function renderCounts(section, agg) {
+      var el = section.querySelector('.bn-usefulness__count');
+      if (!el) return;
+      var parts = [];
+      if (agg.useful > 0) parts.push(agg.useful + ' found this useful');
+      if (agg.notYet > 0) parts.push(agg.notYet + ' found it not yet useful');
+      el.textContent = parts.length ? parts.join(' · ') : '';
+    }
+
+    function showReason(section, show) {
+      var box = section.querySelector('.bn-usefulness__reason');
+      if (box) box.classList.toggle('hidden', !show);
+    }
+
+    function loadState(section) {
+      fetch('/api/feedback?' + qsParams(section).toString(), {
+        credentials: 'same-origin',
+        headers: { 'Accept': 'application/json' },
+      })
+        .then(function (r) { return r.json(); })
+        .then(function (agg) {
+          renderCounts(section, agg);
+          if (agg.myVote) setPressed(section, agg.myVote);
+          showReason(section, agg.myVote === -1);
+        })
+        .catch(function () {});
+    }
+
+    function vote(section, value, reason) {
+      var payload = {
+        pageType: section.dataset.pageType,
+        subject: section.dataset.subject,
+        lecture: section.dataset.lecture || undefined,
+        value: value,
+      };
+      if (reason != null) payload.reason = reason;
+
+      return fetch('/api/feedback', {
+        method: 'POST',
+        credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
+        body: JSON.stringify(payload),
+      }).then(function (r) { return r.json().then(function (d) { return { status: r.status, data: d }; }); });
+    }
+
+    SECTIONS.forEach(function (section) {
+      var yesBtn = section.querySelector('.bn-usefulness__yes');
+      var noBtn = section.querySelector('.bn-usefulness__no');
+      var reasonBox = section.querySelector('.bn-usefulness__reason');
+      var reasonEl = section.querySelector('.bn-usefulness__reason textarea');
+      var reasonSubmit = section.querySelector('.bn-usefulness__reason-submit');
+      var reasonStatus = section.querySelector('.bn-usefulness__reason-status');
+
+      function handleVote(value) {
+        setPressed(section, value);
+        showReason(section, value === -1);
+        vote(section, value, null).then(function (res) {
+          if (res.status === 200) {
+            loadState(section);
+          } else if (res.status === 429) {
+            reasonStatus.textContent = 'Too many requests. Please try again later.';
+          } else if (res.data && res.data.error) {
+            reasonStatus.textContent = res.data.error;
+          }
+        }).catch(function () {
+          reasonStatus.textContent = 'Network error. Please try again.';
+        });
+      }
+
+      if (yesBtn) yesBtn.addEventListener('click', function () { handleVote(1); });
+      if (noBtn) noBtn.addEventListener('click', function () { handleVote(-1); });
+
+      if (reasonSubmit) {
+        reasonSubmit.addEventListener('click', function () {
+          var text = reasonEl ? reasonEl.value.trim() : '';
+          if (text.length > 0 && text.length < 2) {
+            reasonStatus.textContent = 'Please add a little more detail, or leave it blank.';
+            return;
+          }
+          reasonSubmit.disabled = true;
+          reasonStatus.textContent = 'Sending…';
+          vote(section, -1, text || null).then(function (res) {
+            if (res.status === 200) {
+              reasonStatus.textContent = 'Thanks for the feedback!';
+              if (reasonEl) reasonEl.value = '';
+            } else if (res.status === 429) {
+              reasonStatus.textContent = 'Too many requests. Please try again later.';
+            } else if (res.data && res.data.error) {
+              reasonStatus.textContent = res.data.error;
+            }
+          }).catch(function () {
+            reasonStatus.textContent = 'Network error. Please try again.';
+          }).finally(function () { reasonSubmit.disabled = false; });
+        });
+      }
+
+      loadState(section);
+    });
+  })();
+</script>
+
+<style>
+  .bn-usefulness__buttons {
+    display: flex;
+    gap: 0.5rem;
+    flex-wrap: wrap;
+  }
+  .bn-usefulness__btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+    padding: 0.5rem 1rem;
+    font-size: 0.875rem;
+    font-weight: 600;
+    border-radius: var(--r-sm);
+    border: 1px solid var(--border);
+    background: var(--bg-input);
+    color: var(--text);
+    cursor: pointer;
+    transition: border-color 0.15s, background 0.15s, color 0.15s;
+  }
+  .bn-usefulness__btn:hover {
+    border-color: var(--accent);
+    color: var(--accent);
+  }
+  .bn-usefulness__yes[aria-pressed='true'] {
+    background: var(--success-bg);
+    border-color: var(--success-border);
+    color: var(--success-text);
+  }
+  .bn-usefulness__no[aria-pressed='true'] {
+    background: var(--warning-bg);
+    border-color: var(--warning-border);
+    color: var(--warning-text);
+  }
+</style>

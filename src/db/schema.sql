@@ -103,3 +103,64 @@ CREATE TABLE IF NOT EXISTS reading_progress (
   last_read_at    INTEGER NOT NULL,
   PRIMARY KEY (user_id, subject, lecture)
 );
+
+-- ─── Engagement: Comments (Phase 4) ───────────────────────────────────────
+CREATE TABLE IF NOT EXISTS comments (
+  id                TEXT PRIMARY KEY,
+  page_type         TEXT NOT NULL,
+  subject           TEXT NOT NULL,
+  lecture           TEXT,
+  display_name      TEXT NOT NULL,
+  body              TEXT NOT NULL,
+  status            TEXT NOT NULL DEFAULT 'published',
+  moderation_reason TEXT,
+  author_token_hash TEXT NOT NULL,
+  report_count      INTEGER NOT NULL DEFAULT 0,
+  created_at        INTEGER NOT NULL,
+  updated_at        INTEGER NOT NULL,
+  deleted_at        INTEGER
+);
+
+CREATE INDEX IF NOT EXISTS idx_comments_page
+  ON comments (page_type, subject, lecture, status, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_comments_status
+  ON comments (status, created_at DESC);
+
+CREATE TABLE IF NOT EXISTS comment_reports (
+  id            TEXT PRIMARY KEY,
+  comment_id    TEXT NOT NULL REFERENCES comments(id) ON DELETE CASCADE,
+  reporter_hash TEXT NOT NULL,
+  reason        TEXT NOT NULL,
+  created_at    INTEGER NOT NULL,
+  UNIQUE(comment_id, reporter_hash)
+);
+
+CREATE INDEX IF NOT EXISTS idx_comment_reports_comment
+  ON comment_reports (comment_id, created_at DESC);
+
+CREATE TABLE IF NOT EXISTS admin_users (
+  user_id     TEXT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+  created_at  INTEGER NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_admin_users_created
+  ON admin_users (created_at DESC);
+
+-- ─── Engagement: Page Feedback (Phase 5) ─────────────────────────────────
+CREATE TABLE IF NOT EXISTS page_feedback (
+  id            TEXT PRIMARY KEY,                 -- UUID v7
+  page_type     TEXT NOT NULL,                    -- 'lecture' | 'subject'
+  subject       TEXT NOT NULL,                    -- Manifest subject name
+  lecture       TEXT,                             -- Folder name; NULL for subject page
+  visitor_hash  TEXT NOT NULL,                    -- HMAC of functional visitor cookie
+  value         INTEGER NOT NULL,                 -- 1 useful / -1 not yet
+  reason        TEXT,                             -- Optional, <=300 chars, NOT public in v1
+  created_at    INTEGER NOT NULL,
+  updated_at    INTEGER NOT NULL,
+  UNIQUE(page_type, subject, lecture, visitor_hash)
+);
+
+CREATE INDEX IF NOT EXISTS idx_feedback_page
+  ON page_feedback (page_type, subject, lecture, value);
+CREATE INDEX IF NOT EXISTS idx_feedback_visitor
+  ON page_feedback (visitor_hash, page_type, subject, lecture);

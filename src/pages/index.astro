@@ -1,10 +1,49 @@
 ---
 import BaseLayout from '../layouts/BaseLayout.astro';
-import { listSubjects } from '../utils/notesLoader';
+import { listCatalog } from '../utils/notesLoader';
+import { getSubjectInfo } from '../data/subjects';
+import LibraryStats from '../components/LibraryStats.astro';
+import ResourceTypeBadge from '../components/ResourceTypeBadge.astro';
 
 export const prerender = false;
 
-const subjects = await listSubjects();
+const catalog = await listCatalog();
+
+// Build a per-subject view model: split lectures vs additional resources,
+// and carry the full lecture list (with catalog metadata) for the browse-all
+// accordions. Lecture numbers come from the catalog — never an array index.
+const subjectsVM = catalog.map((s) => {
+  const info = getSubjectInfo(s.subject);
+  const lectures = s.lectures.filter((l) => l.scope === 'lecture');
+  const additional = s.lectures.filter((l) => l.scope !== 'lecture');
+  return {
+    name: s.subject,
+    description: info.description,
+    lectureCount: lectures.length,
+    additionalCount: additional.length,
+    lectures: s.lectures,
+  };
+});
+
+// Compact catalog for client-side filtering (catalog is small).
+const catalogJson = JSON.stringify(
+  subjectsVM.map((s) => ({
+    subject: s.name,
+    description: s.description,
+    lectureCount: s.lectureCount,
+    additionalCount: s.additionalCount,
+    lectures: s.lectures.map((l) => ({
+      folderName: l.folderName,
+      displayTitle: l.displayTitle,
+      lectureNumber: l.lectureNumber ?? null,
+      lectureNumberEnd: l.lectureNumberEnd ?? null,
+      resourceKind: l.resourceKind,
+      availableModes: l.availableModes,
+      scope: l.scope,
+    })),
+  })),
+);
+
 const homeKeywords = 'lecture notes, study guides, classroom notes, bitsnotes, free study materials, AI notes, machine learning notes, deep learning, natural language processing, software engineering, data management, postgraduate notes, exam preparation';
 
 const webSiteSchema = {
@@ -50,45 +89,80 @@ const webSiteJson = JSON.stringify(webSiteSchema);
       <button
         type="button"
         id="homepage-search-trigger"
-        class="mt-6 flex w-full max-w-md items-center gap-3 pl-3.5 pr-4 py-2.5 border border-[var(--border)] text-black bg-white text-sm rounded-[var(--r-sm)] hover:border-[var(--border-strong)] focus:outline-none focus:ring-2 focus:ring-[var(--focus-ring)] focus:border-[var(--accent)] transition-all cursor-pointer text-left group"
+        class="mt-6 flex w-full max-w-md items-center gap-3 pl-3.5 pr-4 py-2.5 border border-[var(--border)] text-[var(--text)] bg-[var(--bg-elevated)] text-sm rounded-[var(--r-sm)] hover:border-[var(--border-strong)] focus:outline-none focus:ring-2 focus:ring-[var(--focus-ring)] focus:border-[var(--accent)] transition-all cursor-pointer text-left group"
         aria-label="Open universal search"
       >
-        <svg class="w-4 h-4 text-black/70 group-hover:text-black transition-colors shrink-0" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+        <svg class="w-4 h-4 text-[var(--text-muted)] group-hover:text-[var(--text)] transition-colors shrink-0" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
           <path stroke-linecap="round" stroke-linejoin="round" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/>
         </svg>
-        <span class="flex-grow text-black/80 group-hover:text-black transition-colors">Search notes, concepts, and subjects...</span>
-        <kbd class="hidden sm:inline-flex items-center px-1.5 py-0.5 text-[9px] font-sans font-semibold text-black/70 bg-[var(--bg-subtle)] border border-[var(--border)] rounded-[4px] leading-none shrink-0">Ctrl+K</kbd>
+        <span class="flex-grow text-[var(--text-muted)] group-hover:text-[var(--text)] transition-colors">Search notes, concepts, and subjects...</span>
+        <kbd class="hidden sm:inline-flex items-center px-1.5 py-0.5 text-[9px] font-sans font-semibold text-[var(--text-muted)] bg-[var(--bg-subtle)] border border-[var(--border)] rounded-[4px] leading-none shrink-0">Ctrl+K</kbd>
       </button>
     </header>
 
-    <!-- Subjects grid -->
-    <div class="flex items-center justify-between mb-5">
-      <h2 class="text-sm font-bold text-[var(--text-muted)] uppercase tracking-widest">
-        Subjects
-        <span id="subject-count" class="ml-2 text-[var(--text-faint)] font-normal normal-case tracking-normal">({subjects.length})</span>
-      </h2>
+    <!-- Library statistics (real values from the catalog) -->
+    <LibraryStats class="mb-10" />
+
+    <!-- View switch: Subjects (default) | Browse all -->
+    <div class="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between mb-5">
+      <div class="inline-flex items-center gap-1 p-1 border border-[var(--border)] rounded-[var(--r-md)] bg-[var(--bg-subtle)] self-start" role="tablist" aria-label="Library view">
+        <button type="button" class="bn-view-btn" data-view="subjects" role="tab" aria-selected="true">Subjects</button>
+        <button type="button" class="bn-view-btn" data-view="browse" role="tab" aria-selected="false">Browse all</button>
+      </div>
+
+      <!-- Inline filter (separate from Ctrl+K) -->
+      <div class="flex flex-col gap-2 sm:items-end">
+        <div class="relative w-full sm:w-72">
+          <div class="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+            <svg class="w-4 h-4 text-[var(--text-muted)]" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/>
+            </svg>
+          </div>
+          <input
+            type="text"
+            id="inline-filter"
+            placeholder="Filter subjects and resources…"
+            class="block w-full pl-9 pr-8 py-2 border border-[var(--border)] text-[var(--text)] bg-[var(--bg-input)] placeholder-[var(--input-placeholder)] text-sm rounded-[var(--r-sm)] focus:outline-none focus:ring-2 focus:ring-[var(--focus-ring)] focus:border-[var(--accent)] transition-colors"
+            aria-label="Filter subjects and resources"
+          />
+          <button type="button" id="inline-filter-clear" class="hidden absolute inset-y-0 right-0 pr-3 flex items-center text-[var(--text-faint)] hover:text-[var(--text)]" aria-label="Clear filter">✕</button>
+        </div>
+        <div class="flex flex-wrap gap-1.5" id="filter-chips" role="group" aria-label="Filter by resource type">
+          <button type="button" class="bn-chip" data-filter="all" aria-pressed="true">All</button>
+          <button type="button" class="bn-chip" data-filter="lectures" aria-pressed="false">Lectures</button>
+          <button type="button" class="bn-chip" data-filter="revision" aria-pressed="false">Revision</button>
+          <button type="button" class="bn-chip" data-filter="quizzes" aria-pressed="false">Quizzes</button>
+          <button type="button" class="bn-chip" data-filter="solved" aria-pressed="false">Solved papers</button>
+          <button type="button" class="bn-chip" data-filter="visual" aria-pressed="false">Visual guides</button>
+        </div>
+      </div>
     </div>
 
-    {subjects.length === 0 ? (
-      <div class="text-center py-16 border border-[var(--border)] rounded-[var(--r-md)]">
-        <svg class="mx-auto h-10 w-10 text-[var(--text-faint)]" fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24">
-          <path stroke-linecap="round" stroke-linejoin="round" d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253"/>
-        </svg>
-        <h3 class="mt-3 text-sm font-bold text-[var(--text)]">No subjects found</h3>
-        <p class="mt-1 text-xs text-[var(--text-muted)]">Add HTML note files to src/content/notes/ and redeploy.</p>
-      </div>
-    ) : (
+    <!-- Result count + empty state (shown while filtering) -->
+    <p id="filter-status" class="hidden text-sm text-[var(--text-muted)] mb-4" aria-live="polite"></p>
+    <div id="filter-empty" class="hidden text-center py-16 border border-[var(--border)] rounded-[var(--r-md)]">
+      <svg class="mx-auto h-10 w-10 text-[var(--text-faint)]" fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24">
+        <path stroke-linecap="round" stroke-linejoin="round" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/>
+      </svg>
+      <h3 class="mt-3 text-sm font-bold text-[var(--text)]">No matches</h3>
+      <p class="mt-1 text-xs text-[var(--text-muted)]">Try a different term or clear the filter.</p>
+    </div>
+
+    <!-- ============ VIEW: SUBJECTS (grid) ============ -->
+    <section id="view-subjects" class="bn-view" aria-label="Subjects">
+      <h2 class="sr-only">Subjects</h2>
       <div id="subjects-grid" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-        {subjects.map(({ name, lectureCount }) => {
-          const param = encodeURIComponent(name);
+        {subjectsVM.map((s) => {
+          const param = encodeURIComponent(s.name);
           return (
             <a
               href={`/subject/${param}`}
-              data-subject-name={name.toLowerCase()}
-               class="group border border-[var(--border)] rounded-[var(--r-md)] p-5 hover:border-[var(--border-strong)] hover:bg-[var(--bg-subtle)] transition-colors no-underline"
+              data-astro-prefetch
+              data-subject-name={s.name.toLowerCase()}
+              data-subject-description={s.description.toLowerCase()}
+              class="bn-subject-card group border border-[var(--border)] rounded-[var(--r-md)] p-5 hover:border-[var(--border-strong)] hover:bg-[var(--bg-subtle)] transition-colors no-underline"
             >
               <div class="flex items-start gap-3">
-                <!-- Monoline book glyph -->
                 <div class="mt-0.5 w-8 h-8 rounded-[var(--r-sm)] bg-[var(--accent-subtle)] flex items-center justify-center text-[var(--accent)] shrink-0">
                   <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
                     <path stroke-linecap="round" stroke-linejoin="round" d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253"/>
@@ -96,13 +170,15 @@ const webSiteJson = JSON.stringify(webSiteSchema);
                 </div>
                 <div class="min-w-0 flex-1">
                   <h3 class="font-display font-bold text-[var(--text)] text-base leading-snug group-hover:text-[var(--accent)] transition-colors line-clamp-2">
-                    {name}
+                    {s.name}
                   </h3>
                   <p class="text-xs text-[var(--text-muted)] mt-1">
-                    {lectureCount} {lectureCount === 1 ? 'lecture' : 'lectures'}
+                    {s.lectureCount} {s.lectureCount === 1 ? 'lecture' : 'lectures'}{s.additionalCount > 0 ? ` · ${s.additionalCount} ${s.additionalCount === 1 ? 'resource' : 'resources'}` : ''}
+                  </p>
+                  <p class="text-xs text-[var(--text-faint)] mt-1.5 line-clamp-2">
+                    {s.description}
                   </p>
                 </div>
-                <!-- Accent arrow nudge on hover -->
                 <svg class="w-4 h-4 text-[var(--text-faint)] mt-1 shrink-0 group-hover:text-[var(--accent)] group-hover:translate-x-0.5 transition-colors" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
                   <path stroke-linecap="round" stroke-linejoin="round" d="M9 5l7 7-7 7"/>
                 </svg>
@@ -111,11 +187,321 @@ const webSiteJson = JSON.stringify(webSiteSchema);
           );
         })}
       </div>
-    )}
+    </section>
+
+    <!-- ============ VIEW: BROWSE ALL (accordions) ============ -->
+    <section id="view-browse" class="bn-view hidden" aria-label="Browse all resources">
+      <div class="flex items-center justify-between mb-3">
+        <h2 class="text-sm font-bold text-[var(--text-muted)] uppercase tracking-widest">All resources</h2>
+        <div class="flex gap-2">
+          <button type="button" id="expand-all" class="bn-link-btn">Expand all</button>
+          <span class="text-[var(--text-faint)]">·</span>
+          <button type="button" id="collapse-all" class="bn-link-btn">Collapse all</button>
+        </div>
+      </div>
+
+      <div id="browse-accordions" class="flex flex-col gap-2">
+        {subjectsVM.map((s) => {
+          const param = encodeURIComponent(s.name);
+          return (
+            <div class="bn-accordion border border-[var(--border)] rounded-[var(--r-md)] bg-[var(--bg-elevated)] overflow-hidden" data-subject={s.name.toLowerCase()}>
+              <button
+                type="button"
+                class="bn-accordion__header w-full flex items-center gap-3 px-4 py-3 text-left hover:bg-[var(--bg-subtle)] transition-colors"
+                aria-expanded="false"
+              >
+                <svg class="bn-accordion__chevron w-4 h-4 text-[var(--text-faint)] shrink-0 transition-transform" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" d="M19 9l-7 7-7-7"/>
+                </svg>
+                <div class="min-w-0 flex-1">
+                  <div class="flex items-baseline gap-2 flex-wrap">
+                    <h3 class="font-display font-bold text-[var(--text)] text-base leading-snug">{s.name}</h3>
+                    <span class="text-xs text-[var(--text-faint)]">{s.lectureCount} {s.lectureCount === 1 ? 'lecture' : 'lectures'}{s.additionalCount > 0 ? ` · ${s.additionalCount} ${s.additionalCount === 1 ? 'resource' : 'resources'}` : ''}</span>
+                  </div>
+                  <p class="text-xs text-[var(--text-muted)] mt-0.5 line-clamp-1">{s.description}</p>
+                </div>
+              </button>
+              <div class="bn-accordion__panel hidden border-t border-[var(--border)]">
+                <ul class="divide-y divide-[var(--border)]">
+                  {s.lectures.map((l) => {
+                    const viewPath = `/view/${param}/${encodeURIComponent(l.folderName)}`;
+                    const lecNum = l.lectureNumber != null
+                      ? (l.lectureNumberEnd != null
+                          ? `${l.lectureNumber.toString().padStart(2, '0')}–${l.lectureNumberEnd.toString().padStart(2, '0')}`
+                          : l.lectureNumber.toString().padStart(2, '0'))
+                      : '';
+                    return (
+                      <li
+                        class="bn-lecture-row flex items-center gap-3 px-4 py-2.5 hover:bg-[var(--bg-subtle)] transition-colors"
+                        data-subject={s.name.toLowerCase()}
+                        data-title={l.displayTitle.toLowerCase()}
+                        data-lecture-number={lecNum}
+                        data-resource-kind={l.resourceKind}
+                        data-modes={l.availableModes.join(',')}
+                        data-scope={l.scope}
+                      >
+                        <a href={viewPath} class="flex-1 min-w-0 text-sm font-medium text-[var(--text)] hover:text-[var(--accent)] transition-colors line-clamp-1 no-underline">
+                          {l.displayTitle}
+                        </a>
+                        <ResourceTypeBadge resourceKind={l.resourceKind} availableModes={l.availableModes} maxModes={2} />
+                      </li>
+                    );
+                  })}
+                </ul>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </section>
   </div>
 </BaseLayout>
 
 <script defer src="/auth-features.js"></script>
+
+<script is:inline>
+  // ─── Home view switch + inline filtering + browse-all accordions ─────
+  (function () {
+    var VIEW_KEY = 'bitsnotes-home-view';
+    var CATALOG = [];
+    var raw = document.getElementById('bn-catalog-data');
+    if (raw) { try { CATALOG = JSON.parse(raw.textContent || '[]'); } catch (e) { CATALOG = []; } }
+
+    var viewBtns = Array.prototype.slice.call(document.querySelectorAll('.bn-view-btn'));
+    var views = {
+      subjects: document.getElementById('view-subjects'),
+      browse: document.getElementById('view-browse'),
+    };
+    var filterInput = document.getElementById('inline-filter');
+    var filterClear = document.getElementById('inline-filter-clear');
+    var chips = Array.prototype.slice.call(document.querySelectorAll('.bn-chip'));
+    var statusEl = document.getElementById('filter-status');
+    var emptyEl = document.getElementById('filter-empty');
+    var accordions = Array.prototype.slice.call(document.querySelectorAll('.bn-accordion'));
+    var subjectCards = Array.prototype.slice.call(document.querySelectorAll('.bn-subject-card'));
+
+    // ── View switching (persisted) ──
+    function getStoredView() {
+      try { return localStorage.getItem(VIEW_KEY) || 'subjects'; } catch (e) { return 'subjects'; }
+    }
+    function setView(v) {
+      if (!views[v]) v = 'subjects';
+      try { localStorage.setItem(VIEW_KEY, v); } catch (e) {}
+      Object.keys(views).forEach(function (key) {
+        var el = views[key];
+        if (!el) return;
+        el.classList.toggle('hidden', key !== v);
+      });
+      viewBtns.forEach(function (b) {
+        var active = b.dataset.view === v;
+        b.setAttribute('aria-selected', String(active));
+        b.classList.toggle('bn-view-btn--active', active);
+      });
+    }
+    viewBtns.forEach(function (b) {
+      b.addEventListener('click', function () { setView(b.dataset.view); });
+    });
+    setView(getStoredView());
+
+    // ── Accordion open/close ──
+    function setAccordionOpen(acc, open) {
+      var header = acc.querySelector('.bn-accordion__header');
+      var panel = acc.querySelector('.bn-accordion__panel');
+      var chevron = acc.querySelector('.bn-accordion__chevron');
+      header.setAttribute('aria-expanded', String(open));
+      panel.classList.toggle('hidden', !open);
+      if (chevron) chevron.style.transform = open ? 'rotate(180deg)' : '';
+    }
+    accordions.forEach(function (acc) {
+      var header = acc.querySelector('.bn-accordion__header');
+      header.addEventListener('click', function () {
+        var open = header.getAttribute('aria-expanded') === 'true';
+        setAccordionOpen(acc, !open);
+      });
+    });
+    var expandAll = document.getElementById('expand-all');
+    var collapseAll = document.getElementById('collapse-all');
+    if (expandAll) expandAll.addEventListener('click', function () {
+      accordions.forEach(function (a) { setAccordionOpen(a, true); });
+    });
+    if (collapseAll) collapseAll.addEventListener('click', function () {
+      accordions.forEach(function (a) { setAccordionOpen(a, false); });
+    });
+
+    // ── Filtering ──
+    var savedOpenState = null; // snapshot of open subjects before filtering
+
+    function chipMatches(lec, chip) {
+      if (chip === 'all') return true;
+      if (chip === 'lectures') return lec.scope === 'lecture' || lec.resourceKind === 'lecture';
+      if (chip === 'revision') return (lec.availableModes || []).indexOf('exam-revision') !== -1;
+      if (chip === 'quizzes') return (lec.availableModes || []).indexOf('quiz') !== -1;
+      if (chip === 'solved') return lec.resourceKind === 'solved-paper';
+      if (chip === 'visual') return ['concept-map', 'race-card', 'one-sheet'].indexOf(lec.resourceKind) !== -1;
+      return true;
+    }
+
+    function textMatches(lec, subjectName, subjectDesc, term) {
+      if (!term) return true;
+      var hay = (subjectName + ' ' + subjectDesc + ' ' + lec.displayTitle + ' ' + (lec.lectureNumber != null ? lec.lectureNumber : '') + ' ' + (lec.lectureNumberEnd != null ? lec.lectureNumberEnd : '')).toLowerCase();
+      return hay.indexOf(term) !== -1;
+    }
+
+    function applyFilter() {
+      var term = (filterInput.value || '').trim().toLowerCase();
+      var chip = 'all';
+      chips.forEach(function (c) { if (c.getAttribute('aria-pressed') === 'true') chip = c.dataset.filter; });
+      var active = term.length > 0 || chip !== 'all';
+
+      // Snapshot open state the first time a filter becomes active.
+      if (active && savedOpenState === null) {
+        savedOpenState = accordions.map(function (a) {
+          return a.querySelector('.bn-accordion__header').getAttribute('aria-expanded') === 'true' ? a.dataset.subject : null;
+        }).filter(Boolean);
+      }
+
+      var totalMatches = 0;
+
+      // Subjects grid: show card if name/desc matches OR has matching lecture.
+      subjectCards.forEach(function (card) {
+        var name = card.dataset.subjectName || '';
+        var desc = card.dataset.subjectDescription || '';
+        var subj = CATALOG.find(function (s) { return s.subject.toLowerCase() === name; });
+        var nameHit = !term || name.indexOf(term) !== -1 || desc.indexOf(term) !== -1;
+        var lecHit = subj ? subj.lectures.some(function (l) { return chipMatches(l, chip) && textMatches(l, name, desc, term); }) : false;
+        card.style.display = (nameHit || lecHit) ? '' : 'none';
+      });
+
+      // Browse-all: filter rows, auto-expand subjects with matches.
+      accordions.forEach(function (acc) {
+        var subjName = acc.dataset.subject;
+        var subj = CATALOG.find(function (s) { return s.subject.toLowerCase() === subjName; });
+        if (!subj) return;
+        var rows = Array.prototype.slice.call(acc.querySelectorAll('.bn-lecture-row'));
+        var matchCount = 0;
+        rows.forEach(function (row) {
+          var lec = subj.lectures.find(function (l) {
+            return l.folderName && row.dataset.title === l.displayTitle.toLowerCase();
+          }) || subj.lectures.find(function (l) { return l.displayTitle.toLowerCase() === row.dataset.title; });
+          if (!lec) { row.style.display = active ? 'none' : ''; return; }
+          var ok = chipMatches(lec, chip) && textMatches(lec, subjName, subj.description.toLowerCase(), term);
+          row.style.display = ok ? '' : 'none';
+          if (ok) matchCount++;
+        });
+        // Show subject only if it has matches (or no active filter).
+        acc.style.display = (active && matchCount === 0) ? 'none' : '';
+        if (active) {
+          setAccordionOpen(acc, matchCount > 0);
+        } else if (savedOpenState !== null) {
+          // Restore prior state on clear.
+          setAccordionOpen(acc, savedOpenState.indexOf(subjName) !== -1);
+        } else {
+          setAccordionOpen(acc, false);
+        }
+        totalMatches += matchCount;
+      });
+
+      // Status + empty state + clear button.
+      filterClear.classList.toggle('hidden', !active);
+      if (active) {
+        statusEl.classList.remove('hidden');
+        statusEl.textContent = totalMatches + (totalMatches === 1 ? ' result' : ' results');
+        emptyEl.classList.toggle('hidden', totalMatches > 0);
+      } else {
+        statusEl.classList.add('hidden');
+        statusEl.textContent = '';
+        emptyEl.classList.add('hidden');
+        savedOpenState = null;
+      }
+    }
+
+    // Chips (single-select)
+    chips.forEach(function (c) {
+      c.addEventListener('click', function () {
+        chips.forEach(function (x) { x.setAttribute('aria-pressed', 'false'); x.classList.remove('bn-chip--active'); });
+        c.setAttribute('aria-pressed', 'true');
+        c.classList.add('bn-chip--active');
+        applyFilter();
+      });
+    });
+
+    // Text input with debounce (~120ms)
+    var t;
+    filterInput.addEventListener('input', function () {
+      clearTimeout(t);
+      t = setTimeout(applyFilter, 120);
+    });
+    filterClear.addEventListener('click', function () {
+      filterInput.value = '';
+      chips.forEach(function (x) { x.setAttribute('aria-pressed', 'false'); x.classList.remove('bn-chip--active'); });
+      var all = chips.find(function (x) { return x.dataset.filter === 'all'; });
+      if (all) { all.setAttribute('aria-pressed', 'true'); all.classList.add('bn-chip--active'); }
+      applyFilter();
+    });
+  })();
+</script>
+
+<!-- Catalog data for client-side filtering (small, JSON only) -->
+<script type="application/json" id="bn-catalog-data" set:html={catalogJson}></script>
+
+<style>
+  .bn-view-btn {
+    font-family: var(--font-body);
+    font-size: var(--text-sm);
+    font-weight: 600;
+    padding: 6px 14px;
+    border-radius: calc(var(--r-md) - 4px);
+    border: 1px solid transparent;
+    background: transparent;
+    color: var(--text-muted);
+    cursor: pointer;
+    transition: background-color var(--duration-fast) var(--ease-out),
+      color var(--duration-fast) var(--ease-out);
+  }
+  .bn-view-btn:hover { color: var(--text); }
+  .bn-view-btn--active {
+    background: var(--bg-elevated);
+    border-color: var(--border);
+    color: var(--text);
+  }
+  .bn-view-btn:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 1px; }
+
+  .bn-chip {
+    font-family: var(--font-body);
+    font-size: var(--text-xs);
+    font-weight: 600;
+    padding: 4px 10px;
+    border-radius: 999px;
+    border: 1px solid var(--border);
+    background: var(--bg-elevated);
+    color: var(--text-muted);
+    cursor: pointer;
+    transition: background-color var(--duration-fast) var(--ease-out),
+      color var(--duration-fast) var(--ease-out),
+      border-color var(--duration-fast) var(--ease-out);
+  }
+  .bn-chip:hover { color: var(--text); border-color: var(--border-strong); }
+  .bn-chip--active {
+    background: var(--accent);
+    border-color: var(--accent);
+    color: var(--accent-contrast);
+  }
+  .bn-chip:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 1px; }
+
+  .bn-link-btn {
+    font-family: var(--font-body);
+    font-size: var(--text-xs);
+    font-weight: 600;
+    color: var(--text-muted);
+    background: none;
+    border: none;
+    cursor: pointer;
+    padding: 0;
+  }
+  .bn-link-btn:hover { color: var(--accent); }
+
+  .bn-accordion__header:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: -2px; }
+</style>
 
 <script is:inline>
   // ─── Dashboard auth features: recently saved + progress bars ─────
@@ -154,7 +540,7 @@ const webSiteJson = JSON.stringify(webSiteSchema);
             '<svg class="w-3.5 h-3.5 text-[var(--accent)]" fill="currentColor" viewBox="0 0 24 24"><path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/></svg>' +
             '</div>' +
             '<div class="min-w-0 flex-1">' +
-            '<p class="text-sm font-medium text-[var(--text)] group-hover:text-[var(--accent)] transition-colors line-clamp-1">' + bm.display_name + '</p>' +
+            '<p class="text-sm font-medium text-[var(--text)] group-hover:text-[var(--accent)] transition-colors line-clamp-1">' + (bm.display_title || bm.display_name) + '</p>' +
             '<p class="text-[10px] text-[var(--text-muted)] truncate">' + bm.subject + '</p>' +
             '</div>';
           grid.appendChild(a);

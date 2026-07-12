@@ -49,46 +49,41 @@ export const onRequest = defineMiddleware(async (context, next) => {
   const { request, url, locals } = context;
   const pathname = url.pathname;
 
+  // ─── Cheap early exit: static assets never need auth ────────────────
+  // Skip cookie parsing and all session/DB imports for assets, fonts, and
+  // other static files. This keeps the hot path (public HTML, CSS, JS, fonts)
+  // free of any D1/Workers auth work (Phase 8.7).
+  const isAsset = /\.(css|js|woff2?|ttf|otf|png|jpeg|jpg|gif|svg|webp|ico|webmanifest|txt|xml|json|map)$/i.test(pathname)
+    || pathname.startsWith('/fonts/')
+    || pathname === '/favicon.ico'
+    || pathname === '/robots.txt'
+    || pathname === '/ads.txt'
+    || pathname === '/sitemap.xml';
+
   // ─── Session resolution (lazy imports to avoid startup errors) ───────
   let user: any = null;
   let tier = 'free';
 
-  try {
-    const sessionMod = await import('./lib/auth/session');
-    const dbMod = await import('./lib/auth/db');
-    const cookieHeader = request.headers.get('Cookie');
-    const sessionToken = sessionMod.getSessionTokenFromCookie(cookieHeader);
-    const signingKey = (env as any).SESSION_SIGNING_KEY || '';
-    const db = (env as any).DB;
+  if (!isAsset) {
+    const cookieHeader = request.headers.get('Cookie') || '';
+    // Cheap cookie inspection BEFORE importing any session/DB module: only
+    // proceed with the (heavier) auth flow if a session cookie is actually
+    // present. Signed-out requests skip all D1 work.
+    const hasSessionCookie = /(?:^|;\s*)(bn_session|bn_refresh)=/.test(cookieHeader);
 
-    if (sessionToken && db && signingKey) {
-      const claims = await sessionMod.verifyJwt(sessionToken, signingKey);
-      if (claims) {
-        const dbUser = await dbMod.findUserById(db, claims.sub);
-        if (dbUser && dbUser.status === 'active') {
-          user = {
-            id: dbUser.id,
-            email: dbUser.email,
-            displayName: dbUser.display_name,
-            avatarUrl: dbUser.avatar_url,
-            status: dbUser.status,
-          };
-          tier = claims.tier;
-        }
-      } else {
-        // Access token expired — try refresh
-        const refreshToken = sessionMod.getRefreshTokenFromCookie(cookieHeader);
-        if (refreshToken && db) {
-          const rotated = await sessionMod.verifyRefreshToken(db, refreshToken);
-          if (rotated) {
-            const dbUser = await dbMod.findUserById(db, rotated.userId);
+    if (hasSessionCookie) {
+      try {
+        const sessionMod = await import('./lib/auth/session');
+        const dbMod = await import('./lib/auth/db');
+        const sessionToken = sessionMod.getSessionTokenFromCookie(cookieHeader);
+        const signingKey = (env as any).SESSION_SIGNING_KEY || '';
+        const db = (env as any).DB;
+
+        if (sessionToken && db && signingKey) {
+          const claims = await sessionMod.verifyJwt(sessionToken, signingKey);
+          if (claims) {
+            const dbUser = await dbMod.findUserById(db, claims.sub);
             if (dbUser && dbUser.status === 'active') {
-              const entitlement = await dbMod.getEntitlement(db, rotated.userId);
-              tier = entitlement?.tier ?? 'free';
-              const newAccessToken = await sessionMod.signJwt(
-                { sub: dbUser.id, email: dbUser.email, tier, rt: rotated.newTokenHash },
-                signingKey,
-              );
               user = {
                 id: dbUser.id,
                 email: dbUser.email,
@@ -96,16 +91,41 @@ export const onRequest = defineMiddleware(async (context, next) => {
                 avatarUrl: dbUser.avatar_url,
                 status: dbUser.status,
               };
-              (locals as any).__newSessionToken = newAccessToken;
-              (locals as any).__newRefreshToken = rotated.newToken;
+              tier = claims.tier;
+            }
+          } else {
+            // Access token expired — try refresh
+            const refreshToken = sessionMod.getRefreshTokenFromCookie(cookieHeader);
+            if (refreshToken && db) {
+              const rotated = await sessionMod.verifyRefreshToken(db, refreshToken);
+              if (rotated) {
+                const dbUser = await dbMod.findUserById(db, rotated.userId);
+                if (dbUser && dbUser.status === 'active') {
+                  const entitlement = await dbMod.getEntitlement(db, rotated.userId);
+                  tier = entitlement?.tier ?? 'free';
+                  const newAccessToken = await sessionMod.signJwt(
+                    { sub: dbUser.id, email: dbUser.email, tier, rt: rotated.newTokenHash },
+                    signingKey,
+                  );
+                  user = {
+                    id: dbUser.id,
+                    email: dbUser.email,
+                    displayName: dbUser.display_name,
+                    avatarUrl: dbUser.avatar_url,
+                    status: dbUser.status,
+                  };
+                  (locals as any).__newSessionToken = newAccessToken;
+                  (locals as any).__newRefreshToken = rotated.newToken;
+                }
+              }
             }
           }
         }
+      } catch (err) {
+        // Session resolution failed — proceed without auth
+        console.error('Session resolution error:', err);
       }
     }
-  } catch (err) {
-    // Session resolution failed — proceed without auth
-    console.error('Session resolution error:', err);
   }
 
   (locals as any).user = user;
@@ -142,9 +162,20 @@ export const onRequest = defineMiddleware(async (context, next) => {
   } else if (contentType.includes('text/html')) {
     // Public pages: report-only CSP
     headers.set('Content-Security-Policy-Report-Only', cspReportOnly);
+
+    // Cache public page shells at the edge ONLY when the request is anonymous
+    // (signed-out). Signed-in responses, admin pages, and any mutation route
+    // stay no-store so personalized UI is never served from cache (Phase 8.10).
+    const isAdmin = pathname.startsWith('/admin');
+    const isMutation = request.method !== 'GET' && request.method !== 'HEAD';
+    if (!user && !isAdmin && !isMutation) {
+      headers.set('Cache-Control', 'public, max-age=300, stale-while-revalidate=600');
+    } else {
+      headers.set('Cache-Control', noCacheHeader);
+    }
   }
 
-  // API responses: no-cache
+  // API responses: no-cache (auth/bookmarks/admin/mutations must never be cached)
   if (pathname.startsWith('/api/')) {
     headers.set('Cache-Control', noCacheHeader);
   }

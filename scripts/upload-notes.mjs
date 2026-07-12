@@ -126,6 +126,122 @@ function cleanHtmlText(html) {
   return text.replace(/\s+/g, ' ').trim();
 }
 
+// ─── Catalog normalization (mirrors src/utils/lectureDisplay.ts) ────────────
+// Kept in sync with the TS helper so the production manifest carries the same
+// fields as the dev manifest. Lecture numbers are NEVER derived from an index.
+
+const RESOURCE_KIND_PATTERNS = [
+  [/solved/i, 'solved-paper'],
+  [/one[_\s-]?sheet/i, 'one-sheet'],
+  [/worksheet/i, 'worksheet'],
+  [/question[_\s-]?bank/i, 'question-bank'],
+  [/concept[_\s-]?map/i, 'concept-map'],
+  [/race[_\s-]?card/i, 'race-card'],
+];
+
+function detectResourceKind(folderName, metadata) {
+  if (metadata && metadata.resourceKind) return metadata.resourceKind;
+  for (const [re, kind] of RESOURCE_KIND_PATTERNS) {
+    if (re.test(folderName)) return kind;
+  }
+  return 'lecture';
+}
+
+function parseFolderLectureNumbers(folderName) {
+  const range =
+    folderName.match(/(\d+)[_\s-]*and[_\s-]*(\d+)/i) ??
+    folderName.match(/(\d+)\s*[–-]\s*(\d+)/);
+  if (range) return { start: parseInt(range[1], 10), end: parseInt(range[2], 10) };
+  const single = folderName.match(/lecture[_\s-]*(\d+)/i);
+  if (single) return { start: parseInt(single[1], 10) };
+  return {};
+}
+
+function pad2(n) { return n.toString().padStart(2, '0'); }
+
+function deriveTopicTitle(folderName, metadata) {
+  if (metadata && metadata.topicTitle) return metadata.topicTitle;
+  if (metadata && metadata.title) return metadata.title;
+  let t = folderName;
+  t = t.replace(/^[A-Za-z]{2,5}[_\s-]+/, '');
+  t = t.replace(/lecture[_\s-]*\d+(?:[_\s-]*and[_\s-]*\d+)?/i, '');
+  t = t.replace(/[_\s-]*(notes?|solved|regular|midsem|one[_\s-]?sheet|worksheet|question[_\s-]?bank|concept[_\s-]?map|race[_\s-]?card)\b/gi, '');
+  t = t.replace(/[_\s-]+/g, ' ').trim();
+  if (t.length > 0) t = t.charAt(0).toUpperCase() + t.slice(1);
+  return t;
+}
+
+function formatLectureLabel({ lectureNumber, lectureNumberEnd, topicTitle, resourceKind }) {
+  const isLecture = resourceKind === 'lecture' || resourceKind === undefined;
+  let prefix;
+  if (isLecture) {
+    if (lectureNumber != null && lectureNumberEnd != null) {
+      prefix = `Lectures ${pad2(lectureNumber)}–${pad2(lectureNumberEnd)}`;
+    } else if (lectureNumber != null) {
+      prefix = `Lecture ${pad2(lectureNumber)}`;
+    } else {
+      prefix = '';
+    }
+  } else {
+    const labels = {
+      'solved-paper': 'Solved Paper',
+      'one-sheet': 'One Sheet',
+      'worksheet': 'Worksheet',
+      'question-bank': 'Question Bank',
+      'concept-map': 'Concept Map',
+      'race-card': 'Race Card',
+    };
+    prefix = labels[resourceKind] || 'Resource';
+  }
+  if (topicTitle) return prefix ? `${prefix} · ${topicTitle}` : topicTitle;
+  return prefix;
+}
+
+function normalizeCatalogEntry({ folderName, fileName, name, metadata }) {
+  const resourceKind = detectResourceKind(folderName, metadata);
+  const scope = (metadata && metadata.scope) || (resourceKind === 'lecture' ? 'lecture' : 'subject');
+  const folderNums = parseFolderLectureNumbers(folderName);
+  const lectureNumber = (metadata && metadata.lectureNumber) ?? folderNums.start;
+  const lectureNumberEnd = (metadata && metadata.lectureNumberEnd) ?? folderNums.end;
+  const topicTitle = deriveTopicTitle(folderName, metadata);
+  const metadataSource = (metadata && metadata.metadataSource) || 'fallback';
+  const authored = metadataSource !== 'fallback';
+  const authoredQuizCount = authored ? (metadata && metadata.quiz ? metadata.quiz.length : 0) : 0;
+
+  const availableModes = (metadata && metadata.availableModes) || (() => {
+    const modes = ['notes', 'study-guide'];
+    if (!authored) return modes;
+    if (metadata && metadata.examRevisionNotes && metadata.examRevisionNotes.length > 0) modes.push('exam-revision');
+    if (metadata && metadata.quiz && metadata.quiz.length > 0) modes.push('quiz');
+    if (resourceKind !== 'lecture' && !modes.includes('exam-revision')) modes.push('exam-revision');
+    return modes;
+  })();
+
+  const sortOrder = (metadata && metadata.sortOrder) != null
+    ? metadata.sortOrder
+    : (resourceKind === 'lecture' ? (lectureNumber != null ? lectureNumber : 999) : 1000);
+
+  const displayTitle = formatLectureLabel({ lectureNumber, lectureNumberEnd, topicTitle, resourceKind });
+
+  return {
+    name,
+    folderName,
+    fileName,
+    topicTitle,
+    displayTitle,
+    lectureNumber,
+    lectureNumberEnd,
+    resourceKind,
+    availableModes,
+    scope,
+    sortOrder,
+    shortDescription: metadata && metadata.shortDescription,
+    topics: metadata && metadata.topics,
+    metadataSource,
+    authoredQuizCount,
+  };
+}
+
 // ─── Main Scanning ──────────────────────────────────────────────────────────
 
 const subjects = [];
@@ -183,12 +299,20 @@ for (const subjectName of subjectFolders) {
 
     const displayName = defaultDisplayName;
 
-    lecturesList.push({
-      name: displayName,
+    // Normalize into a catalog entry (carries display title, lecture number,
+    // resource kind, authored quiz count, etc.) so the manifest can render the
+    // catalog without fetching lecture HTML.
+    const catalogEntry = normalizeCatalogEntry({
+      subject: subjectName,
       folderName: lectureFolder,
       fileName: fileName,
+      name: displayName,
       metadata: metadata
     });
+
+    // Retain the raw metadata so getLectureContent() can return it to the
+    // viewer (scope, resourceKind, topicTitle, summary, quiz, etc.).
+    lecturesList.push({ ...catalogEntry, metadata });
 
     totalLectures++;
 
@@ -223,9 +347,9 @@ for (const subjectName of subjectFolders) {
       }
     }
 
-    // Add to search index
+    // Add to search index — use the normalized display title for better matches.
     const cleanText = cleanHtmlText(htmlContent);
-    const title = metadata.title ? `${defaultDisplayName} — ${metadata.title}` : defaultDisplayName;
+    const title = catalogEntry.displayTitle || defaultDisplayName;
     searchIndex.push({
       title,
       subject: subjectName,
@@ -234,14 +358,10 @@ for (const subjectName of subjectFolders) {
     });
   }
 
-  // Sort lectures by folder name number numerically (matches old notesLoader.ts sort)
+  // Sort lectures by their stable sortOrder (real lecture number, never index).
   lecturesList.sort((a, b) => {
-    const numA = a.folderName.match(/(\d+)/);
-    const numB = b.folderName.match(/(\d+)/);
-    if (numA && numB) {
-      return parseInt(numA[1]) - parseInt(numB[1]);
-    }
-    return a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' });
+    if (a.sortOrder !== b.sortOrder) return a.sortOrder - b.sortOrder;
+    return a.displayTitle.localeCompare(b.displayTitle);
   });
 
   subjects.push({

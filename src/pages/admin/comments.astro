@@ -1,0 +1,148 @@
+---
+/**
+ * Admin moderation UI for comments.
+ * Requires login + admin_users membership (enforced server-side on APIs).
+ * noindex + no-store.
+ */
+import BaseLayout from '../../layouts/BaseLayout.astro';
+import { getUser, getEnv } from '../../lib/apiHelpers';
+
+export const prerender = false;
+
+const user = getUser(Astro);
+const isAdminUser = user ? (await (await getEnv(Astro)).DB.prepare('SELECT user_id FROM admin_users WHERE user_id = ?').bind(user.id).first()) : null;
+---
+
+<BaseLayout
+  title="Moderate Comments — BitsNotes Admin"
+  description="Moderate anonymous comments."
+  robots="noindex, nofollow"
+>
+  <Fragment slot="head">
+    <meta name="robots" content="noindex, nofollow" />
+  </Fragment>
+
+  <div class="max-w-5xl mx-auto px-4 sm:px-6 lg:px-8 py-10 flex-grow">
+    <header class="mb-6">
+      <h1 class="font-display text-3xl font-extrabold text-[var(--text)]">Comment Moderation</h1>
+      <p class="mt-1 text-sm text-[var(--text-muted)]">Review and moderate anonymous comments.</p>
+    </header>
+
+    {!user && (
+      <div class="border-l-3 border-[var(--callout-warning-border)] bg-[var(--callout-warning-bg)] rounded-r-[var(--r-sm)] p-4 text-sm text-[var(--callout-warning-text)]">
+        You must <a href="/auth/signin" class="font-bold underline">sign in</a> to moderate comments.
+      </div>
+    )}
+
+    {user && !isAdminUser && (
+      <div class="border-l-3 border-[var(--callout-warning-border)] bg-[var(--callout-warning-bg)] rounded-r-[var(--r-sm)] p-4 text-sm text-[var(--callout-warning-text)]">
+        Your account does not have moderation access.
+      </div>
+    )}
+
+    {user && isAdminUser && (
+      <div data-admin-comments>
+        <div class="flex flex-wrap gap-2 mb-6" role="tablist" aria-label="Filter comments">
+          {['pending', 'reported', 'hidden', 'published', 'all'].map((f) => (
+            <button
+              type="button"
+              data-filter={f}
+              class="px-3 py-1.5 text-sm rounded-[var(--r-sm)] border border-[var(--border)] text-[var(--text-muted)] hover:text-[var(--text)] hover:border-[var(--accent)] transition-colors data-[active=true]:bg-[var(--accent)] data-[active=true]:text-[var(--accent-contrast)] data-[active=true]:border-[var(--accent)]"
+              data-active={f === 'pending' ? 'true' : 'false'}
+            >
+              {f.charAt(0).toUpperCase() + f.slice(1)}
+            </button>
+          ))}
+        </div>
+
+        <div data-comments-list class="space-y-4">
+          <p class="text-sm text-[var(--text-muted)]">Loading…</p>
+        </div>
+      </div>
+    )}
+  </div>
+</BaseLayout>
+
+<script is:inline data-astro-rerun>
+  (function () {
+    var root = document.querySelector('[data-admin-comments]');
+    if (!root) return;
+    var list = root.querySelector('[data-comments-list]');
+    var filterBtns = root.querySelectorAll('[data-filter]');
+    var current = 'pending';
+
+    function esc(s) { return String(s).replace(/[&<>"']/g, function (c) {
+      return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
+    }); }
+
+    function load(filter) {
+      current = filter;
+      list.innerHTML = '<p class="text-sm text-[var(--text-muted)]">Loading…</p>';
+      fetch('/api/admin/comments?filter=' + encodeURIComponent(filter), { credentials: 'same-origin' })
+        .then(function (r) { return r.json(); })
+        .then(function (data) {
+          if (!data.comments || !data.comments.length) {
+            list.innerHTML = '<p class="text-sm text-[var(--text-muted)]">No comments in this view.</p>';
+            return;
+          }
+          list.innerHTML = '';
+          data.comments.forEach(function (c) {
+            var card = document.createElement('div');
+            card.className = 'border border-[var(--border)] rounded-[var(--r-md)] p-4 bg-[var(--bg-elevated)]';
+            var meta = document.createElement('div');
+            meta.className = 'flex flex-wrap items-center gap-2 text-xs text-[var(--text-muted)] mb-2';
+            meta.innerHTML = '<span class="font-semibold text-[var(--text)]">' + esc(c.displayName) + '</span>'
+              + '<span>·</span><span>' + esc(c.subject) + (c.lecture ? ' / ' + esc(c.lecture) : '') + '</span>'
+              + '<span>·</span><span class="uppercase tracking-wide">' + esc(c.status) + '</span>'
+              + (c.reportCount ? '<span>·</span><span class="text-[var(--danger-text)]">' + c.reportCount + ' reports</span>' : '');
+            var body = document.createElement('p');
+            body.className = 'text-sm text-[var(--text)] whitespace-pre-wrap mb-3';
+            body.textContent = c.body; // textContent only — XSS safe
+            var actions = document.createElement('div');
+            actions.className = 'flex flex-wrap gap-2';
+            [
+              { a: 'publish', label: 'Publish' },
+              { a: 'hide', label: 'Hide' },
+              { a: 'restore', label: 'Restore' },
+              { a: 'delete', label: 'Delete' },
+            ].forEach(function (act) {
+              var b = document.createElement('button');
+              b.type = 'button';
+              b.className = 'px-2.5 py-1 text-xs rounded-[var(--r-sm)] border border-[var(--border)] text-[var(--text-muted)] hover:text-[var(--text)] hover:border-[var(--accent)] transition-colors';
+              b.textContent = act.label;
+              b.addEventListener('click', function () { moderate(c.id, act.a, b); });
+              actions.appendChild(b);
+            });
+            card.appendChild(meta);
+            card.appendChild(body);
+            card.appendChild(actions);
+            list.appendChild(card);
+          });
+        })
+        .catch(function () { list.innerHTML = '<p class="text-sm text-[var(--danger-text)]">Failed to load.</p>'; });
+    }
+
+    function moderate(id, action, btn) {
+      btn.disabled = true;
+      fetch('/api/admin/comments/' + encodeURIComponent(id), {
+        method: 'POST',
+        credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: action }),
+      }).then(function (r) {
+        if (r.ok) load(current);
+        else { btn.disabled = false; alert('Action failed.'); }
+      });
+    }
+
+    filterBtns.forEach(function (btn) {
+      btn.addEventListener('click', function () {
+        filterBtns.forEach(function (b) { b.dataset.active = 'false'; });
+        btn.dataset.active = 'true';
+        load(btn.dataset.filter);
+      });
+    });
+
+    load(current);
+  })();
+</script>

@@ -1,5 +1,7 @@
 import { env } from 'cloudflare:workers';
 import { getFallbackMetadata } from './metadata';
+import type { DocumentMetadata, ResourceKind, AvailableMode, ResourceScope, MetadataSource } from './metadata';
+import { normalizeCatalogEntry, type CatalogEntry, type RawCatalogEntry } from './lectureDisplay';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -17,6 +19,25 @@ export interface LectureContent {
   htmlContent: string;
   metadata: Record<string, any> | null;
   fileName: string;
+}
+
+/** A catalog entry carried in the manifest — enough to render without fetching HTML. */
+export interface CatalogLecture {
+  name: string;
+  folderName: string;
+  fileName: string;
+  topicTitle: string;
+  displayTitle: string;
+  lectureNumber?: number;
+  lectureNumberEnd?: number;
+  resourceKind: ResourceKind;
+  availableModes: AvailableMode[];
+  scope: ResourceScope;
+  sortOrder: number;
+  shortDescription?: string;
+  topics?: string[];
+  metadataSource: MetadataSource;
+  authoredQuizCount: number;
 }
 
 interface LectureEntry {
@@ -88,7 +109,10 @@ export async function getManifest(): Promise<NotesManifest> {
     return manifest;
   }
 
-  // Production: fetch from R2 with 10-second TTL cache
+  // Production: fetch from R2 with 10-second in-memory TTL cache, backed by
+  // the Cloudflare Cache API for a longer (5 min) isolate-level TTL with
+  // stale-while-revalidate (Phase 8.8). Versioned by the manifest's own
+  // `version` field so a new upload invalidates the cached copy immediately.
   if (manifestCache && (now - lastFetchedTime < 10000)) {
     return manifestCache;
   }
@@ -100,12 +124,30 @@ export async function getManifest(): Promise<NotesManifest> {
   }
 
   try {
-    const obj = await bucket.get('notes-manifest.json');
+    const cache = (env as any).caches?.default as Cache | undefined;
+    const cacheKey = new Request('https://internal.bitsnotes/cache/notes-manifest.json');
+    let obj = await bucket.get('notes-manifest.json');
     if (!obj) {
       console.warn('[notesLoader] notes-manifest.json not found in R2 bucket.');
       return { version: 'empty', subjects_count: 0, total_lectures: 0, updatedAt: '', subjects: [] };
     }
     const manifest = (await obj.json()) as NotesManifest;
+
+    // Populate the edge cache with a 5-minute TTL, versioned by manifest version.
+    if (cache) {
+      try {
+        const cached = new Response(JSON.stringify(manifest), {
+          headers: {
+            'Content-Type': 'application/json',
+            'Cache-Control': 'public, max-age=300',
+            'ETag': `"${manifest.version}"`,
+          },
+        });
+        // Fire-and-forget cache write (best-effort).
+        cache.put(cacheKey, cached).catch(() => {});
+      } catch { /* cache write is best-effort */ }
+    }
+
     manifestCache = manifest;
     lastFetchedTime = now;
     return manifest;
@@ -173,20 +215,28 @@ async function buildLocalManifest(): Promise<NotesManifest> {
 
   const subjectsList: SubjectEntry[] = [];
   for (const [subjectName, lecturesList] of subjectsMap.entries()) {
-    // Sort lectures numerically by lecture number in folder name
-    lecturesList.sort((a, b) => {
-      const numA = a.folderName.match(/(\d+)/);
-      const numB = b.folderName.match(/(\d+)/);
-      if (numA && numB) {
-        return parseInt(numA[1]) - parseInt(numB[1]);
-      }
-      return a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' });
-    });
+    // Normalize each entry into a catalog entry and sort by its stable sortOrder
+    // (which is derived from the real lecture number, never an array index).
+    const catalogLectures = lecturesList
+      .map((lec) => {
+        const raw: RawCatalogEntry = {
+          subject: subjectName,
+          folderName: lec.folderName,
+          fileName: lec.fileName,
+          name: lec.name,
+          metadata: lec.metadata as DocumentMetadata | null,
+        };
+        // Keep the normalized catalog fields AND the raw metadata so that
+        // getLectureContent() can return the original metadata (scope,
+        // resourceKind, topicTitle, summary, quiz, etc.) to the viewer.
+        return { ...normalizeCatalogEntry(raw), metadata: lec.metadata };
+      })
+      .sort((a, b) => a.sortOrder - b.sortOrder || a.displayTitle.localeCompare(b.displayTitle));
 
     subjectsList.push({
       name: subjectName,
-      lectureCount: lecturesList.length,
-      lectures: lecturesList
+      lectureCount: catalogLectures.length,
+      lectures: catalogLectures as unknown as LectureEntry[]
     });
   }
 
@@ -212,15 +262,102 @@ export async function listSubjects(): Promise<SubjectSummary[]> {
   }));
 }
 
-/** List all lectures within a subject. */
-export async function listLectures(subjectName: string): Promise<LectureSummary[]> {
+/** List all lectures within a subject, as normalized catalog entries. */
+export async function listLectures(subjectName: string): Promise<CatalogLecture[]> {
   const manifest = await getManifest();
   const subject = manifest.subjects.find(s => s.name === subjectName);
   if (!subject) return [];
-  return subject.lectures.map(l => ({
+  return subject.lectures.map((l: any) => ({
     name: l.name,
-    folderName: l.folderName
+    folderName: l.folderName,
+    fileName: l.fileName,
+    topicTitle: l.topicTitle,
+    displayTitle: l.displayTitle,
+    lectureNumber: l.lectureNumber,
+    lectureNumberEnd: l.lectureNumberEnd,
+    resourceKind: l.resourceKind,
+    availableModes: l.availableModes,
+    scope: l.scope,
+    sortOrder: l.sortOrder,
+    shortDescription: l.shortDescription,
+    topics: l.topics,
+    metadataSource: l.metadataSource,
+    authoredQuizCount: l.authoredQuizCount,
   }));
+}
+
+/**
+ * Phase 2.5 — Return the full catalog (all subjects + their normalized
+ * resources) in a single manifest read. Prefer this over repeated
+ * `listSubjects()` + `listLectures()` calls.
+ */
+export async function listCatalog(): Promise<Array<{ subject: string; lectureCount: number; lectures: CatalogLecture[] }>> {
+  const manifest = await getManifest();
+  return manifest.subjects.map((s) => ({
+    subject: s.name,
+    lectureCount: s.lectureCount,
+    lectures: s.lectures.map((l: any) => ({
+      name: l.name,
+      folderName: l.folderName,
+      fileName: l.fileName,
+      topicTitle: l.topicTitle,
+      displayTitle: l.displayTitle,
+      lectureNumber: l.lectureNumber,
+      lectureNumberEnd: l.lectureNumberEnd,
+      resourceKind: l.resourceKind,
+      availableModes: l.availableModes,
+      scope: l.scope,
+      sortOrder: l.sortOrder,
+      shortDescription: l.shortDescription,
+      topics: l.topics,
+      metadataSource: l.metadataSource,
+      authoredQuizCount: l.authoredQuizCount,
+    })),
+  }));
+}
+
+/** Phase 2.5 — Alias of `listLectures` for subject-scoped catalog access. */
+export async function listSubjectResources(subjectName: string): Promise<CatalogLecture[]> {
+  return listLectures(subjectName);
+}
+
+/** Phase 2.5 — Real library statistics derived from the catalog (no view counters). */
+export interface LibraryStats {
+  subjects: number;
+  lectures: number;
+  authoredQuizQuestions: number;
+  examRevisionResources: number;
+  additionalResources: number;
+}
+
+export async function getLibraryStats(): Promise<LibraryStats> {
+  const catalog = await listCatalog();
+  let lectures = 0;
+  let authoredQuizQuestions = 0;
+  let examRevisionResources = 0;
+  let additionalResources = 0;
+
+  for (const subject of catalog) {
+    for (const lec of subject.lectures) {
+      if (lec.scope === 'lecture') {
+        lectures++;
+      } else {
+        additionalResources++;
+      }
+      authoredQuizQuestions += lec.authoredQuizCount;
+      if (lec.availableModes.includes('exam-revision')) {
+        examRevisionResources++;
+      }
+    }
+  }
+
+  return {
+    subjects: catalog.length,
+    lectures,
+    authoredQuizQuestions,
+    examRevisionResources,
+    additionalResources,
+  };
 }
 
 /** Get the full HTML content and metadata for a specific lecture. */
@@ -264,6 +401,24 @@ export async function getLectureContent(subjectName: string, lectureFolderName: 
         return null;
       }
       htmlContent = await obj.text();
+
+      // Cache the lecture HTML at the edge, versioned by the manifest version
+      // so a new content upload invalidates it (Phase 8.8). No unbounded
+      // in-memory map — rely on the Cache API instead.
+      const cache = (env as any).caches?.default as Cache | undefined;
+      if (cache) {
+        try {
+          const cacheKey = new Request(`https://internal.bitsnotes/cache/lecture/${subjectName}/${lectureFolderName}`);
+          const cached = new Response(htmlContent, {
+            headers: {
+              'Content-Type': 'text/html; charset=utf-8',
+              'Cache-Control': 'public, max-age=300',
+              'ETag': `"${manifest.version}"`,
+            },
+          });
+          cache.put(cacheKey, cached).catch(() => {});
+        } catch { /* best-effort */ }
+      }
     } catch (err: any) {
       console.error(`[notesLoader] Error fetching note from R2 (${key}):`, err.message);
       return null;

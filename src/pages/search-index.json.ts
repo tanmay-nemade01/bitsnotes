@@ -1,6 +1,6 @@
 import type { APIRoute } from 'astro';
 import { env } from 'cloudflare:workers';
-import { listSubjects, listLectures, getLectureContent } from '../utils/notesLoader';
+import { listCatalog, getLectureContent, getManifest } from '../utils/notesLoader';
 
 export const prerender = false;
 
@@ -33,20 +33,20 @@ function cleanHtmlText(html: string): string {
 export const GET: APIRoute = async () => {
   // In development, build the search index dynamically so local edits reflect immediately
   if (import.meta.env.DEV) {
-    const subjects = await listSubjects();
+    const catalog = await listCatalog();
+    const manifest = await getManifest();
     const index = [];
 
-    for (const subject of subjects) {
-      const lectures = await listLectures(subject.name);
-      for (const lecture of lectures) {
-        const content = await getLectureContent(subject.name, lecture.folderName);
+    for (const subject of catalog) {
+      for (const lecture of subject.lectures) {
+        const content = await getLectureContent(subject.subject, lecture.folderName);
         if (content) {
-          const title = content.metadata?.title ? `${lecture.name} — ${content.metadata.title}` : lecture.name;
+          const title = lecture.displayTitle || lecture.name;
           const fullText = cleanHtmlText(content.htmlContent);
-          
+
           index.push({
             title,
-            subject: subject.name,
+            subject: subject.subject,
             folderName: lecture.folderName,
             snippet: fullText.slice(0, 300)
           });
@@ -57,7 +57,11 @@ export const GET: APIRoute = async () => {
     return new Response(JSON.stringify(index), {
       headers: {
         'Content-Type': 'application/json',
-        'Cache-Control': 'private, no-store, max-age=0',
+        // Versioned by manifest version; public cache so the client can reuse
+        // the index across navigations (Phase 8.9). Snippets are already
+        // truncated to 300 chars to limit bulk content exposure.
+        'Cache-Control': 'public, max-age=300',
+        'ETag': `"${manifest.version}"`,
         'X-Robots-Tag': 'noindex, nofollow'
       }
     });
@@ -90,10 +94,15 @@ export const GET: APIRoute = async () => {
       folderName: item.folderName,
       snippet: (item.text || item.snippet || '').slice(0, 300)
     }));
+
+    // Version the cache by the current manifest version so a content upload
+    // invalidates the cached search index (Phase 8.9).
+    const manifest = await getManifest();
     return new Response(JSON.stringify(safeIndex), {
       headers: {
         'Content-Type': 'application/json',
-        'Cache-Control': 'private, no-store, max-age=0',
+        'Cache-Control': 'public, max-age=300',
+        'ETag': `"${manifest.version}"`,
         'X-Robots-Tag': 'noindex, nofollow'
       }
     });

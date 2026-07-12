@@ -18,6 +18,8 @@ export interface AppEnv {
   TURNSTILE_SITE_KEY: string;
   APP_BASE_URL: string;
   API_SECRET_KEY?: string;
+  COMMENT_RATE_LIMITER?: { limit: (opts: { key: string }) => Promise<{ success: boolean }> };
+  FEEDBACK_RATE_LIMITER?: { limit: (opts: { key: string }) => Promise<{ success: boolean }> };
 }
 
 let _envCache: AppEnv | null = null;

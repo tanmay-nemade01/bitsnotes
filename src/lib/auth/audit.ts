@@ -12,6 +12,7 @@ export type AuthEvent =
   | 'verify_resend'
   | 'failed_login'
   | 'state_mismatch'
+  | 'state_cookie_tampered'
   | 'turnstile_fail'
   | 'rate_limit'
   | 'bookmark_add'
