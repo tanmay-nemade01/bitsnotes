@@ -9,7 +9,7 @@ import {
   findIdentity, findUserByEmail, createUser, createIdentity, verifyUserEmail,
   storeVerificationToken, signJwt, createRefreshToken,
   setSessionCookie, setRefreshCookie, clearOAuthStateCookie,
-  logAuthEvent, sha256Hex, generateToken,
+  logAuthEvent, sha256Hex, generateToken, hmacVerify,
   getEntitlement,
   type OAuthProfile,
 } from '../../../../lib/auth';
@@ -31,17 +31,33 @@ export const GET: APIRoute = async (context) => {
     return badRequest('Unknown provider');
   }
 
-  // Verify state
+  // Verify state — cookie is signed: base64(payload).base64url(hmac)
   const cookieHeader = request.headers.get('Cookie');
   const stateCookie = cookieHeader?.match(/__oauth_state=([^;]+)/)?.[1];
   if (!stateCookie) {
     return badRequest('Missing state cookie — please try signing in again.');
   }
 
-  // Decode state cookie
+  const dotIdx = stateCookie.lastIndexOf('.');
+  if (dotIdx === -1) {
+    return badRequest('Invalid state cookie format');
+  }
+
+  const payloadB64 = stateCookie.slice(0, dotIdx);
+  const sig = stateCookie.slice(dotIdx + 1);
+
   let stateData: { state: string; codeVerifier: string; provider: string };
   try {
-    stateData = JSON.parse(atob(stateCookie));
+    // Verify HMAC signature before trusting the payload
+    const valid = await hmacVerify(env.SESSION_SIGNING_KEY, payloadB64, sig);
+    if (!valid) {
+      const loggingDb = env.DB;
+      if (loggingDb) {
+        await logAuthEvent(loggingDb, { event: 'state_cookie_tampered', ip, ua: request.headers.get('User-Agent') || '' });
+      }
+      return badRequest('State cookie tampered — please try signing in again.');
+    }
+    stateData = JSON.parse(atob(payloadB64));
   } catch {
     return badRequest('Invalid state cookie');
   }

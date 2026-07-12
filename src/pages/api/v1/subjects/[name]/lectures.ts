@@ -13,9 +13,9 @@ export const GET: APIRoute = async ({ params, request }) => {
   };
 
   const authHeader = request.headers.get('Authorization') || request.headers.get('x-api-key');
-  const expectedKey = (env as any).API_SECRET_KEY || 'default-bitsnotes-mobile-app-key-2026';
+  const expectedKey = (env as any).API_SECRET_KEY;
 
-  if (!authHeader || (authHeader !== `Bearer ${expectedKey}` && authHeader !== expectedKey)) {
+  if (!expectedKey || !authHeader || (authHeader !== `Bearer ${expectedKey}` && authHeader !== expectedKey)) {
     return new Response(
       JSON.stringify({ error: 'Unauthorized: Invalid or missing API key' }),
       { status: 401, headers: corsHeaders }

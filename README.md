@@ -23,7 +23,7 @@ Notes are HTML files committed to git under `src/content/notes/<Subject>/<Lectur
 - **SEO structured data** — JSON-LD schemas (`LearningResource`, `Quiz`, `CollectionPage`, `WebSite`)
 - **Dynamic sitemap** and `robots.txt`
 - **Deferred analytics** (GA4 + Cloudflare beacon load on first interaction)
-- **Self-hosted Inter font**, dark mode, scroll progress, back-to-top
+- **Self-hosted Inter font**, scroll progress, back-to-top
 
 ## Adding a new lecture
 

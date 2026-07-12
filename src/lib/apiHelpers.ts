@@ -17,6 +17,7 @@ export interface EnvBindings {
   GITHUB_CLIENT_SECRET: string;
   TURNSTILE_SECRET_KEY: string;
   APP_BASE_URL: string;
+  API_SECRET_KEY?: string;
   SEND_EMAIL: any;
 }
 

@@ -17,6 +17,7 @@ export interface AppEnv {
   TURNSTILE_SECRET_KEY: string;
   TURNSTILE_SITE_KEY: string;
   APP_BASE_URL: string;
+  API_SECRET_KEY?: string;
 }
 
 let _envCache: AppEnv | null = null;

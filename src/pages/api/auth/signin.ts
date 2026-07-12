@@ -5,7 +5,7 @@
 
 import type { APIRoute } from 'astro';
 import { getEnv, badRequest, serverError, getClientIp } from '../../../lib/apiHelpers';
-import { verifyTurnstile, generateCodeVerifier, generateCodeChallenge } from '../../../lib/auth';
+import { verifyTurnstile, generateCodeVerifier, generateCodeChallenge, hmacSign } from '../../../lib/auth';
 import { isSecure } from '../../../lib/auth/session';
 import { validateOrigin, csrfForbidden } from '../../../lib/auth/csrf';
 
@@ -45,12 +45,15 @@ export const POST: APIRoute = async (context) => {
   }
 
   if (!turnstileToken) {
-    // In dev or when Turnstile fails, allow the flow to proceed without verification
-    console.warn('Turnstile token missing — allowing sign-in flow without captcha verification.');
+    // Require Turnstile in production when the secret is configured
+    if (env.TURNSTILE_SECRET_KEY) {
+      return badRequest('Turnstile verification required');
+    }
+    console.warn('Turnstile token missing — allowing sign-in flow without captcha verification (no secret key configured).');
   }
 
-  // Verify Turnstile (skip if token is missing — dev/fallback)
-  if (turnstileToken) {
+  // Verify Turnstile
+  if (turnstileToken && env.TURNSTILE_SECRET_KEY) {
     const turnstileResult = await verifyTurnstile(env.TURNSTILE_SECRET_KEY, turnstileToken, ip);
     if (!turnstileResult.success) {
       return badRequest('Turnstile verification failed');
@@ -62,10 +65,10 @@ export const POST: APIRoute = async (context) => {
   const codeChallenge = await generateCodeChallenge(codeVerifier);
   const state = `${provider}_${crypto.randomUUID()}`;
 
-  // We need to store state + codeVerifier for callback verification.
-  // Store in a short-lived cookie as JSON (encrypted with session key).
+  // Store state + codeVerifier in a signed cookie for callback verification.
   const statePayload = JSON.stringify({ state, codeVerifier, provider });
-  const stateToken = btoa(statePayload);
+  const stateSig = await hmacSign(env.SESSION_SIGNING_KEY, statePayload);
+  const stateToken = `${btoa(statePayload)}.${stateSig}`;
 
   // Build redirect URL
   const baseUrl = env.APP_BASE_URL;
