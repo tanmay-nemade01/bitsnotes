@@ -144,6 +144,14 @@ export const onRequest = defineMiddleware(async (context, next) => {
   // ─── Execute the route handler ───────────────────────────────────────
   const response = await next();
 
+  // ─── Return original response for null-body statuses ────────────────
+  // Statuses like 304 (Not Modified) or 204 (No Content) must not have a body
+  // and constructing a new Response with them will throw a TypeError in Cloudflare Workers (workerd).
+  const nullBodyStatuses = [101, 204, 205, 304];
+  if (nullBodyStatuses.includes(response.status)) {
+    return response;
+  }
+
   // Build mutable headers from the response
   const headers = new Headers(response.headers);
 
