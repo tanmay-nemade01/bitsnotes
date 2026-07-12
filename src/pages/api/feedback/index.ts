@@ -63,7 +63,8 @@ export const GET: APIRoute = async (context) => {
     });
     return json(agg, 200, { 'Cache-Control': 'no-store' });
   } catch {
-    return json({ useful: 0, notYet: 0, myVote: null }, 500);
+    // Return defaults on any DB error (e.g., table doesn't exist yet)
+    return json({ useful: 0, notYet: 0, myVote: null }, 200);
   }
 };
 

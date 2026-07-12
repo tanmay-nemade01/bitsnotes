@@ -142,7 +142,27 @@ export const onRequest = defineMiddleware(async (context, next) => {
   }
 
   // ─── Execute the route handler ───────────────────────────────────────
-  const response = await next();
+  let response: Response;
+  try {
+    response = await next();
+  } catch (err) {
+    console.error('[middleware] SSR render error:', err);
+    // Return a proper error page instead of an empty response (blank screen).
+    // API routes get a JSON error; HTML pages get a styled 500 page.
+    if (pathname.startsWith('/api/')) {
+      return new Response(JSON.stringify({ error: 'Internal server error' }), {
+        status: 500,
+        headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' },
+      });
+    }
+    // For HTML pages, return a minimal styled error page so the user sees
+    // something actionable instead of a blank white screen.
+    const errorHtml = `<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>500 — BitsNotes</title><style>body{font-family:system-ui,sans-serif;display:flex;align-items:center;justify-content:center;min-height:100vh;margin:0;background:#FAF9F6;color:#1A1916}main{text-align:center;padding:2rem}h1{font-size:2rem;margin:0}p{margin:0.5rem 0;color:#48453F}a{color:#0F766E}</style></head><body><main><h1>500</h1><p>Something went wrong. Please try again in a moment.</p><p><a href="/">Return home</a></p></main></body></html>`;
+    return new Response(errorHtml, {
+      status: 500,
+      headers: { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store' },
+    });
+  }
 
   // ─── Return original response for null-body statuses ────────────────
   // Statuses like 304 (Not Modified) or 204 (No Content) must not have a body
