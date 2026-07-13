@@ -201,7 +201,15 @@ export const onRequest = defineMiddleware(async (context, next) => {
     const isAdmin = pathname.startsWith('/admin');
     const isMutation = request.method !== 'GET' && request.method !== 'HEAD';
     if (!user && !isAdmin && !isMutation) {
-      headers.set('Cache-Control', 'public, max-age=300, stale-while-revalidate=600');
+      headers.set('Cache-Control', 'public, max-age=0, s-maxage=300, stale-while-revalidate=600, must-revalidate');
+      const vary = headers.get('Vary');
+      if (vary) {
+        if (!vary.includes('Cookie')) {
+          headers.set('Vary', `${vary}, Cookie`);
+        }
+      } else {
+        headers.set('Vary', 'Cookie');
+      }
     } else {
       headers.set('Cache-Control', noCacheHeader);
     }

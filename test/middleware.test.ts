@@ -9,7 +9,7 @@ import type { AuthDb } from '../src/lib/auth/db';
 const BASE = 'https://bitsnotes.com';
 const SECRET = 'test-session-signing-key';
 
-describe('Middleware Session Authentication', () => {
+describe('Middleware Session Authentication & Caching', () => {
   let db: AuthDb;
 
   beforeEach(() => {
@@ -21,7 +21,7 @@ describe('Middleware Session Authentication', () => {
     });
   });
 
-  it('populates Astro.locals.user and Astro.locals.tier if a valid __session cookie is provided', async () => {
+  it('populates Astro.locals.user and sets no-cache header if a valid __session cookie is provided', async () => {
     // 1. Create an active user
     const dbUser = await createUser(db, {
       email: 'test@example.com',
@@ -53,7 +53,9 @@ describe('Middleware Session Authentication', () => {
     let nextCalled = false;
     const next = async () => {
       nextCalled = true;
-      return new Response('OK');
+      return new Response('OK', {
+        headers: { 'Content-Type': 'text/html; charset=utf-8' },
+      });
     };
 
     // 4. Run middleware
@@ -65,9 +67,12 @@ describe('Middleware Session Authentication', () => {
     expect(locals.user.id).toBe(dbUser.id);
     expect(locals.user.email).toBe(dbUser.email);
     expect(locals.tier).toBe('free');
+
+    // Caching check: personalized page must have noCacheHeader
+    expect(res.headers.get('Cache-Control')).toBe('no-store, no-cache, must-revalidate');
   });
 
-  it('does not populate Astro.locals.user if session cookie is missing', async () => {
+  it('does not populate Astro.locals.user and sets browser revalidation for anonymous HTML requests (missing cookie)', async () => {
     const request = new Request(`${BASE}/`, {
       headers: {},
     });
@@ -79,15 +84,21 @@ describe('Middleware Session Authentication', () => {
       locals,
     };
 
-    const next = async () => new Response('OK');
+    const next = async () => new Response('OK', {
+      headers: { 'Content-Type': 'text/html; charset=utf-8' },
+    });
 
-    await onRequest(context as any, next);
+    const res = await onRequest(context as any, next);
 
     expect(locals.user).toBeNull();
     expect(locals.tier).toBe('free');
+
+    // Caching check: anonymous public HTML page shell can be cached at edge but must be revalidated by the browser
+    expect(res.headers.get('Cache-Control')).toBe('public, max-age=0, s-maxage=300, stale-while-revalidate=600, must-revalidate');
+    expect(res.headers.get('Vary')).toContain('Cookie');
   });
 
-  it('does not populate Astro.locals.user if session cookie is invalid', async () => {
+  it('does not populate Astro.locals.user and sets browser revalidation for anonymous HTML requests (invalid cookie)', async () => {
     const request = new Request(`${BASE}/`, {
       headers: {
         'Cookie': `__session=invalid-jwt-token-string`,
@@ -101,11 +112,17 @@ describe('Middleware Session Authentication', () => {
       locals,
     };
 
-    const next = async () => new Response('OK');
+    const next = async () => new Response('OK', {
+      headers: { 'Content-Type': 'text/html; charset=utf-8' },
+    });
 
-    await onRequest(context as any, next);
+    const res = await onRequest(context as any, next);
 
     expect(locals.user).toBeNull();
     expect(locals.tier).toBe('free');
+
+    // Caching check: anonymous public HTML page shell can be cached at edge but must be revalidated by the browser
+    expect(res.headers.get('Cache-Control')).toBe('public, max-age=0, s-maxage=300, stale-while-revalidate=600, must-revalidate');
+    expect(res.headers.get('Vary')).toContain('Cookie');
   });
 });
