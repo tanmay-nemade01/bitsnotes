@@ -101,7 +101,7 @@ Do not process multiple sections in parallel — do them one at a time to mainta
       ```
       Where `<Subject>` is the full subject name, `<LectureNumber>` is the lecture number, `<Lecture Topic>` is the clean main lecture topic (from the `#` header), and the HTML path parameter is standardized as `<Subject>/<LecturePrefix>_notes/<LecturePrefix>_notes.html`.
    d. Delete the temporary `topics_list.txt` file.
-   e. Confirm that `topic_mappings/<Subject>.yaml` is successfully updated or created.
+   e. Confirm that the corresponding subject topic mapping YAML file (e.g., inside `topic_mappings/`) is successfully updated or created. Note that the update script resolves names robustly and may write to a normalized filename (for example, updating `Deep Neural Networks.yaml` when `<Subject>` is passed as `DNN` or `Deep_Neural_Networks`).
 
 Clean up any other intermediate helper files, drafts, or scripts created during this phase (but do NOT delete the `sections/` directory or the `section_XX_summary.json` summaries, as Agent 3 will clean them up):
 Ensure that ONLY `<LecturePrefix>_notes_dense.md`, `<LecturePrefix>_notes_enriched.md`, `<LecturePrefix>_extraction_manifest.json`, and the `sections/` directory (with section files and summaries) remain in the lecture folder.

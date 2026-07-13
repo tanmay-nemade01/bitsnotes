@@ -44,14 +44,57 @@ def _parse_yaml(text):
         return None
 
 
+def clean_string_to_words(s):
+    if not isinstance(s, str):
+        return []
+    s = s.lower().strip()
+    # Replace underscores and hyphens with spaces
+    s = s.replace("_", " ").replace("-", " ")
+    words = s.split()
+    stopwords = {"and", "for", "to", "of", "the", "in", "on", "at", "by", "with"}
+    return [w for w in words if w not in stopwords]
+
+
+def get_acronym(words):
+    if not words:
+        return ""
+    return "".join(w[0] for w in words if w)
+
+
+def is_subject_match(name1, name2):
+    w1 = clean_string_to_words(name1)
+    w2 = clean_string_to_words(name2)
+    if not w1 or not w2:
+        return False
+    # Check exact match of words
+    if w1 == w2:
+        return True
+    # Check acronym match
+    acr1 = w1[0] if len(w1) == 1 else get_acronym(w1)
+    acr2 = w2[0] if len(w2) == 1 else get_acronym(w2)
+    joined1 = "".join(w1)
+    joined2 = "".join(w2)
+    
+    if joined1 == acr2 or joined2 == acr1:
+        return True
+    if acr1 == acr2 and len(acr1) >= 2:
+        return True
+        
+    # Strip digits for standard course codes/acronyms (e.g. SE4ML vs SEML)
+    acr1_no_digits = "".join(c for c in acr1 if not c.isdigit())
+    acr2_no_digits = "".join(c for c in acr2 if not c.isdigit())
+    if acr1_no_digits == acr2_no_digits and len(acr1_no_digits) >= 2:
+        return True
+        
+    return False
+
+
 def load_topic_map(subject_name):
     """Load a topic_mapping YAML file by subject name.
 
     Tries direct filename match first (e.g. "Machine Learning" -> "Machine
     Learning.yaml"). If that fails, scans ALL YAML files in the directory
-    and matches by the ``subject_name`` field inside each file. This handles
-    acronym filenames (e.g. "ML.yaml" containing subject_name: "Machine
-    Learning").
+    and matches by the ``subject_name`` field inside each file or by filename.
 
     Args:
         subject_name: e.g. "Artificial Computational Intelligence" or
@@ -62,34 +105,40 @@ def load_topic_map(subject_name):
         dict with keys: subject_name, lectures (list of lecture dicts)
         or None if no matching file found.
     """
-    if subject_name.endswith(".yaml") or subject_name.endswith(".yml"):
-        fname = subject_name
-    else:
-        fname = subject_name + ".yaml"
+    if not subject_name:
+        return None
+
+    clean_name = subject_name
+    if clean_name.lower().endswith(".yaml") or clean_name.lower().endswith(".yml"):
+        clean_name = clean_name.rsplit(".", 1)[0]
 
     # 1. Direct filename match
+    fname = clean_name + ".yaml"
     path = os.path.join(TOPIC_MAPPINGS_DIR, fname)
     if os.path.exists(path):
-        with open(path, "r", encoding="utf-8") as f:
+        with open(path, "r", encoding="utf-8-sig") as f:
             text = f.read()
         result = _parse_yaml(text)
         if result:
+            result["_file_path"] = path
             return result
 
-    # 2. Fallback: scan all YAMLs and match by subject_name field inside
+    # 2. Fallback: scan all YAMLs and match by subject_name field inside or filename
     if not os.path.isdir(TOPIC_MAPPINGS_DIR):
         return None
 
-    query = subject_name.replace(".yaml", "").replace(".yml", "").lower().strip()
     for candidate in os.listdir(TOPIC_MAPPINGS_DIR):
         if not (candidate.endswith(".yaml") or candidate.endswith(".yml")):
             continue
         cpath = os.path.join(TOPIC_MAPPINGS_DIR, candidate)
-        with open(cpath, "r", encoding="utf-8") as f:
+        with open(cpath, "r", encoding="utf-8-sig") as f:
             text = f.read()
         parsed = _parse_yaml(text)
-        if parsed and "subject_name" in parsed:
-            if parsed["subject_name"].lower().strip() == query:
+        if parsed:
+            cand_name = candidate.rsplit(".", 1)[0]
+            inner_name = parsed.get("subject_name", "")
+            if is_subject_match(clean_name, inner_name) or is_subject_match(clean_name, cand_name):
+                parsed["_file_path"] = cpath
                 return parsed
     return None
 

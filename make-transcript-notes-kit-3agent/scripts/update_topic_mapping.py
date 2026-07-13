@@ -49,12 +49,13 @@ TOPIC_MAPPINGS_DIR = TMU.TOPIC_MAPPINGS_DIR
 import yaml
 
 
-def write_topic_map(subject_name, lectures):
+def write_topic_map(subject_name, lectures, path=None):
     """Write the topic map YAML for a subject using PyYAML.
 
     Args:
         subject_name: the subject display name
         lectures: list of lecture dicts
+        path: optional path to write to (overrides subject_name filename)
 
     Returns:
         path to the written YAML file
@@ -62,16 +63,19 @@ def write_topic_map(subject_name, lectures):
     if not os.path.exists(TOPIC_MAPPINGS_DIR):
         os.makedirs(TOPIC_MAPPINGS_DIR)
 
-    fname = subject_name + ".yaml"
-    path = os.path.join(TOPIC_MAPPINGS_DIR, fname)
+    if path is None:
+        fname = subject_name + ".yaml"
+        path = os.path.join(TOPIC_MAPPINGS_DIR, fname)
 
     # Sort lectures numerically by lecture number
     def _get_lecture_sort_key(lec):
         num_str = str(lec.get("lecture_number", "0"))
-        match = re.search(r'\d+', num_str)
-        if match:
-            return int(match.group())
-        return 999999
+        # Parse ranges like "1-2"
+        parts = num_str.split('-')
+        try:
+            return [float(p.strip()) for p in parts]
+        except ValueError:
+            return [float('inf')]
 
     lectures_sorted = sorted(lectures, key=_get_lecture_sort_key)
     data = {"subject_name": subject_name, "lectures": lectures_sorted}
@@ -111,6 +115,7 @@ def update_or_add_lecture(subject_name, lecture_number, lecture_topic,
     topic_map = TMU.load_topic_map(subject_name)
     was_added = False
     was_updated = False
+    path = None
 
     if topic_map is None:
         # Create new topic map
@@ -118,6 +123,9 @@ def update_or_add_lecture(subject_name, lecture_number, lecture_topic,
         was_added = True
     else:
         lectures = topic_map.get("lectures", [])
+        if "_file_path" in topic_map:
+            path = topic_map["_file_path"]
+        subject_name = topic_map.get("subject_name", subject_name)
 
     # Find existing lecture by number
     existing_idx = None
@@ -158,7 +166,7 @@ def update_or_add_lecture(subject_name, lecture_number, lecture_topic,
         })
         was_added = True
 
-    path = write_topic_map(subject_name, lectures)
+    path = write_topic_map(subject_name, lectures, path=path)
     return path, was_added, was_updated
 
 
