@@ -69,7 +69,7 @@ export const onRequest = defineMiddleware(async (context, next) => {
     // Cheap cookie inspection BEFORE importing any session/DB module: only
     // proceed with the (heavier) auth flow if a session cookie is actually
     // present. Signed-out requests skip all D1 work.
-    const hasSessionCookie = /(?:^|;\s*)(bn_session|bn_refresh)=/.test(cookieHeader);
+    const hasSessionCookie = /(?:^|;\s*)(__session|__rt)=/.test(cookieHeader);
 
     if (hasSessionCookie) {
       try {
