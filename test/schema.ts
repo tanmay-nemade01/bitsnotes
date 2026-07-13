@@ -27,6 +27,48 @@ CREATE TABLE IF NOT EXISTS entitlements (
   updated_at      INTEGER NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS identities (
+  id              TEXT PRIMARY KEY,
+  user_id         TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  provider        TEXT NOT NULL,
+  provider_uid    TEXT NOT NULL,
+  created_at      INTEGER NOT NULL,
+  UNIQUE(provider, provider_uid)
+);
+
+CREATE TABLE IF NOT EXISTS verification_tokens (
+  token_hash      TEXT PRIMARY KEY,
+  user_id         TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  purpose         TEXT NOT NULL,
+  expires_at      INTEGER NOT NULL,
+  consumed_at     INTEGER,
+  created_at      INTEGER NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS refresh_tokens (
+  token_hash      TEXT PRIMARY KEY,
+  user_id         TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  created_at      INTEGER NOT NULL,
+  expires_at      INTEGER NOT NULL,
+  revoked_at      INTEGER,
+  replaced_by     TEXT
+);
+
+CREATE TABLE IF NOT EXISTS auth_events (
+  id              INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id         TEXT,
+  event           TEXT NOT NULL,
+  provider        TEXT,
+  ip              TEXT,
+  ua              TEXT,
+  created_at      INTEGER NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_identities_provider_uid ON identities(provider, provider_uid);
+CREATE INDEX IF NOT EXISTS idx_users_email ON users(email);
+CREATE INDEX IF NOT EXISTS idx_auth_events_user ON auth_events(user_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_refresh_tokens_user ON refresh_tokens(user_id);
+
 CREATE TABLE IF NOT EXISTS admin_users (
   user_id     TEXT PRIMARY KEY,
   created_at  INTEGER NOT NULL

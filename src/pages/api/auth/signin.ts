@@ -67,8 +67,9 @@ export const POST: APIRoute = async (context) => {
 
   // Store state + codeVerifier in a signed cookie for callback verification.
   const statePayload = JSON.stringify({ state, codeVerifier, provider });
-  const stateSig = await hmacSign(env.SESSION_SIGNING_KEY, statePayload);
-  const stateToken = `${btoa(statePayload)}.${stateSig}`;
+  const payloadB64 = btoa(statePayload);
+  const stateSig = await hmacSign(env.SESSION_SIGNING_KEY, payloadB64);
+  const stateToken = `${payloadB64}.${stateSig}`;
 
   // Build redirect URL
   const baseUrl = env.APP_BASE_URL;
