@@ -174,6 +174,19 @@ export function parseLectureHtml(htmlContent: string): ParsedLectureHtml {
     );
   }
 
+  // Remove script tags from the body content to prevent executing or double-rendering quiz scripts
+  // and to avoid breaking JSON serialization.
+  bodyContent = bodyContent.replace(/<script[^>]*>[\s\S]*?<\/script>/gi, '');
+
+  // Strip leading container div wrapper
+  bodyContent = bodyContent.replace(/^\s*(<!--[\s\S]*?-->\s*)*<div[^>]*class=["'][^"']*container[^"']*["'][^>]*>/i, '');
+
+  // Strip first <main> tag
+  bodyContent = bodyContent.replace(/<main[^>]*>/i, '');
+
+  // Strip trailing </main> and </div> tags from the end of the body
+  bodyContent = bodyContent.replace(/<\/main>\s*(<!--[\s\S]*?-->\s*)*<\/div>\s*$/i, '');
+
   // Prepend inline styles if extracted
   if (inlineStyles) {
     bodyContent = `<style>${inlineStyles}</style>` + bodyContent;
