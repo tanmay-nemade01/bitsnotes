@@ -7,11 +7,19 @@ export interface Topic {
   title: string;
   html: string;
   subtopics: Subtopic[];
+  slug: string;
 }
 
 export interface SplitResult {
   topics: Topic[];
   hasMultipleTopics: boolean;
+}
+
+export function slugify(text: string): string {
+  return text
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/(^-|-$)/g, '');
 }
 
 function stripHtml(html: string): string {
@@ -23,11 +31,7 @@ function getTopicId(titleText: string, index: number): string {
   if (match) return match[1];
 
   // Fallback: slugify
-  const slug = titleText
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, '-')
-    .replace(/(^-|-$)/g, '');
-  return slug || `topic-${index + 1}`;
+  return slugify(titleText) || `topic-${index + 1}`;
 }
 
 function parseSubtopics(html: string): Subtopic[] {
@@ -89,6 +93,7 @@ export function splitLectureTopics(bodyContent: string): SplitResult {
           title: 'Full lecture',
           html: cleanBody,
           subtopics: parseSubtopics(cleanBody),
+          slug: 'full',
         },
       ],
       hasMultipleTopics: false,
@@ -116,6 +121,7 @@ export function splitLectureTopics(bodyContent: string): SplitResult {
       title: current.titleText,
       html: topicHtml,
       subtopics: parseSubtopics(topicHtml),
+      slug: slugify(current.titleText),
     });
   }
 
@@ -130,6 +136,7 @@ export function splitLectureTopics(bodyContent: string): SplitResult {
       title: 'Overview',
       html: preamble,
       subtopics: [],
+      slug: 'overview',
     });
   } else if (preamble.trim()) {
     // Prepend preamble to the first topic
