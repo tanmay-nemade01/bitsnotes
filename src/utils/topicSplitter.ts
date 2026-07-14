@@ -126,20 +126,7 @@ export function splitLectureTopics(bodyContent: string): SplitResult {
   }
 
   // Handle preamble
-  const contentPreamble = preamble.replace(/<header[^>]*>[\s\S]*?<\/header>/gi, '');
-  const preambleText = stripHtml(contentPreamble);
-  const isNonTrivial = /[a-zA-Z0-9]/.test(preambleText);
-
-  if (isNonTrivial) {
-    // Insert synthetic Overview topic at the beginning
-    topics.unshift({
-      id: 'overview',
-      title: 'Overview',
-      html: preamble,
-      subtopics: [],
-      slug: 'overview',
-    });
-  } else if (preamble.trim()) {
+  if (preamble.trim()) {
     // Prepend preamble to the first topic
     topics[0].html = preamble + topics[0].html;
   }

@@ -45,15 +45,14 @@ describe('splitLectureTopics', () => {
     expect(result.topics[0].subtopics[1].title).toBe('9.1.2 Another Subtitle');
   });
 
-  it('handles non-trivial preambles by generating Overview topic', () => {
+  it('combines non-trivial preambles with the first topic', () => {
     const html = `
       <p>Non-trivial preamble content about NLP</p>
       <h2 class="section-title">9.1 Lecture Notes</h2>
     `;
     const result = splitLectureTopics(html);
-    expect(result.topics).toHaveLength(2);
-    expect(result.topics[0].id).toBe('overview');
-    expect(result.topics[0].title).toBe('Overview');
+    expect(result.topics).toHaveLength(1);
+    expect(result.topics[0].id).toBe('9.1');
     expect(result.topics[0].html).toContain('Non-trivial preamble');
   });
 
