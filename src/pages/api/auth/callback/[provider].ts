@@ -4,7 +4,7 @@
  */
 
 import type { APIRoute } from 'astro';
-import { getEnv, json, badRequest, serverError, getClientIp, normalizeEmail } from '../../../../lib/apiHelpers';
+import { getEnv, badRequest, serverError, getClientIp, normalizeEmail } from '../../../../lib/apiHelpers';
 import {
   findIdentity, findUserByEmail, createUser, createIdentity, verifyUserEmail,
   storeVerificationToken, signJwt, createRefreshToken,

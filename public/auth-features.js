@@ -11,39 +11,45 @@
 
   // ─── Helpers ─────────────────────────────────────────────────────────────
 
-  BN.json = function (url, opts) {
-    return fetch(url, opts).then(function (r) {
+  BN.json = async function (url, opts) {
+    try {
+      var r = await fetch(url, opts);
       if (r.status === 401) return null;
-      return r.json();
-    }).catch(function () { return null; });
+      return await r.json();
+    } catch (e) { return null; }
   };
 
-  BN.post = function (url, body) {
-    return fetch(url, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body),
-    }).then(function (r) { return r.json(); }).catch(function () { return null; });
+  BN.post = async function (url, body) {
+    try {
+      var r = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+      return await r.json();
+    } catch (e) { return null; }
   };
 
-  BN.del = function (url, body) {
-    return fetch(url, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body),
-    }).then(function (r) { return r.json(); }).catch(function () { return null; });
+  BN.del = async function (url, body) {
+    try {
+      var r = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+      return await r.json();
+    } catch (e) { return null; }
   };
 
   // ─── Bookmarks ───────────────────────────────────────────────────────────
 
   BN.collections = null;
 
-  BN.loadCollections = function () {
-    if (BN.collections) return Promise.resolve(BN.collections);
-    return BN.json('/api/bookmarks/list').then(function (data) {
-      if (data && data.collections) BN.collections = data.collections;
-      return BN.collections;
-    });
+  BN.loadCollections = async function () {
+    if (BN.collections) return BN.collections;
+    var data = await BN.json('/api/bookmarks/list');
+    if (data && data.collections) BN.collections = data.collections;
+    return BN.collections;
   };
 
   BN.toggleBookmark = function (btn) {

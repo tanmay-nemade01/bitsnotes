@@ -4,7 +4,7 @@
  */
 
 import type { APIContext } from 'astro';
-import { verifyJwt, getSessionTokenFromCookie, findUserById, getEntitlement, type AuthDb } from '../lib/auth';
+import { type AuthDb } from '../lib/auth';
 
 // ─── Env access (Astro v6: use cloudflare:workers) ─────────────────────────
 
@@ -24,7 +24,7 @@ export interface EnvBindings {
   FEEDBACK_RATE_LIMITER?: { limit: (opts: { key: string }) => Promise<{ success: boolean }> };
 }
 
-export async function getEnv(context?: APIContext): Promise<EnvBindings> {
+export async function getEnv(_context?: APIContext): Promise<EnvBindings> {
   try {
     const { getEnv: getCFEnv } = await import('./getEnv');
     const env = await getCFEnv();

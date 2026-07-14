@@ -1,7 +1,7 @@
 ---
 // Self-contained Pomodoro timer for the lecture viewer.
 // State:
-//   localStorage  -> mode preference ("pomodoro" | "exam") + interval (15 | 30)
+//   localStorage  -> interval preference (15 | 30)
 //   sessionStorage -> active timer state (survives refresh + view transitions,
 //                     cleared when the tab/window closes)
 // Refresh does NOT reset the timer: sessionStorage persists across reloads in
@@ -10,19 +10,8 @@
 
 <div id="pomodoro" class="pomodoro" hidden>
   <div class="pomodoro__bar">
-    <!-- Left: mode toggle + intervals -->
+    <!-- Left: interval length selector -->
     <div class="pomodoro__left">
-      <div
-        class="pomodoro__toggle"
-        role="switch"
-        aria-checked="false"
-        aria-label="Toggle Pomodoro mode"
-        tabindex="0"
-      >
-        <span class="pomodoro__seg" data-mode="pomodoro">Pomodoro</span>
-        <span class="pomodoro__seg" data-mode="exam">Exam Mode</span>
-      </div>
-
       <div
         class="pomodoro__intervals"
         role="radiogroup"
@@ -50,8 +39,7 @@
           </svg>
         </span>
         <div id="pomodoro-info-card" class="pomodoro__card" role="tooltip">
-          <strong>Pomodoro Mode</strong> — Study in focused intervals with guided breathing breaks.<br/><br/>
-          <strong>Exam Mode</strong> — Read freely without interruptions, ideal for last-minute revision.
+          <strong>Pomodoro Mode</strong> — Study in focused intervals with guided breathing breaks.
         </div>
       </div>
 
@@ -141,32 +129,6 @@
     flex: 1;
     justify-content: center;
     min-width: 0;
-  }
-
-  /* ---- Mode toggle pill ---- */
-  .pomodoro__toggle {
-    display: inline-flex;
-    border-radius: var(--r-md, 10px);
-    background: var(--bg-subtle, #f1f5f9);
-    padding: 2px;
-    cursor: pointer;
-    user-select: none;
-  }
-  .pomodoro__seg {
-    padding: 0.3rem 0.75rem;
-    border-radius: calc(var(--r-md, 10px) - 2px);
-    font-size: 0.8rem;
-    font-weight: 500;
-    color: var(--text-muted, #64748b);
-    transition: background var(--duration-fast, 120ms) var(--ease-out, ease-out),
-      color var(--duration-fast, 120ms) var(--ease-out, ease-out);
-    white-space: nowrap;
-  }
-  .pomodoro__toggle[aria-checked='true'] .pomodoro__seg[data-mode='pomodoro'],
-  .pomodoro__toggle[aria-checked='false'] .pomodoro__seg[data-mode='exam'] {
-    background: var(--accent, #0f766e);
-    color: var(--accent-contrast, #fff);
-    box-shadow: 0 1px 3px rgba(0,0,0,0.08);
   }
 
   /* ---- Interval selector ---- */
@@ -546,10 +508,6 @@
       padding: 0.6rem 0.75rem;
       gap: 0.5rem;
     }
-    .pomodoro__seg {
-      padding: 0.25rem 0.55rem;
-      font-size: 0.75rem;
-    }
     .pomodoro__int {
       padding: 0.25rem 0.55rem;
       font-size: 0.75rem;
@@ -579,7 +537,6 @@
   (function () {
     'use strict';
 
-    var MODE_KEY = 'bitsnotes:pomodoro:mode';
     var INTERVAL_KEY = 'bitsnotes:pomodoro:interval';
     var TIMER_KEY = 'bitsnotes:pomodoro:timerState';
     var MINIMIZED_KEY = 'bitsnotes:pomodoro:minimized';
@@ -588,7 +545,6 @@
     var root = document.getElementById('pomodoro');
     if (!root) return; // not on a lecture page
 
-    var toggle = root.querySelector('.pomodoro__toggle');
     var intervalBtns = Array.prototype.slice.call(root.querySelectorAll('.pomodoro__int'));
     var intervalsContainer = root.querySelector('.pomodoro__intervals');
     var startBtn = document.getElementById('pomodoro-start');
@@ -607,9 +563,6 @@
     // Transitions) can clear any interval started by a previous run.
     var TICK_KEY = '__bitsnotesPomodoroTick';
 
-    function getMode() {
-      return localStorage.getItem(MODE_KEY) || 'exam';
-    }
     function getIntervalMin() {
       return parseInt(localStorage.getItem(INTERVAL_KEY) || '15', 10);
     }
@@ -629,7 +582,10 @@
     }
 
     function isMinimized() {
-      return sessionStorage.getItem(MINIMIZED_KEY) === 'true';
+      // Default to minimized (a chip) so it doesn't compete with the title.
+      // Only expand if the user has explicitly opted in (stored 'false').
+      var stored = sessionStorage.getItem(MINIMIZED_KEY);
+      return stored !== 'false';
     }
     function setMinimizedState(minimized) {
       sessionStorage.setItem(MINIMIZED_KEY, String(minimized));
@@ -649,18 +605,9 @@
       return m + ':' + (s < 10 ? '0' + s : s);
     }
 
-    function renderToggle() {
-      var mode = getMode();
-      toggle.setAttribute('aria-checked', mode === 'pomodoro' ? 'true' : 'false');
-      
+    function renderIntervals() {
       // Ensure the widget wrapper itself is always visible once JS initializes it
       root.hidden = false;
-
-      var isExam = mode === 'exam';
-      if (intervalsContainer) intervalsContainer.hidden = isExam;
-      if (startBtn) startBtn.hidden = isExam;
-      if (statusEl) statusEl.hidden = isExam;
-      if (centerGroup) centerGroup.hidden = isExam;
 
       intervalBtns.forEach(function (b) {
         b.setAttribute('aria-checked', String(getIntervalMin()) === b.getAttribute('data-interval') ? 'true' : 'false');
@@ -699,8 +646,6 @@
     function tick() {
       var state = getTimerState();
       if (!state || state.status === 'idle') return;
-      var mode = getMode();
-      if (mode !== 'pomodoro') return;
 
       var elapsed = Date.now() - state.startedAt + (state.elapsedBeforePause || 0);
 
@@ -818,45 +763,12 @@
       }
     }
 
-    function setMode(mode) {
-      localStorage.setItem(MODE_KEY, mode);
-      renderToggle();
-      if (mode === 'exam') {
-        stopTick();
-        setTimerState(null);
-        if (vignette) vignette.classList.remove('is-visible');
-        setStatus('Ready', null);
-        renderStartBtn({ status: 'idle' });
-      } else {
-        // pomodoro mode: restore or idle
-        var st = getTimerState();
-        if (st && st.status !== 'idle') {
-          renderStartBtn(st);
-          startTick();
-          tick();
-        } else {
-          setStatus('Ready', null);
-          renderStartBtn({ status: 'idle' });
-        }
-      }
-    }
-
     // Event wiring
-    toggle.addEventListener('click', function () {
-      setMode(getMode() === 'pomodoro' ? 'exam' : 'pomodoro');
-    });
-    toggle.addEventListener('keydown', function (e) {
-      if (e.key === 'Enter' || e.key === ' ') {
-        e.preventDefault();
-        setMode(getMode() === 'pomodoro' ? 'exam' : 'pomodoro');
-      }
-    });
-
     intervalBtns.forEach(function (b) {
       b.addEventListener('click', function () {
         var val = parseInt(b.getAttribute('data-interval'), 10);
         localStorage.setItem(INTERVAL_KEY, String(val));
-        renderToggle();
+        renderIntervals();
         // If currently idle, just update the ready label
         var st = getTimerState();
         if (!st || st.status === 'idle') {
@@ -1026,19 +938,13 @@
     }
 
     function init() {
-      renderToggle();
+      renderIntervals();
       applyMinimizedState();
-      var mode = getMode();
-      if (mode === 'pomodoro') {
-        var st = getTimerState();
-        if (st && st.status !== 'idle') {
-          renderStartBtn(st);
-          startTick();
-          tick();
-        } else {
-          setStatus('Ready', null);
-          renderStartBtn({ status: 'idle' });
-        }
+      var st = getTimerState();
+      if (st && st.status !== 'idle') {
+        renderStartBtn(st);
+        startTick();
+        tick();
       } else {
         setStatus('Ready', null);
         renderStartBtn({ status: 'idle' });

@@ -1,7 +1,7 @@
 import { env } from 'cloudflare:workers';
 import { getFallbackMetadata } from './metadata';
 import type { DocumentMetadata, ResourceKind, AvailableMode, ResourceScope, MetadataSource } from './metadata';
-import { normalizeCatalogEntry, type CatalogEntry, type RawCatalogEntry } from './lectureDisplay';
+import { normalizeCatalogEntry, type RawCatalogEntry } from './lectureDisplay';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 

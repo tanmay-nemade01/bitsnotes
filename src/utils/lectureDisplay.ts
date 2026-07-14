@@ -128,7 +128,7 @@ export function parseFolderLectureNumbers(
 
 function deriveTopicTitle(
   folderName: string,
-  subject: string,
+  _subject: string,
   metadata?: DocumentMetadata | null,
 ): string {
   if (metadata?.topicTitle) return metadata.topicTitle;
@@ -204,7 +204,7 @@ function defaultModesFor(
 function defaultSortOrder(
   resourceKind: ResourceKind,
   lectureNumber?: number,
-  lectureNumberEnd?: number,
+  _lectureNumberEnd?: number,
 ): number {
   if (resourceKind === 'lecture') {
     // Use the start of the range when present, else the single number.

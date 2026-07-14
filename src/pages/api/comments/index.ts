@@ -22,7 +22,7 @@ import { listComments, createComment, resolveParent } from '../../../lib/comment
 import { validateCommentBody, moderateSubmission, MAX_JSON_BYTES, MIN_FILL_MS } from '../../../lib/commentsValidation';
 import { listLectures, listSubjects } from '../../../utils/notesLoader';
 import { sha256Hex } from '../../../lib/auth/crypto';
-import { getVisitorId, hashVisitor } from '../../../lib/visitor';
+
 
 export const prerender = false;
 

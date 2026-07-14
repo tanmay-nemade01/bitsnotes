@@ -4,7 +4,7 @@
  */
 
 import type { APIRoute } from 'astro';
-import { getEnv, json, badRequest, serverError, getClientIp } from '../../../lib/apiHelpers';
+import { getEnv, badRequest, getClientIp } from '../../../lib/apiHelpers';
 import { consumeVerificationToken, verifyUserEmail, logAuthEvent } from '../../../lib/auth';
 
 export const prerender = false;

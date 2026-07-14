@@ -4,7 +4,7 @@
  */
 
 import type { APIRoute } from 'astro';
-import { getEnv, badRequest, serverError, getClientIp } from '../../../lib/apiHelpers';
+import { getEnv, badRequest, getClientIp } from '../../../lib/apiHelpers';
 import { verifyTurnstile, generateCodeVerifier, generateCodeChallenge, hmacSign } from '../../../lib/auth';
 import { isSecure } from '../../../lib/auth/session';
 import { validateOrigin, csrfForbidden } from '../../../lib/auth/csrf';

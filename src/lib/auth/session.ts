@@ -3,7 +3,7 @@
  * Stateless signed JWT for access tokens, opaque refresh tokens stored in D1.
  */
 
-import { hmacSign, hmacVerify, generateToken, sha256Hex, uuidv7 } from './crypto';
+import { hmacSign, hmacVerify, generateToken, sha256Hex } from './crypto';
 import type { AuthDb } from './db';
 
 const ACCESS_TOKEN_TTL = 15 * 60;          // 15 minutes (seconds)

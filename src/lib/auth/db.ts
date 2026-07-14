@@ -3,7 +3,7 @@
  * All queries use parameterized prepared statements — no string concatenation.
  */
 
-import type { D1Database, D1PreparedStatement, D1ExecResult } from '@cloudflare/workers-types';
+import type { D1PreparedStatement, D1ExecResult } from '@cloudflare/workers-types';
 import { uuidv7 } from './crypto';
 
 // ─── Types ──────────────────────────────────────────────────────────────────

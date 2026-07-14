@@ -52,7 +52,7 @@ export const GET: APIRoute = async ({ url }) => {
 };
 
 // POST: Gmail/Yahoo RFC 8058 one-click unsubscribe
-export const POST: APIRoute = async ({ request, url }) => {
+export const POST: APIRoute = async ({ url }) => {
   const token = url.searchParams.get('token');
   const jsonHeaders = { 'Content-Type': 'application/json' };
 

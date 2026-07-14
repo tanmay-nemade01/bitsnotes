@@ -14,7 +14,7 @@ export interface SpamResult {
 }
 
 const MAX_LINKS = 1;            // Plan: at most one link allowed in published comments
-const REPEAT_CHAR_THRESHOLD = 20; // e.g. "aaaa..." filler
+
 const MIN_DISTINCT_RATIO = 0.25;  // very low lexical diversity => likely spam
 
 export function checkSpam(rawName: string, rawBody: string): SpamResult {

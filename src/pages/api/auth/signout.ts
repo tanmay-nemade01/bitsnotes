@@ -4,7 +4,7 @@
  */
 
 import type { APIRoute } from 'astro';
-import { getEnv, json, unauthorized, getClientIp } from '../../../lib/apiHelpers';
+import { getEnv, unauthorized, getClientIp } from '../../../lib/apiHelpers';
 import {
   revokeAllRefreshTokens,
   clearSessionCookie,
