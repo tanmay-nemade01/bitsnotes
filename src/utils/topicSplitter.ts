@@ -126,7 +126,8 @@ export function splitLectureTopics(bodyContent: string): SplitResult {
   }
 
   // Handle preamble
-  const preambleText = stripHtml(preamble);
+  const contentPreamble = preamble.replace(/<header[^>]*>[\s\S]*?<\/header>/gi, '');
+  const preambleText = stripHtml(contentPreamble);
   const isNonTrivial = /[a-zA-Z0-9]/.test(preambleText);
 
   if (isNonTrivial) {

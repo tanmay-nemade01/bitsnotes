@@ -74,4 +74,20 @@ describe('splitLectureTopics', () => {
     const result = splitLectureTopics(html);
     expect(result.topics[0].html).toBe('<h2 class="section-title">9.1 Topic</h2>');
   });
+
+  it('treats a preamble containing only a header block as trivial', () => {
+    const html = `
+      <header class="hero-header">
+        <h1>Introduction to AI</h1>
+        <p>Published: June 2, 2026</p>
+      </header>
+      <h2 class="section-title">1.1 Course Overview</h2>
+      <p>Content of first section</p>
+    `;
+    const result = splitLectureTopics(html);
+    expect(result.topics).toHaveLength(1);
+    expect(result.topics[0].id).toBe('1.1');
+    expect(result.topics[0].html).toContain('Introduction to AI');
+    expect(result.topics[0].html).toContain('Content of first section');
+  });
 });
