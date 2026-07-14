@@ -79,8 +79,12 @@ export const onRequest = defineMiddleware(async (context, next) => {
         const signingKey = (env as any).SESSION_SIGNING_KEY || '';
         const db = (env as any).DB;
 
-        if (sessionToken && db && signingKey) {
-          const claims = await sessionMod.verifyJwt(sessionToken, signingKey);
+        if (db && signingKey) {
+          let claims = null;
+          if (sessionToken) {
+            claims = await sessionMod.verifyJwt(sessionToken, signingKey);
+          }
+
           if (claims) {
             const dbUser = await dbMod.findUserById(db, claims.sub);
             if (dbUser && dbUser.status === 'active') {
@@ -94,9 +98,9 @@ export const onRequest = defineMiddleware(async (context, next) => {
               tier = claims.tier;
             }
           } else {
-            // Access token expired — try refresh
+            // Access token missing or expired — try refresh
             const refreshToken = sessionMod.getRefreshTokenFromCookie(cookieHeader);
-            if (refreshToken && db) {
+            if (refreshToken) {
               const rotated = await sessionMod.verifyRefreshToken(db, refreshToken);
               if (rotated) {
                 const dbUser = await dbMod.findUserById(db, rotated.userId);
