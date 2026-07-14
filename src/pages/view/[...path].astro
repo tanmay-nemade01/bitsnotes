@@ -5,6 +5,7 @@ import { getFallbackMetadata } from '../../utils/metadata';
 import type { QuizQuestion } from '../../utils/metadata';
 import { listSubjects, listLectures, getLectureContent } from '../../utils/notesLoader';
 import { parseLectureHtml } from '../../utils/htmlParser';
+import { splitLectureTopics } from '../../utils/topicSplitter';
 import { getResourceKindLabel } from '../../utils/lectureDisplay';
 import PomodoroTimer from '../../components/PomodoroTimer.astro';
 import CommentsSection from '../../components/CommentsSection.astro';
@@ -36,6 +37,7 @@ if (lectureContent) {
 }
 
 let bodyContent = '';
+let inlineStyles = '';
 let hasRevisionSection = false;
 let revisionSectionContent = '';
 let hasQuizSection = false;
@@ -44,6 +46,7 @@ let quizSectionContent = '';
 if (hasHtmlContent) {
   const parsed = parseLectureHtml(htmlContent);
   bodyContent = parsed.bodyContent;
+  inlineStyles = parsed.inlineStyles;
   hasRevisionSection = parsed.hasRevisionSection;
   revisionSectionContent = parsed.revisionSectionContent;
   hasQuizSection = parsed.hasQuizSection;
@@ -53,9 +56,18 @@ if (hasHtmlContent) {
 const metadata = customMetadata || getFallbackMetadata(lectureFolderName, subjectName);
 const lectureName = (lectureContent?.fileName || lectureFolderName).replace(/_/g, ' ');
 
+const { topics, hasMultipleTopics } = splitLectureTopics(bodyContent);
+
+const initialTopicId = Astro.url.searchParams.get('topic') || '';
+let initialTopic = topics.find((t) => t.id === initialTopicId);
+if (!initialTopic) {
+  initialTopic = topics[0];
+}
+
 // Phase 7: resource-type awareness. Non-lecture (subject-scope) resources must
 // not be labelled "Lecture Notes" and must never fabricate a lecture number.
 const isResource = metadata.scope === 'subject' || (metadata.resourceKind && metadata.resourceKind !== 'lecture');
+const showRightSidebar = !(topics.length === 1 && topics[0].id === 'full' && isResource);
 const resourceKindLabel = isResource ? getResourceKindLabel(metadata.resourceKind ?? 'lecture') : 'Lecture';
 // Real title for non-lectures comes from topicTitle (no lecture-number prefix).
 const displayResourceTitle = isResource
@@ -175,7 +187,7 @@ const quizJson = quizSchema ? JSON.stringify(quizSchema) : null;
     {hasHtmlContent && (
       <div class="max-w-[1400px] mx-auto w-full px-4 sm:px-6 lg:px-8 py-6 flex-grow relative">
         <div class="flex gap-0 lg:gap-8 items-start">
-          <!-- Mobile toggle -->
+          <!-- Mobile toggles -->
           <button id="sidebar-toggle" aria-label="Toggle lecture list">
             <svg fill="none" stroke="currentColor" stroke-width="2.2" viewBox="0 0 24 24">
               <path d="M4 6h16M4 12h16M4 18h16"/>
@@ -183,11 +195,27 @@ const quizJson = quizSchema ? JSON.stringify(quizSchema) : null;
           </button>
           <div id="sidebar-overlay" class="fixed inset-0 z-40 bg-[var(--scrim)] hidden lg:hidden"></div>
 
+          {showRightSidebar && (
+            <button id="topic-sidebar-toggle" aria-label="Toggle topic list">
+              <svg fill="none" stroke="currentColor" stroke-width="2.2" viewBox="0 0 24 24">
+                <path d="M4 6h16M4 12h12M4 18h16" />
+              </svg>
+            </button>
+            <div id="topic-sidebar-overlay" class="fixed inset-0 z-40 bg-[var(--scrim)] hidden lg:hidden"></div>
+          )}
+
           <!-- ========== LEFT SIDEBAR ========== -->
           <aside id="lecture-sidebar" class="lecture-sidebar w-[260px] shrink-0 sticky top-20 max-h-[calc(100vh-100px)] overflow-y-auto lg:block" style="scrollbar-width:thin">
-            <div class="pb-4 mb-4 border-b border-[var(--border)]">
-              <span class="text-xs text-[var(--text-muted)] uppercase tracking-wider font-semibold">Subject</span>
-              <h2 class="font-display text-base font-bold text-[var(--text)] mt-0.5">{subjectName}</h2>
+            <div class="flex items-center justify-between pb-4 mb-4 border-b border-[var(--border)]">
+              <div class="sidebar-header-text">
+                <span class="text-xs text-[var(--text-muted)] uppercase tracking-wider font-semibold">Subject</span>
+                <h2 class="font-display text-base font-bold text-[var(--text)] mt-0.5">{subjectName}</h2>
+              </div>
+              <button id="lecture-sidebar-collapse-btn" class="hidden lg:flex items-center justify-center p-1.5 rounded hover:bg-[var(--bg-subtle)] text-[var(--text-muted)] hover:text-[var(--text)]" aria-label="Collapse sidebar">
+                <svg class="w-4 h-4 transition-transform duration-200" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24">
+                  <path d="M15 19l-7-7 7-7" />
+                </svg>
+              </button>
             </div>
             <nav class="flex flex-col gap-0.5">
               {(() => {
@@ -273,11 +301,15 @@ const quizJson = quizSchema ? JSON.stringify(quizSchema) : null;
             <!-- Tab panels -->
             <!-- Notes panel -->
             <div class="tab-panel active" id="panel-notes" role="tabpanel" aria-labelledby="tab-notes">
+              {inlineStyles && <style set:html={inlineStyles} />}
               <div class="lecture-notes-wrapper" id="lecture-content" data-subject={subjectName} data-lecture={lectureFolderName}>
                 <span class="content-watermark" aria-hidden="true">&copy; BitsNotes bitsnotes.com - Unauthorized reproduction prohibited</span>
-                <Fragment set:html={bodyContent} />
+                <div id="topic-content">
+                  <Fragment set:html={initialTopic?.html} />
+                </div>
                 <span class="content-watermark" aria-hidden="true">&copy; BitsNotes bitsnotes.com</span>
               </div>
+              <div id="topic-nav" class="flex gap-3 mt-6 pt-4 border-t border-[var(--border)]"></div>
             </div>
 
             <!-- Study Guide panel -->
@@ -461,7 +493,55 @@ const quizJson = quizSchema ? JSON.stringify(quizSchema) : null;
             )}
           </div>
 
+          <!-- ========== RIGHT SIDEBAR (TOC) ========== -->
+          {showRightSidebar && (
+            <aside id="topic-sidebar" class="topic-sidebar w-[260px] shrink-0 sticky top-20 max-h-[calc(100vh-100px)] overflow-y-auto lg:block" style="scrollbar-width:thin">
+              <div class="flex items-center justify-between pb-4 mb-4 border-b border-[var(--border)]">
+                <div class="sidebar-header-text">
+                  <span class="text-xs text-[var(--text-muted)] uppercase tracking-wider font-semibold">TOC</span>
+                  <h2 class="font-display text-base font-bold text-[var(--text)] mt-0.5">Topics</h2>
+                </div>
+                <button id="topic-sidebar-collapse-btn" class="hidden lg:flex items-center justify-center p-1.5 rounded hover:bg-[var(--bg-subtle)] text-[var(--text-muted)] hover:text-[var(--text)]" aria-label="Collapse topics">
+                  <svg class="w-4 h-4 transition-transform duration-200" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24">
+                    <path d="M9 5l7 7-7 7" />
+                  </svg>
+                </button>
+              </div>
+              <nav class="flex flex-col gap-0.5" id="topic-list-nav">
+                {topics.map((t, idx) => (
+                  <div class="topic-item-container" data-topic-id={t.id}>
+                    <a href={`?topic=${t.id}`}
+                       class="topic-nav-link flex items-center gap-2.5 px-3 py-2 rounded-[var(--r-sm)] text-sm transition-colors no-underline text-[var(--text-muted)] hover:bg-[var(--bg-subtle)] hover:text-[var(--text)]"
+                       data-topic-id={t.id}
+                    >
+                      <span class="topic-badge w-7 h-5 rounded-[4px] flex items-center justify-center text-[10px] font-bold bg-[var(--bg-subtle)] text-[var(--text-muted)] shrink-0">
+                        {t.id === 'overview' ? 'Intro' : t.id === 'full' ? 'Notes' : t.id}
+                      </span>
+                      <span class="topic-title-text line-clamp-2 leading-snug flex-1">{t.title}</span>
+                      <span class="topic-check-indicator hidden text-[var(--accent)] shrink-0">
+                        <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24">
+                          <path d="M20 6L9 17l-5-5"/>
+                        </svg>
+                      </span>
+                    </a>
+                    
+                    {t.subtopics.length > 0 && (
+                      <ul class="topic-subtopics-list pl-8 pr-3 py-1 flex flex-col gap-1 list-none hidden">
+                        {t.subtopics.map((st) => (
+                          <li class="text-xs text-[var(--text-muted)] font-normal py-0.5 line-clamp-1 border-l border-[var(--border)] pl-3">
+                            {st.title}
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+                  </div>
+                ))}
+              </nav>
+            </aside>
+          )}
 
+          {/* Topics JSON data for client-side routing */}
+          <script type="application/json" id="lecture-topics-data" set:html={JSON.stringify(topics)} />
 
         </div>
       </div>
@@ -557,29 +637,322 @@ const quizJson = quizSchema ? JSON.stringify(quizSchema) : null;
     }
   }
 
-  // ===================== MOBILE SIDEBAR =====================
-  function initSidebar() {
-    var toggleBtn = document.getElementById('sidebar-toggle');
-    var sidebar = document.getElementById('lecture-sidebar');
-    var overlay = document.getElementById('sidebar-overlay');
-    if (!toggleBtn || !sidebar || !overlay) return;
-    if (toggleBtn.dataset.sidebarInited) return;
-    toggleBtn.dataset.sidebarInited = 'true';
+  // ===================== TOPIC NAV & SELECTION =====================
+  var currentTopicId = null;
 
-    function toggleSidebar() {
-      if (window.innerWidth < 1024) {
-        sidebar.classList.toggle('open');
-        overlay.classList.toggle('hidden');
-        document.body.classList.toggle('overflow-hidden');
+  function updateTopicNavButtons(topicId, topicsData) {
+    var navEl = document.getElementById('topic-nav');
+    if (!navEl) return;
+
+    var idx = topicsData.findIndex(function(t) { return t.id === topicId; });
+    if (idx === -1) {
+      navEl.innerHTML = '';
+      return;
+    }
+
+    var prevTopic = idx > 0 ? topicsData[idx - 1] : null;
+    var nextTopic = idx < topicsData.length - 1 ? topicsData[idx + 1] : null;
+
+    var html = '';
+
+    if (prevTopic) {
+      html += '<button type="button" class="topic-nav-btn prev-btn flex-1 flex items-center gap-3 px-4 py-3 border border-[var(--border)] rounded-[var(--r-sm)] hover:border-[var(--accent)] hover:bg-[var(--accent-subtle)] transition-colors text-left group" data-topic-id="' + prevTopic.id + '">' +
+        '<svg class="w-4 h-4 text-[var(--text-muted)] shrink-0 group-hover:text-[var(--accent)] transition-colors" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24">' +
+          '<path d="M15 19l-7-7 7-7"/>' +
+        '</svg>' +
+        '<div class="min-w-0">' +
+          '<span class="block text-[10px] text-[var(--text-muted)] uppercase tracking-widest font-bold">Previous Topic</span>' +
+          '<span class="block text-sm font-semibold text-[var(--text)] line-clamp-1 group-hover:text-[var(--accent)] transition-colors">' + prevTopic.title + '</span>' +
+        '</div>' +
+      '</button>';
+    } else {
+      html += '<div class="flex-1"></div>';
+    }
+
+    if (nextTopic) {
+      html += '<button type="button" class="topic-nav-btn next-btn flex-1 flex items-center justify-end gap-3 px-4 py-3 border border-[var(--border)] rounded-[var(--r-sm)] hover:border-[var(--accent)] hover:bg-[var(--accent-subtle)] transition-colors text-right group" data-topic-id="' + nextTopic.id + '">' +
+        '<div class="min-w-0">' +
+          '<span class="block text-[10px] text-[var(--text-muted)] uppercase tracking-widest font-bold">Next Topic</span>' +
+          '<span class="block text-sm font-semibold text-[var(--text)] line-clamp-1 group-hover:text-[var(--accent)] transition-colors">' + nextTopic.title + '</span>' +
+        '</div>' +
+        '<svg class="w-4 h-4 text-[var(--text-muted)] shrink-0 group-hover:text-[var(--accent)] transition-colors" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24">' +
+          '<path d="M9 5l7 7-7 7"/>' +
+        '</svg>' +
+      '</button>';
+    } else {
+      html += '<div class="flex-1"></div>';
+    }
+
+    navEl.innerHTML = html;
+
+    navEl.querySelectorAll('.topic-nav-btn').forEach(function(btn) {
+      btn.addEventListener('click', function() {
+        var tid = btn.getAttribute('data-topic-id');
+        switchToTopic(tid, true);
+      });
+    });
+  }
+
+  function switchToTopic(topicId, updateHistory) {
+    var jsonEl = document.getElementById('lecture-topics-data');
+    if (!jsonEl) return;
+    var topicsData = JSON.parse(jsonEl.textContent);
+    var topic = topicsData.find(function(t) { return t.id === topicId; }) || topicsData[0];
+    if (!topic) return;
+
+    currentTopicId = topic.id;
+    window.BitsNotesCurrentTopicId = topic.id;
+    window.BitsNotesTotalTopics = topicsData.length;
+
+    // Swap content
+    var contentEl = document.getElementById('topic-content');
+    if (contentEl) {
+      contentEl.innerHTML = topic.html;
+      var lectureWrapper = document.getElementById('lecture-content');
+      if (lectureWrapper) {
+        lectureWrapper.scrollIntoView({ behavior: 'instant', block: 'start' });
+      } else {
+        window.scrollTo({ top: 0, behavior: 'instant' });
       }
     }
-    toggleBtn.addEventListener('click', toggleSidebar);
-    overlay.addEventListener('click', toggleSidebar);
+
+    // Update active state in Right sidebar
+    var navLinks = document.querySelectorAll('#topic-list-nav .topic-nav-link');
+    navLinks.forEach(function(link) {
+      var linkId = link.getAttribute('data-topic-id');
+      var container = link.closest('.topic-item-container');
+      var sublist = container ? container.querySelector('.topic-subtopics-list') : null;
+
+      if (linkId === topic.id) {
+        link.classList.add('bg-[var(--accent-subtle)]', 'text-[var(--accent)]', 'font-semibold', 'border-l-[3px]', 'border-[var(--accent)]');
+        link.classList.remove('text-[var(--text-muted)]');
+        if (sublist) sublist.classList.remove('hidden');
+      } else {
+        link.classList.remove('bg-[var(--accent-subtle)]', 'text-[var(--accent)]', 'font-semibold', 'border-l-[3px]', 'border-[var(--accent)]');
+        link.classList.add('text-[var(--text-muted)]');
+        if (sublist) sublist.classList.add('hidden');
+      }
+    });
+
+    // Update buttons
+    updateTopicNavButtons(topic.id, topicsData);
+
+    // Update history/URL
+    if (updateHistory) {
+      var url = new URL(window.location.href);
+      url.searchParams.set('topic', topic.id);
+      window.history.replaceState(null, '', url.pathname + url.search + url.hash);
+    }
+
+    // Save in localStorage
+    var contentWrapper = document.getElementById('lecture-content');
+    var subName = contentWrapper ? contentWrapper.dataset.subject : '';
+    var lecName = contentWrapper ? contentWrapper.dataset.lecture : '';
+    if (subName && lecName) {
+      localStorage.setItem('bitsnotes-last-topic:' + subName + ':' + lecName, topic.id);
+    }
+
+    // Typeset
+    if (contentEl) {
+      typesetNotes(contentEl);
+    }
+
+    // Re-initialize code block copy buttons
+    initCodeCopy();
+
+    // Trigger scroll handler to see if already read
+    setTimeout(function() {
+      window.dispatchEvent(new Event('scroll'));
+    }, 50);
+
+    // Warm adjacent topics (prefetch / mathjax warm next)
+    warmAdjacentTopics(topic.id, topicsData);
+  }
+
+  function warmAdjacentTopics(topicId, topicsData) {
+    var idx = topicsData.findIndex(function(t) { return t.id === topicId; });
+    if (idx === -1) return;
+
+    var nextTopic = idx < topicsData.length - 1 ? topicsData[idx + 1] : null;
+    if (!nextTopic) return;
+
+    var sandbox = document.getElementById('mathjax-sandbox');
+    if (!sandbox) {
+      sandbox = document.createElement('div');
+      sandbox.id = 'mathjax-sandbox';
+      sandbox.style.display = 'none';
+      document.body.appendChild(sandbox);
+    }
+
+    sandbox.innerHTML = nextTopic.html;
+    if (window.MathJax && window.MathJax.typesetPromise && panelHasMath(sandbox)) {
+      window.MathJax.typesetPromise([sandbox]).catch(function() {});
+    }
+  }
+
+  function initTopicViewer() {
+    var jsonEl = document.getElementById('lecture-topics-data');
+    if (!jsonEl) return;
+    var topicsData = JSON.parse(jsonEl.textContent);
+
+    var currentParam = new URLSearchParams(window.location.search).get('topic');
+    var storageKey = '';
+    var contentWrapper = document.getElementById('lecture-content');
+    var subName = contentWrapper ? contentWrapper.dataset.subject : '';
+    var lecName = contentWrapper ? contentWrapper.dataset.lecture : '';
+    if (subName && lecName) {
+      storageKey = 'bitsnotes-last-topic:' + subName + ':' + lecName;
+    }
+
+    var topicId = currentParam;
+    if (!topicId && storageKey) {
+      topicId = localStorage.getItem(storageKey);
+    }
+
+    var activeTopic = topicsData.find(function(t) { return t.id === topicId; }) || topicsData[0];
+    if (activeTopic) {
+      switchToTopic(activeTopic.id, !!currentParam);
+    }
+  }
+
+  function initTopicNavLinks() {
+    var nav = document.getElementById('topic-list-nav');
+    if (!nav) return;
+    nav.addEventListener('click', function(e) {
+      var link = e.target.closest('.topic-nav-link');
+      if (!link) return;
+
+      e.preventDefault();
+      var topicId = link.getAttribute('data-topic-id');
+
+      var notesTab = document.querySelector('[role="tab"][data-tab="notes"]');
+      if (notesTab && notesTab.getAttribute('aria-selected') !== 'true') {
+        notesTab.click();
+      }
+
+      switchToTopic(topicId, true);
+    });
+  }
+
+  // ===================== DUAL MOBILE DRAWERS =====================
+  function initMobileDrawers() {
+    var lectureToggle = document.getElementById('sidebar-toggle');
+    var lectureSidebar = document.getElementById('lecture-sidebar');
+    var lectureOverlay = document.getElementById('sidebar-overlay');
+
+    var topicToggle = document.getElementById('topic-sidebar-toggle');
+    var topicSidebar = document.getElementById('topic-sidebar');
+    var topicOverlay = document.getElementById('topic-sidebar-overlay');
+
+    if (!lectureToggle || !lectureSidebar || !lectureOverlay) return;
+
+    function closeAllDrawers() {
+      lectureSidebar.classList.remove('open');
+      lectureOverlay.classList.add('hidden');
+      if (topicSidebar && topicOverlay) {
+        topicSidebar.classList.remove('open');
+        topicOverlay.classList.add('hidden');
+      }
+      document.body.classList.remove('overflow-hidden');
+    }
+
+    function toggleLectureSidebar() {
+      if (window.innerWidth < 1024) {
+        if (topicSidebar && topicSidebar.classList.contains('open')) {
+          topicSidebar.classList.remove('open');
+          topicOverlay.classList.add('hidden');
+        }
+        var isOpen = lectureSidebar.classList.toggle('open');
+        lectureOverlay.classList.toggle('hidden', !isOpen);
+        document.body.classList.toggle('overflow-hidden', isOpen);
+      }
+    }
+
+    function toggleTopicSidebar() {
+      if (window.innerWidth < 1024 && topicSidebar && topicOverlay) {
+        if (lectureSidebar.classList.contains('open')) {
+          lectureSidebar.classList.remove('open');
+          lectureOverlay.classList.add('hidden');
+        }
+        var isOpen = topicSidebar.classList.toggle('open');
+        topicOverlay.classList.toggle('hidden', !isOpen);
+        document.body.classList.toggle('overflow-hidden', isOpen);
+      }
+    }
+
+    lectureToggle.addEventListener('click', toggleLectureSidebar);
+    lectureOverlay.addEventListener('click', closeAllDrawers);
+
+    if (topicToggle && topicSidebar && topicOverlay) {
+      topicToggle.addEventListener('click', toggleTopicSidebar);
+      topicOverlay.addEventListener('click', closeAllDrawers);
+    }
+
+    document.addEventListener('keydown', function(e) {
+      if (e.key === 'Escape') {
+        closeAllDrawers();
+      }
+    });
+  }
+
+  // ===================== DESKTOP COLLAPSE CONTROL =====================
+  function initSidebarCollapse() {
+    var leftBtn = document.getElementById('lecture-sidebar-collapse-btn');
+    var leftSidebar = document.getElementById('lecture-sidebar');
+    if (leftBtn && leftSidebar) {
+      var isCollapsed = localStorage.getItem('bitsnotes-left-sidebar-collapsed') === 'true';
+      if (isCollapsed) {
+        leftSidebar.classList.add('collapsed');
+      }
+      leftBtn.addEventListener('click', function() {
+        var collapsed = leftSidebar.classList.toggle('collapsed');
+        localStorage.setItem('bitsnotes-left-sidebar-collapsed', collapsed ? 'true' : 'false');
+      });
+    }
+
+    var rightBtn = document.getElementById('topic-sidebar-collapse-btn');
+    var rightSidebar = document.getElementById('topic-sidebar');
+    if (rightBtn && rightSidebar) {
+      var isCollapsed = localStorage.getItem('bitsnotes-right-sidebar-collapsed') === 'true';
+      if (isCollapsed) {
+        rightSidebar.classList.add('collapsed');
+      }
+      rightBtn.addEventListener('click', function() {
+        var collapsed = rightSidebar.classList.toggle('collapsed');
+        localStorage.setItem('bitsnotes-right-sidebar-collapsed', collapsed ? 'true' : 'false');
+      });
+    }
+  }
+
+  // ===================== KEYBOARD NAVIGATION =====================
+  function initKeyboardNav() {
+    document.addEventListener('keydown', function(e) {
+      var tag = e.target.tagName.toLowerCase();
+      if (tag === 'input' || tag === 'textarea' || e.target.isContentEditable) {
+        return;
+      }
+
+      var jsonEl = document.getElementById('lecture-topics-data');
+      if (!jsonEl) return;
+      var topicsData = JSON.parse(jsonEl.textContent);
+      var currentIndex = topicsData.findIndex(function(t) { return t.id === currentTopicId; });
+      if (currentIndex === -1) return;
+
+      if (e.key === 'ArrowLeft') {
+        if (currentIndex > 0) {
+          switchToTopic(topicsData[currentIndex - 1].id, true);
+        }
+      } else if (e.key === 'ArrowRight') {
+        if (currentIndex < topicsData.length - 1) {
+          switchToTopic(topicsData[currentIndex + 1].id, true);
+        }
+      }
+    });
   }
 
   // ===================== CODE COPY BUTTONS =====================
   function initCodeCopy() {
-    var panel = document.getElementById('panel-notes');
+    var panel = document.getElementById('topic-content');
     if (!panel) return;
     panel.querySelectorAll('pre:not([data-copy-inited])').forEach(function(p) {
       if (p.querySelector('.copy-btn') || p.parentElement.classList.contains('code-block-wrapper')) return;
@@ -610,7 +983,11 @@ const quizJson = quizSchema ? JSON.stringify(quizSchema) : null;
 
   // Run initializers on load / view transitions
   initTabs();
-  initSidebar();
+  initMobileDrawers();
+  initSidebarCollapse();
+  initTopicViewer();
+  initTopicNavLinks();
+  initKeyboardNav();
   initCodeCopy();
 </script>
 
@@ -762,18 +1139,19 @@ const quizJson = quizSchema ? JSON.stringify(quizSchema) : null;
     var BN = window.BitsNotes;
     if (!BN) return;
 
-    // Single consolidated bootstrap call (bookmarks + progress + user) instead
-    // of separate /api/bookmarks/list + /api/progress/list requests (Phase 8.6).
-    // Cached as a promise so repeated navigations within the session reuse it.
     var subject = (document.getElementById('lecture-content') || {}).dataset
       ? document.getElementById('lecture-content').dataset.subject : null;
-    var bootstrapUrl = '/api/user/bootstrap' + (subject ? ('?subject=' + encodeURIComponent(subject)) : '');
-    if (!window.__bnBootstrapPromise) {
-      window.__bnBootstrapPromise = fetch(bootstrapUrl, { credentials: 'same-origin' })
+    var lecture = (document.getElementById('lecture-content') || {}).dataset
+      ? document.getElementById('lecture-content').dataset.lecture : null;
+    var bootstrapUrl = '/api/user/bootstrap' + (subject ? ('?subject=' + encodeURIComponent(subject) + (lecture ? '&lecture=' + encodeURIComponent(lecture) : '')) : '');
+    
+    var cacheKey = '__bnBootstrapPromise_' + subject + '_' + lecture;
+    if (!window[cacheKey]) {
+      window[cacheKey] = fetch(bootstrapUrl, { credentials: 'same-origin' })
         .then(function (r) { return r.status === 401 ? null : r.json(); })
         .catch(function () { return null; });
     }
-    window.__bnBootstrapPromise.then(function (bootstrap) {
+    window[cacheKey].then(function (bootstrap) {
       if (!bootstrap) return;
 
       // Show bookmark button
@@ -801,7 +1179,22 @@ const quizJson = quizSchema ? JSON.stringify(quizSchema) : null;
       // Setup reading progress
       var contentEl = document.getElementById('lecture-content');
       if (contentEl && contentEl.dataset.subject) {
-        BN.setupProgress(contentEl.dataset.subject, contentEl.dataset.lecture);
+        if (document.getElementById('topic-content')) {
+          if (bootstrap.progress && bootstrap.progress.topicProgress) {
+            bootstrap.progress.topicProgress.forEach(function (tp) {
+              if (tp.readPct >= 80) {
+                BN.topicProgressSent[tp.topicId] = true;
+                var indicators = document.querySelectorAll('.topic-item-container[data-topic-id="' + tp.topicId + '"] .topic-check-indicator');
+                indicators.forEach(function (ind) {
+                  ind.classList.remove('hidden');
+                });
+              }
+            });
+          }
+          BN.setupTopicProgress(contentEl.dataset.subject, contentEl.dataset.lecture);
+        } else {
+          BN.setupProgress(contentEl.dataset.subject, contentEl.dataset.lecture);
+        }
       }
     });
   })();

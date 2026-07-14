@@ -143,4 +143,42 @@ CREATE INDEX IF NOT EXISTS idx_feedback_page
   ON page_feedback (page_type, subject, lecture, value);
 CREATE INDEX IF NOT EXISTS idx_feedback_visitor
   ON page_feedback (visitor_hash, page_type, subject, lecture);
+
+CREATE TABLE IF NOT EXISTS reading_progress (
+  user_id         TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  subject         TEXT NOT NULL,
+  lecture         TEXT NOT NULL,
+  read_pct        INTEGER NOT NULL DEFAULT 0,
+  last_read_at    INTEGER NOT NULL,
+  PRIMARY KEY (user_id, subject, lecture)
+);
+
+CREATE TABLE IF NOT EXISTS topic_progress (
+  user_id         TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  subject         TEXT NOT NULL,
+  lecture         TEXT NOT NULL,
+  topic_id        TEXT NOT NULL,
+  read_pct        INTEGER NOT NULL DEFAULT 0,
+  last_read_at    INTEGER NOT NULL,
+  PRIMARY KEY (user_id, subject, lecture, topic_id)
+);
+
+CREATE TABLE IF NOT EXISTS collections (
+  id              TEXT PRIMARY KEY,
+  user_id         TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  name            TEXT NOT NULL,
+  sort_order      INTEGER NOT NULL DEFAULT 0,
+  created_at      INTEGER NOT NULL,
+  UNIQUE(user_id, name)
+);
+
+CREATE TABLE IF NOT EXISTS bookmarks (
+  id              TEXT PRIMARY KEY,
+  user_id         TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  collection_id   TEXT NOT NULL REFERENCES collections(id) ON DELETE CASCADE,
+  subject         TEXT NOT NULL,
+  lecture         TEXT NOT NULL,
+  display_name    TEXT NOT NULL,
+  created_at      INTEGER NOT NULL
+);
 `;

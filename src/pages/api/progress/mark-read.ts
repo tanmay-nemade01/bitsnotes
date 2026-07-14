@@ -5,7 +5,7 @@
 
 import type { APIRoute } from 'astro';
 import { getEnv, json, unauthorized, badRequest, getUser, validateFields, sanitizeString, getClientIp } from '../../../lib/apiHelpers';
-import { markRead } from '../../../lib/progress';
+import { markRead, markTopicProgress } from '../../../lib/progress';
 import { logAuthEvent } from '../../../lib/auth';
 import { validateOrigin, csrfForbidden } from '../../../lib/auth/csrf';
 
@@ -32,13 +32,32 @@ export const POST: APIRoute = async (context) => {
     return badRequest('readPct must be a number');
   }
 
-  await markRead(
-    env.DB,
-    user.id,
-    sanitizeString(body.subject, 200)!,
-    sanitizeString(body.lecture, 200)!,
-    body.readPct,
-  );
+  if (body.topicId !== undefined) {
+    if (typeof body.topicId !== 'string') {
+      return badRequest('topicId must be a string');
+    }
+    if (typeof body.totalTopics !== 'number' || body.totalTopics <= 0) {
+      return badRequest('totalTopics must be a positive number');
+    }
+
+    await markTopicProgress(
+      env.DB,
+      user.id,
+      sanitizeString(body.subject, 200)!,
+      sanitizeString(body.lecture, 200)!,
+      sanitizeString(body.topicId, 200)!,
+      body.readPct,
+      body.totalTopics,
+    );
+  } else {
+    await markRead(
+      env.DB,
+      user.id,
+      sanitizeString(body.subject, 200)!,
+      sanitizeString(body.lecture, 200)!,
+      body.readPct,
+    );
+  }
 
   await logAuthEvent(env.DB, { userId: user.id, event: 'progress_mark_read', ip: getClientIp(context.request), ua: context.request.headers.get('User-Agent') || '' });
 

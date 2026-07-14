@@ -92,3 +92,65 @@ export async function getLectureProgress(
     'SELECT * FROM reading_progress WHERE user_id = ? AND subject = ? AND lecture = ?',
   ).bind(userId, subject, lecture).first<ReadingProgress>();
 }
+
+/**
+ * Get topic-level progress for a single lecture.
+ */
+export async function listTopicProgress(
+  db: AuthDb,
+  userId: string,
+  subject: string,
+  lecture: string,
+): Promise<{ topicId: string; readPct: number; lastReadAt: number }[]> {
+  const result = await db.prepare(
+    'SELECT topic_id as topicId, read_pct as readPct, last_read_at as lastReadAt FROM topic_progress WHERE user_id = ? AND subject = ? AND lecture = ?',
+  ).bind(userId, subject, lecture).all<{ topicId: string; readPct: number; lastReadAt: number }>();
+  return result.results ?? [];
+}
+
+/**
+ * Mark a topic as read and recompute the overall lecture progress.
+ */
+export async function markTopicProgress(
+  db: AuthDb,
+  userId: string,
+  subject: string,
+  lecture: string,
+  topicId: string,
+  readPct: number,
+  totalTopics: number,
+): Promise<void> {
+  const clampedPct = Math.min(100, Math.max(0, Math.round(readPct)));
+  const now = Date.now();
+
+  // 1. Upsert the topic-specific progress
+  await db.prepare(
+    `INSERT INTO topic_progress (user_id, subject, lecture, topic_id, read_pct, last_read_at)
+     VALUES (?, ?, ?, ?, ?, ?)
+     ON CONFLICT(user_id, subject, lecture, topic_id)
+     DO UPDATE SET
+       read_pct = MAX(topic_progress.read_pct, excluded.read_pct),
+       last_read_at = excluded.last_read_at`,
+  ).bind(userId, subject, lecture, topicId, clampedPct, now).run();
+
+  // 2. Count topics completed (read_pct >= 80)
+  const completedResult = await db.prepare(
+    `SELECT COUNT(*) as count FROM topic_progress
+     WHERE user_id = ? AND subject = ? AND lecture = ? AND read_pct >= 80`,
+  ).bind(userId, subject, lecture).first<{ count: number }>();
+
+  const completedCount = completedResult?.count ?? 0;
+
+  // 3. Compute overall lecture read_pct (capped at 100)
+  const lectureReadPct = totalTopics > 0 ? Math.min(100, Math.round((completedCount / totalTopics) * 100)) : 0;
+
+  // 4. Upsert the lecture-wide reading progress
+  await db.prepare(
+    `INSERT INTO reading_progress (user_id, subject, lecture, read_pct, last_read_at)
+     VALUES (?, ?, ?, ?, ?)
+     ON CONFLICT(user_id, subject, lecture)
+     DO UPDATE SET
+       read_pct = MAX(reading_progress.read_pct, excluded.read_pct),
+       last_read_at = excluded.last_read_at`,
+  ).bind(userId, subject, lecture, lectureReadPct, now).run();
+}

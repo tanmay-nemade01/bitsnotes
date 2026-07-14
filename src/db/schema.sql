@@ -104,6 +104,16 @@ CREATE TABLE IF NOT EXISTS reading_progress (
   PRIMARY KEY (user_id, subject, lecture)
 );
 
+CREATE TABLE IF NOT EXISTS topic_progress (
+  user_id         TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  subject         TEXT NOT NULL,
+  lecture         TEXT NOT NULL,
+  topic_id        TEXT NOT NULL,
+  read_pct        INTEGER NOT NULL DEFAULT 0,  -- 0-100
+  last_read_at    INTEGER NOT NULL,
+  PRIMARY KEY (user_id, subject, lecture, topic_id)
+);
+
 -- ─── Engagement: Comments (Phase 4) ───────────────────────────────────────
 CREATE TABLE IF NOT EXISTS comments (
   id                TEXT PRIMARY KEY,

@@ -81,6 +81,7 @@
   // ─── Reading Progress ────────────────────────────────────────────────────
 
   BN.progressSent = false;
+  BN.topicProgressSent = {};
 
   BN.setupProgress = function (subject, lecture) {
     var sent = false;
@@ -99,6 +100,52 @@
     // Clean up on SPA navigation so the listener doesn't leak across pages.
     document.addEventListener('astro:before-swap', function () {
       window.removeEventListener('scroll', handler);
+    }, { once: true });
+  };
+
+  BN.setupTopicProgress = function (subject, lecture) {
+    var handler = function () {
+      var currentTopicId = window.BitsNotesCurrentTopicId;
+      var totalTopics = window.BitsNotesTotalTopics;
+      if (!currentTopicId || !totalTopics) return;
+
+      if (BN.topicProgressSent[currentTopicId]) return;
+
+      var contentEl = document.getElementById('topic-content');
+      if (!contentEl) return;
+
+      var rect = contentEl.getBoundingClientRect();
+      var elementHeight = contentEl.offsetHeight;
+      if (elementHeight <= 0) return;
+
+      var viewportHeight = window.innerHeight;
+      var scrolledAmount = viewportHeight - rect.top;
+      var pct = Math.round((scrolledAmount / elementHeight) * 100);
+
+      if (pct >= 80) {
+        BN.topicProgressSent[currentTopicId] = true;
+
+        var indicators = document.querySelectorAll('.topic-item-container[data-topic-id="' + currentTopicId + '"] .topic-check-indicator');
+        indicators.forEach(function (ind) {
+          ind.classList.remove('hidden');
+        });
+
+        BN.post('/api/progress/mark-read', {
+          subject: subject,
+          lecture: lecture,
+          topicId: currentTopicId,
+          readPct: Math.min(100, pct),
+          totalTopics: totalTopics,
+        });
+      }
+    };
+
+    window.addEventListener('scroll', handler, { passive: true });
+    window.addEventListener('resize', handler, { passive: true });
+
+    document.addEventListener('astro:before-swap', function () {
+      window.removeEventListener('scroll', handler);
+      window.removeEventListener('resize', handler);
     }, { once: true });
   };
 

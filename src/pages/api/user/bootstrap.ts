@@ -15,7 +15,7 @@
 import type { APIRoute } from 'astro';
 import { getEnv, json, unauthorized, badRequest, getUser, sanitizeString } from '../../../lib/apiHelpers';
 import { listCollections, listBookmarks } from '../../../lib/bookmarks';
-import { listProgress, getProgressSummary } from '../../../lib/progress';
+import { listProgress, getProgressSummary, listTopicProgress } from '../../../lib/progress';
 import { listCatalog } from '../../../utils/notesLoader';
 
 export const prerender = false;
@@ -27,6 +27,7 @@ export const GET: APIRoute = async (context) => {
   const env = await getEnv(context);
   const url = new URL(context.request.url);
   const subject = url.searchParams.get('subject');
+  const lecture = url.searchParams.get('lecture');
 
   // Bookmarks (grouped by collection, with catalog titles).
   const collections = await listCollections(env.DB, user.id);
@@ -56,7 +57,16 @@ export const GET: APIRoute = async (context) => {
   if (subject) {
     const normalized = sanitizeString(subject, 200);
     if (!normalized) return badRequest('Invalid subject');
-    progress = { lectures: await listProgress(env.DB, user.id, normalized) };
+    const lectures = await listProgress(env.DB, user.id, normalized);
+    
+    let topicProgress: any[] = [];
+    if (lecture) {
+      const normalizedLec = sanitizeString(lecture, 200);
+      if (normalizedLec) {
+        topicProgress = await listTopicProgress(env.DB, user.id, normalized, normalizedLec);
+      }
+    }
+    progress = { lectures, topicProgress };
   } else {
     progress = { summary: await getProgressSummary(env.DB, user.id) };
   }
