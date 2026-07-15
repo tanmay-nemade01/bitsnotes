@@ -82,6 +82,17 @@
       outlines[0].classList.toggle('hidden', bookmarked);
       outlines[1].classList.toggle('hidden', !bookmarked);
     }
+    if (bookmarked) {
+      btn.classList.add('border-[var(--accent)]', 'bg-[var(--accent-subtle)]', 'text-[var(--accent)]');
+      btn.classList.remove('border-[var(--border)]', 'text-[var(--text-muted)]');
+      var textSpan = btn.querySelector('span:last-child');
+      if (textSpan) textSpan.textContent = 'Saved';
+    } else {
+      btn.classList.remove('border-[var(--accent)]', 'bg-[var(--accent-subtle)]', 'text-[var(--accent)]');
+      btn.classList.add('border-[var(--border)]', 'text-[var(--text-muted)]');
+      var textSpan = btn.querySelector('span:last-child');
+      if (textSpan) textSpan.textContent = 'Save';
+    }
   };
 
   // ─── Reading Progress ────────────────────────────────────────────────────
