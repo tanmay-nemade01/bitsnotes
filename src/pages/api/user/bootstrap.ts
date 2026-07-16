@@ -22,7 +22,14 @@ export const prerender = false;
 
 export const GET: APIRoute = async (context) => {
   const user = getUser(context);
-  if (!user) return unauthorized();
+  if (!user) {
+    return json({
+      user: null,
+      bookmarks: { collections: [], bookmarks: {}, uncategorized: [], recentBookmarks: [] },
+      progress: {},
+      loggedIn: false
+    }, 200);
+  }
 
   const env = await getEnv(context);
   const url = new URL(context.request.url);

@@ -16,7 +16,7 @@ export const GET: APIRoute = async ({ locals }) => {
   const user = (locals as any).user;
 
   if (!user) {
-    return new Response(JSON.stringify({ user: null }), { status: 401, headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' } });
+    return new Response(JSON.stringify({ user: null, loggedIn: false }), { status: 200, headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' } });
   }
 
   return new Response(JSON.stringify({
