@@ -195,3 +195,33 @@ CREATE INDEX IF NOT EXISTS idx_feedback_page
   ON page_feedback (page_type, subject, lecture, value);
 CREATE INDEX IF NOT EXISTS idx_feedback_visitor
   ON page_feedback (visitor_hash, page_type, subject, lecture);
+
+-- ─── Blog Likes ────────────────────────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS blog_likes (
+  id            TEXT PRIMARY KEY,
+  user_id       TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  slug          TEXT NOT NULL,
+  created_at    INTEGER NOT NULL,
+  UNIQUE(user_id, slug)
+);
+
+CREATE INDEX IF NOT EXISTS idx_blog_likes_slug ON blog_likes(slug);
+CREATE INDEX IF NOT EXISTS idx_blog_likes_user ON blog_likes(user_id);
+
+-- ─── Blog Follows ──────────────────────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS blog_follows (
+  id            TEXT PRIMARY KEY,
+  user_id       TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  author        TEXT NOT NULL,
+  created_at    INTEGER NOT NULL,
+  UNIQUE(user_id, author)
+);
+
+CREATE INDEX IF NOT EXISTS idx_blog_follows_author ON blog_follows(author);
+CREATE INDEX IF NOT EXISTS idx_blog_follows_user ON blog_follows(user_id);
+
+-- ─── Views Tracking ────────────────────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS page_views (
+  page_key      TEXT PRIMARY KEY,
+  views         INTEGER NOT NULL DEFAULT 0
+);

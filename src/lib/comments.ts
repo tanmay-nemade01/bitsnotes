@@ -14,7 +14,7 @@ import type { AuthDb } from './auth/db';
 import { uuidv7, sha256Hex } from './auth/crypto';
 
 export type CommentStatus = 'published' | 'pending' | 'hidden' | 'deleted';
-export type PageType = 'lecture' | 'subject';
+export type PageType = 'lecture' | 'subject' | 'blog';
 
 /** Maximum visual nesting depth. Deeper replies are flattened to this level. */
 export const MAX_DEPTH = 6;

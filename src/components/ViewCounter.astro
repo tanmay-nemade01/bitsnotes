@@ -1,0 +1,133 @@
+---
+/**
+ * ViewCounter.astro
+ *
+ * Displays a global page view count. On mount, fires a POST to /api/views to
+ * increment the count and updates the displayed number with the server-returned
+ * value. Falls back to a "-" placeholder if the network request fails.
+ *
+ * Props:
+ *   pageKey  - The page_key string (e.g. "home", "blog:my-slug", "lecture:X:Y")
+ *   class    - Optional extra CSS class on the wrapper <span>
+ */
+
+interface Props {
+  pageKey: string;
+  class?: string;
+}
+
+const { pageKey, class: className } = Astro.props;
+---
+
+<span
+  class={`view-counter ${className ?? ''}`}
+  data-page-key={pageKey}
+  aria-label="Page views"
+>
+  <svg
+    class="view-counter__icon"
+    xmlns="http://www.w3.org/2000/svg"
+    viewBox="0 0 24 24"
+    fill="none"
+    stroke="currentColor"
+    stroke-width="2"
+    stroke-linecap="round"
+    stroke-linejoin="round"
+    aria-hidden="true"
+  >
+    <path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7Z" />
+    <circle cx="12" cy="12" r="3" />
+  </svg>
+  <span class="view-counter__value" aria-live="polite">—</span>
+</span>
+
+<style>
+  .view-counter {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.3em;
+    font-size: var(--text-sm, 0.875rem);
+    color: var(--text-muted);
+  }
+
+  .view-counter__icon {
+    width: 1em;
+    height: 1em;
+    flex-shrink: 0;
+    opacity: 0.7;
+  }
+
+  .view-counter__value {
+    font-variant-numeric: tabular-nums;
+  }
+</style>
+
+<script>
+  /**
+   * View counter client logic.
+   *
+   * First visit in a browser session  → POST /api/views  (increments + returns count)
+   * Same-session refresh              → GET  /api/views  (reads count, no increment)
+   *
+   * sessionStorage key: `bitsnotes-viewed:{page_key}`
+   * This ensures that refreshing the same page in the same tab/session does not
+   * inflate the view counter, while still showing the current count.
+   *
+   * Multiple ViewCounter elements sharing the same page_key on one page (e.g.
+   * top + bottom engagement bars on a blog post) fire only one network request.
+   */
+  document.addEventListener('DOMContentLoaded', () => {
+    const elements = Array.from(
+      document.querySelectorAll<HTMLElement>('.view-counter[data-page-key]'),
+    );
+    if (elements.length === 0) return;
+
+    // Group elements by page key to avoid duplicate requests.
+    const grouped = new Map<string, HTMLElement[]>();
+    for (const el of elements) {
+      const key = el.dataset.pageKey!;
+      if (!grouped.has(key)) grouped.set(key, []);
+      grouped.get(key)!.push(el);
+    }
+
+    /** Update all elements for a given key with a formatted count. */
+    function applyCount(els: HTMLElement[], views: number) {
+      const formatted = views.toLocaleString();
+      for (const el of els) {
+        const valueEl = el.querySelector<HTMLElement>('.view-counter__value');
+        if (valueEl) valueEl.textContent = formatted;
+      }
+    }
+
+    for (const [key, els] of grouped) {
+      const sessionKey = `bitsnotes-viewed:${key}`;
+      const alreadyViewed = sessionStorage.getItem(sessionKey) === '1';
+
+      if (alreadyViewed) {
+        // Same-session refresh: just fetch the current count without incrementing.
+        fetch(`/api/views?key=${encodeURIComponent(key)}`)
+          .then((res) => (res.ok ? res.json() : null))
+          .then((data) => {
+            if (!data || typeof (data as any).views !== 'number') return;
+            applyCount(els, (data as any).views as number);
+          })
+          .catch(() => {/* "-" placeholder stays */});
+      } else {
+        // First visit: POST to increment, then mark as viewed in sessionStorage.
+        fetch('/api/views', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ key }),
+          keepalive: true,
+        })
+          .then((res) => (res.ok ? res.json() : null))
+          .then((data) => {
+            if (!data || typeof (data as any).views !== 'number') return;
+            sessionStorage.setItem(sessionKey, '1');
+            applyCount(els, (data as any).views as number);
+          })
+          .catch(() => {/* "-" placeholder stays */});
+      }
+    }
+  });
+</script>

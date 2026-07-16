@@ -1,7 +1,7 @@
 import { env } from 'cloudflare:workers';
 import { getFallbackMetadata } from './metadata';
 import type { DocumentMetadata, ResourceKind, AvailableMode, ResourceScope, MetadataSource } from './metadata';
-import { normalizeCatalogEntry, type RawCatalogEntry } from './lectureDisplay';
+import { normalizeCatalogEntry, type RawCatalogEntry, slugify } from './lectureDisplay';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -28,6 +28,7 @@ export interface CatalogLecture {
   fileName: string;
   topicTitle: string;
   displayTitle: string;
+  slug: string;
   lectureNumber?: number;
   lectureNumberEnd?: number;
   resourceKind: ResourceKind;
@@ -273,6 +274,7 @@ export async function listLectures(subjectName: string): Promise<CatalogLecture[
     fileName: l.fileName,
     topicTitle: l.topicTitle,
     displayTitle: l.displayTitle,
+    slug: l.slug || slugify(l.topicTitle || l.name),
     lectureNumber: l.lectureNumber,
     lectureNumberEnd: l.lectureNumberEnd,
     resourceKind: l.resourceKind,
@@ -302,6 +304,7 @@ export async function listCatalog(): Promise<Array<{ subject: string; lectureCou
       fileName: l.fileName,
       topicTitle: l.topicTitle,
       displayTitle: l.displayTitle,
+      slug: l.slug || slugify(l.topicTitle || l.name),
       lectureNumber: l.lectureNumber,
       lectureNumberEnd: l.lectureNumberEnd,
       resourceKind: l.resourceKind,
@@ -432,20 +435,20 @@ export async function getLectureContent(subjectName: string, lectureFolderName: 
   };
 }
 
-/**
- * Resolve a lecture display name back to a folder name.
- * Used when URL params use the display name and we need the folder.
- */
-export async function resolveLectureFolderName(subjectName: string, lectureDisplayName: string): Promise<string | null> {
+export async function resolveLectureFolderName(subjectName: string, lectureSlugOrFolderName: string): Promise<string | null> {
   const lectures = await listLectures(subjectName);
 
-  // Direct match by display name
-  const byName = lectures.find((l) => l.name === lectureDisplayName);
-  if (byName) return byName.folderName;
+  // Match by slug first
+  const bySlug = lectures.find((l) => l.slug === lectureSlugOrFolderName);
+  if (bySlug) return bySlug.folderName;
 
-  // Direct match by folder name (user might have used folder name in URL)
-  const byFolder = lectures.find((l) => l.folderName === lectureDisplayName);
+  // Match by folder name (user might have used folder name in URL)
+  const byFolder = lectures.find((l) => l.folderName === lectureSlugOrFolderName);
   if (byFolder) return byFolder.folderName;
+
+  // Direct match by display name
+  const byName = lectures.find((l) => l.name === lectureSlugOrFolderName);
+  if (byName) return byName.folderName;
 
   return null;
 }

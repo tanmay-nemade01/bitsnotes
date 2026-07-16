@@ -1,5 +1,6 @@
 import type { APIRoute } from 'astro';
 import { listSubjects, listLectures } from '../utils/notesLoader';
+import { getPublishedPosts } from '../utils/blogLoader';
 
 export const prerender = false;
 
@@ -21,7 +22,17 @@ export const GET: APIRoute = async ({ url }) => {
     { path: '/contact', changefreq: 'monthly', priority: '0.6' },
     { path: '/privacy', changefreq: 'yearly',  priority: '0.4' },
     { path: '/terms',   changefreq: 'yearly',  priority: '0.4' },
+    { path: '/blog',    changefreq: 'weekly',  priority: '0.8' },
   ];
+
+  const blogPosts = getPublishedPosts();
+  for (const post of blogPosts) {
+    pages.push({
+      path: `/blog/${post.slug}`,
+      changefreq: 'monthly',
+      priority: '0.7',
+    });
+  }
 
   const subjects = await listSubjects();
   for (const subject of subjects) {
@@ -34,7 +45,7 @@ export const GET: APIRoute = async ({ url }) => {
 
     const lectures = await listLectures(subject.name);
     for (const lecture of lectures) {
-      const viewPath = `/view/${subjectParam}/${encodeURIComponent(lecture.folderName)}`;
+      const viewPath = `/view/${subjectParam}/${encodeURIComponent(lecture.slug)}`;
       pages.push({
         path: viewPath,
         changefreq: 'weekly',

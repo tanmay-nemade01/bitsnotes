@@ -38,6 +38,7 @@ export interface CatalogEntry {
   displayTitle: string;
   /** Topic title without the lecture-number prefix, e.g. "POS Tagging and HMMs". */
   topicTitle: string;
+  slug: string;
   lectureNumber?: number;
   lectureNumberEnd?: number;
   resourceKind: ResourceKind;
@@ -49,6 +50,18 @@ export interface CatalogEntry {
   metadataSource: MetadataSource;
   /** Authored quiz question count (0 unless metadata is authored). */
   authoredQuizCount: number;
+}
+
+export function slugify(text: string): string {
+  return text
+    .toString()
+    .toLowerCase()
+    .trim()
+    .replace(/\s+/g, '-')           // Replace spaces with -
+    .replace(/[^\w\-]+/g, '')       // Remove all non-word chars except -
+    .replace(/\-\-+/g, '-')         // Replace multiple - with single -
+    .replace(/^-+/, '')             // Trim - from start
+    .replace(/-+$/, '');            // Trim - from end
 }
 
 export interface RawCatalogEntry {
@@ -255,6 +268,7 @@ export function normalizeCatalogEntry(entry: RawCatalogEntry): CatalogEntry {
     name,
     displayTitle,
     topicTitle,
+    slug: slugify(topicTitle),
     lectureNumber,
     lectureNumberEnd,
     resourceKind,

@@ -48,6 +48,7 @@ export const GET: APIRoute = async () => {
             title,
             subject: subject.subject,
             folderName: lecture.folderName,
+            slug: lecture.slug,
             snippet: fullText.slice(0, 300)
           });
         }
@@ -92,6 +93,7 @@ export const GET: APIRoute = async () => {
       title: item.title,
       subject: item.subject,
       folderName: item.folderName,
+      slug: item.slug || item.folderName,
       snippet: (item.text || item.snippet || '').slice(0, 300)
     }));
 

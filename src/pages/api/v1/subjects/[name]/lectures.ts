@@ -32,7 +32,7 @@ export const GET: APIRoute = async ({ params, request }) => {
     const result = lectures.map((l: any) => ({
       name: l.name,
       folderName: l.folderName,
-      slug: encodeURIComponent(l.folderName)
+      slug: l.slug
     }));
     return new Response(JSON.stringify(result), { status: 200, headers: corsHeaders });
   } catch (err: any) {

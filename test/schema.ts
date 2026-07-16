@@ -181,4 +181,9 @@ CREATE TABLE IF NOT EXISTS bookmarks (
   display_name    TEXT NOT NULL,
   created_at      INTEGER NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS page_views (
+  page_key      TEXT PRIMARY KEY,
+  views         INTEGER NOT NULL DEFAULT 0
+);
 `;

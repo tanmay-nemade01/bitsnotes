@@ -197,6 +197,18 @@ function formatLectureLabel({ lectureNumber, lectureNumberEnd, topicTitle, resou
   return prefix;
 }
 
+function slugify(text) {
+  return text
+    .toString()
+    .toLowerCase()
+    .trim()
+    .replace(/\s+/g, '-')           // Replace spaces with -
+    .replace(/[^\w\-]+/g, '')       // Remove all non-word chars except -
+    .replace(/\-\-+/g, '-')         // Replace multiple - with single -
+    .replace(/^-+/, '')             // Trim - from start
+    .replace(/-+$/, '');            // Trim - from end
+}
+
 function normalizeCatalogEntry({ folderName, fileName, name, metadata }) {
   const resourceKind = detectResourceKind(folderName, metadata);
   const scope = (metadata && metadata.scope) || (resourceKind === 'lecture' ? 'lecture' : 'subject');
@@ -229,6 +241,7 @@ function normalizeCatalogEntry({ folderName, fileName, name, metadata }) {
     fileName,
     topicTitle,
     displayTitle,
+    slug: slugify(topicTitle),
     lectureNumber,
     lectureNumberEnd,
     resourceKind,
@@ -354,6 +367,7 @@ for (const subjectName of subjectFolders) {
       title,
       subject: subjectName,
       folderName: lectureFolder,
+      slug: catalogEntry.slug,
       snippet: cleanText.slice(0, 300)
     });
   }

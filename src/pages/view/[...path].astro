@@ -10,6 +10,7 @@ import { getResourceKindLabel } from '../../utils/lectureDisplay';
 import PomodoroTimer from '../../components/PomodoroTimer.astro';
 import CommentsSection from '../../components/CommentsSection.astro';
 import UsefulnessFeedback from '../../components/UsefulnessFeedback.astro';
+import ViewCounter from '../../components/ViewCounter.astro';
 
 export const prerender = false;
 
@@ -20,7 +21,25 @@ const segments = path.split('/').map(decodeURIComponent);
 if (segments.length < 2) return Astro.redirect('/');
 
 const subjectName = segments[0];
-const lectureFolderName = segments[1];
+const lectureSlugOrFolderName = segments[1];
+
+const lectures = await listLectures(subjectName);
+const matchedLecture = lectures.find(
+  (l) => l.slug === lectureSlugOrFolderName || l.folderName === lectureSlugOrFolderName
+);
+
+if (!matchedLecture) {
+  return Astro.redirect('/');
+}
+
+// Redirect to canonical slug if folderName was used in URL instead of slug
+if (lectureSlugOrFolderName === matchedLecture.folderName && matchedLecture.slug !== matchedLecture.folderName) {
+  const targetUrl = new URL(`/view/${encodeURIComponent(subjectName)}/${encodeURIComponent(matchedLecture.slug)}`, Astro.url);
+  targetUrl.search = Astro.url.search;
+  return Astro.redirect(targetUrl.pathname + targetUrl.search);
+}
+
+const lectureFolderName = matchedLecture.folderName;
 
 let errorMsg = '';
 let customMetadata = null;
@@ -78,7 +97,6 @@ const showRevisionTab = hasRevisionSection || !!(metadata.examRevisionNotes && m
 const showQuizTab = hasQuizSection || !!(metadata.quiz && metadata.quiz.length > 0);
 
 const subjects = await listSubjects();
-const lectures = await listLectures(subjectName);
 
 let prevUrl = '', prevLabel = '', nextUrl = '', nextLabel = '';
 const currentLectureIndex = lectures.findIndex(l => l.folderName === lectureFolderName);
@@ -87,7 +105,7 @@ const currentSubjectIndex = subjects.findIndex(s => s.name === subjectName);
 if (currentLectureIndex !== -1 && currentSubjectIndex !== -1) {
   if (currentLectureIndex > 0) {
     const p = lectures[currentLectureIndex - 1];
-    prevUrl = `/view/${encodeURIComponent(subjectName)}/${encodeURIComponent(p.folderName)}`;
+    prevUrl = `/view/${encodeURIComponent(subjectName)}/${encodeURIComponent(p.slug)}`;
     prevLabel = p.displayTitle || p.name;
   } else {
     const prevSubjectIdx = (currentSubjectIndex - 1 + subjects.length) % subjects.length;
@@ -95,14 +113,14 @@ if (currentLectureIndex !== -1 && currentSubjectIndex !== -1) {
     const prevLectures = await listLectures(prevSubject.name);
     if (prevLectures.length > 0) {
       const last = prevLectures[prevLectures.length - 1];
-      prevUrl = `/view/${encodeURIComponent(prevSubject.name)}/${encodeURIComponent(last.folderName)}`;
+      prevUrl = `/view/${encodeURIComponent(prevSubject.name)}/${encodeURIComponent(last.slug)}`;
       prevLabel = last.displayTitle || last.name;
     }
   }
 
   if (currentLectureIndex < lectures.length - 1) {
     const n = lectures[currentLectureIndex + 1];
-    nextUrl = `/view/${encodeURIComponent(subjectName)}/${encodeURIComponent(n.folderName)}`;
+    nextUrl = `/view/${encodeURIComponent(subjectName)}/${encodeURIComponent(n.slug)}`;
     nextLabel = n.displayTitle || n.name;
   } else {
     const nextSubjectIdx = (currentSubjectIndex + 1) % subjects.length;
@@ -110,7 +128,7 @@ if (currentLectureIndex !== -1 && currentSubjectIndex !== -1) {
     const nextLectures = await listLectures(nextSubject.name);
     if (nextLectures.length > 0) {
       const first = nextLectures[0];
-      nextUrl = `/view/${encodeURIComponent(nextSubject.name)}/${encodeURIComponent(first.folderName)}`;
+      nextUrl = `/view/${encodeURIComponent(nextSubject.name)}/${encodeURIComponent(first.slug)}`;
       nextLabel = first.displayTitle || first.name;
     }
   }
@@ -196,12 +214,14 @@ const quizJson = quizSchema ? JSON.stringify(quizSchema) : null;
           <div id="sidebar-overlay" class="fixed inset-0 z-40 bg-[var(--scrim)] hidden lg:hidden"></div>
 
           {showRightSidebar && (
-            <button id="topic-sidebar-toggle" aria-label="Toggle topic list">
-              <svg fill="none" stroke="currentColor" stroke-width="2.2" viewBox="0 0 24 24">
-                <path d="M4 6h16M4 12h12M4 18h16" />
-              </svg>
-            </button>
-            <div id="topic-sidebar-overlay" class="fixed inset-0 z-40 bg-[var(--scrim)] hidden lg:hidden"></div>
+            <>
+              <button id="topic-sidebar-toggle" aria-label="Toggle topic list">
+                <svg fill="none" stroke="currentColor" stroke-width="2.2" viewBox="0 0 24 24">
+                  <path d="M4 6h16M4 12h12M4 18h16" />
+                </svg>
+              </button>
+              <div id="topic-sidebar-overlay" class="fixed inset-0 z-40 bg-[var(--scrim)] hidden lg:hidden"></div>
+            </>
           )}
 
           <!-- ========== LEFT SIDEBAR ========== -->
@@ -223,7 +243,7 @@ const quizJson = quizSchema ? JSON.stringify(quizSchema) : null;
                 const resourceItems = lectures.filter((l) => l.scope !== 'lecture' && l.resourceKind !== 'lecture');
                 const renderItem = (lec: typeof lectures[number]) => {
                   const active = lec.folderName === lectureFolderName;
-                  const url = active ? '#' : `/view/${encodeURIComponent(subjectName)}/${encodeURIComponent(lec.folderName)}`;
+                  const url = active ? '#' : `/view/${encodeURIComponent(subjectName)}/${encodeURIComponent(lec.slug)}`;
                   const numLabel = lec.lectureNumber != null
                     ? (lec.lectureNumberEnd != null
                         ? `${lec.lectureNumber.toString().padStart(2, '0')}–${lec.lectureNumberEnd.toString().padStart(2, '0')}`
@@ -285,6 +305,11 @@ const quizJson = quizSchema ? JSON.stringify(quizSchema) : null;
                 </button>
               ))}
             </nav>
+
+            <!-- Page view counter for this lecture -->
+            <div class="flex justify-end mb-2 mt-1">
+              <ViewCounter pageKey={`lecture:${subjectName}:${lectureFolderName}`} class="text-xs text-[var(--text-faint)]" />
+            </div>
 
             <!-- Toolbar row: bookmark + notes toggle (always in DOM, shown by JS when logged in) -->
             <div id="bn-toolbar-row" class="hidden flex items-center justify-between mb-2">

@@ -6,8 +6,19 @@ import {
   formatLectureLabel,
   normalizeCatalogEntry,
   type RawCatalogEntry,
+  slugify,
 } from '../src/utils/lectureDisplay';
 import type { DocumentMetadata } from '../src/utils/metadata';
+
+describe('slugify', () => {
+  it('converts titles to url-friendly slugs', () => {
+    expect(slugify('Introduction to AI, History, Definitions, and Risks')).toBe(
+      'introduction-to-ai-history-definitions-and-risks'
+    );
+    expect(slugify('MDP -> DP -> MC -> TD')).toBe('mdp-dp-mc-td');
+    expect(slugify('  Hello   World!  ')).toBe('hello-world');
+  });
+});
 
 function raw(partial: Partial<RawCatalogEntry> & { folderName: string; subject: string }): RawCatalogEntry {
   return {
@@ -113,12 +124,14 @@ describe('normalizeCatalogEntry', () => {
     expect(entry.lectureNumber).toBe(12);
     expect(entry.topicTitle).toBe('Custom Title');
     expect(entry.displayTitle).toBe('Lecture 12 · Custom Title');
+    expect(entry.slug).toBe('custom-title');
   });
 
   it('derives number from folder when metadata absent', () => {
     const entry = normalizeCatalogEntry(raw({ folderName: 'Lecture_03_Neural_Nets' }));
     expect(entry.lectureNumber).toBe(3);
     expect(entry.displayTitle).toBe('Lecture 03 · Neural Nets');
+    expect(entry.slug).toBe('neural-nets');
   });
 
   it('marks fallback metadata and zeroes authored quiz count', () => {

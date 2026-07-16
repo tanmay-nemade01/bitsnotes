@@ -24,6 +24,7 @@ export const POST: APIRoute = async (context) => {
   // Accept both JSON and application/x-www-form-urlencoded (native <form> POST)
   let provider: string | undefined;
   let turnstileToken: string | undefined;
+  let redirectUrl: string | undefined;
   const contentType = request.headers.get('content-type') || '';
 
   try {
@@ -31,13 +32,27 @@ export const POST: APIRoute = async (context) => {
       const jsonBody = await request.json() as Record<string, unknown>;
       provider = jsonBody.provider as string | undefined;
       turnstileToken = jsonBody['cf-turnstile-response'] as string | undefined;
+      redirectUrl = jsonBody.redirect as string | undefined;
     } else {
       const formData = await request.formData();
       provider = formData.get('provider') as string | undefined;
       turnstileToken = formData.get('cf-turnstile-response') as string | undefined;
+      redirectUrl = formData.get('redirect') as string | undefined;
     }
   } catch {
     return badRequest('Invalid request body');
+  }
+
+  // Validate redirect URL (must be same-origin)
+  if (redirectUrl) {
+    try {
+      const parsed = new URL(redirectUrl, env.APP_BASE_URL);
+      if (parsed.origin !== env.APP_BASE_URL) {
+        redirectUrl = undefined;
+      }
+    } catch {
+      redirectUrl = undefined;
+    }
   }
 
   if (!provider || (provider !== 'google' && provider !== 'github')) {
@@ -65,8 +80,8 @@ export const POST: APIRoute = async (context) => {
   const codeChallenge = await generateCodeChallenge(codeVerifier);
   const state = `${provider}_${crypto.randomUUID()}`;
 
-  // Store state + codeVerifier in a signed cookie for callback verification.
-  const statePayload = JSON.stringify({ state, codeVerifier, provider });
+  // Store state + codeVerifier + redirect in a signed cookie for callback verification.
+  const statePayload = JSON.stringify({ state, codeVerifier, provider, redirect: redirectUrl || null });
   const payloadB64 = btoa(statePayload);
   const stateSig = await hmacSign(env.SESSION_SIGNING_KEY, payloadB64);
   const stateToken = `${payloadB64}.${stateSig}`;

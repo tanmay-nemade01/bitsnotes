@@ -46,7 +46,7 @@ export const GET: APIRoute = async (context) => {
   const payloadB64 = stateCookie.slice(0, dotIdx);
   const sig = stateCookie.slice(dotIdx + 1);
 
-  let stateData: { state: string; codeVerifier: string; provider: string };
+  let stateData: { state: string; codeVerifier: string; provider: string; redirect: string | null };
   try {
     // Verify HMAC signature before trusting the payload
     const valid = await hmacVerify(env.SESSION_SIGNING_KEY, payloadB64, sig);
@@ -199,9 +199,10 @@ export const GET: APIRoute = async (context) => {
 
   await logAuthEvent(db, { userId: user.id, event: 'login', provider, ip, ua: request.headers.get('User-Agent') || '' });
 
-  // Redirect to homepage with session cookies
+  // Redirect with session cookies
+  const postAuthRedirect = stateData.redirect || '/';
   const headers = new Headers({
-    Location: '/',
+    Location: postAuthRedirect,
     'Cache-Control': 'no-store',
   });
   setSessionCookie(headers, accessToken, request);

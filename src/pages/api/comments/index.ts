@@ -21,6 +21,7 @@ import { getClientIp } from '../../../lib/apiHelpers';
 import { listComments, createComment, resolveParent } from '../../../lib/comments';
 import { validateCommentBody, moderateSubmission, MAX_JSON_BYTES, MIN_FILL_MS } from '../../../lib/commentsValidation';
 import { listLectures, listSubjects } from '../../../utils/notesLoader';
+import { getPublishedPosts } from '../../../utils/blogLoader';
 import { sha256Hex } from '../../../lib/auth/crypto';
 
 
@@ -35,8 +36,8 @@ export const GET: APIRoute = async (context) => {
   const cursor = url.searchParams.get('cursor');
   const limitRaw = url.searchParams.get('limit');
 
-  if (pageType !== 'lecture' && pageType !== 'subject') {
-    return badRequest('pageType must be "lecture" or "subject"');
+  if (pageType !== 'lecture' && pageType !== 'subject' && pageType !== 'blog') {
+    return badRequest('pageType must be "lecture", "subject" or "blog"');
   }
   if (!subject) return badRequest('subject is required');
   if (pageType === 'lecture' && !lecture) {
@@ -133,16 +134,25 @@ export const POST: APIRoute = async (context) => {
   const v = validateCommentBody(body);
   if (!v.ok) return badRequest(v.error);
 
-  // Verify subject/lecture exist in manifest.
-  const subjects = await listSubjects();
-  if (!subjects.some((s) => s.name === v.subject)) {
-    return badRequest('Unknown subject');
-  }
-  if (v.pageType === 'lecture') {
-    const lectures = await listLectures(v.subject);
-    if (!lectures.some((l) => l.folderName === v.lecture)) {
-      return badRequest('Unknown lecture');
+  // Verify subject/lecture/blog exist in manifest/loader.
+  if (v.pageType === 'lecture' || v.pageType === 'subject') {
+    const subjects = await listSubjects();
+    if (!subjects.some((s) => s.name === v.subject)) {
+      return badRequest('Unknown subject');
     }
+    if (v.pageType === 'lecture') {
+      const lectures = await listLectures(v.subject);
+      if (!lectures.some((l) => l.folderName === v.lecture)) {
+        return badRequest('Unknown lecture');
+      }
+    }
+  } else if (v.pageType === 'blog') {
+    const allPosts = getPublishedPosts();
+    if (!allPosts.some((p) => p.slug === v.subject)) {
+      return badRequest('Unknown blog post');
+    }
+  } else {
+    return badRequest('Invalid pageType');
   }
 
   // Resolve parent (reply) — must be a published comment on the same page.
