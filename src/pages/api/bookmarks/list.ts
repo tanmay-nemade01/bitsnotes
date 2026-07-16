@@ -12,7 +12,9 @@ export const prerender = false;
 
 export const GET: APIRoute = async (context) => {
   const user = getUser(context);
-  if (!user) return unauthorized();
+  if (!user) {
+    return json({ collections: {}, bookmarks: {}, uncategorized: [], recentBookmarks: [], loggedIn: false }, 200);
+  }
 
   const env = await getEnv(context);
   const collections = await listCollections(env.DB, user.id);

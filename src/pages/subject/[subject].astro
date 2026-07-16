@@ -182,86 +182,94 @@ const seoKeywords = `${decodedSubjectName}, lecture notes, study guides, college
     var BN = window.BitsNotes;
     if (!BN) return;
 
-    fetch('/api/bookmarks/list', { credentials: 'same-origin' }).then(function (r) {
-      if (r.status === 401) return false;
-      return r.json().then(function () { return true; });
-    }).then(function (loggedIn) {
-      if (!loggedIn) return;
+    var initBookmarks = function () {
+      fetch('/api/bookmarks/list', { credentials: 'same-origin' }).then(function (r) {
+        if (r.status === 401) return false;
+        return r.json().then(function (data) { return data && data.loggedIn !== false; });
+      }).then(function (loggedIn) {
+        if (!loggedIn) return;
 
-      var subject = document.querySelector('[data-subject]');
-      var subjectName = subject ? subject.dataset.subject : '';
+        var subject = document.querySelector('[data-subject]');
+        var subjectName = subject ? subject.dataset.subject : '';
 
-      // Show bookmark buttons
-      document.querySelectorAll('.bm-star-btn').forEach(function (btn) {
-        btn.classList.remove('hidden');
-        btn.addEventListener('click', function (e) {
-          e.preventDefault();
-          e.stopPropagation();
-          var isBm = btn.dataset.bookmarked === 'true';
-          var data = {
-            subject: btn.dataset.subject,
-            lecture: btn.dataset.lecture,
-            displayName: btn.dataset.displayName,
-          };
-          if (isBm) {
-            BN.del('/api/bookmarks/remove', data).then(function () {
-              btn.dataset.bookmarked = 'false';
-              btn.querySelector('.bm-outline').classList.remove('hidden');
-              btn.querySelector('.bm-filled').classList.add('hidden');
+        // Show bookmark buttons
+        document.querySelectorAll('.bm-star-btn').forEach(function (btn) {
+          btn.classList.remove('hidden');
+          btn.addEventListener('click', function (e) {
+            e.preventDefault();
+            e.stopPropagation();
+            var isBm = btn.dataset.bookmarked === 'true';
+            var data = {
+              subject: btn.dataset.subject,
+              lecture: btn.dataset.lecture,
+              displayName: btn.dataset.displayName,
+            };
+            if (isBm) {
+              BN.del('/api/bookmarks/remove', data).then(function () {
+                btn.dataset.bookmarked = 'false';
+                btn.querySelector('.bm-outline').classList.remove('hidden');
+                btn.querySelector('.bm-filled').classList.add('hidden');
+              });
+            } else {
+              BN.post('/api/bookmarks/add', data).then(function () {
+                btn.dataset.bookmarked = 'true';
+                btn.querySelector('.bm-outline').classList.add('hidden');
+                btn.querySelector('.bm-filled').classList.remove('hidden');
+              });
+            }
+          });
+        });
+
+        // Load bookmarks to set initial state
+        BN.json('/api/bookmarks/list').then(function (data) {
+          if (!data || !data.bookmarks) return;
+          var allBm = Object.values(data.bookmarks).flat();
+          document.querySelectorAll('.bm-star-btn').forEach(function (btn) {
+            var isBm = allBm.some(function (b) {
+              return b.subject === btn.dataset.subject && b.lecture === btn.dataset.lecture;
             });
-          } else {
-            BN.post('/api/bookmarks/add', data).then(function () {
+            if (isBm) {
               btn.dataset.bookmarked = 'true';
               btn.querySelector('.bm-outline').classList.add('hidden');
               btn.querySelector('.bm-filled').classList.remove('hidden');
-            });
-          }
-        });
-      });
-
-      // Load bookmarks to set initial state
-      BN.json('/api/bookmarks/list').then(function (data) {
-        if (!data || !data.bookmarks) return;
-        var allBm = Object.values(data.bookmarks).flat();
-        document.querySelectorAll('.bm-star-btn').forEach(function (btn) {
-          var isBm = allBm.some(function (b) {
-            return b.subject === btn.dataset.subject && b.lecture === btn.dataset.lecture;
+            }
           });
-          if (isBm) {
-            btn.dataset.bookmarked = 'true';
-            btn.querySelector('.bm-outline').classList.add('hidden');
-            btn.querySelector('.bm-filled').classList.remove('hidden');
-          }
+        });
+
+        // Load progress
+        BN.json('/api/progress/list?subject=' + encodeURIComponent(subjectName)).then(function (data) {
+          if (!data || !data.lectures) return;
+          var progressMap = {};
+          data.lectures.forEach(function (l) { progressMap[l.lecture] = l.readPct; });
+
+          document.querySelectorAll('[data-lecture]').forEach(function (row) {
+            var lecture = row.dataset.lecture;
+            var pct = progressMap[lecture];
+            if (pct === undefined) return;
+            var dot = row.querySelector('.bm-progress-dot');
+            if (!dot) return;
+            dot.classList.remove('hidden');
+            if (pct >= 80) {
+              dot.style.backgroundColor = 'var(--accent)';
+              dot.style.borderColor = 'var(--accent)';
+              dot.title = 'Read';
+            } else if (pct > 20) {
+              dot.style.background = 'linear-gradient(to right, var(--accent) 50%, var(--border) 50%)';
+              dot.style.borderColor = 'var(--accent)';
+              dot.title = 'Partially read';
+            } else {
+              dot.style.borderColor = 'var(--text-faint)';
+              dot.title = 'Unread';
+            }
+          });
         });
       });
+    };
 
-      // Load progress
-      BN.json('/api/progress/list?subject=' + encodeURIComponent(subjectName)).then(function (data) {
-        if (!data || !data.lectures) return;
-        var progressMap = {};
-        data.lectures.forEach(function (l) { progressMap[l.lecture] = l.readPct; });
-
-        document.querySelectorAll('[data-lecture]').forEach(function (row) {
-          var lecture = row.dataset.lecture;
-          var pct = progressMap[lecture];
-          if (pct === undefined) return;
-          var dot = row.querySelector('.bm-progress-dot');
-          if (!dot) return;
-          dot.classList.remove('hidden');
-          if (pct >= 80) {
-            dot.style.backgroundColor = 'var(--accent)';
-            dot.style.borderColor = 'var(--accent)';
-            dot.title = 'Read';
-          } else if (pct > 20) {
-            dot.style.background = 'linear-gradient(to right, var(--accent) 50%, var(--border) 50%)';
-            dot.style.borderColor = 'var(--accent)';
-            dot.title = 'Partially read';
-          } else {
-            dot.style.borderColor = 'var(--text-faint)';
-            dot.title = 'Unread';
-          }
-        });
-      });
-    });
+    if ('requestIdleCallback' in window) {
+      requestIdleCallback(function () { initBookmarks(); });
+    } else {
+      setTimeout(initBookmarks, 1);
+    }
   })();
 </script>
