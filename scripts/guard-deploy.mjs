@@ -8,6 +8,12 @@ const RESET = "\x1b[0m";
 const skipFlag = "--dangerously-skip-branch-check";
 const skip = process.argv.includes(skipFlag);
 
+const isCI = process.env.CI === 'true' || process.env.CI === '1' || !!process.env.GITHUB_ACTIONS || !!process.env.CF_PAGES;
+
+if (!isCI) {
+  bail("Direct deployments from local machines are strictly disabled.\nAll deployments must go through Git and Cloudflare Workers (CI/CD).");
+}
+
 let branch;
 try {
   branch = execSync("git branch --show-current", { encoding: "utf8" }).trim();
