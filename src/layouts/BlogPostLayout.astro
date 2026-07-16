@@ -223,22 +223,69 @@ const displayDate = new Date(publishedAt).toLocaleDateString('en-US', {
   <div id="blog-share-toast" class="fixed bottom-5 right-5 z-50 bg-[var(--accent)] text-[var(--accent-contrast)] px-4 py-2 rounded-[var(--r-sm)] shadow-[var(--shadow-overlay)] text-sm font-medium transform translate-y-10 opacity-0 pointer-events-none transition-all duration-300">
     Copied link to clipboard!
   </div>
+
+  <!-- Sign-in Nudge Toast -->
+  <div id="blog-signin-nudge" class="nudge-hidden fixed bottom-5 left-1/2 -translate-x-1/2 z-50 flex items-center gap-3 bg-[var(--bg-elevated)] border border-[var(--border)] text-[var(--text)] px-4 py-3 rounded-[var(--r-md)] shadow-[var(--shadow-overlay)] text-sm font-medium transition-all duration-300">
+    <svg class="w-4 h-4 text-[var(--accent)] flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+      <path stroke-linecap="round" stroke-linejoin="round" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
+    </svg>
+    <span><a href={`/auth/signin?redirect=${encodeURIComponent('/blog/' + slug)}`} class="text-[var(--accent)] font-semibold hover:underline">Sign in</a> to like and follow</span>
+    <button id="blog-signin-nudge-close" class="ml-2 text-[var(--text-muted)] hover:text-[var(--text)] transition-colors flex-shrink-0" aria-label="Dismiss">
+      <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+        <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" />
+      </svg>
+    </button>
+  </div>
 </BaseLayout>
+
 
 <script is:inline>
   (function () {
-    function isLoggedIn() {
-      return document.querySelector('.blog-engagement-bar[data-user]')?.dataset?.user === '1';
+    // ── Auth state ──────────────────────────────────────────────────────────
+    // We do NOT trust data-user on the DOM: Cloudflare may serve an
+    // edge-cached anonymous page to a logged-in user, leaving data-user="0"
+    // even after sign-in. /api/auth/me is always no-cache and reads the real
+    // session cookie, so it is the correct source of truth.
+    var _authState = null; // null = pending, false = logged out, true = logged in
+
+    function getAuthState(cb) {
+      if (_authState !== null) { cb(_authState); return; }
+      fetch('/api/auth/me', { credentials: 'same-origin' })
+        .then(function (r) { return r.json(); })
+        .then(function (data) {
+          _authState = !!(data && data.user);
+          cb(_authState);
+        })
+        .catch(function () { _authState = false; cb(false); });
     }
 
-    function requireLogin() {
-      if (!isLoggedIn()) {
-        window.location.href = '/auth/signin?redirect=' + encodeURIComponent(window.location.pathname);
-        return false;
-      }
-      return true;
+    // ── Sign-in nudge toast ─────────────────────────────────────────────────
+    var nudgeTimeout = null;
+    function showSignInNudge() {
+      var el = document.getElementById('blog-signin-nudge');
+      if (!el) return;
+      clearTimeout(nudgeTimeout);
+      el.classList.remove('nudge-hidden');
+      el.classList.add('nudge-visible');
+      nudgeTimeout = setTimeout(function () {
+        el.classList.remove('nudge-visible');
+        el.classList.add('nudge-hidden');
+      }, 3500);
     }
 
+    // ── Share toast ─────────────────────────────────────────────────────────
+    function showShareToast() {
+      var toast = document.getElementById('blog-share-toast');
+      if (!toast) return;
+      toast.classList.remove('translate-y-10', 'opacity-0', 'pointer-events-none');
+      toast.classList.add('translate-y-0', 'opacity-100');
+      setTimeout(function () {
+        toast.classList.remove('translate-y-0', 'opacity-100');
+        toast.classList.add('translate-y-10', 'opacity-0', 'pointer-events-none');
+      }, 2500);
+    }
+
+    // ── Like UI ─────────────────────────────────────────────────────────────
     function setLikeUI(slug, liked, count) {
       document.querySelectorAll('.blog-engagement-bar[data-slug="' + slug + '"] .blog-likes-count').forEach(function (span) {
         span.textContent = count;
@@ -257,6 +304,7 @@ const displayDate = new Date(publishedAt).toLocaleDateString('en-US', {
       });
     }
 
+    // ── Follow UI ───────────────────────────────────────────────────────────
     function setFollowUI(author, following) {
       document.querySelectorAll('.blog-follow-btn[data-author="' + author + '"]').forEach(function (btn) {
         if (following) {
@@ -269,80 +317,90 @@ const displayDate = new Date(publishedAt).toLocaleDateString('en-US', {
       });
     }
 
+    // ── Main setup ──────────────────────────────────────────────────────────
     function setupInteractivity() {
-      // 1. Follow Buttons
+      // Reset auth state on each page (important for view transitions / SPA nav)
+      _authState = null;
+
+      // 1. Follow Buttons — always fetch state from API (not from DOM)
       var followBtns = document.querySelectorAll('.blog-follow-btn');
+
       followBtns.forEach(function (btn) {
+        var author = btn.dataset.author;
+        fetch('/api/blog/follow?author=' + encodeURIComponent(author), { credentials: 'same-origin' })
+          .then(function (r) { return r.ok ? r.json() : null; })
+          .then(function (data) { if (data) setFollowUI(author, data.following); })
+          .catch(function () {});
+
         btn.onclick = function (e) {
           e.preventDefault();
-          if (!requireLogin()) return;
-          var author = btn.dataset.author;
-          fetch('/api/blog/follow', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ author: author }),
-          })
-            .then(function (r) { return r.ok ? r.json() : null; })
-            .then(function (data) {
-              if (data) setFollowUI(author, data.following);
+          getAuthState(function (loggedIn) {
+            if (!loggedIn) { showSignInNudge(); return; }
+            var isFollowing = btn.classList.contains('following');
+            // Optimistic UI
+            setFollowUI(author, !isFollowing);
+            fetch('/api/blog/follow', {
+              method: 'POST',
+              credentials: 'same-origin',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ author: author }),
             })
-            .catch(function () {});
+              .then(function (r) {
+                if (r.status === 401) { setFollowUI(author, isFollowing); showSignInNudge(); return null; }
+                return r.ok ? r.json() : null;
+              })
+              .then(function (data) { if (data) setFollowUI(author, data.following); })
+              .catch(function () { setFollowUI(author, isFollowing); });
+          });
         };
       });
 
-      // 2. Likes (Heart) buttons
+      // 2. Like Buttons — always fetch initial state from API
       var likers = document.querySelectorAll('.blog-btn-like');
       var loadedSlugs = {};
       likers.forEach(function (btn) {
-        var slug = btn.closest('.blog-engagement-bar').dataset.slug;
+        var bar = btn.closest('.blog-engagement-bar');
+        var slug = bar && bar.dataset.slug;
+        if (!slug) return;
 
-        // Fetch initial state from server (once per slug)
         if (!loadedSlugs[slug]) {
           loadedSlugs[slug] = true;
-          fetch('/api/blog/like?slug=' + encodeURIComponent(slug))
+          fetch('/api/blog/like?slug=' + encodeURIComponent(slug), { credentials: 'same-origin' })
             .then(function (r) { return r.ok ? r.json() : null; })
-            .then(function (data) {
-              if (data) setLikeUI(slug, data.liked, data.count);
-            })
+            .then(function (data) { if (data) setLikeUI(slug, data.liked, data.count); })
             .catch(function () {});
         }
 
         btn.onclick = function (e) {
           e.preventDefault();
-          if (!requireLogin()) return;
-          fetch('/api/blog/like', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ slug: slug }),
-          })
-            .then(function (r) { return r.ok ? r.json() : null; })
-            .then(function (data) {
-              if (data) {
-                setLikeUI(slug, data.liked, data.count);
-                if (data.liked) {
-                  btn.classList.add('like-pulse');
-                  setTimeout(function () { btn.classList.remove('like-pulse'); }, 300);
-                }
-              }
+          getAuthState(function (loggedIn) {
+            if (!loggedIn) { showSignInNudge(); return; }
+            var wasLiked = btn.classList.contains('liked');
+            var countEls = document.querySelectorAll('.blog-engagement-bar[data-slug="' + slug + '"] .blog-likes-count');
+            var currentCount = parseInt((countEls[0] && countEls[0].textContent) || '0', 10) || 0;
+            // Optimistic UI
+            setLikeUI(slug, !wasLiked, currentCount + (wasLiked ? -1 : 1));
+            if (!wasLiked) {
+              btn.classList.add('like-pulse');
+              setTimeout(function () { btn.classList.remove('like-pulse'); }, 300);
+            }
+            fetch('/api/blog/like', {
+              method: 'POST',
+              credentials: 'same-origin',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ slug: slug }),
             })
-            .catch(function () {});
+              .then(function (r) {
+                if (r.status === 401) { setLikeUI(slug, wasLiked, currentCount); showSignInNudge(); return null; }
+                return r.ok ? r.json() : null;
+              })
+              .then(function (data) { if (data) setLikeUI(slug, data.liked, data.count); })
+              .catch(function () { setLikeUI(slug, wasLiked, currentCount); });
+          });
         };
       });
 
-      // 3. Fetch initial follow state (if logged in)
-      if (isLoggedIn()) {
-        followBtns.forEach(function (btn) {
-          var author = btn.dataset.author;
-          fetch('/api/blog/follow?author=' + encodeURIComponent(author))
-            .then(function (r) { return r.ok ? r.json() : null; })
-            .then(function (data) {
-              if (data) setFollowUI(author, data.following);
-            })
-            .catch(function () {});
-        });
-      }
-
-      // 3. Bookmarks buttons (localStorage)
+      // 3. Bookmarks (localStorage)
       var bookmarkBtns = document.querySelectorAll('.blog-btn-bookmark');
       var bookmarks = {};
       try {
@@ -351,7 +409,9 @@ const displayDate = new Date(publishedAt).toLocaleDateString('en-US', {
       } catch (e) {}
 
       function updateBookmarkBtnUI(btn) {
-        var slug = btn.closest('.blog-engagement-bar').dataset.slug;
+        var bar = btn.closest('.blog-engagement-bar');
+        var slug = bar && bar.dataset.slug;
+        if (!slug) return;
         var svg = btn.querySelector('svg');
         if (bookmarks[slug]) {
           btn.classList.add('bookmarked');
@@ -368,39 +428,35 @@ const displayDate = new Date(publishedAt).toLocaleDateString('en-US', {
         updateBookmarkBtnUI(btn);
         btn.onclick = function (e) {
           e.preventDefault();
-          var slug = btn.closest('.blog-engagement-bar').dataset.slug;
+          var bar = btn.closest('.blog-engagement-bar');
+          var slug = bar && bar.dataset.slug;
+          if (!slug) return;
           bookmarks[slug] = !bookmarks[slug];
-          try {
-            localStorage.setItem('bitsnotes-bookmarked-posts', JSON.stringify(bookmarks));
-          } catch (err) {}
+          try { localStorage.setItem('bitsnotes-bookmarked-posts', JSON.stringify(bookmarks)); } catch (err) {}
           document.querySelectorAll('.blog-engagement-bar[data-slug="' + slug + '"] .blog-btn-bookmark').forEach(updateBookmarkBtnUI);
         };
       });
 
-      // 5. Share buttons
-      var shareBtns = document.querySelectorAll('.blog-btn-share');
-      var toast = document.getElementById('blog-share-toast');
-      shareBtns.forEach(function (btn) {
+      // 4. Share Buttons
+      document.querySelectorAll('.blog-btn-share').forEach(function (btn) {
         btn.onclick = function (e) {
           e.preventDefault();
-          navigator.clipboard.writeText(window.location.href).then(function () {
-            if (toast) {
-              toast.classList.remove('translate-y-10', 'opacity-0', 'pointer-events-none');
-              toast.classList.add('translate-y-0', 'opacity-100');
-              setTimeout(function () {
-                toast.classList.remove('translate-y-0', 'opacity-100');
-                toast.classList.add('translate-y-10', 'opacity-0', 'pointer-events-none');
-              }, 2500);
-            }
-          });
+          navigator.clipboard.writeText(window.location.href).then(showShareToast).catch(function () {});
         };
       });
+
+      // 5. Sign-in nudge close button
+      var nudgeClose = document.getElementById('blog-signin-nudge-close');
+      if (nudgeClose) {
+        nudgeClose.onclick = function () {
+          var el = document.getElementById('blog-signin-nudge');
+          if (el) { clearTimeout(nudgeTimeout); el.classList.remove('nudge-visible'); el.classList.add('nudge-hidden'); }
+        };
+      }
     }
 
-    // Run on boot
     setupInteractivity();
-
-    // Re-run after swap
     document.addEventListener('astro:after-swap', setupInteractivity);
   })();
 </script>
+
