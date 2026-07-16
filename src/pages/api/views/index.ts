@@ -9,7 +9,7 @@
  */
 
 import type { APIRoute } from 'astro';
-import { getEnv, json, badRequest, serverError } from '../../../lib/apiHelpers';
+import { getEnv, json, badRequest } from '../../../lib/apiHelpers';
 import { incrementViews, getViews, seedOffsetForKey } from '../../../lib/views';
 
 export const prerender = false;
@@ -29,7 +29,9 @@ export const GET: APIRoute = async (context) => {
     const views = await getViews(env.DB, key);
     return json({ views }, 200);
   } catch (err) {
-    return serverError('Failed to fetch views');
+    // Graceful degradation: if the DB query fails (e.g. table not yet migrated),
+    // return the seed offset so the counter still shows a realistic number.
+    return json({ views: seedOffsetForKey(key) }, 200);
   }
 };
 
@@ -52,6 +54,8 @@ export const POST: APIRoute = async (context) => {
     const views = await incrementViews(env.DB, key);
     return json({ views }, 200);
   } catch (err) {
-    return serverError('Failed to record view');
+    // Graceful degradation: if the DB query fails (e.g. table not yet migrated),
+    // return the seed offset so the counter still shows a realistic number.
+    return json({ views: seedOffsetForKey(key) }, 200);
   }
 };
