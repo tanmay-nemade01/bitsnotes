@@ -1,8 +1,9 @@
 ---
 import BaseLayout from '../../layouts/BaseLayout.astro';
-import { listLectures } from '../../utils/notesLoader';
+import { listLectures, getSubjectByNameOrSlug } from '../../utils/notesLoader';
 import { getSubjectInfo } from '../../data/subjects';
 import CommentsSection from '../../components/CommentsSection.astro';
+import { slugify } from '../../utils/lectureDisplay';
 
 export const prerender = false;
 
@@ -10,31 +11,41 @@ const { subject } = Astro.params;
 if (!subject) return Astro.redirect('/');
 
 const decodedSubject = decodeURIComponent(subject);
-const lectures = await listLectures(decodedSubject);
-const subjectInfo = getSubjectInfo(decodedSubject);
+const matchedSubject = await getSubjectByNameOrSlug(decodedSubject);
+if (!matchedSubject) return Astro.redirect('/');
+
+// Redirect to canonical slug if raw subject name or unslugified path was used
+const canonicalSubjectSlug = slugify(matchedSubject.name);
+if (decodedSubject !== canonicalSubjectSlug) {
+  return Astro.redirect(`/subject/${encodeURIComponent(canonicalSubjectSlug)}`);
+}
+
+const decodedSubjectName = matchedSubject.name;
+const lectures = await listLectures(decodedSubjectName);
+const subjectInfo = getSubjectInfo(decodedSubjectName);
 
 const collectionPageSchema = {
   "@context": "https://schema.org",
   "@type": "CollectionPage",
-  "name": `${decodedSubject} Lecture Notes & Study Guides | BitsNotes`,
-  "description": `Comprehensive collection of study guides, lecture notes, and interactive quizzes for ${decodedSubject}.`,
+  "name": `${decodedSubjectName} Lecture Notes & Study Guides | BitsNotes`,
+  "description": `Comprehensive collection of study guides, lecture notes, and interactive quizzes for ${decodedSubjectName}.`,
   "url": new URL(Astro.url.pathname, 'https://bitsnotes.com').href,
-  "about": { "@type": "Course", "name": decodedSubject, "description": `Academic course materials and study resources for ${decodedSubject}.` },
+  "about": { "@type": "Course", "name": decodedSubjectName, "description": `Academic course materials and study resources for ${decodedSubjectName}.` },
   "hasPart": lectures.map((l, i) => ({
     "@type": "LearningResource",
     "name": l.name,
-    "url": new URL(`/view/${encodeURIComponent(decodedSubject)}/${encodeURIComponent(l.slug)}`, 'https://bitsnotes.com').href,
+    "url": new URL(`/view/${encodeURIComponent(canonicalSubjectSlug)}/${encodeURIComponent(l.slug)}`, 'https://bitsnotes.com').href,
     "position": i + 1
   }))
 };
 
 const collectionPageJson = JSON.stringify(collectionPageSchema);
-const seoKeywords = `${decodedSubject}, lecture notes, study guides, college courses, study materials, academic resources, BitsNotes`;
+const seoKeywords = `${decodedSubjectName}, lecture notes, study guides, college courses, study materials, academic resources, BitsNotes`;
 ---
 
 <BaseLayout
-  title={`${decodedSubject} Lectures & Notes | BitsNotes`}
-  description={`Comprehensive collection of lecture notes, study guides, and interactive practice quizzes for ${decodedSubject}. Access view-only notes and curated summaries for every lecture.`}
+  title={`${decodedSubjectName} Lectures & Notes | BitsNotes`}
+  description={`Comprehensive collection of lecture notes, study guides, and interactive practice quizzes for ${decodedSubjectName}. Access view-only notes and curated summaries for every lecture.`}
   keywords={seoKeywords}
   robots="index, follow"
 >
@@ -49,13 +60,13 @@ const seoKeywords = `${decodedSubject}, lecture notes, study guides, college cou
       <svg class="w-3 h-3 text-[var(--text-faint)]" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24">
         <path stroke-linecap="round" stroke-linejoin="round" d="M9 5l7 7-7 7"/>
       </svg>
-      <span class="text-[var(--text)] font-medium truncate">{decodedSubject}</span>
+      <span class="text-[var(--text)] font-medium truncate">{decodedSubjectName}</span>
     </nav>
 
     <!-- Editorial header -->
     <header class="mb-8">
       <h1 class="font-display text-3xl md:text-4xl font-extrabold text-[var(--text)] leading-tight tracking-tight">
-        {decodedSubject}
+        {decodedSubjectName}
       </h1>
       <p class="mt-1 text-sm text-[var(--text-muted)]">
         {lectures.length} {lectures.length === 1 ? 'lecture' : 'lectures'}
@@ -92,7 +103,7 @@ const seoKeywords = `${decodedSubject}, lecture notes, study guides, college cou
     ) : (
       <div id="lecture-list" class="divide-y divide-[var(--border)] border-y border-[var(--border)]">
         {lectures.map((lec) => {
-          const viewPath = `/view/${encodeURIComponent(decodedSubject)}/${encodeURIComponent(lec.slug)}`;
+          const viewPath = `/view/${encodeURIComponent(canonicalSubjectSlug)}/${encodeURIComponent(lec.slug)}`;
           const lectureName = lec.displayTitle || lec.name;
           const numLabel = lec.lectureNumber != null
             ? (lec.lectureNumberEnd != null
@@ -102,7 +113,7 @@ const seoKeywords = `${decodedSubject}, lecture notes, study guides, college cou
           return (
             <div
               data-lecture-name={lectureName.toLowerCase()}
-              data-subject={decodedSubject}
+              data-subject={decodedSubjectName}
               data-lecture={lec.folderName}
               class="flex items-center gap-4 py-3.5 px-3 -mx-3 rounded-[var(--r-sm)] hover:bg-[var(--bg-subtle)] transition-colors group"
             >
@@ -120,7 +131,7 @@ const seoKeywords = `${decodedSubject}, lecture notes, study guides, college cou
               <button
                 type="button"
                 class="bm-star-btn hidden p-1 rounded-full hover:bg-[var(--accent-subtle)] transition-colors shrink-0"
-                data-subject={decodedSubject}
+                data-subject={decodedSubjectName}
                 data-lecture={lec.folderName}
                 data-display-name={lectureName}
                 data-bookmarked="false"
@@ -140,7 +151,7 @@ const seoKeywords = `${decodedSubject}, lecture notes, study guides, college cou
     )}
 
     <!-- Anonymous comments (lazy-loaded, below resource list) -->
-    <CommentsSection pageType="subject" subject={decodedSubject} />
+    <CommentsSection pageType="subject" subject={decodedSubjectName} />
   </div>
 </BaseLayout>
 

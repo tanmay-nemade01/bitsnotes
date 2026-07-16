@@ -3,10 +3,10 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
 import '../../styles/lecture-notes.css';
 import { getFallbackMetadata } from '../../utils/metadata';
 import type { QuizQuestion } from '../../utils/metadata';
-import { listSubjects, listLectures, getLectureContent } from '../../utils/notesLoader';
+import { listSubjects, listLectures, getLectureContent, getSubjectByNameOrSlug } from '../../utils/notesLoader';
 import { parseLectureHtml } from '../../utils/htmlParser';
 import { splitLectureTopics } from '../../utils/topicSplitter';
-import { getResourceKindLabel } from '../../utils/lectureDisplay';
+import { getResourceKindLabel, slugify } from '../../utils/lectureDisplay';
 import PomodoroTimer from '../../components/PomodoroTimer.astro';
 import CommentsSection from '../../components/CommentsSection.astro';
 import UsefulnessFeedback from '../../components/UsefulnessFeedback.astro';
@@ -20,8 +20,14 @@ if (!path) return Astro.redirect('/');
 const segments = path.split('/').map(decodeURIComponent);
 if (segments.length < 2) return Astro.redirect('/');
 
-const subjectName = segments[0];
+const subjectSlugOrFolderName = segments[0];
 const lectureSlugOrFolderName = segments[1];
+
+const matchedSubject = await getSubjectByNameOrSlug(subjectSlugOrFolderName);
+if (!matchedSubject) {
+  return Astro.redirect('/');
+}
+const subjectName = matchedSubject.name;
 
 const lectures = await listLectures(subjectName);
 const matchedLecture = lectures.find(
@@ -32,9 +38,12 @@ if (!matchedLecture) {
   return Astro.redirect('/');
 }
 
-// Redirect to canonical slug if folderName was used in URL instead of slug
-if (lectureSlugOrFolderName === matchedLecture.folderName && matchedLecture.slug !== matchedLecture.folderName) {
-  const targetUrl = new URL(`/view/${encodeURIComponent(subjectName)}/${encodeURIComponent(matchedLecture.slug)}`, Astro.url);
+// Redirect to canonical slug if raw/unslugified names or folderNames were used in URL
+const canonicalSubjectSlug = slugify(subjectName);
+const canonicalLectureSlug = matchedLecture.slug;
+
+if (subjectSlugOrFolderName !== canonicalSubjectSlug || lectureSlugOrFolderName !== canonicalLectureSlug) {
+  const targetUrl = new URL(`/view/${encodeURIComponent(canonicalSubjectSlug)}/${encodeURIComponent(canonicalLectureSlug)}`, Astro.url);
   targetUrl.search = Astro.url.search;
   return Astro.redirect(targetUrl.pathname + targetUrl.search);
 }
@@ -105,7 +114,7 @@ const currentSubjectIndex = subjects.findIndex(s => s.name === subjectName);
 if (currentLectureIndex !== -1 && currentSubjectIndex !== -1) {
   if (currentLectureIndex > 0) {
     const p = lectures[currentLectureIndex - 1];
-    prevUrl = `/view/${encodeURIComponent(subjectName)}/${encodeURIComponent(p.slug)}`;
+    prevUrl = `/view/${encodeURIComponent(slugify(subjectName))}/${encodeURIComponent(p.slug)}`;
     prevLabel = p.displayTitle || p.name;
   } else {
     const prevSubjectIdx = (currentSubjectIndex - 1 + subjects.length) % subjects.length;
@@ -113,14 +122,14 @@ if (currentLectureIndex !== -1 && currentSubjectIndex !== -1) {
     const prevLectures = await listLectures(prevSubject.name);
     if (prevLectures.length > 0) {
       const last = prevLectures[prevLectures.length - 1];
-      prevUrl = `/view/${encodeURIComponent(prevSubject.name)}/${encodeURIComponent(last.slug)}`;
+      prevUrl = `/view/${encodeURIComponent(slugify(prevSubject.name))}/${encodeURIComponent(last.slug)}`;
       prevLabel = last.displayTitle || last.name;
     }
   }
 
   if (currentLectureIndex < lectures.length - 1) {
     const n = lectures[currentLectureIndex + 1];
-    nextUrl = `/view/${encodeURIComponent(subjectName)}/${encodeURIComponent(n.slug)}`;
+    nextUrl = `/view/${encodeURIComponent(slugify(subjectName))}/${encodeURIComponent(n.slug)}`;
     nextLabel = n.displayTitle || n.name;
   } else {
     const nextSubjectIdx = (currentSubjectIndex + 1) % subjects.length;
@@ -128,7 +137,7 @@ if (currentLectureIndex !== -1 && currentSubjectIndex !== -1) {
     const nextLectures = await listLectures(nextSubject.name);
     if (nextLectures.length > 0) {
       const first = nextLectures[0];
-      nextUrl = `/view/${encodeURIComponent(nextSubject.name)}/${encodeURIComponent(first.slug)}`;
+      nextUrl = `/view/${encodeURIComponent(slugify(nextSubject.name))}/${encodeURIComponent(first.slug)}`;
       nextLabel = first.displayTitle || first.name;
     }
   }
@@ -243,7 +252,7 @@ const quizJson = quizSchema ? JSON.stringify(quizSchema) : null;
                 const resourceItems = lectures.filter((l) => l.scope !== 'lecture' && l.resourceKind !== 'lecture');
                 const renderItem = (lec: typeof lectures[number]) => {
                   const active = lec.folderName === lectureFolderName;
-                  const url = active ? '#' : `/view/${encodeURIComponent(subjectName)}/${encodeURIComponent(lec.slug)}`;
+                  const url = active ? '#' : `/view/${encodeURIComponent(slugify(subjectName))}/${encodeURIComponent(lec.slug)}`;
                   const numLabel = lec.lectureNumber != null
                     ? (lec.lectureNumberEnd != null
                         ? `${lec.lectureNumber.toString().padStart(2, '0')}–${lec.lectureNumberEnd.toString().padStart(2, '0')}`

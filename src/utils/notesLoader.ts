@@ -263,6 +263,13 @@ export async function listSubjects(): Promise<SubjectSummary[]> {
   }));
 }
 
+/** Get a subject by its raw name or its slugified name. */
+export async function getSubjectByNameOrSlug(nameOrSlug: string): Promise<SubjectSummary | null> {
+  const subjects = await listSubjects();
+  const matched = subjects.find(s => slugify(s.name) === slugify(nameOrSlug) || s.name === nameOrSlug);
+  return matched || null;
+}
+
 /** List all lectures within a subject, as normalized catalog entries. */
 export async function listLectures(subjectName: string): Promise<CatalogLecture[]> {
   const manifest = await getManifest();
