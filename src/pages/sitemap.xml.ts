@@ -1,6 +1,7 @@
 import type { APIRoute } from 'astro';
 import { listSubjects, listLectures } from '../utils/notesLoader';
 import { getPublishedPosts } from '../utils/blogLoader';
+import { slugify } from '../utils/lectureDisplay';
 
 export const prerender = false;
 
@@ -36,7 +37,7 @@ export const GET: APIRoute = async ({ url }) => {
 
   const subjects = await listSubjects();
   for (const subject of subjects) {
-    const subjectParam = encodeURIComponent(subject.name);
+    const subjectParam = slugify(subject.name);
     pages.push({
       path: `/subject/${subjectParam}`,
       changefreq: 'weekly',
