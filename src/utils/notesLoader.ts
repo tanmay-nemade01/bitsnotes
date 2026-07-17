@@ -331,44 +331,6 @@ export async function listSubjectResources(subjectName: string): Promise<Catalog
   return listLectures(subjectName);
 }
 
-/** Phase 2.5 — Real library statistics derived from the catalog (no view counters). */
-export interface LibraryStats {
-  subjects: number;
-  lectures: number;
-  authoredQuizQuestions: number;
-  examRevisionResources: number;
-  additionalResources: number;
-}
-
-export async function getLibraryStats(): Promise<LibraryStats> {
-  const catalog = await listCatalog();
-  let lectures = 0;
-  let authoredQuizQuestions = 0;
-  let examRevisionResources = 0;
-  let additionalResources = 0;
-
-  for (const subject of catalog) {
-    for (const lec of subject.lectures) {
-      if (lec.scope === 'lecture') {
-        lectures++;
-      } else {
-        additionalResources++;
-      }
-      authoredQuizQuestions += lec.authoredQuizCount;
-      if (lec.availableModes.includes('exam-revision')) {
-        examRevisionResources++;
-      }
-    }
-  }
-
-  return {
-    subjects: catalog.length,
-    lectures,
-    authoredQuizQuestions,
-    examRevisionResources,
-    additionalResources,
-  };
-}
 
 /** Get the full HTML content and metadata for a specific lecture. */
 export async function getLectureContent(subjectName: string, lectureFolderName: string): Promise<LectureContent | null> {
