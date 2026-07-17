@@ -69,7 +69,7 @@ const CODE_COLOR_PATTERNS = [
 
 // 4. Theme bootstrap meta-color literals (light/dark paper). Mirror the
 //    tokens; used only to set <meta name="theme-color"> before paint.
-const THEME_META_PATTERNS = ['#FAF9F6', '#16140F'];
+const THEME_META_PATTERNS = ['#FAF9F6', '#16140F', '#161B22', '#FFFFFF'];
 
 // 5. Neutral shadows / scrims / ripple tints. These are low-alpha overlays
 //    that read acceptably on both themes (subtle elevation, ripple on accent
