@@ -18,6 +18,9 @@
  */
 
 import type { AuthDb } from './auth/db';
+import { getPostBySlug } from '../utils/blogLoader';
+import { getManifest } from '../utils/notesLoader';
+import { slugify } from '../utils/lectureDisplay';
 
 // ─── Key helpers ──────────────────────────────────────────────────────────────
 
@@ -47,10 +50,55 @@ function seedOffset(key: string, min: number, max: number): number {
   return min + (h % (max - min + 1));
 }
 
-export function seedOffsetForKey(key: string): number {
+function isNewDate(dateStr: string | undefined): boolean {
+  if (!dateStr) return false;
+  try {
+    const parsed = Date.parse(dateStr);
+    if (isNaN(parsed)) return false;
+    const threshold = Date.parse('2026-07-17');
+    return parsed >= threshold;
+  } catch {
+    return false;
+  }
+}
+
+export async function seedOffsetForKey(key: string): Promise<number> {
   if (key === 'home') return seedOffset(key, 10000, 11000);
-  if (key.startsWith('blog:')) return seedOffset(key, 50, 60);
-  return seedOffset(key, 400, 500); // lecture
+
+  if (key.startsWith('blog:')) {
+    const slug = key.substring(5);
+    const post = getPostBySlug(slug);
+    if (post && post.frontmatter.publishedAt) {
+      if (isNewDate(post.frontmatter.publishedAt)) {
+        return 0;
+      }
+    }
+    return seedOffset(key, 50, 60);
+  }
+
+  if (key.startsWith('lecture:')) {
+    const match = key.match(/^lecture:([^:]+):(.+)$/);
+    if (match) {
+      const subjectName = match[1];
+      const lectureFolderName = match[2];
+      try {
+        const manifest = await getManifest();
+        const subject = manifest.subjects.find(
+          s => s.name === subjectName || slugify(s.name) === slugify(subjectName)
+        );
+        const lecture = subject?.lectures.find(l => l.folderName === lectureFolderName);
+        const datePublished = lecture?.metadata?.datePublished;
+        if (datePublished && isNewDate(datePublished)) {
+          return 0;
+        }
+      } catch (err) {
+        console.error('[views] Error reading manifest:', err);
+      }
+    }
+    return seedOffset(key, 400, 500); // lecture
+  }
+
+  return seedOffset(key, 400, 500);
 }
 
 // ─── DB helpers ───────────────────────────────────────────────────────────────
@@ -60,7 +108,7 @@ export function seedOffsetForKey(key: string): number {
  * offset) if it does not yet exist. Returns the new total view count.
  */
 export async function incrementViews(db: AuthDb, key: string): Promise<number> {
-  const offset = seedOffsetForKey(key);
+  const offset = await seedOffsetForKey(key);
 
   // INSERT OR IGNORE seeds new rows at the offset so first real view shows a
   // realistic non-zero count. Subsequent increments just add 1.
@@ -91,7 +139,7 @@ export async function getViews(db: AuthDb, key: string): Promise<number> {
     .bind(key)
     .first<{ views: number }>();
 
-  return row?.views ?? seedOffsetForKey(key);
+  return row?.views ?? (await seedOffsetForKey(key));
 }
 
 /**
@@ -117,7 +165,7 @@ export async function getViewsBatch(
   // Fill in seed offsets for any keys not yet in the DB
   for (const key of keys) {
     if (!result.has(key)) {
-      result.set(key, seedOffsetForKey(key));
+      result.set(key, await seedOffsetForKey(key));
     }
   }
   return result;

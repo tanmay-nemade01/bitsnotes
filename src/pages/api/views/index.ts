@@ -24,14 +24,14 @@ export const GET: APIRoute = async (context) => {
     if (!env.DB) {
       // Dev fallback: return deterministic seed offset so the counter shows a
       // realistic non-zero number even when D1 is not wired up.
-      return json({ views: seedOffsetForKey(key) }, 200);
+      return json({ views: await seedOffsetForKey(key) }, 200);
     }
     const views = await getViews(env.DB, key);
     return json({ views }, 200);
   } catch (err) {
     // Graceful degradation: if the DB query fails (e.g. table not yet migrated),
     // return the seed offset so the counter still shows a realistic number.
-    return json({ views: seedOffsetForKey(key) }, 200);
+    return json({ views: await seedOffsetForKey(key) }, 200);
   }
 };
 
@@ -49,13 +49,13 @@ export const POST: APIRoute = async (context) => {
   try {
     const env = await getEnv(context);
     if (!env.DB) {
-      return json({ views: seedOffsetForKey(key) }, 200);
+      return json({ views: await seedOffsetForKey(key) }, 200);
     }
     const views = await incrementViews(env.DB, key);
     return json({ views }, 200);
   } catch (err) {
     // Graceful degradation: if the DB query fails (e.g. table not yet migrated),
     // return the seed offset so the counter still shows a realistic number.
-    return json({ views: seedOffsetForKey(key) }, 200);
+    return json({ views: await seedOffsetForKey(key) }, 200);
   }
 };
