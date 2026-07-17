@@ -86,12 +86,6 @@ const lectureName = (lectureContent?.fileName || lectureFolderName).replace(/_/g
 
 const { topics } = splitLectureTopics(bodyContent);
 
-const initialTopicId = Astro.url.searchParams.get('topic') || '';
-let initialTopic = topics.find((t) => t.slug === initialTopicId || t.id === initialTopicId);
-if (!initialTopic) {
-  initialTopic = topics[0];
-}
-
 // Phase 7: resource-type awareness. Non-lecture (subject-scope) resources must
 // not be labelled "Lecture Notes" and must never fabricate a lecture number.
 const isResource = metadata.scope === 'subject' || (metadata.resourceKind && metadata.resourceKind !== 'lecture');
@@ -345,12 +339,15 @@ const quizJson = quizSchema ? JSON.stringify(quizSchema) : null;
                 <span class="content-watermark" aria-hidden="true">&copy; BitsNotes bitsnotes.com - Unauthorized reproduction prohibited</span>
                 <div class="container">
                   <main id="topic-content">
-                    <Fragment set:html={initialTopic?.html} />
+                    {topics.map((t) => (
+                      <section id={t.slug} class="lecture-section mb-12 scroll-mt-24">
+                        <Fragment set:html={t.html} />
+                      </section>
+                    ))}
                   </main>
                 </div>
                 <span class="content-watermark" aria-hidden="true">&copy; BitsNotes bitsnotes.com</span>
               </div>
-              <div id="topic-nav" class="flex gap-3 mt-6 pt-4 border-t border-[var(--border)]"></div>
             </div>
 
             <!-- Study Guide panel -->
@@ -536,7 +533,7 @@ const quizJson = quizSchema ? JSON.stringify(quizSchema) : null;
 
           <!-- ========== RIGHT SIDEBAR (TOC) ========== -->
           {showRightSidebar && (
-            <aside id="topic-sidebar" class="topic-sidebar w-[300px] shrink-0 sticky top-28 max-h-[calc(100vh-130px)] overflow-y-auto lg:block" style="scrollbar-width:thin">
+            <aside id="topic-sidebar" class="topic-sidebar w-[300px] shrink-0 sticky top-28 max-h-[calc(100vh-130px)] overflow-y-auto lg:block collapsed" style="scrollbar-width:thin">
               <div class="flex items-center justify-between pb-4 mb-4 border-b border-[var(--border)]">
                 <div class="sidebar-header-text">
                   <span class="text-[10px] text-[var(--text-faint)] uppercase tracking-wider font-medium">TOC</span>
@@ -551,7 +548,7 @@ const quizJson = quizSchema ? JSON.stringify(quizSchema) : null;
               <nav class="flex flex-col gap-0.5" id="topic-list-nav">
                 {topics.map((t) => (
                   <div class="topic-item-container" data-topic-id={t.id}>
-                    <a href={`?topic=${t.slug}`}
+                    <a href={`#${t.slug}`}
                        class="topic-nav-link flex items-center gap-2.5 px-3 py-2 rounded-[var(--r-sm)] text-[13px] transition-colors no-underline text-[var(--text-muted)] hover:bg-[var(--bg-subtle)] hover:text-[var(--text)]"
                        data-topic-id={t.id}
                        title={t.title}
@@ -564,15 +561,10 @@ const quizJson = quizSchema ? JSON.stringify(quizSchema) : null;
                         <span class="w-7 shrink-0"></span>
                       ))}
                       <span class="topic-title-text line-clamp-2 leading-snug flex-1">{t.title}</span>
-                      <span class="topic-check-indicator hidden text-[var(--accent)] shrink-0">
-                        <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24">
-                          <path d="M20 6L9 17l-5-5"/>
-                        </svg>
-                      </span>
                     </a>
                     
                     {t.subtopics.length > 0 && (
-                      <ul class="topic-subtopics-list pl-8 pr-3 py-1 flex flex-col gap-1 list-none hidden">
+                      <ul class="topic-subtopics-list pl-8 pr-3 py-1 flex flex-col gap-1 list-none">
                         {t.subtopics.map((st) => (
                           <li class="text-xs text-[var(--text-muted)] font-normal py-0.5 line-clamp-2 border-l border-[var(--border)] pl-3" title={st.title}>
                             {st.title}
@@ -586,13 +578,17 @@ const quizJson = quizSchema ? JSON.stringify(quizSchema) : null;
             </aside>
           )}
 
-          {/* Topics JSON data for client-side routing */}
-          <script is:inline define:vars={{ topics }} data-astro-rerun>
-            window.lectureTopics = topics;
-          </script>
-
         </div>
       </div>
+    )}
+
+    {/* Floating Comments FAB */}
+    {hasHtmlContent && (
+      <button id="floating-comments-btn" aria-label="Scroll to comments" title="Comments">
+        <svg class="w-6 h-6" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" d="M7 8h10M7 12h4m1 8l-4-4H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-3l-4 4z"></path>
+        </svg>
+      </button>
     )}
   </div>
 </BaseLayout>
@@ -696,190 +692,65 @@ const quizJson = quizSchema ? JSON.stringify(quizSchema) : null;
     }
   }
 
-  // ===================== TOPIC NAV & SELECTION =====================
-  var currentTopicId = null;
-
-  function updateTopicNavButtons(topicId, topicsData) {
-    var navEl = document.getElementById('topic-nav');
-    if (!navEl) return;
-
-    var idx = topicsData.findIndex(function(t) { return t.id === topicId; });
-    if (idx === -1) {
-      navEl.innerHTML = '';
-      return;
-    }
-
-    var prevTopic = idx > 0 ? topicsData[idx - 1] : null;
-    var nextTopic = idx < topicsData.length - 1 ? topicsData[idx + 1] : null;
-
-    var html = '';
-
-    if (prevTopic) {
-      html += '<button type="button" class="topic-nav-btn prev-btn flex-1 flex items-center gap-3 px-4 py-3 rounded-[var(--r-sm)] hover:bg-[var(--bg-subtle)] transition-colors text-left group" data-topic-id="' + prevTopic.id + '">' +
-        '<svg class="w-4 h-4 text-[var(--text-muted)] shrink-0 transition duration-200 group-hover:-translate-x-0.5 group-hover:text-[var(--accent)]" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24">' +
-          '<path d="M15 19l-7-7 7-7"/>' +
-        '</svg>' +
-        '<div class="min-w-0">' +
-          '<span class="block text-[10px] text-[var(--text-muted)] uppercase tracking-widest font-bold">Previous Topic</span>' +
-          '<span class="block text-sm font-semibold text-[var(--text)] line-clamp-1 group-hover:text-[var(--accent)] transition-colors">' + prevTopic.title + '</span>' +
-        '</div>' +
-      '</button>';
-    } else {
-      html += '<div class="flex-1"></div>';
-    }
-
-    if (nextTopic) {
-      html += '<button type="button" class="topic-nav-btn next-btn flex-1 flex items-center justify-end gap-3 px-4 py-3 rounded-[var(--r-sm)] hover:bg-[var(--bg-subtle)] transition-colors text-right group" data-topic-id="' + nextTopic.id + '">' +
-        '<div class="min-w-0">' +
-          '<span class="block text-[10px] text-[var(--text-muted)] uppercase tracking-widest font-bold">Next Topic</span>' +
-          '<span class="block text-sm font-semibold text-[var(--text)] line-clamp-1 group-hover:text-[var(--accent)] transition-colors">' + nextTopic.title + '</span>' +
-        '</div>' +
-        '<svg class="w-4 h-4 text-[var(--text-muted)] shrink-0 transition duration-200 group-hover:translate-x-0.5 group-hover:text-[var(--accent)]" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24">' +
-          '<path d="M9 5l7 7-7 7"/>' +
-        '</svg>' +
-      '</button>';
-    } else {
-      html += '<div class="flex-1"></div>';
-    }
-
-    navEl.innerHTML = html;
-
-    navEl.querySelectorAll('.topic-nav-btn').forEach(function(btn) {
-      btn.addEventListener('click', function() {
-        var tid = btn.getAttribute('data-topic-id');
-        switchToTopic(tid, true);
-      });
-    });
-  }
-
-  function switchToTopic(topicId, updateHistory) {
-    var topicsData = window.lectureTopics;
-    if (!topicsData) return;
-    var topic = topicsData.find(function(t) { return t.id === topicId; }) || topicsData[0];
-    if (!topic) return;
-
-    currentTopicId = topic.id;
-    window.BitsNotesCurrentTopicId = topic.id;
-    window.BitsNotesTotalTopics = topicsData.length;
-
-    // Swap content
-    var contentEl = document.getElementById('topic-content');
-    if (contentEl) {
-      contentEl.innerHTML = topic.html;
-      var lectureWrapper = document.getElementById('lecture-content');
-      if (lectureWrapper) {
-        lectureWrapper.scrollIntoView({ behavior: 'instant', block: 'start' });
-      } else {
-        window.scrollTo({ top: 0, behavior: 'instant' });
-      }
-    }
-
-    // Update active state in Right sidebar
+  // ===================== SCROLL-SPY TOC =====================
+  function initScrollSpy() {
+    var sections = document.querySelectorAll('.lecture-section');
     var navLinks = document.querySelectorAll('#topic-list-nav .topic-nav-link');
-    navLinks.forEach(function(link) {
-      var linkId = link.getAttribute('data-topic-id');
-      var container = link.closest('.topic-item-container');
-      var sublist = container ? container.querySelector('.topic-subtopics-list') : null;
+    if (!sections.length || !navLinks.length) return;
 
-      if (linkId === topic.id) {
-        link.classList.add('bg-[var(--bg-subtle)]', 'text-[var(--text)]', 'font-semibold');
-        link.classList.remove('text-[var(--text-muted)]');
-        var badge = link.querySelector('.topic-badge');
-        if (badge) {
-          badge.classList.add('bg-[var(--accent)]', 'text-[var(--accent-contrast)]');
-          badge.classList.remove('bg-[var(--bg-subtle)]', 'text-[var(--text-muted)]');
+    function spy() {
+      var notesPanel = document.getElementById('panel-notes');
+      if (!notesPanel || !notesPanel.classList.contains('active')) return;
+
+      var scrollPos = window.scrollY || document.documentElement.scrollTop;
+      var buffer = 150; // offset buffer
+      var currentSection = null;
+
+      for (var i = 0; i < sections.length; i++) {
+        var sec = sections[i];
+        if (sec.offsetTop - buffer <= scrollPos) {
+          currentSection = sec;
+        } else {
+          break;
         }
-        if (sublist) sublist.classList.remove('hidden');
-      } else {
-        link.classList.remove('bg-[var(--bg-subtle)]', 'text-[var(--text)]', 'font-semibold');
-        link.classList.add('text-[var(--text-muted)]');
-        var badge = link.querySelector('.topic-badge');
-        if (badge) {
-          badge.classList.remove('bg-[var(--accent)]', 'text-[var(--accent-contrast)]');
-          badge.classList.add('bg-[var(--bg-subtle)]', 'text-[var(--text-muted)]');
-        }
-        if (sublist) sublist.classList.add('hidden');
       }
-    });
 
-    // Update buttons
-    updateTopicNavButtons(topic.id, topicsData);
+      if (!currentSection && sections.length > 0) {
+        currentSection = sections[0];
+      }
 
-    // Update history/URL
-    if (updateHistory) {
-      var url = new URL(window.location.href);
-      url.searchParams.set('topic', topic.slug);
-      window.history.replaceState(null, '', url.pathname + url.search + url.hash);
+      if (currentSection) {
+        var activeId = currentSection.getAttribute('id');
+        navLinks.forEach(function(link) {
+          var href = link.getAttribute('href');
+
+          if (href === '#' + activeId) {
+            link.classList.add('bg-[var(--bg-subtle)]', 'text-[var(--text)]', 'font-semibold');
+            link.classList.remove('text-[var(--text-muted)]');
+            var badge = link.querySelector('.topic-badge');
+            if (badge) {
+              badge.classList.add('bg-[var(--accent)]', 'text-[var(--accent-contrast)]');
+              badge.classList.remove('bg-[var(--bg-subtle)]', 'text-[var(--text-muted)]');
+            }
+          } else {
+            link.classList.remove('bg-[var(--bg-subtle)]', 'text-[var(--text)]', 'font-semibold');
+            link.classList.add('text-[var(--text-muted)]');
+            var badge = link.querySelector('.topic-badge');
+            if (badge) {
+              badge.classList.remove('bg-[var(--accent)]', 'text-[var(--accent-contrast)]');
+              badge.classList.add('bg-[var(--bg-subtle)]', 'text-[var(--text-muted)]');
+            }
+          }
+        });
+      }
     }
 
-    // Save in localStorage
-    var contentWrapper = document.getElementById('lecture-content');
-    var subName = contentWrapper ? contentWrapper.dataset.subject : '';
-    var lecName = contentWrapper ? contentWrapper.dataset.lecture : '';
-    if (subName && lecName) {
-      localStorage.setItem('bitsnotes-last-topic:' + subName + ':' + lecName, topic.id);
-    }
+    window.addEventListener('scroll', spy, { passive: true });
+    spy();
 
-    // Typeset
-    if (contentEl) {
-      typesetNotes(contentEl);
-    }
-
-    // Re-initialize code block copy buttons
-    initCodeCopy();
-
-    // Trigger scroll handler to see if already read
-    setTimeout(function() {
-      window.dispatchEvent(new Event('scroll'));
-    }, 50);
-
-    // Warm adjacent topics (prefetch / mathjax warm next)
-    warmAdjacentTopics(topic.id, topicsData);
-  }
-
-  function warmAdjacentTopics(topicId, topicsData) {
-    var idx = topicsData.findIndex(function(t) { return t.id === topicId; });
-    if (idx === -1) return;
-
-    var nextTopic = idx < topicsData.length - 1 ? topicsData[idx + 1] : null;
-    if (!nextTopic) return;
-
-    var sandbox = document.getElementById('mathjax-sandbox');
-    if (!sandbox) {
-      sandbox = document.createElement('div');
-      sandbox.id = 'mathjax-sandbox';
-      sandbox.style.display = 'none';
-      document.body.appendChild(sandbox);
-    }
-
-    sandbox.innerHTML = nextTopic.html;
-    if (window.MathJax && window.MathJax.typesetPromise && panelHasMath(sandbox)) {
-      window.MathJax.typesetPromise([sandbox]).catch(function() {});
-    }
-  }
-
-  function initTopicViewer() {
-    var topicsData = window.lectureTopics;
-    if (!topicsData) return;
-
-    var currentParam = new URLSearchParams(window.location.search).get('topic');
-    var storageKey = '';
-    var contentWrapper = document.getElementById('lecture-content');
-    var subName = contentWrapper ? contentWrapper.dataset.subject : '';
-    var lecName = contentWrapper ? contentWrapper.dataset.lecture : '';
-    if (subName && lecName) {
-      storageKey = 'bitsnotes-last-topic:' + subName + ':' + lecName;
-    }
-
-    var topicId = currentParam;
-    if (!topicId && storageKey) {
-      topicId = localStorage.getItem(storageKey);
-    }
-
-    var activeTopic = topicsData.find(function(t) { return t.slug === topicId || t.id === topicId; }) || topicsData[0];
-    if (activeTopic) {
-      switchToTopic(activeTopic.id, !!currentParam);
-    }
+    document.addEventListener('astro:before-swap', function() {
+      window.removeEventListener('scroll', spy);
+    }, { once: true });
   }
 
   function initTopicNavLinks() {
@@ -890,14 +761,37 @@ const quizJson = quizSchema ? JSON.stringify(quizSchema) : null;
       if (!link) return;
 
       e.preventDefault();
-      var topicId = link.getAttribute('data-topic-id');
+      var targetId = link.getAttribute('href');
+      var targetEl = document.getElementById(targetId.substring(1));
+      if (!targetEl) return;
 
       var notesTab = document.querySelector('[role="tab"][data-tab="notes"]');
       if (notesTab && notesTab.getAttribute('aria-selected') !== 'true') {
         notesTab.click();
       }
 
-      switchToTopic(topicId, true);
+      targetEl.scrollIntoView({ behavior: 'smooth', block: 'start' });
+
+      // Close mobile drawer if open
+      var topicSidebar = document.getElementById('topic-sidebar');
+      var topicOverlay = document.getElementById('topic-sidebar-overlay');
+      if (topicSidebar && topicSidebar.classList.contains('open')) {
+        topicSidebar.classList.remove('open');
+        if (topicOverlay) topicOverlay.classList.add('hidden');
+        document.body.classList.remove('overflow-hidden');
+      }
+    });
+  }
+
+  // ===================== FLOATING COMMENTS FAB =====================
+  function initCommentsBtn() {
+    var btn = document.getElementById('floating-comments-btn');
+    if (!btn) return;
+    btn.addEventListener('click', function() {
+      var commentsEl = document.querySelector('.bn-comments');
+      if (commentsEl) {
+        commentsEl.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      }
     });
   }
 
@@ -987,37 +881,14 @@ const quizJson = quizSchema ? JSON.stringify(quizSchema) : null;
       var isCollapsed = rightStored !== 'false';
       if (isCollapsed) {
         rightSidebar.classList.add('collapsed');
+      } else {
+        rightSidebar.classList.remove('collapsed');
       }
       rightBtn.addEventListener('click', function() {
         var collapsed = rightSidebar.classList.toggle('collapsed');
         localStorage.setItem('bitsnotes-right-sidebar-collapsed', collapsed ? 'true' : 'false');
       });
     }
-  }
-
-  // ===================== KEYBOARD NAVIGATION =====================
-  function initKeyboardNav() {
-    document.addEventListener('keydown', function(e) {
-      var tag = e.target.tagName.toLowerCase();
-      if (tag === 'input' || tag === 'textarea' || e.target.isContentEditable) {
-        return;
-      }
-
-      var topicsData = window.lectureTopics;
-      if (!topicsData) return;
-      var currentIndex = topicsData.findIndex(function(t) { return t.id === currentTopicId; });
-      if (currentIndex === -1) return;
-
-      if (e.key === 'ArrowLeft') {
-        if (currentIndex > 0) {
-          switchToTopic(topicsData[currentIndex - 1].id, true);
-        }
-      } else if (e.key === 'ArrowRight') {
-        if (currentIndex < topicsData.length - 1) {
-          switchToTopic(topicsData[currentIndex + 1].id, true);
-        }
-      }
-    });
   }
 
   // ===================== CODE COPY BUTTONS =====================
@@ -1055,9 +926,9 @@ const quizJson = quizSchema ? JSON.stringify(quizSchema) : null;
   initTabs();
   initMobileDrawers();
   initSidebarCollapse();
-  initTopicViewer();
   initTopicNavLinks();
-  initKeyboardNav();
+  initScrollSpy();
+  initCommentsBtn();
   initCodeCopy();
 </script>
 
@@ -1269,22 +1140,7 @@ const quizJson = quizSchema ? JSON.stringify(quizSchema) : null;
         // Setup reading progress
         var contentEl = document.getElementById('lecture-content');
         if (contentEl && contentEl.dataset.subject) {
-          if (document.getElementById('topic-content')) {
-            if (bootstrap.progress && bootstrap.progress.topicProgress) {
-              bootstrap.progress.topicProgress.forEach(function (tp) {
-                if (tp.readPct >= 80) {
-                  BN.topicProgressSent[tp.topicId] = true;
-                  var indicators = document.querySelectorAll('.topic-item-container[data-topic-id="' + tp.topicId + '"] .topic-check-indicator');
-                  indicators.forEach(function (ind) {
-                    ind.classList.remove('hidden');
-                  });
-                }
-              });
-            }
-            BN.setupTopicProgress(contentEl.dataset.subject, contentEl.dataset.lecture);
-          } else {
-            BN.setupProgress(contentEl.dataset.subject, contentEl.dataset.lecture);
-          }
+          BN.setupProgress(contentEl.dataset.subject, contentEl.dataset.lecture);
         }
       });
     }

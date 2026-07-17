@@ -295,8 +295,6 @@
   /* Floating minimized badge: solid circle with time */
   .pomodoro-badge {
     position: fixed;
-    top: 4.25rem;
-    right: 24px;
     z-index: 90;
     width: 44px;
     height: 44px;
@@ -307,12 +305,12 @@
     background: var(--bg-elevated, #fff);
     border: 1.5px solid var(--border, #cbd5e1);
     box-shadow: var(--shadow-overlay, 0 8px 30px rgba(0, 0, 0, 0.12));
-    cursor: pointer;
+    cursor: grab;
+    touch-action: none;
     font-family: inherit;
     transition: border-color var(--duration-fast, 120ms) var(--ease-out, ease-out),
       background var(--duration-fast, 120ms) var(--ease-out, ease-out),
-      transform 0.1s var(--ease-out),
-      right 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+      transform 0.1s var(--ease-out);
   }
   .pomodoro-badge:hover {
     background: var(--bg-subtle, #f1f5f9);
@@ -320,6 +318,10 @@
   }
   .pomodoro-badge:active {
     transform: scale(0.95);
+  }
+  .pomodoro-badge.is-dragging {
+    cursor: grabbing;
+    user-select: none;
   }
   .pomodoro-badge__text {
     font-size: 0.72rem;
@@ -351,21 +353,6 @@
   }
   .pomodoro-badge[hidden] {
     display: none !important;
-  }
-
-  @media (max-width: 1023px) {
-    .pomodoro-badge {
-      right: 16px;
-    }
-  }
-
-  @media (min-width: 1024px) {
-    :global(body:has(#topic-sidebar:not(.collapsed))) .pomodoro-badge {
-      right: calc(max(0px, (100vw - 1700px) / 2) + 324px);
-    }
-    :global(body:has(#topic-sidebar.collapsed)) .pomodoro-badge {
-      right: calc(max(0px, (100vw - 1700px) / 2) + 84px);
-    }
   }
 
   /* Morph clone for min ↔ max transitions */
@@ -579,6 +566,7 @@
     var INTERVAL_KEY = 'bitsnotes:pomodoro:interval';
     var TIMER_KEY = 'bitsnotes:pomodoro:timerState';
     var MINIMIZED_KEY = 'bitsnotes:pomodoro:minimized';
+    var BADGE_POS_KEY = 'bitsnotes:pomodoro:badgePosition';
     var BREAK_MS = 5 * 60 * 1000; // 5 minutes
 
     var root = document.getElementById('pomodoro');
@@ -635,6 +623,82 @@
       if (badge) {
         badge.hidden = !minimized;
       }
+    }
+
+    var BADGE_SIZE = 44;
+
+    function loadBadgePosition() {
+      try {
+        return JSON.parse(localStorage.getItem(BADGE_POS_KEY));
+      } catch (e) {
+        return null;
+      }
+    }
+
+    function saveBadgePosition(left, top) {
+      localStorage.setItem(BADGE_POS_KEY, JSON.stringify({ left: left, top: top }));
+    }
+
+    function clampToViewport(left, top) {
+      return {
+        left: Math.max(0, Math.min(left, window.innerWidth - BADGE_SIZE)),
+        top: Math.max(0, Math.min(top, window.innerHeight - BADGE_SIZE))
+      };
+    }
+
+    function applyBadgePosition() {
+      var pos = loadBadgePosition();
+      if (pos) {
+        var clamped = clampToViewport(pos.left, pos.top);
+        badge.style.left = clamped.left + 'px';
+        badge.style.top = clamped.top + 'px';
+      } else {
+        badge.style.left = (window.innerWidth - BADGE_SIZE - 24) + 'px';
+        badge.style.top = '68px';
+      }
+    }
+
+    // ---- Drag handling ----
+
+    var dragState = null;
+    var wasDragged = false;
+
+    function onPointerDown(e) {
+      if (e.button !== 0) return;
+      if (badge.hidden) return;
+      var rect = badge.getBoundingClientRect();
+      dragState = {
+        startX: e.clientX,
+        startY: e.clientY,
+        origLeft: rect.left,
+        origTop: rect.top
+      };
+      wasDragged = false;
+      badge.classList.add('is-dragging');
+      badge.setPointerCapture(e.pointerId);
+      e.preventDefault();
+    }
+
+    function onPointerMove(e) {
+      if (!dragState) return;
+      var dx = e.clientX - dragState.startX;
+      var dy = e.clientY - dragState.startY;
+      if (Math.abs(dx) > 3 || Math.abs(dy) > 3) {
+        wasDragged = true;
+      }
+      var clamped = clampToViewport(dragState.origLeft + dx, dragState.origTop + dy);
+      badge.style.left = clamped.left + 'px';
+      badge.style.top = clamped.top + 'px';
+      e.preventDefault();
+    }
+
+    function onPointerUp(e) {
+      if (!dragState) return;
+      badge.classList.remove('is-dragging');
+      var rect = badge.getBoundingClientRect();
+      saveBadgePosition(Math.round(rect.left), Math.round(rect.top));
+      dragState = null;
+      e.preventDefault();
     }
 
     function fmt(ms) {
@@ -834,12 +898,17 @@
     }
 
     if (badge) {
-      badge.addEventListener('click', function () {
+      badge.addEventListener('click', function (e) {
+        if (wasDragged) { wasDragged = false; return; }
         morphToBar(function () {
           setMinimizedState(false);
           applyMinimizedState();
         });
       });
+      badge.addEventListener('pointerdown', onPointerDown);
+      badge.addEventListener('pointermove', onPointerMove);
+      badge.addEventListener('pointerup', onPointerUp);
+      badge.addEventListener('pointercancel', onPointerUp);
     }
 
     // ---- Morph animation helpers ----
@@ -978,7 +1047,23 @@
 
     function init() {
       renderIntervals();
+      applyBadgePosition();
       applyMinimizedState();
+
+      window.addEventListener('resize', function () {
+        var pos = loadBadgePosition();
+        if (pos) {
+          var clamped = clampToViewport(pos.left, pos.top);
+          if (clamped.left !== pos.left || clamped.top !== pos.top) {
+            badge.style.left = clamped.left + 'px';
+            badge.style.top = clamped.top + 'px';
+            saveBadgePosition(clamped.left, clamped.top);
+          }
+        } else {
+          applyBadgePosition();
+        }
+      });
+
       var st = getTimerState();
       if (st && st.status !== 'idle') {
         renderStartBtn(st);
