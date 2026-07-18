@@ -51,6 +51,7 @@ export interface PublicComment {
   body: string;
   score: number;
   isOwn: boolean;
+  isAdmin: boolean;
   createdAt: number;
 }
 
@@ -63,7 +64,7 @@ export interface ListResult {
 
 const PAGE_SIZE = 20;
 
-function toPublic(row: CommentRow, opts?: { isOwn?: boolean }): PublicComment {
+function toPublic(row: CommentRow, opts?: { isOwn?: boolean; isAdmin?: boolean }): PublicComment {
   return {
     id: row.id,
     pageType: row.page_type,
@@ -75,6 +76,7 @@ function toPublic(row: CommentRow, opts?: { isOwn?: boolean }): PublicComment {
     body: row.body,
     score: row.score,
     isOwn: opts?.isOwn ?? false,
+    isAdmin: opts?.isAdmin ?? false,
     createdAt: row.created_at,
   };
 }
@@ -136,7 +138,8 @@ export async function createComment(
 
   const row = await getCommentById(db, id);
   if (!row) throw new Error('Failed to read created comment');
-  return { token, comment: toPublic(row) };
+  const isUserAdmin = input.authorUserId ? await isAdmin(db, input.authorUserId) : false;
+  return { token, comment: toPublic(row, { isAdmin: isUserAdmin }) };
 }
 
 export async function getCommentById(db: AuthDb, id: string): Promise<CommentRow | null> {
@@ -199,11 +202,29 @@ export async function listComments(
   const items = rows.results ?? [];
   const hasMore = items.length > limit;
   const page = items.slice(0, limit);
+
+  const adminIds = new Set<string>();
+  const userIds = Array.from(new Set(page.map((r) => r.author_user_id).filter(Boolean)));
+  if (userIds.length > 0) {
+    const placeholders = userIds.map(() => '?').join(', ');
+    const adminRows = await db.prepare(
+      `SELECT user_id FROM admin_users WHERE user_id IN (${placeholders})`
+    ).bind(...userIds).all<{ user_id: string }>();
+    if (adminRows.results) {
+      for (const r of adminRows.results) {
+        adminIds.add(r.user_id);
+      }
+    }
+  }
+
   const last = page[page.length - 1];
   const nextCursor = hasMore && last ? btoa(`${last.created_at}:${last.id}`) : null;
 
   return {
-    comments: page.map((r) => toPublic(r, { isOwn: opts.ownIds ? opts.ownIds.has(r.id) : false })),
+    comments: page.map((r) => toPublic(r, {
+      isOwn: opts.ownIds ? opts.ownIds.has(r.id) : false,
+      isAdmin: r.author_user_id ? adminIds.has(r.author_user_id) : false
+    })),
     total: totalRow?.c ?? 0,
     nextCursor,
     hasMore,
@@ -361,6 +382,7 @@ export interface AdminCommentView extends PublicComment {
   moderationReason: string | null;
   reportCount: number;
   updatedAt: number;
+  authorUserId: string | null;
 }
 
 export async function listAdminComments(
@@ -374,13 +396,33 @@ export async function listAdminComments(
   )
     .bind(...(filter === 'all' ? [] : [filter]))
     .all<CommentRow>();
-  return (rows.results ?? []).map((r) => ({
-    ...toPublic(r),
-    status: r.status,
-    moderationReason: r.moderation_reason,
-    reportCount: r.report_count,
-    updatedAt: r.updated_at,
-  }));
+
+  const items = rows.results ?? [];
+  const adminIds = new Set<string>();
+  const userIds = Array.from(new Set(items.map((r) => r.author_user_id).filter(Boolean)));
+  if (userIds.length > 0) {
+    const placeholders = userIds.map(() => '?').join(', ');
+    const adminRows = await db.prepare(
+      `SELECT user_id FROM admin_users WHERE user_id IN (${placeholders})`
+    ).bind(...userIds).all<{ user_id: string }>();
+    if (adminRows.results) {
+      for (const r of adminRows.results) {
+        adminIds.add(r.user_id);
+      }
+    }
+  }
+
+  return items.map((r) => {
+    const isUserAdmin = r.author_user_id ? adminIds.has(r.author_user_id) : false;
+    return {
+      ...toPublic(r, { isAdmin: isUserAdmin }),
+      status: r.status,
+      moderationReason: r.moderation_reason,
+      reportCount: r.report_count,
+      updatedAt: r.updated_at,
+      authorUserId: r.author_user_id,
+    };
+  });
 }
 
 export async function setCommentStatus(

@@ -21,7 +21,14 @@ export type AuthEvent =
   | 'collection_create'
   | 'collection_rename'
   | 'collection_delete'
-  | 'progress_mark_read';
+  | 'progress_mark_read'
+  | 'admin_dashboard_view'
+  | 'admin_views_list'
+  | 'admin_comments_overview'
+  | 'admin_comment_publish'
+  | 'admin_comment_hide'
+  | 'admin_comment_delete'
+  | 'admin_comment_restore';
 
 export interface AuditContext {
   userId?: string;
