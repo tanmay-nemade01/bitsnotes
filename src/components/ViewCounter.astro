@@ -66,17 +66,18 @@ const { pageKey, class: className } = Astro.props;
   /**
    * View counter client logic.
    *
-   * First visit in a browser session  → POST /api/views  (increments + returns count)
-   * Same-session refresh              → GET  /api/views  (reads count, no increment)
+   * Uses localStorage with a 30-minute TTL per page key. If the visitor
+   * last viewed this page more than 30 minutes ago (or never), we POST to
+   * increment. Otherwise we GET the current count without incrementing.
    *
-   * sessionStorage key: `bitsnotes-viewed:{page_key}`
-   * This ensures that refreshing the same page in the same tab/session does not
-   * inflate the view counter, while still showing the current count.
+   * localStorage key: `bitsnotes-viewed:{page_key}` → timestamp (ms)
    *
    * Multiple ViewCounter elements sharing the same page_key on one page (e.g.
    * top + bottom engagement bars on a blog post) fire only one network request.
    */
   document.addEventListener('astro:page-load', () => {
+    const VIEW_TTL_MS = 30 * 60 * 1000; // 30 minutes
+
     const elements = Array.from(
       document.querySelectorAll<HTMLElement>('.view-counter[data-page-key]'),
     );
@@ -99,13 +100,26 @@ const { pageKey, class: className } = Astro.props;
       }
     }
 
+    /** Check if the last view for this key is still within the TTL window. */
+    function isWithinTTL(storageKey: string): boolean {
+      try {
+        const raw = localStorage.getItem(storageKey);
+        if (!raw) return false;
+        const lastViewed = parseInt(raw, 10);
+        if (isNaN(lastViewed)) return false;
+        return (Date.now() - lastViewed) < VIEW_TTL_MS;
+      } catch {
+        return false;
+      }
+    }
+
     const loadViews = () => {
       for (const [key, els] of grouped) {
-        const sessionKey = `bitsnotes-viewed:${key}`;
-        const alreadyViewed = sessionStorage.getItem(sessionKey) === '1';
+        const storageKey = `bitsnotes-viewed:${key}`;
+        const recentlyViewed = isWithinTTL(storageKey);
 
-        if (alreadyViewed) {
-          // Same-session revisit: fetch current count without incrementing.
+        if (recentlyViewed) {
+          // Viewed within the last 30 min: fetch current count without incrementing.
           fetch(`/api/views?key=${encodeURIComponent(key)}`)
             .then((res) => (res.ok ? res.json() : null))
             .then((data) => {
@@ -114,7 +128,7 @@ const { pageKey, class: className } = Astro.props;
             })
             .catch(() => {/* "—" placeholder stays */});
         } else {
-          // First visit: POST to increment, then mark as viewed in sessionStorage.
+          // First visit or >30 min since last view: POST to increment.
           fetch('/api/views', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -124,7 +138,7 @@ const { pageKey, class: className } = Astro.props;
             .then((res) => (res.ok ? res.json() : null))
             .then((data) => {
               if (!data || typeof (data as any).views !== 'number') return;
-              sessionStorage.setItem(sessionKey, '1');
+              try { localStorage.setItem(storageKey, String(Date.now())); } catch {}
               applyCount(els, (data as any).views as number);
             })
             .catch(() => {/* "—" placeholder stays */});

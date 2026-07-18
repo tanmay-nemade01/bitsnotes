@@ -190,9 +190,8 @@ export const onRequest = defineMiddleware(async (context, next) => {
 
   // ─── CSP + cache policy for HTML vs API vs auth ─────────────────────
   const contentType = headers.get('content-type') || '';
-
-  if (isAuthRoute(pathname)) {
-    // Auth routes: enforcing CSP, no-cache
+  if (isAuthRoute(pathname) || pathname.startsWith('/admin')) {
+    // Auth and Admin routes: enforcing CSP, no-cache
     headers.set('Content-Security-Policy', cspEnforcing);
     headers.set('Cache-Control', noCacheHeader);
   } else if (contentType.includes('text/html')) {
