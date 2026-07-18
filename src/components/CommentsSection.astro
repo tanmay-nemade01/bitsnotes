@@ -529,7 +529,7 @@ const sectionId = `comments-${pageType}-${encodeURIComponent(subject)}${lecture 
       status.setAttribute('aria-live', 'polite');
 
       var tsBox = null;
-      if (!opts.compact) {
+      if (section.dataset.turnstileKey) {
         tsBox = document.createElement('div');
         tsBox.className = 'bn-comments__turnstile mt-2';
         form.appendChild(tsBox);
@@ -555,8 +555,10 @@ const sectionId = `comments-${pageType}-${encodeURIComponent(subject)}${lecture 
           _website: hp.value,
           formStartedAt: started.value,
         };
-        if (!opts.compact && window.turnstile && tsRendered) {
-          try { payload.turnstileToken = window.turnstile.getResponse(); } catch (e) {}
+        var tsBox = form.querySelector('.bn-comments__turnstile');
+        var widgetId = tsBox && tsBox.dataset.widgetId;
+        if (window.turnstile && widgetId) {
+          try { payload.turnstileToken = window.turnstile.getResponse(widgetId); } catch (e) {}
         }
 
         submit.disabled = true;
@@ -598,8 +600,7 @@ const sectionId = `comments-${pageType}-${encodeURIComponent(subject)}${lecture 
         finally { submit.disabled = false; }
       });
 
-      // Lazy render Turnstile when the top-level form scrolls into view.
-      if (!opts.compact && section.dataset.turnstileKey) {
+      if (section.dataset.turnstileKey) {
         renderTurnstileInto(tsBox, section);
       }
 
@@ -607,8 +608,6 @@ const sectionId = `comments-${pageType}-${encodeURIComponent(subject)}${lecture 
     }
 
     // ── Turnstile (shared loader) ──
-    var tsRendered = false;
-    var tsWidgetId = null;
     var tsApiLoading = false;
     var tsApiLoaded = false;
 
@@ -637,17 +636,18 @@ const sectionId = `comments-${pageType}-${encodeURIComponent(subject)}${lecture 
       var tsKey = section.dataset.turnstileKey;
       if (!tsKey) return;
       function doRender() {
-        if (tsRendered && tsWidgetId != null) {
-          try { window.turnstile.remove(tsWidgetId); } catch (e) {}
-          tsRendered = false; tsWidgetId = null;
+        var existingId = tsBox.dataset.widgetId;
+        if (existingId != null) {
+          try { window.turnstile.remove(existingId); } catch (e) {}
+          delete tsBox.dataset.widgetId;
         }
-        if (tsRendered) return;
-        tsRendered = true;
-        tsWidgetId = window.turnstile.render(tsBox, {
+        var widgetId = window.turnstile.render(tsBox, {
           sitekey: tsKey,
           theme: document.documentElement.dataset.theme === 'dark' ? 'dark' : 'light',
+          appearance: 'interaction-only',
           callback: function () {}
         });
+        tsBox.dataset.widgetId = widgetId;
       }
       if (!window.turnstile) { loadTurnstileApi(doRender); return; }
       doRender();
@@ -655,9 +655,11 @@ const sectionId = `comments-${pageType}-${encodeURIComponent(subject)}${lecture 
 
     window.addEventListener('bitsnotes:theme-changed', function () {
       var s = document.querySelector('.bn-comments');
-      if (s && s.dataset.turnstileKey && tsRendered) {
-        var box = s.querySelector('.bn-comments__turnstile');
-        if (box) renderTurnstileInto(box, s);
+      if (s && s.dataset.turnstileKey) {
+        var boxes = s.querySelectorAll('.bn-comments__turnstile');
+        boxes.forEach(function (box) {
+          renderTurnstileInto(box, s);
+        });
       }
     });
 
