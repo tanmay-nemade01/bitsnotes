@@ -199,7 +199,7 @@ def check_pii_and_anonymization(text, report):
             pii_hits.append(f"{label}: \"{m.group(0)}\"")
             
     if pii_hits:
-        report.failed("PII / anonymization", f"PII or transcript references found (must read as a standalone textbook):\n  " + "\n  ".join(pii_hits))
+        report.failed("PII / anonymization", f"PII or source-file references found (notes must stand alone without erasing anonymous Q&A):\n  " + "\n  ".join(pii_hits))
     else:
         report.passed("PII / anonymization", "No PII or transcript references detected.")
 
@@ -208,7 +208,7 @@ def check_verify_markers(text, report, strict=False):
     # Verify markers should have a description/reason
     markers = re.findall(r"\*\[verify\b(.*?)\]\*", text)
     if strict and len(markers) > 0:
-        report.failed("verify markers", f"Found {len(markers)} unresolved verify marker(s). In the enriched draft, all verify markers must be resolved or escalated.")
+        report.failed("verify markers", f"Found {len(markers)} unresolved verify marker(s). Resolve them or stop for human review before assembling the enriched draft.")
         return
         
     bad_markers = 0
@@ -225,13 +225,48 @@ def check_verify_markers(text, report, strict=False):
         report.passed("verify markers", "No verify markers found.")
 
 
+def extract_readable_prose(text):
+    """Remove math/code/table material before heuristic prose checks.
+
+    Readability metrics are unreliable on LaTeX, symbol registries, derivations,
+    and markdown tables. It is safer to omit those regions than to encourage an
+    agent to break correct mathematics while chasing a word-count score.
+    """
+    clean = re.sub(r"```.*?```", " ", text, flags=re.DOTALL)
+    clean = re.sub(
+        r"\\begin\{([A-Za-z*]+)\}.*?\\end\{\1\}",
+        " ",
+        clean,
+        flags=re.DOTALL,
+    )
+    clean = re.sub(r"\\\[.*?\\\]|\\\(.*?\\\)|\$\$.*?\$\$", " ", clean, flags=re.DOTALL)
+
+    prose_lines = []
+    in_symbol_registry = False
+    for line in clean.splitlines():
+        stripped = line.strip()
+        if re.match(r"^#{1,6}\s+.*symbol registry", stripped, re.I):
+            in_symbol_registry = True
+            continue
+        if in_symbol_registry and stripped.startswith("#"):
+            in_symbol_registry = False
+        if in_symbol_registry:
+            continue
+        if (
+            not stripped
+            or stripped.startswith((":::", "#"))
+            or stripped.count("|") >= 2
+            or re.search(r"\\(?:frac|sum|prod|int|mathbb|mathbf|begin|end)\b", stripped)
+            or "\\[" in stripped
+            or "\\]" in stripped
+        ):
+            continue
+        prose_lines.append(line)
+    return "\n".join(prose_lines)
+
+
 def check_writing_style(text, report):
-    # Filter out callout annotations (lines starting with :::)
-    lines = [line for line in text.split("\n") if not line.strip().startswith(":::")]
-    clean_text = "\n".join(lines)
-    
-    # Strip math expressions so they don't trigger readability check
-    prose = re.sub(r"\\\(.*?\\\)|\\\[.*?\\\]|\$\$.*?\$\$", " ", clean_text, flags=re.DOTALL)
+    prose = extract_readable_prose(text)
     
     # 1. Banned hand-waving
     hand_waves = PL.find_handwaving(prose)
@@ -268,21 +303,17 @@ def check_writing_style(text, report):
     ratio = long_sentences / total if total else 0
     if long_sentences > 0:
         msg = f"{long_sentences} sentences over {PL.WORD_CEILING} words ({ratio*100:.0f}% of {total} sentences)."
-        if ratio > 0.15 or long_sentences >= 12:
-            report.failed("sentence length", f"Too many long sentences. {msg} Split them to fit the smart-beginner audience.")
-        else:
-            report.warned("sentence length", f"Some long sentences found. {msg} Consider splitting.")
+        report.warned(
+            "sentence length",
+            f"{msg} Advisory only after math/code/tables were excluded. "
+            "Rewrite only prose that is genuinely hard to follow; never edit a formula to silence this warning.",
+        )
     else:
         report.passed("sentence length", "All sentences are short and clear.")
 
 
 def check_fancy_words(text, report):
-    # Filter out callout annotations (lines starting with :::)
-    lines = [line for line in text.split("\n") if not line.strip().startswith(":::")]
-    clean_text = "\n".join(lines)
-    
-    # Strip math expressions
-    prose = re.sub(r"\\\(.*?\\\)|\\\[.*?\\\]|\$\$.*?\$\$", " ", clean_text, flags=re.DOTALL)
+    prose = extract_readable_prose(text)
     
     hits = PL.find_fancy(prose)
     if not hits:
@@ -290,14 +321,11 @@ def check_fancy_words(text, report):
         return
     total = sum(c for _, _, c in hits)
     detail = "; ".join(f"'{w}'→'{s}' ({c}x)" for w, s, c in hits[:6])
-    if total >= 10:
-        report.failed("fancy words",
-                      f"{total} fancy-word hit(s): {detail}. "
-                      "Too many academic words — replace with plain alternatives.")
-    else:
-        report.warned("fancy words",
-                      f"{total} fancy-word hit(s): {detail}. "
-                      "Consider plain alternatives for a friendlier read.")
+    report.warned(
+        "fancy words",
+        f"{total} possible plain-language substitution(s): {detail}. "
+        "Advisory only; keep precise technical vocabulary when it is the correct term.",
+    )
 
 
 def lint_dense_file(path, lecture_num=None, phase="dense"):

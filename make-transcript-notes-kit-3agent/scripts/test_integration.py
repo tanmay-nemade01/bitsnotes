@@ -1,48 +1,93 @@
 #!/usr/bin/env python3
-"""Integration test for topic_mapping utils + update script."""
-import sys
+"""Isolated integration tests for topic mapping utilities."""
+
 import os
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "scripts"))
+import sys
+import tempfile
+import unittest
 
-from topic_mapping_utils import *
-from update_topic_mapping import update_or_add_lecture
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, SCRIPT_DIR)
 
-print("=== Test 1: Load all maps ===")
-maps = get_all_topic_maps()
-print(f"Loaded {len(maps)} subjects")
+import topic_mapping_utils as TMU
+import update_topic_mapping as UTM
 
-print("\n=== Test 2: Previous lectures before ACI L3 ===")
-result = find_previous_coverage_in_subject("Artificial Computational Intelligence", 3)
-for r in result:
-    print(f'  L{r["lecture_number"]}: {r["topic"]}')
 
-print("\n=== Test 3: Cross-subject reference for 'Search' ===")
-results = find_coverage_by_topics(
-    ["Search Algorithms", "BFS", "DFS", "Heuristic"],
-    min_word_overlap=2
-)
-for r in results[:5]:
-    print(f'  {r["subject"]} L{r["lecture_number"]}: matched {len(r["matching_topics"])} topics')
+class TopicMappingIntegrationTests(unittest.TestCase):
+    def setUp(self):
+        self.temp_dir = tempfile.TemporaryDirectory()
+        self.old_tmu_dir = TMU.TOPIC_MAPPINGS_DIR
+        self.old_utm_dir = UTM.TOPIC_MAPPINGS_DIR
+        TMU.TOPIC_MAPPINGS_DIR = self.temp_dir.name
+        UTM.TOPIC_MAPPINGS_DIR = self.temp_dir.name
 
-print("\n=== Test 4: Format summary ===")
-print(format_coverage_summary(results[:3]))
+    def tearDown(self):
+        TMU.TOPIC_MAPPINGS_DIR = self.old_tmu_dir
+        UTM.TOPIC_MAPPINGS_DIR = self.old_utm_dir
+        self.temp_dir.cleanup()
 
-print("\n=== Test 5: Update topic mapping ===")
-path, added, updated = update_or_add_lecture(
-    "Artificial Computational Intelligence", "9",
-    "Test Integration Lecture",
-    "ACI/ACI_Lecture_9_Notes/ACI_Lecture_9_Notes.html",
-    ["9.1 Integration Test", "9.2 Cross-Reference Check"]
-)
-action = "Added" if added else "Updated" if updated else "No change"
-print(f"{action} lecture at {path}")
+    def test_update_replaces_stale_topics_without_touching_workspace(self):
+        path, added, updated = UTM.update_or_add_lecture(
+            "Deep Reinforcement Learning",
+            "3",
+            "Bandit Methods",
+            "Deep Reinforcement Learning/DRL_Lecture_3_notes.html",
+            ["3.1 Bandits", "3.2 Sample Average"],
+        )
+        self.assertTrue(added)
+        self.assertFalse(updated)
+        self.assertTrue(path.startswith(self.temp_dir.name))
 
-# Clean up test
-import yaml
-data = yaml.safe_load(open(path, encoding="utf-8"))
-data["lectures"] = [l for l in data["lectures"] if l.get("lecture_number") != "9"]
-with open(path, "w", encoding="utf-8") as f:
-    yaml.dump(data, f, default_flow_style=False, allow_unicode=True, sort_keys=False, indent=2)
-print("Cleaned up test entry")
+        _, added, updated = UTM.update_or_add_lecture(
+            "Deep Reinforcement Learning",
+            "3",
+            "Bandit Methods",
+            "Deep Reinforcement Learning/DRL_Lecture_3_notes.html",
+            ["3.1 Bandits", "3.2 Incremental Update"],
+        )
+        self.assertFalse(added)
+        self.assertTrue(updated)
 
-print("\n=== ALL TESTS PASSED ===")
+        topic_map = TMU.load_topic_map("DRL")
+        self.assertEqual(
+            topic_map["lectures"][0]["topics_covered"],
+            ["3.1 Bandits", "3.2 Incremental Update"],
+        )
+
+    def test_empty_topic_update_is_rejected(self):
+        with self.assertRaises(ValueError):
+            UTM.update_or_add_lecture(
+                "Deep Reinforcement Learning",
+                "3",
+                "Bandit Methods",
+                "DRL/notes.html",
+                [],
+            )
+
+    def test_acronym_subject_filter_uses_same_matcher_as_loader(self):
+        UTM.update_or_add_lecture(
+            "Deep Reinforcement Learning",
+            "2",
+            "Bandits",
+            "DRL/lecture-2.html",
+            ["2.1 Search Algorithms"],
+        )
+        results = TMU.find_coverage_by_topics(
+            ["Search Algorithms"],
+            subject_name="DRL",
+            min_word_overlap=2,
+        )
+        self.assertEqual(len(results), 1)
+        self.assertEqual(results[0]["subject"], "Deep Reinforcement Learning")
+
+        excluded = TMU.find_coverage_by_topics(
+            ["Search Algorithms"],
+            subject_name="DRL",
+            exclude_lecture=("DRL", "2"),
+            min_word_overlap=2,
+        )
+        self.assertEqual(excluded, [])
+
+
+if __name__ == "__main__":
+    unittest.main()
