@@ -152,16 +152,22 @@ export async function getViewsBatch(
 ): Promise<Map<string, number>> {
   if (keys.length === 0) return new Map();
 
-  const placeholders = keys.map(() => '?').join(', ');
-  const rows = await db
-    .prepare(`SELECT page_key, views FROM page_views WHERE page_key IN (${placeholders})`)
-    .bind(...keys)
-    .all<{ page_key: string; views: number }>();
-
   const result = new Map<string, number>();
-  for (const row of rows.results ?? []) {
-    result.set(row.page_key, row.views);
+  const chunkSize = 90;
+
+  for (let i = 0; i < keys.length; i += chunkSize) {
+    const chunk = keys.slice(i, i + chunkSize);
+    const placeholders = chunk.map(() => '?').join(', ');
+    const rows = await db
+      .prepare(`SELECT page_key, views FROM page_views WHERE page_key IN (${placeholders})`)
+      .bind(...chunk)
+      .all<{ page_key: string; views: number }>();
+
+    for (const row of rows.results ?? []) {
+      result.set(row.page_key, row.views);
+    }
   }
+
   // Fill in seed offsets for any keys not yet in the DB
   for (const key of keys) {
     if (!result.has(key)) {
