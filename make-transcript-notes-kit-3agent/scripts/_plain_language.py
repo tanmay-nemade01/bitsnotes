@@ -9,9 +9,10 @@ Pure standard library. No third-party deps, no network.
 
 import re
 
-# Sentence-length policy.
-WORD_AIM = 15            # the target average
-WORD_CEILING = 22        # a single sentence longer than this is "long"
+# Sentence-length policy for ordinary prose after math/code/table stripping.
+# These are review hints, never blocking targets.
+WORD_AIM = 20
+WORD_CEILING = 28
 
 # --------------------------------------------------------------------------- #
 # 1. Hand-waving — BANNED OUTRIGHT (hard FAIL).
@@ -56,7 +57,7 @@ FLOURISH_PHRASES = [
 ]
 
 # --------------------------------------------------------------------------- #
-# 3. Fancy words -> plain swaps (WARN; many => FAIL).
+# 3. Fancy words -> optional plain swaps (advisory WARN only).
 # --------------------------------------------------------------------------- #
 FANCY_WORDS = {
     "utilize": "use", "utilise": "use", "utilizes": "uses", "utilises": "uses",

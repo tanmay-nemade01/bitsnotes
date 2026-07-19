@@ -3,18 +3,18 @@ name: formatter
 description: >-
   Phase 3 of make-transcript-notes-kit. Takes the enricher's annotated markdown draft
   and produces the final self-contained <lecture_name>.html — converting callout annotations to
-  HTML, embedding all SEO metadata inline, generating exam revision notes, running the
+  HTML, embedding all SEO metadata inline, rendering Agent 2's exam revision summaries, running the
   lint gate, and self-scoring against the quality rubric. Output is a single HTML file
   with no companion JSON files. Trigger after Agent 2 (enricher).
 ---
 
 # Agent 3 — Formatter
 
-**Your job:** Take Agent 2's enriched draft (`<LecturePrefix>_notes_enriched.md`), reuse the split section files from Agent 2 if they are present in the `sections/` directory, or split the draft yourself if they are missing or if the draft has been manually updated, and produce the **final `<LecturePrefix>_notes.html`** inside the folder `<LecturePrefix>_notes/` (e.g., `ML_Lecture_5_notes/ML_Lecture_5_notes.html` inside `ML_Lecture_5/`) — you must create the folder `<LecturePrefix>_notes/` if it does not exist. The output must be a self-contained, lint-clean, rubric-scored HTML page with all SEO, structured data, and lecture metadata embedded directly in the HTML. **No companion `.json` files are created.**
+**Your job:** Take Agent 2's enriched draft (`<LecturePrefix>_notes_enriched.md`), re-split it so the inventory exactly matches the final markdown, and render it as `<LecturePrefix>_notes.html`. Preserve all approved content, especially Q&A, misconceptions, corrections, analogies, worked steps, and terminology contrasts. You are a renderer, not a recovery author. If required instructional content or a placeholder remains, stop and return it to Agent 2 instead of inventing a repair.
 
 **Critical: Section-by-section processing.** The enriched draft can be very large. Converting it to HTML in one shot causes heading numbering drift, malformed tags, and inconsistent formatting. Instead, you will process **one `##` section at a time** — reusing Agent 2's split sections or splitting the draft yourself, converting each section independently, then mechanically reassembling. This keeps heading numbering local and prevents cross-section interference.
 
-**Your input:** Agent 2's enriched draft `<LecturePrefix>_notes_enriched.md` (located in the same directory).
+**Your input:** Agent 2's enriched draft, extraction manifest, and `section_XX_summary.json` files. Stop if any are missing.
 
 **Your output:** Create the directory `<LecturePrefix>_notes/` and write `outputs/<Subject>/<LecturePrefix>/<LecturePrefix>_notes/<LecturePrefix>_notes.html` — passes lint with zero FAILs, scores ≥ 85/100 against the rubric, zero red-list items. This is the ONLY file produced. All metadata is embedded in the HTML. The BitsNotes viewer reads the metadata from `<script id="lecture-metadata">` inside this single HTML file.
 
@@ -22,16 +22,16 @@ description: >-
 
 ## Core rules for this phase
 
-1. **Information density** — The final HTML must contain everything from Agent 2's draft. Do not thin it out. Preserve full depth.
+1. **Information and teaching-flow fidelity** — The final HTML must contain everything from Agent 2's draft in the same pedagogical order. Do not flatten Q&A or correction sequences into generic exposition.
 2. **Math must render** — Single backslash delimiters only. Every symbol named. Wide formulas scroll horizontally (platform CSS handles this via `mjx-container`).
 3. **No styling in the HTML** — No `<style>` tags, no inline `style=""`, no Google Fonts links. All styling comes from `/lecture-notes.css`.
 4. **SEO must be complete** — Every SEO element is mandatory. The lint gate enforces this.
-5. **Exam revision is a distillation, not an invention** — Built from the completed core only.
-6. **STRIP intermediate metadata** — Before converting to HTML, strip any extraction checklists, quality self-checks, verification tick-lists, or other intermediate/process metadata that may have leaked from Agent 1 or Agent 2. These are NOT educational content. The HTML body must contain ONLY the textbook content and exam revision notes.
-7. **Math is final and reconciled** — Agent 2 should have resolved every `*[verify]*` marker. If any remain (escalated by Agent 2 with a `:::warning-box`), preserve that warning callout in the HTML and keep the marker text out of the visible prose. The lint gate will WARN on leftover `*[verify]*` markers so they are not silently shipped. Exam revision `keyFormula` values must use Agent 2's reconciled LaTeX, not re-derived.
+5. **Exam revision is upstream-owned** — Render Agent 2's traceable revision summaries; do not author or repair them here.
+6. **STRIP intermediate metadata** — Remove process checklists and internal verification data. Preserve educational structures such as anonymous Q&A, misconception corrections, professor-origin analogies, and terminology contrasts.
+7. **Math is final and reconciled** — Agent 2 must resolve every `*[verify]*` marker before handoff. If any marker remains, stop and return the section; never hide the marker or convert uncertainty into polished prose. Exam revision formulas must be copied from Agent 2's reconciled LaTeX.
 8. **Strict File Attachment Guard Rail** — Focus *only and only* on the files attached to the prompt/context. Do *not* search for or read other files in the workspace (such as other drafts or notes) unless you are absolutely certain that the attached files do not match the expected context at all (e.g., they are completely blank, corrupted, or clearly belong to a different course/lecture, suggesting an accidental attachment). Only under that absolute certainty may you check for other files in the workspace; otherwise, restrict your processing strictly to the attached files (while allowing necessary reads of templates/notes.html and the resolved subject topic mapping YAML file in `topic_mappings/` as instructed in Step 8).
 9. **Strict Script Creation Guard Rail** — You are strictly prohibited from creating or writing any script (Python, Bash, JS, etc.) inside the toolkit folder (`make-transcript-notes-kit-3agent` or its subfolders) during the process. Any intermediate or temporary scripts created in the workspace for testing or content parsing must be cleaned up and deleted before completing the task.
-10. **🚫 Student-Facing Output Guardrail (ZERO TOLERANCE)** — The final HTML is read by students. It must look like a professionally authored textbook chapter — not like the output of a multi-agent pipeline. **The following MUST NEVER appear in any student-visible text** (title, headings, body, metadata title, OG/Twitter titles, or any visible prose):
+10. **Student-Facing Output Guardrail** — The final HTML must read as lecture-faithful study notes written by a knowledgeable human, not as pipeline output or a generic textbook chapter. **The following MUST NEVER appear in student-visible text**:
     - The words "Enriched", "Dense Draft", "enrichment", "enriched draft" (these are internal pipeline phase names)
     - Agent names or phase labels: "Agent 1", "Agent 2", "Agent 3", "Extractor", "Enricher", "Formatter", "enriched by Agent", "created by agent", "based on agent output"
     - Pipeline descriptors in titles: "Complete Enriched Lecture Notes", "Enriched Lecture Notes", "(Enriched)", "Dense Draft Notes"
@@ -40,7 +40,7 @@ description: >-
     - Course codes in audience fields (e.g., "S1-25_AIMLCZG565")
     - Any text that reveals the internal pipeline to the reader
 
-    **What titles SHOULD look like:** Clean, descriptive topic titles that a textbook would use. Examples:
+    **What titles SHOULD look like:** Clean, descriptive topic titles. Examples:
     - ✅ `Logistic Regression` or `Logistic Regression — From Probability to Classification`
     - ❌ `Logistic Regression — Complete Enriched Lecture Notes`
     - ✅ `Deep Neural Networks — Introduction and Overview`
@@ -51,8 +51,8 @@ description: >-
     **Think like a student:** If a student opened these notes, would any text make them think "this was generated by a bot"? If yes, remove or rewrite it. The notes should feel like they were written by a knowledgeable human author, not assembled by a pipeline. The lint gate enforces this rule — any pipeline jargon in visible text is a FAIL.
 
 11. **Strict Dotted Numbering System** — You must strictly enforce the topic and sub-topic numbering system `lecture_number.topic_number` for all `h2` headings, and `lecture_number.topic_number.sub_topic_number` for all `h3` headings (e.g., `## 5.1 [Concept Title]` and `### 5.1.1 [Sub-concept Title]` if you are processing Lecture 5). Never strip, alter, or renumber these dotted numbers.
-12. **Content-Aware Conversion (Resolve Placeholder Instructions and TODOs)** — The conversion process must be content-aware, not a mechanical or automated translation of markdown. If you encounter any placeholder instructions, tasks, or TODO markers left by Agent 2 (for example, "Define [Concept] in revision notes", "TODO: add worked example here", "placeholder for formula", etc.), you must **NOT** output them literally in the HTML. Instead, you must dynamically resolve and complete the requested action using the core lecture notes, generating professional, textbook-quality content in the final output (e.g., actually defining the concept in the revision notes). The final HTML must never contain raw instructions, placeholders, or TODO text.
-13. **Writing style — sound human, not AI** — Any text you generate (exam revision entries, resolved placeholders, prerequisite sections) must sound like a knowledgeable person explaining things, not like a chatbot. Short sentences, active voice, conversational tone, no filler phrases, no marketing-speak. Use your judgment — technical terms are the right word when they describe the concept precisely. The lint gate will softly flag common AI-cliché patterns, but the real test is: would a student reading this think "a human wrote this"?
+12. **Placeholders are blocking defects** — If a TODO, placeholder, delegated task, missing explanation, or unresolved instructional gap remains, do not render or silently strip it. Stop and return the affected section to Agent 2. The only new prose you may write is non-instructional metadata and prerequisite navigation wording.
+13. **Writing style — sound human, not AI** — Metadata-facing prose and prerequisite navigation must sound like a knowledgeable person, not a chatbot. Copy exam revision fields from Agent 2 without rewriting them.
 14. **HTML Code Formatting (No Single-Line HTML)** — The output HTML must be pretty-printed, indented, and formatted with proper line breaks. Never compress or minify the HTML into a single line or a few extremely long lines. Block elements (e.g., `<div>`, `<p>`, `<li>`, `h2`, `h3`, `ul`, `ol`) must start on a new line and be indented according to their nesting depth. This keeps the code human-readable and maintainable. The lint gate will fail if the HTML is not well-formatted.
 
 ---
@@ -64,30 +64,31 @@ Before anything else, scan the enriched draft for intermediate/process metadata 
 - **Extraction checklists** — any section titled "Extraction Checklist" with ticked/bulleted lists of concepts. These are Agent 1's internal verification and belong nowhere in the final output.
 - **Quality self-check lists** — any section titled "Quality self-check" or "Quality self-check before handoff" with checkbox items. These are Agent 2's internal verification.
 - **The math verification queue / marker sweep lists** — Agent 2's internal R-step work lists. These are process artifacts.
-- **Any `*[verify]*` markers that Agent 2 resolved** — the marker text itself (`*[verify: ...]*`) must be removed from visible prose. Only markers that Agent 2 explicitly escalated inside a `:::warning-box` should remain, and even then only the human-readable warning prose — not the `*[verify: ...]*` token.
+- **Any `*[verify]*` marker** — this is a blocking upstream defect. Stop conversion and return the section to Agent 2 or human review; do not remove it and continue.
 - **Any other process/verification metadata** — any section that reads like internal QA rather than educational material.
-- **Process-only placeholder tasks** — any TODOs, placeholder text, or task delegations that cannot be resolved as educational content must be stripped entirely.
+- **Process-only placeholder tasks** — treat any TODO, placeholder, or task delegation as a blocking Agent 2 defect. Do not strip it and continue, because that would silently remove expected content.
 
 **How to identify:** Look for sections whose heading contains words like "checklist", "self-check", "verification", or sections that are just long bulleted/ticked lists of concept names with `[x]` markers. Also search for keywords like "TODO", "placeholder", and instructions such as "Define [Concept] in revision notes". These have zero educational value for the end reader.
 
 **Do NOT strip educational appendices.** Agent 1 produces two consolidated content sections — "Exam Guidance Summary" and "Key Industry Applications" — and Agent 2 carries them through. These are legitimate educational content (the professor's exam strategy and real-world connections), NOT process metadata. Preserve and render them as normal sections. Only strip the internal checklists/self-checks listed above.
 
-After stripping, the remaining content should start directly with the first educational concept section.
+After stripping, preserve the educational preamble—title and introduction—when present, followed by the first concept section.
 
 ---
 
-## Step 1 — Reuse or split the enriched draft into per-section files
+## Step 1 — Split the final enriched draft into per-section files
 
-**Optimized Reuse Path:**
-If the `sections/` directory already exists (left behind by Agent 2), contains `_inventory.json` and the `section_XX.md` files, AND `<LecturePrefix>_notes_enriched.md` has not been manually edited since Agent 2 ran, you should **reuse the existing section files directly** and skip the splitting command to save time and resource usage.
-
-**Fallback/Modification Path:**
-If the `sections/` directory is missing, incomplete, or if `<LecturePrefix>_notes_enriched.md` was manually edited/updated after Agent 2 ran, you must run the section splitter to (re)generate the section files from the draft:
+Always run the splitter on `<LecturePrefix>_notes_enriched.md`. This is inexpensive and guarantees that `_inventory.json` and every section file reflect Agent 2's final output rather than the earlier dense draft:
 
 ```bash
 python scripts/section_splitter.py split outputs/<Subject>/<LecturePrefix>/<LecturePrefix>_notes_enriched.md \
     --output-dir outputs/<Subject>/<LecturePrefix>/sections/
+python scripts/section_splitter.py validate-summaries \
+    outputs/<Subject>/<LecturePrefix>/sections/
 ```
+
+If summary validation fails, stop and return to Agent 2. Never render an
+unbound, stale, missing, or orphaned summary.
 
 Running this command creates:
 - `_inventory.json` — the **locked heading numbering map** (source of truth for all heading numbers)
@@ -105,7 +106,7 @@ Running this command creates:
 
 ### 2a — Strip intermediate metadata from this section
 
-Apply the same rules as Step 0, but scoped to this section only. Remove extraction checklists, quality self-checks, verification tick-lists, and resolved `*[verify]*` markers that appear within this section's boundaries.
+Apply the same rules as Step 0, but scoped to this section only. Remove process checklists. If any `*[verify]*` marker appears, stop conversion.
 
 ### 2b — Convert callout annotations to HTML
 
@@ -129,32 +130,29 @@ Same conversion rules as before, applied to this section only:
 | `.warning-box` | red | Pitfalls, traps, cautions, common mistakes, **assumptions & scope** (labeled `**Scope:**`/`**Assumption:**`) |
 | `.key-takeaway` | amber | One-line recap, bridge to next concept, **per-concept exam guidance** (labeled `**Exam note:**`) |
 
-Plus structural classes: `.chapter-title` (h1), `.section-title` (h2), `.subsection-title` (h3).
+Plus structural classes: `.lecture-title` (h1), `.section-title` (h2), `.subsection-title` (h3).
 
 **Rules:** No other callout types exist — situational spine content reuses these five with bold labels. No two same-type callouts back-to-back — separate with body text.
 
-### 2c — Fix heading numbers against the inventory
+### 2c — Assert heading IDs against the inventory
 
-**This is the critical step that prevents numbering drift and forces the lecture_number.topic_number.sub_topic_number numbering system.** Before writing the HTML:
-
-1. Identify the current lecture number, `L` (e.g., 5).
-2. Look up this section's number, `T`, in `_inventory.json` (e.g., section 3 → `"num": 3`, so `T = 3`).
-3. The `##` heading MUST use exactly `L.T <Title>` format (e.g., `5.3 Title` if lecture is 5 and section is 3). If the inventory title already contains a number, strip it and use the correct `L.T` format.
-4. Every `###` subsection MUST use exactly `L.T.S <Title>` where `S` matches the `sub_num` in the inventory (e.g., `5.3.1 Title` for the first subsection).
-5. **Never renumber/deviate from the inventory sequence.** The inventory specifies the order and existence of sections/subsections. Ensure the first number in the dotted sequence matches the current lecture number exactly.
+`_inventory.json` records each source `heading_id`. Copy every `##` and `###`
+heading exactly as written in the enriched markdown. Assert that it matches the
+inventory; if it does not, stop and return the mismatch to Agent 2. Never derive
+a topic ID from the section-file ordinal, strip an existing ID, or renumber a
+heading during HTML conversion. Manifest and topic-map references depend on
+those stable IDs.
 
 ### 2d — Math quality check (per section)
 
 - **Single backslash ONLY:** `\( ... \)` inline, `\[ ... \]` block. **Never `\\(` or `\\[`**.
 - **Every symbol named** within this section — a student jumping to any section must understand every symbol.
-- **Fraction hygiene:** `\frac{}{}` not inline `/`. **Exponent hygiene:** `e^{i\pi}` not `e^i\pi`.
-- **Multi-line:** `\begin{aligned}` inside `\[ ... \]`.
-- **No raw LaTeX leaking:** `\cdot` not `*`, `\times` not `x`, `\ldots` not `...`.
-- **No `*[verify]*` tokens in visible body** — remove resolved ones; convert escalated ones into `:::warning-box` prose.
+- **Preserve reconciled math exactly.** Validate delimiters and escaping, but do not normalize `/`, `*`, `x`, `...`, variables, operators, or equation structure. Agent 3 cannot know whether those symbols are intentional.
+- **No `*[verify]*` tokens** — if one exists, stop; do not remove or reinterpret it.
 
 ### 2e — Write the section HTML
 
-Write the converted HTML to `section_NN.html` in the same `_sections/` directory. The file must contain ONLY the HTML for this section — no `<html>`, `<head>`, or `<body>` tags. Just the content that will go inside `<main>`.
+Write the converted HTML to `section_NN.html` in the same `sections/` directory. The file must contain ONLY the HTML for this section — no `<html>`, `<head>`, or `<body>` tags. Just the content that will go inside `<main>`.
 
 **HTML Formatting Requirement:** The output HTML must be pretty-printed, indented, and well-formatted with appropriate line breaks (never output the HTML as a single line or a few compressed lines). Every block-level HTML element (e.g. `<div>`, `<p>`, `<ul>`, `<li>`, `h2`, `h3`) should start on its own line and be properly indented relative to its parent container.
 
@@ -186,12 +184,9 @@ After successful assembly, clean up intermediate files (but do NOT delete the `s
 # Remove the temporary body file after template fill
 Remove-Item -Force outputs/<Subject>/<LecturePrefix>/_body.html
 
-# Remove the temporary section summaries JSON files from the sections directory
-Get-ChildItem -Path outputs/<Subject>/<LecturePrefix>/sections/ -Filter "*_summary.json" | Remove-Item -Force
-
 # Remove any other intermediate helper files, drafts, or scripts created during this phase (keep sections/ and notes_dense/notes_enriched markdown files)
 ```
-Ensure that `<LecturePrefix>_notes_dense.md`, `<LecturePrefix>_notes_enriched.md`, `<LecturePrefix>_extraction_manifest.json`, the `sections/` directory (containing the markdown section files and `_inventory.json`), and `<LecturePrefix>_notes/<LecturePrefix>_notes.html` remain in the lecture folder (along with the updated YAML file in `topic_mappings/`).
+Keep `section_XX_summary.json` files as the traceable source of exam revision entries. Ensure that the dense draft, enriched draft, extraction manifest, `sections/` directory, summaries, inventory, and final HTML remain in the lecture folder.
 
 ---
 
@@ -201,7 +196,7 @@ Use `templates/notes.html`. Replace every `{{PLACEHOLDER}}`:
 
 | Placeholder | What to fill |
 |---|---|
-| `{{LECTURE_TITLE}}` | Clean, descriptive topic title (e.g., "Logistic Regression" or "Data Preprocessing for Machine Learning"). **No pipeline jargon** — no "Enriched", no "Complete Enriched Lecture Notes", no agent names. Must read like a textbook chapter title. |
+| `{{LECTURE_TITLE}}` | Clean, descriptive topic title (e.g., "Logistic Regression" or "Data Preprocessing for Machine Learning"). **No pipeline jargon** or agent names. |
 | `{{SUBJECT}}` | Full subject name |
 | `{{TITLE}}` | Same as LECTURE_TITLE |
 | `{{DATE_PUBLISHED}}` | Today's date in YYYY-MM-DD |
@@ -269,14 +264,17 @@ This metadata is placed inside `<script type="application/json" id="lecture-meta
 - `title` must be a clean topic title — same as `{{LECTURE_TITLE}}`. **No** "Enriched", "Complete Enriched Lecture Notes", agent names, or pipeline jargon.
 - `targetAudience` must be human-readable — **no course codes** (e.g., never include "S1-25_AIMLCZG565").
 - `sections` must include every major concept from the core.
-- `examRevisionNotes` — one entry per major concept. **Built ONLY from the completed core — never invented.** Every `keyFormula` must render correctly.
+- `examRevisionNotes` — copy one entry per major concept from Agent 2's `section_XX_summary.json`. Every source manifest ID must exist and every `keyFormula` must be copied unchanged.
 - **Do NOT include** `summary`, `keyConcepts`, or `quiz` fields. These sections are not part of the output.
 
 ---
 
-## Step 6 — Generate exam revision notes (AFTER core is complete)
+## Step 6 — Render Agent 2's exam revision summaries
 
-Re-read the full core first. This section is a *distillation*, not a co-product.
+Read each `section_XX_summary.json` and render its `exam_revision` object. Do
+not create missing fields or re-summarize the core. If a major concept lacks a
+complete revision object or `source_manifest_items`, return that section to
+Agent 2.
 
 Each entry = one `<div class="exam-revision-entry">`:
 
@@ -293,11 +291,11 @@ Each entry = one `<div class="exam-revision-entry">`:
 
 **Critical rules:**
 - One entry per major concept.
-- Every formula in `\[...\]` with every symbol named.
-- **Use the reconciled formulas from Agent 2's enriched core** — do not re-derive or paraphrase. If the core shows two equivalent forms (professor's + standard), use the professor's form in `keyFormula` and mention the alternative in `mustKnow` if useful.
-- **No content invented here** — everything must be traceable to the core.
-- **Resolve revision notes tasks content-aware**: If Agent 2 left a task in the draft like "Define Logistic Regression in revision notes", you must resolve this by actually writing a complete, professional exam revision entry for Logistic Regression (with must-know, formula, pitfall, self-check, and connections) derived from the core lecture notes. Never copy the task description or placeholder text into the output.
-- The intro paragraph: "Below is the distilled, exam-ready core of this lecture. Every entry is built from the full textbook notes above. Use this section for rapid review — but if something doesn't make sense, go back to the full explanation in the main content."
+- Copy every summary field without adding instructional claims.
+- Copy `keyFormula` exactly; do not re-derive, normalize, or paraphrase it.
+- Confirm every `source_manifest_items` ID exists in the extraction manifest.
+- If Agent 2 left a revision-note task or placeholder, stop and return it.
+- The intro paragraph: "Below is the distilled, exam-ready core. Every entry comes from the full explanation above. Use this section for rapid review; return to the main notes when a point needs more context."
 
 ---
 
@@ -401,11 +399,17 @@ If no matches found, set `{{PREREQUISITE_KNOWLEDGE}}` to an empty string.
 
 ```bash
 python scripts/lint.py outputs/<Subject>/<LecturePrefix>/<LecturePrefix>_notes/<LecturePrefix>_notes.html
+python scripts/verify_manifest.py \
+    outputs/<Subject>/<LecturePrefix>/<LecturePrefix>_extraction_manifest.json \
+    outputs/<Subject>/<LecturePrefix>/<LecturePrefix>_notes/<LecturePrefix>_notes.html \
+    --phase html
 ```
 
-Fix **every FAIL**. Re-run until clean. Note that readability (sentence length), hand-waving, Flesch reading ease, and fancy/academic words checks in `lint.py` have been downgraded to warnings (`WARN`) for this phase, as they are fully handled and verified by Agent 2 during Phase 2. Your focus is strictly on fixing HTML-related failures, template hygiene, SEO metadata, metadata JSON structure, and CSS class rules. Fix any WARNs where appropriate, but do not spend time manually editing or splitting sentences in the main content as that was already optimized by Agent 2.
+Both gates must pass. A manifest failure means content was dropped during conversion; fix the conversion, not the educational prose. Readability, sentence length, Flesch score, and fancy-word findings are advisory. Ignore formula-heavy false positives and never alter correct math to silence a warning.
 
-The lint checks: template hygiene (no surviving `{{PLACEHOLDER}}`), viewport meta, metadata completeness, SEO (OG, Twitter, canonical, robots, keywords, JSON-LD, description length), callout box usage (all 5 types present), style separation (no `<style>`/inline `style`/Google Fonts), math delimiters (no `\\(`), PII/secrets, readability (sentence length), long tokens, exam revision entries, content structure, HTML formatting consistency (no single-line or minified HTML).
+The lint checks: template hygiene, viewport meta, metadata completeness, SEO, appropriate callout usage without requiring all five types, style separation, math delimiters, PII/secrets, advisory prose readability, exam revision entries, content structure, and HTML formatting consistency.
+
+**Detailed lint checks reference:** template hygiene (no surviving `{{PLACEHOLDER}}`), viewport meta, metadata completeness, SEO (OG, Twitter, canonical, robots, keywords, JSON-LD, description length), appropriate callout box usage, style separation (no `<style>`/inline `style`/Google Fonts), math delimiters (no `\\(`), PII/secrets, readability (sentence length — advisory, not blocking), long tokens, exam revision entries, content structure, HTML formatting consistency (no single-line or minified HTML).
 
 ---
 
@@ -415,15 +419,15 @@ The lint checks: template hygiene (no surviving `{{PLACEHOLDER}}`), viewport met
 
 | # | Category | Weight |
 |---|----------|:------:|
-| 1 | Completeness/coverage — every transcript concept present, every example fully worked | 14 |
-| 2 | Teaching spine — all core spine steps per major concept (or procedural spine for algorithms), correct callout per step, situational steps where the transcript provides them | 12 |
-| 3 | Easy language — <~20 word sentences, terms defined on first use, common words | 10 |
-| 4 | Relatable analogies — every tricky idea has concrete mapping analogy | 9 |
+| 1 | Manifest coverage — every essential concept, example, Q&A, and teaching moment present | 18 |
+| 2 | Lecture-faithful flow — questions, corrections, terminology contrasts, and explanation pivots retain their causal order | 14 |
+| 3 | Clear prose — terms defined; ordinary prose understandable without mechanically shortening math | 3 |
+| 4 | Professor intuition — source analogies, warnings, and mental models preserved before generated additions | 10 |
 | 5 | Math intuition & display — built step by step, every symbol named, correct `\(`/`\[` delimiters | 13 |
 | 6 | Generous worked examples — ≥1 fully-solved per concept, real numbers, every step, no "it can be shown" | 12 |
 | 7 | Information density — no thin summaries, domain knowledge supplemented, standalone learnable | 10 |
-| 8 | Readability & structure — clean h1/h2/h3 hierarchy, callout boxes correct, exam entries well-formed | 5 |
-| 9 | Story/flow — hook opener, bridges between concepts, reads as one coherent text | 4 |
+| 8 | Structure — clean h1/h2/h3 hierarchy, callout boxes correct, exam entries well-formed | 5 |
+| 9 | Story/flow — motivations, hook opener, bridges between concepts read as one coherent explanation | 4 |
 | 10 | SEO — OG tags, Twitter Cards, canonical, robots, keywords, JSON-LD, description 100-155 chars | 7 |
 | 11 | Exam revision notes — one entry per major concept, built from core, all fields present | 4 |
 | | **Total** | **100** |
@@ -432,18 +436,19 @@ The lint checks: template hygiene (no surviving `{{PLACEHOLDER}}`), viewport met
 
 ### Red-list (any one = automatic fail regardless of score)
 
-- Concept left out or transcript example not worked in full
+- Essential manifest item left out, including a misconception or vocabulary correction
+- Student-triggered correction flattened into a generic pitfall or unattributed summary
 - Worked example skips steps or says "it can be shown that"
 - Math doesn't render (double-backslash `\\(` used)
 - Formula in exam revision doesn't render or has unnamed symbols
 - Domain connection missing from any major concept
-- Long jargon-dense sentences in text generated/added by Agent 3 (e.g., in revision notes or prerequisite sections) — smart beginner gets lost (main textbook readability is enforced by Agent 2)
+- Agent 3 prose is genuinely hard to understand after math is ignored; sentence length alone is not a red-list item
 - PII present: names, institute, "transcript"/"lecture" references
 - Content is thin — student can't learn from notes alone
 - Callout box used for wrong purpose
 - Professor's informal analogies replaced with generic LLM ones
 - Exam revision entry contains info not in core content
-- Unresolved `*[verify]*` marker in visible body (resolved markers must be removed; escalated ones converted to warning callouts)
+- Any `*[verify]*` marker reaching this phase
 - Derivation skips algebra steps or says "after simplification" without showing the simplification
 - SEO absent/broken: missing description, OG/Twitter/JSON-LD, or description outside 100-155 chars
 - **Pipeline jargon in any visible text** — title, headings, body, or metadata title containing "Enriched", "Dense Draft", "Agent 1/2/3", "Extractor", "Enricher", "Formatter", "enriched by", "created by agent", "based on agent output", callout legends, or enrichment source attribution
@@ -460,18 +465,18 @@ The lint checks: template hygiene (no surviving `{{PLACEHOLDER}}`), viewport met
 - [ ] HTML code formatting: All HTML files are pretty-printed, indented, and well-formatted with proper line breaks; no single-line HTML is generated.
 - [ ] Intermediate `_body.html` cleaned up (while preserving sections/ folder and md drafts)
 - [ ] Every concept present in teaching order; every transcript example worked in full
-- [ ] All core spine steps per major concept (or procedural spine for algorithms); correct callout per step; situational steps where the transcript provides them
+- [ ] Every essential manifest item and useful teaching-spine element survives; no filler callouts were added
 - [ ] Sampled paragraphs pass easy-language audit (avg <~20 words, terms defined on first use) (handled by Agent 2)
-- [ ] Every tricky idea has concrete, mapping analogy
+- [ ] Professor analogies and mental models are preserved; generated analogies appear only when genuinely needed
 - [ ] Math: step-by-step, every symbol named, correct single-backslash delimiters, tensor shapes stated, every derivation complete with no skipped algebra
-- [ ] No `*[verify]*` markers in visible body (resolved removed, escalated converted to warning callouts)
+- [ ] No `*[verify]*` markers reached this phase
 - [ ] Every worked example: all steps, real numbers, final highlighted, sense-check
 - [ ] No thin summaries; domain knowledge supplemented
 - [ ] Clean hierarchy; hook opener; bridges between concepts
-- [ ] Anonymized: no PII; reads as standalone textbook
+- [ ] Anonymized: no PII or source-file mechanics; anonymous Q&A and correction flow remain intact
 - [ ] **Student-facing guardrail**: No pipeline jargon ("Enriched", agent names, callout legends, course codes) in any visible text — title, headings, body, metadata title, OG/Twitter titles
 - [ ] Metadata JSON complete with examRevisionNotes; **no** `summary`, `keyConcepts`, or `quiz` fields
-- [ ] **Content-Aware check**: All placeholders, TODOs, and task instructions (e.g. 'Define ... in revision notes') resolved or stripped; none remain in the final HTML
+- [ ] **Upstream-content check**: No placeholders, TODOs, or task instructions remain; if any were found, the section was returned to Agent 2 rather than silently stripped or authored here
 - [ ] Topic mapping: Prerequisite section populated (or omitted for new subjects/first lectures) based on subject's YAML
 - [ ] Professor intuition preserved (analogies, stories, confusion flags — not generic substitutes)
 - [ ] Exam revision: one entry per major concept, built from core only, every formula renders

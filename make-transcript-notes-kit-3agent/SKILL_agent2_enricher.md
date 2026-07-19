@@ -2,7 +2,7 @@
 name: enricher
 description: >-
   Phase 2 of make-transcript-notes-kit. Takes the extractor's dense markdown draft
-  (1_dense_draft.md), which is split into section files,
+  (<LecturePrefix>_notes_dense.md), which is split into section files,
   and enriches every concept with the teaching spine — a core arc (hook, intuition,
   formalize, worked example, assumptions & scope, visual, pitfalls, recap, real-world
   & domain) plus situational steps (comparison, deduplicated student Q&A, exam guidance)
@@ -17,15 +17,16 @@ description: >-
 
 # Agent 2 — Enricher
 
-**Your job:** Take Agent 1's dense draft (`<LecturePrefix>_notes_dense.md`) and run the section splitter to break it into sections (which will create the `sections/` directory). Then, sequentially process and enrich each `sections/section_XX.md` file using the **teaching spine** — a core arc plus situational steps and an alternate procedural spine for algorithms. Supplement missing domain knowledge from the enrichment documents. Deduplicate repetitive student Q&A. You are **fully responsible** for ensuring the prose meets readability requirements (splitting long sentences, using easy language, avoiding fancy words, and cutting hand-waving). Once all sections are enriched, assemble them back into the file `<LecturePrefix>_notes_enriched.md` (creating it if it does not exist, or overwriting it). Do NOT delete the `sections/` directory during cleanup so Agent 3 can reuse these enriched section files directly.
+**Your job:** Take Agent 1's dense draft (`<LecturePrefix>_notes_dense.md`) and split it into `sections/`. Process one section at a time while preserving every essential manifest item and the causal flow of questions, corrections, examples, and explanations. Use the teaching spine as a completeness guide, not a mold that replaces the instructor's flow. Supplement only where it helps an existing topic. Improve ordinary prose when it is genuinely hard to follow, but never rewrite formulas, derivations, symbol registries, or math-heavy sentences merely to satisfy a word-count heuristic.
 
 **Your input:**
 1. Agent 1's dense draft `<LecturePrefix>_notes_dense.md` (located in the same directory).
 2. Some Companion Documents provided for reference. **Do not introduce new topics** from them. Only enrich concepts present in the draft.
+3. `<LecturePrefix>_extraction_manifest.json`, including source-anchored `teaching_moments` and `lecture_flow`. If the manifest is missing, stop rather than enriching without a preservation contract.
 
 **Critical math role:** Agent 1 reconstructed LaTeX from the transcript's plain-language math and left `*[verify]*` markers wherever the reconstruction was uncertain, and wherever a derivation step was skipped. **It is YOUR job to resolve every `*[verify]*` marker in each section** by reconciling the math against the enrichment docs (and web research if needed), and to fill any skipped derivation step with the real algebra. See the "Math reconciliation from enrichment docs" section below. A `*[verify]*` marker reaching Agent 3 is a failure of this phase.
 
-**Your output:** Save your output into the file `<LecturePrefix>_notes_enriched.md` (creating it if it does not exist, or overwriting it) where every major concept has the complete core spine (or the procedural spine for algorithms), plus situational steps where the transcript provides them, each step annotated with its callout type.
+**Your output:** Save `<LecturePrefix>_notes_enriched.md` with every essential manifest item closed, the lecture's explanation flow preserved, and only the teaching-spine or procedural elements that materially help. Use callouts selectively.
 
 ---
 
@@ -37,8 +38,12 @@ Before starting any enrichment work, perform the setup steps autonomously:
 Run the split script on the input draft to create the sections:
 ```bash
 python scripts/section_splitter.py split outputs/<Subject>/<LecturePrefix>/<LecturePrefix>_notes_dense.md \
-    --output-dir outputs/<Subject>/<LecturePrefix>/sections/
+    --output-dir outputs/<Subject>/<LecturePrefix>/sections/ --invalidate-summaries
 ```
+
+This invalidates summaries from any previous run. Every section summary must be
+regenerated from the current section; `bind-summaries` will reject missing or
+mismatched IDs.
 
 ### Step 2 — Read the inventory and manifest
 1. Read `sections/_inventory.json`. This contains your contract and heading numbering map for the entire lecture.
@@ -48,11 +53,12 @@ python scripts/section_splitter.py split outputs/<Subject>/<LecturePrefix>/<Lect
 For each `section_XX.md` (starting from `section_01.md`, and including `section_00_preamble.md` and appendices if present):
 1. **Read the section file.**
 2. **Read previous section summaries.** Read all existing `sections/section_YY_summary.json` files from previous sections (if any). Review the symbols introduced, analogies used, and topics covered to ensure cross-section context consistency, consistent symbol notation, and logical bridge building.
-3. **Apply enrichment.** Apply the teaching spine, complete worked examples, resolve all `*[verify]*` markers, and enrich math using the companion documents. Design everyday analogies, research edge cases/assumptions, identify pitfalls, and extract real-world connections autonomously from scratch using the companion documents and your own general knowledge.
+3. **Apply enrichment.** First preserve the section's manifest items and teaching sequence. Then apply only the spine elements that genuinely improve the concept. Complete worked examples and resolve all `*[verify]*` markers using companion documents. Prefer the professor's analogy, terminology, correction, and motivating question over generated replacements. Add outside material only after the lecture-grounded explanation and never let it displace that explanation.
 4. **Section Mini-Lint Check.** Verify that:
-   - All core spine steps (Hook, Analogy, Formalize, Worked Example, Scope, Visual, Pitfalls, Recap, Connection) are present in the concept section (or procedural spine for algorithms).
+   - Every essential manifest item for this concept is present, including misconception and vocabulary corrections.
+   - Useful spine steps are present; no filler callout was created merely to complete a checklist.
    - Correct callout annotations (`:::key-concept`, `:::important-note`, `:::example-box`, `:::warning-box`, `:::key-takeaway`) are used.
-   - All `*[verify]*` markers are resolved (removed or escalated).
+   - All `*[verify]*` markers are resolved. If one requires escalation, stop the pipeline for human review.
    - Heading numbering matches `L.T` / `L.T.S` structure.
 5. **Save the enriched content.** Overwrite the file `section_XX.md`.
 6. **Write the section summary.** Save a short JSON object to `sections/section_XX_summary.json` containing:
@@ -62,7 +68,18 @@ For each `section_XX.md` (starting from `section_01.md`, and including `section_
      "title": "Concept Name",
      "summary": "Brief 1-2 sentence concept summary",
      "symbols": ["list", "of", "symbols", "defined"],
-     "analogy": "Analogy description"
+     "analogy": "Professor analogy description, or null",
+     "manifest_items_closed": ["L.T.qna.1", "L.T.moment.1"],
+     "manifest_items_escalated": [],
+     "verify_markers_resolved": 2,
+     "exam_revision": {
+       "mustKnow": "Exact takeaway distilled from this section",
+       "keyFormula": "\\[copied reconciled formula, or empty string\\]",
+       "commonPitfall": "Pitfall stated in this section",
+       "quickCheck": "Question answerable from this section",
+       "connections": ["Related concept ID"],
+       "source_manifest_items": ["L.T.formula.1", "L.T.moment.1"]
+     }
    }
    ```
 
@@ -75,19 +92,27 @@ Do not process multiple sections in parallel — do them one at a time to mainta
        --output outputs/<Subject>/<LecturePrefix>/<LecturePrefix>_notes_enriched.md --format md
    ```
 2. Confirm `<LecturePrefix>_notes_enriched.md` is successfully created.
-3. **Run the quality lint gate** against the assembled enriched draft to check readability, sentence lengths, fancy words, and verify markers:
+3. Re-split the assembled enriched draft into `sections/`. This refreshes `_inventory.json` from the final heading tree and prevents Agent 3 from using a pre-enrichment inventory:
+   ```bash
+   python scripts/section_splitter.py split outputs/<Subject>/<LecturePrefix>/<LecturePrefix>_notes_enriched.md \
+       --output-dir outputs/<Subject>/<LecturePrefix>/sections/
+   python scripts/section_splitter.py bind-summaries \
+       outputs/<Subject>/<LecturePrefix>/sections/
+   ```
+   `bind-summaries` records each final section's heading ID and SHA-256 in its summary. It fails on missing or orphaned summaries.
+4. **Run the quality lint gate** against the assembled enriched draft. Structural, math-delimiter, anonymization, hand-waving, and unresolved-marker failures are blocking. Readability findings are advisory:
    ```bash
    python scripts/lint_dense.py outputs/<Subject>/<LecturePrefix>/<LecturePrefix>_notes_enriched.md \
        --lecture-num <lecture_number> --phase enriched
    ```
-   You MUST resolve all FAIL items (such as too many long sentences, banned hand-waving, academic/fancy words, and unresolved verify markers) flagged by the lint gate. Modify the corresponding section files, re-assemble, and re-run until it passes with zero FAILs. Do NOT assume or claim that downstream phases or Agent 3 will split sentences or resolve readability failures. You are fully responsible for resolving all readability and sentence-length lint failures in this phase.
-4. **Run the verification script** against the manifest:
+   Fix every real FAIL. Review readability warnings only in ordinary prose. Ignore warnings caused by formulas, symbol definitions, tables, code, or derivations. Never alter correct math solely to shorten text.
+5. **Run the verification script** against the manifest:
    ```bash
    python scripts/verify_manifest.py outputs/<Subject>/<LecturePrefix>/<LecturePrefix>_extraction_manifest.json \
-       outputs/<Subject>/<LecturePrefix>/<LecturePrefix>_notes_enriched.md
+       outputs/<Subject>/<LecturePrefix>/<LecturePrefix>_notes_enriched.md --phase enriched
    ```
    If any failures are flagged, locate the relevant `section_XX.md` files, correct the missing content/markup, re-assemble, and run the verification again until it passes.
-5. **Update the Topic Mapping YAML file** for this subject with the lecture's covered topics:
+6. **Update the Topic Mapping YAML file** for this subject with the lecture's covered topics:
    a. Scan the assembled `<LecturePrefix>_notes_enriched.md` (or the section files) and compile a flat list of every major topic covered using the section hierarchy.
       - Every `##` (section title) becomes a topic entry, formatted as `lecture_number.topic_number Title` (e.g., `5.1 Concept Name` if processing Lecture 5).
       - Every `###` (subsection title) becomes a sub-topic entry, formatted as `lecture_number.topic_number.sub_topic_number Title` (e.g., `5.1.1 Sub-concept Name`).
@@ -103,7 +128,7 @@ Do not process multiple sections in parallel — do them one at a time to mainta
    d. Delete the temporary `topics_list.txt` file.
    e. Confirm that the corresponding subject topic mapping YAML file (e.g., inside `topic_mappings/`) is successfully updated or created. Note that the update script resolves names robustly and may write to a normalized filename (for example, updating `Deep Neural Networks.yaml` when `<Subject>` is passed as `DNN` or `Deep_Neural_Networks`).
 
-Clean up any other intermediate helper files, drafts, or scripts created during this phase (but do NOT delete the `sections/` directory or the `section_XX_summary.json` summaries, as Agent 3 will clean them up):
+Clean up any other helper files or scripts, but keep `sections/` and every `section_XX_summary.json`; Agent 3 needs the summaries to render traceable exam revision entries, and they remain as audit artifacts:
 Ensure that ONLY `<LecturePrefix>_notes_dense.md`, `<LecturePrefix>_notes_enriched.md`, `<LecturePrefix>_extraction_manifest.json`, and the `sections/` directory (with section files and summaries) remain in the lecture folder.
 
 ---
@@ -111,10 +136,10 @@ Ensure that ONLY `<LecturePrefix>_notes_dense.md`, `<LecturePrefix>_notes_enrich
 ## Core rules for this phase
 
 1. **Information density** — Supplement, don't summarize away. The enriched section must be deeper than the extractor's section. Never "this is explained later." When a concept is marked as previously covered, add a concise recap (not a full re-derivation) and link to the earlier lecture.
-2. **Analogies that stick** — Every tricky idea gets a concrete everyday analogy BEFORE any math. Use the analogy bank below; invent fresh ones when needed.
+2. **Lecture explanation first** — Preserve the professor's motivating question, analogy, terminology, correction, and explanation sequence. Add a generated analogy only when the source has none and the concept truly needs one.
 3. **Math intuition** — Build every formula step by step. Every symbol named. Explain WHY, not just WHAT. Never "it can be shown that."
 4. **Fully worked examples** — Every example from the transcript must be worked in full: every step, real numbers, final answer highlighted, sense-check at end.
-5. **Writing style — sound human, not AI** — Write like a knowledgeable person explaining things to a friend. Short sentences (aim ~15 words, cap at ~22). Active voice. Conversational tone — starting with "and" or "but" is fine. Address the reader as "you." Vary sentence length for rhythm. Define every term on first use. Cut filler phrases ("it is important to note that" → just say the thing). Cut literary flourishes and marketing-speak. If a sentence reads like it came from a corporate press release or an AI chatbot, rewrite it. But use your judgment — technical terms are fine when they are the right word (e.g., "Fourier transform" is not marketing-speak). Words like "could" and "may" are appropriate when expressing genuine uncertainty. You are fully responsible for splitting long sentences and resolving sentence length issues in this phase; Agent 3 does not split sentences or fix readability failures, so all prose editing must be completed by you. If the Flesch reading ease score is flagged below 60, improve the readability of the surrounding prose as much as you can, but do not force changes on mathematical statements (leave math formulas and symbols as is).
+5. **Writing style — clear, human, and math-safe** — Improve prose that a smart beginner would genuinely struggle to parse. Prefer active voice and define terms on first use. Sentence length and Flesch scores are advisory only. Do not spend repeated passes chasing them. Never split LaTeX, derivation steps, symbol registries, tables, code, or a sentence whose length mainly comes from mathematical notation.
 6. **Strict File Attachment Guard Rail** — Focus *only and only* on the files attached to the prompt/context. Do *not* search for or read other files in the workspace (such as other drafts or notes) unless you are absolutely certain that the attached files do not match the expected context at all (e.g., they are completely blank, corrupted, or clearly belong to a different course/lecture, suggesting an accidental attachment). Only under that absolute certainty may you check for other files in the workspace; otherwise, restrict your processing and enrichment strictly to the attached files and local companion documents.
 7. **Strict Script Creation Guard Rail** — You are strictly prohibited from creating or writing any script (Python, Bash, JS, etc.) inside the toolkit folder (`make-transcript-notes-kit-3agent` or its subfolders) during the process. Any intermediate or temporary scripts created in the workspace for testing or content parsing must be cleaned up and deleted before completing the task.
 8. **🚫 Student-Facing Output Guardrail** — Your output will eventually become student-facing notes. **Do NOT inject any pipeline-internal text** into the output:
@@ -127,7 +152,9 @@ Ensure that ONLY `<LecturePrefix>_notes_dense.md`, `<LecturePrefix>_notes_enrich
     - Think like a student: if any text would make a reader think "this was generated by a bot", remove or rewrite it
 
 9. **Strict Dotted Numbering System** — You must strictly maintain the topic and sub-topic numbering system `lecture_number.topic_number` for all `##` headings, and `lecture_number.topic_number.sub_topic_number` for all `###` headings (e.g., `## 5.1 [Concept Title]` and `### 5.1.1 [Sub-concept Title]` if you are processing Lecture 5). Never strip, alter, or renumber these dotted numbers.
-10. **Do NOT delegate tasks to Agent 3** — You are strictly prohibited from leaving unresolved task instructions, placeholders, or TODOs for Agent 3 in the enriched draft (e.g., 'Define Logistic Regression in revision notes' or 'TODO: add worked example here'). You must resolve all core content and math questions yourself during this enrichment phase. You must also resolve all readability and sentence-length lint failures yourself; you are strictly prohibited from leaving sentence-splitting or prose editing for Agent 3, as Agent 3's role is strictly conversion and template layout, not content editing. If you identify a concept as highly examinable, use the `:::key-takeaway` callout with the label `**Exam note:**` in the core text. Never insert instructions directed at the downstream pipeline.
+10. **Do NOT delegate content to Agent 3** — Leave no placeholders or TODOs. Resolve core content here or record a human-review escalation; Agent 3 must not invent missing explanations. Agent 3's role is strictly conversion and template layout, not content editing — sentence-splitting, prose editing, and readability fixes must all be completed here. Readability warnings are not TODOs and do not justify risky math rewrites. If a concept is highly examinable, use a `:::key-takeaway` labeled `**Exam note:**`.
+
+11. **Manifest closure is the phase contract** — Every `essential` item must appear in the enriched section. A teaching moment may be paraphrased, but its trigger, correction, reasoning, and preferred term must survive. Never convert a student-triggered correction into a generic pitfall that hides the question-and-resolution flow.
 
 ---
 
@@ -144,9 +171,9 @@ The section content is the **sole authority on what topics appear**. Enrich *onl
 
 ## The teaching spine (per major concept)
 
-Apply this arc to every major concept from the extractor's draft. The spine has **core steps** (always present), **situational steps** (include only when the transcript actually provides that material — never manufacture filler), and an **alternate procedural spine** for algorithm/process concepts. Reuse the five callout types; differentiate situational content with bold labels inside the box (`**Q:**`/`**A:**`, `**Exam note:**`, `**Scope:**`).
+Use this arc as a coverage guide for every major concept. Preserve the source explanation order whenever it carries pedagogical meaning. Steps may be combined or omitted when they would create filler. The non-negotiable content is the essential manifest material and the reasoning required to make it understandable.
 
-### Core spine (always, in this order)
+### Core spine (use where the concept needs it)
 
 | Step | What to write | Callout annotation |
 |------|--------------|-------------------|
@@ -167,7 +194,7 @@ These are not mandatory per concept. Add them where the material exists; skip si
 | Step | When to include | What to write | Callout annotation |
 |------|-----------------|---------------|-------------------|
 | Comparison | The lecture contrasts this concept with a sibling (L1 vs L2, CNN vs RNN, supervised vs unsupervised). | A side-by-side contrast — preferably a table — on the dimensions that differ. End with a one-sentence "when to pick which." | (inline prose / table) |
-| Student Q&A | A student asked a question about this concept and the professor answered. | The question and the professor's full answer. **Deduplicate first** (see guardrail below). | `:::important-note` (violet), labeled `**Q:**` / `**A:**` |
+| Student Q&A or correction | A student asked a question, proposed a term, or offered an interpretation that triggered explanation. | Preserve the doubt, why it seemed plausible, the correction, the professor's reason, and the preferred mental model or term. **Deduplicate only exact repetition.** | `:::important-note` (violet), labeled `**Q:**` / `**A:**` |
 | Exam Guidance | The professor gave exam intel for this concept (mark weight, question type, what is NOT examinable, study advice). | The specific guidance, labeled `**Exam note:**`. | `:::key-takeaway` (amber) |
 
 Slot situational steps next to the concept they illuminate: Comparison after Formalize; Q&A and Exam Guidance after Pitfalls, before Recap.
@@ -186,8 +213,8 @@ When a concept is a procedure or algorithm (training loop, K-means, backprop, a 
 | When to Use / Alternatives | When this is the right tool and what the alternatives are. | `:::warning-box` (red) |
 
 **Rules:**
-- Core order never changes: Hook first, Real-World & Domain Connection last. Situational steps slot in next to the concept they illuminate.
-- Callout annotations are mandatory for the core steps. A concept with zero callout annotations is incomplete.
+- Follow the lecture's causal order when a question, failed interpretation, or worked example motivates the next explanation. Otherwise use the spine order as a sensible default.
+- Use callouts when they improve scanning. Do not manufacture all five types for every concept.
 - No two same-type callouts back-to-back. Separate them with body text — this is why Assumptions & Scope and Pitfalls (both red) sit apart with Visual Intuition between them, and why Hook/Intuition/Q&A (all violet) need prose between them.
 - Minor sub-concepts can combine steps. Include a worked example and a pitfall only where the concept naturally calls for them — do not manufacture filler to satisfy a step.
 - Choose ONE spine per concept: the core spine for definitions/theorems/ideas, the procedural spine for algorithms/processes. Never mix the two on the same concept.
@@ -201,6 +228,7 @@ Student questions are often repetitive: the same doubt surfaces many times in di
 3. **Note the frequency.** If several students (or repeated mentions) raised it, say so: "Several students asked…" — frequency signals a common trap worth flagging.
 4. **Drop pure repetition.** Identical re-asks with no new angle are removed, not transcribed again.
 5. **Preserve genuine variety.** Keep questions that probe different angles even if superficially similar (a "why?" and a "how do I compute it?" are different confusion points).
+6. **Never flatten a correction.** If a student-supplied term or analogy caused the explanation, keep that trigger in the canonical Q&A. The answer must state why it seemed plausible, why it was rejected or qualified, and the preferred replacement.
 
 A concept with ten near-identical questions should yield one or two Q&A entries, not ten.
 
@@ -272,6 +300,7 @@ Agent 1 preserved the professor's informal teaching moments. Place them correctl
 - Professor's **casual restatements** → Plain-language bridge before the first equation in step 3
 - Professor's **"students always get confused" flags + debugging war stories** → Pitfalls in step 7
 - Professor's **vivid summary lines** → Recap in step 8
+- Student-triggered **misconceptions, vocabulary corrections, rejected analogies, and terminology contrasts** → Q&A/correction callout. Do not demote these to an unattributed pitfall.
 
 **Paraphrase when**: rambling, transcript-noisy, too long. **Preserve when**: vivid, clear, structurally sound. Always keep the *mapping* and *tone*; lose only filler words.
 
@@ -335,7 +364,7 @@ Agent 1 preserved the professor's informal teaching moments. Place them correctl
 - Every symbol named per concept: "λ (lambda) is the rate parameter."
 - `\frac{}{}` for fractions, `e^{i\pi}` (wrap exponents in `{}`).
 - Multi-line derivations: `\begin{aligned}` inside `\[...\]`.
-- Prefer `\cdot` over `*`, `\times` over `x`, `\ldots` over `...`.
+- When authoring new LaTeX, use explicit operators where they are semantically correct. Do not mechanically replace `*`, `x`, `/`, or `...` in existing math; each may be intentional notation.
 - For matrices/vectors: state the shape on first use ("\(W \in \mathbb{R}^{d \times d}\)").
 - For sums/integrals/expectations: always state the bounds/index set; never write a bare `\sum` without an index.
 
@@ -356,7 +385,7 @@ For each marker, search the enrichment docs for the matching formula/derivation:
 - **Found, matches Agent 1's reconstruction** → drop the marker, keep the LaTeX. Done.
 - **Found, differs from Agent 1's reconstruction** → replace with the doc's form, BUT keep the professor's version too if it differs (see discrepancy handling below). Drop the marker. Add a one-line note: "Standard form (from reference): ...". If the professor's version was actually correct and the doc just uses different notation, align notation to the professor's and note the equivalence.
 - **Found, fills a skipped derivation step** → insert the missing algebra in its own `\[...\]` block at the marked location. Drop the marker.
-- **Not found in the docs** → derive the step yourself from first principles, then sanity-check it (Step R4). If you cannot derive it confidently, keep the `*[verify]*` marker AND escalate by adding a `:::warning-box` callout: "This step needs human review — the enrichment docs do not cover it and the reconstruction is uncertain." Never silently leave a marker without a warning callout.
+- **Not found in the docs** → derive the step yourself from first principles, then sanity-check it (Step R4). If you cannot derive it confidently, record the item in `manifest_items_escalated`, keep the marker in the working section, and STOP the pipeline for human review. Do not assemble or hand the section to Agent 3.
 
 ### Step R3 — Notation alignment
 
@@ -368,7 +397,7 @@ The professor's notation is what the student will see on the exam. Default to it
 
 ### Step R4 — Factuality self-check for every reconciled formula
 
-Before dropping a `*[verify]*` marker, privately verify the formula using at least TWO of these checks. If any fails, do NOT drop the marker — escalate per Step R2.
+Before dropping a `*[verify]*` marker, privately verify the formula using at least TWO of these checks. If any fails, stop for human review per Step R2.
 
 - **Dimensional/shape check:** do the shapes multiply through correctly? If \(X \in \mathbb{R}^{n \times d}\) and \(w \in \mathbb{R}^d\), then \(Xw \in \mathbb{R}^n\). If your reconstruction gives a scalar, it's wrong.
 - **Limiting / special case:** does the formula reduce to a known simpler case? (softmax → sigmoid when \(K=2\); MSE → MAE-ish behavior; Gaussian → delta as \(\sigma \to 0\)). State the reduction in one line where helpful.
@@ -382,7 +411,7 @@ For any derivation the professor started but did not finish (Agent 1 marked the 
 
 ### Step R6 — Final marker sweep
 
-Before handoff, search your own output for `*[verify]*`. The only acceptable surviving markers are those you escalated with a `:::warning-box` callout (Step R2, not-found branch). Any un-escalated `*[verify]*` is a failure — go back and resolve it.
+Before handoff, search your output for `*[verify]*`. No marker may survive into an assembled enriched draft. An escalated marker means the run is paused for human review, not that warning prose is shipped.
 
 ---
 
@@ -394,7 +423,9 @@ When describing charts/figures: name both axes (with units), describe shape (lin
 
 ## Easy-language rules (maintain throughout)
 
-- Sentences <~20 words. Split if >25.
+- Prefer one clear idea at a time in ordinary prose. Treat long-sentence findings as review hints, not mechanical failures.
+- Ignore displayed equations, inline formulas, symbol registries, tables, code, and derivation lines during readability edits.
+- Never alter a correct mathematical expression solely to reduce word count or improve Flesch score.
 - Define every term on first use: *italicize* term → plain meaning → symbol if any.
 - Common words first. Analogy before algebra. Active voice.
 - Never: "clearly", "obviously", "it can be shown that", "details left to reader."
@@ -415,10 +446,10 @@ When describing charts/figures: name both axes (with units), describe shape (lin
 
 **This is your internal verification. Do NOT include these checkboxes, this list, or any checklist in your output.** Before passing to Agent 3, privately verify:
 
-- The major concept in this section has all core spine steps (or the procedural spine for algorithm concepts) with correct callout annotations; situational steps present only where the transcript provides them
+- Every essential manifest item is closed; spine steps and callouts are present only where they materially improve the concept
 - Every tricky concept has a concrete analogy (preferably the professor's own, extended)
 - Every math block: symbols named, steps not skipped, shapes stated for tensors
-- **Every `*[verify]*` marker in this section has been resolved** (confirmed, corrected, filled, or escalated with a `:::warning-box`)
+- **Every `*[verify]*` marker in this section has been resolved**; any escalation paused the run before assembly
 - **Every derivation is complete end-to-end** — no skipped algebra, each step annotated
 - **Every reconciled formula passed the Step R4 factuality checks** (dimensions, limiting case, domain, spot-check)
 - Every transcript example in this section is worked in full: real numbers, every step, sense-check
@@ -428,9 +459,9 @@ When describing charts/figures: name both axes (with units), describe shape (lin
 - **Student Q&A has been deduplicated** — one canonical entry per distinct confusion point; pure repetition dropped; frequency noted where several students asked
 - **Exam Guidance Summary and Key Industry Applications sections carried through** if processing the corresponding appendix sections (enriched lightly, never dropped)
 - IRON RULE followed — no new topics introduced (math reconciliation of existing topics is allowed)
-- Prose maintains easy-language standard
+- Ordinary prose is understandable; readability warnings were reviewed without damaging math
 - **No extraction checklist, quality checklist, or intermediate metadata present in the output**
-- **No un-escalated `*[verify]*` markers remain in the output**
+- **No `*[verify]*` markers remain in the assembled output**
 
 ---
 
@@ -439,11 +470,11 @@ When describing charts/figures: name both axes (with units), describe shape (lin
 An enriched markdown file with:
 
 - The title / header matching the input section, preserving the strict numbering: `lecture_number.topic_number [Title]` (e.g., `5.1 Logistic Regression`). No pipeline jargon, no agent names, no phase labels, no callout legends, no enrichment source attribution.
-- For concept sections, the full core spine (or the procedural spine for algorithm concepts), plus situational steps where the transcript provides them, maintaining the `lecture_number.topic_number.sub_topic_number` numbering system for all `###` headings.
+- For concept sections, the source explanation flow plus useful spine/procedural elements, maintaining the `lecture_number.topic_number.sub_topic_number` numbering system for all `###` headings.
 - Callout annotations using `:::` fenced blocks (as shown above)
 - Math in `\(...\)` / `\[...\]` — single backslash
 - Every derivation complete end-to-end with annotated steps
-- Every `*[verify]*` marker from Agent 1 resolved (or escalated with a `:::warning-box`)
+- Every `*[verify]*` marker from Agent 1 resolved; unresolved uncertainty stops handoff
 - All prose in easy language
 - No HTML tags yet (Agent 3 handles that)
 - **Appendix sections carried through from Agent 1** (Exam Guidance Summary, Key Industry Applications) if the current section is an appendix section — enriched lightly, never dropped. **Title must be clean** (e.g., "Exam Guidance Summary", not "Exam Guidance Summary (Enriched)").
@@ -457,6 +488,6 @@ An enriched markdown file with:
 When you finish, the output is ready for Agent 3 (Formatter), who will:
 - Convert your callout annotations to proper HTML `<div class="...">` tags
 - Fill the HTML template with all SEO metadata
-- Generate exam revision notes from your enriched core (carrying through the reconciled formulas)
+- Render the traceable `exam_revision` objects from section summaries
 - Run the lint gate and self-score against the rubric
-- Surface any `*[verify]*` markers you escalated as warnings (the lint gate flags leftover markers)
+- Stop if any `*[verify]*` marker somehow reaches Phase 3

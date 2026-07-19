@@ -22,7 +22,11 @@ if sys.platform.startswith("win"):
         sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding="utf-8", errors="replace")
 
 TOPIC_MAPPINGS_DIR = os.path.abspath(
-    os.path.join(os.path.dirname(__file__), "..", "..", "topic_mappings"))
+    os.environ.get(
+        "BITSNOTES_TOPIC_MAPPINGS_DIR",
+        os.path.join(os.path.dirname(__file__), "..", "..", "topic_mappings"),
+    )
+)
 
 # ---------------------------------------------------------------------------
 # YAML loading
@@ -261,11 +265,11 @@ def find_coverage_by_topics(topics, subject_name=None, exclude_lecture=None,
 
     results = []
     for subj, tmap in all_maps.items():
-        if subject_name and subj != subject_name:
+        if subject_name and not is_subject_match(subj, subject_name):
             continue
         for lec in tmap.get("lectures", []):
             if exclude_lecture and \
-               subj == exclude_lecture[0] and \
+               is_subject_match(subj, exclude_lecture[0]) and \
                str(lec.get("lecture_number", "")) == str(exclude_lecture[1]):
                 continue
             covered = lec.get("topics_covered", [])

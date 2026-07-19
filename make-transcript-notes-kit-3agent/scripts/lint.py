@@ -13,24 +13,22 @@ Checks (each reported as PASS / WARN / FAIL):
   * Metadata JSON is valid and complete (title, subject, date, sections, examRevisionNotes).
   * SEO: Open Graph tags, Twitter Card tags, description length (100–155 chars),
     keywords meta, canonical URL, robots meta, structured data (JSON-LD), author meta.
-  * Callout box usage: at least one of each type (.key-concept, .important-note,
-    .example-box, .warning-box, .key-takeaway).
+  * Callout box usage: reports which supported types are used; never requires
+    filler boxes merely to include all five types.
   * Math delimiters: flags double-backslash delimiters (\\( \\[) in the visible
     body, which MathJax will NOT render. Use single-backslash \( ... \) and
     \[ ... \] (MathJax is loaded by the platform — no script tag needed).
   * No leaked secrets or PII patterns.
-  * Readability heuristic: visible sentences longer than 22 words are flagged;
-    too many => FAIL.
+  * Readability heuristic: math-stripped prose is reviewed with advisory WARNs.
   * Banned hand-waving phrases: "clearly", "obviously", "it can be shown",
-    "left to the reader", etc. => hard FAIL.
-  * Fancy/academic word detection: flags jargon (WARN; many => FAIL).
+    "left to the reader", etc. => WARN in the HTML phase.
+  * Fancy/academic word detection: advisory WARN.
   * Flesch Reading Ease estimate: scores prose readability (WARN if hard).
   * Suspiciously long unbroken tokens flagged as overflow risk.
   * Exam revision notes: at least one .exam-revision-entry present.
   * No <style> tags, no inline style="" attributes, no Google Fonts links.
-  * Leftover *[verify]* math-reconstruction markers (WARN) — these are
-    Agent 1/2 process markers for uncertain math and must be resolved
-    (removed) or escalated into a .warning-box callout before shipping.
+  * Leftover *[verify]* math-reconstruction markers (FAIL) — unresolved
+    uncertainty stops shipping and requires Agent 2 or human review.
 
 Exit code is non-zero if any check FAILs.
 """
@@ -55,9 +53,9 @@ import _plain_language as PL  # shared word lists + readability helpers
 # Configuration
 # ---------------------------------------------------------------------------
 
-SENTENCE_WORD_WARN = PL.WORD_CEILING  # 22 (was 28)
-SENTENCE_FAIL_RATIO = 0.15
-SENTENCE_FAIL_ABS = 12
+SENTENCE_WORD_WARN = PL.WORD_CEILING
+SENTENCE_MANY_RATIO = 0.15
+SENTENCE_MANY_ABS = 12
 LONG_TOKEN_CHARS = 40
 
 SECRET_PATTERNS = [
@@ -466,22 +464,23 @@ def check_metadata(raw, parser, report):
 
 
 def check_callout_boxes(parser, report):
-    missing = []
     found = []
     for c in REQUIRED_CALLOUTS:
         if c in parser.classes_used:
             found.append(c)
-        else:
-            missing.append(c)
 
-    if not missing:
-        report.passed("callout boxes", f"All 5 types present: {', '.join(found)}.")
+    if found:
+        report.passed(
+            "callout boxes",
+            f"Used {len(found)} appropriate callout type(s): {', '.join(found)}. "
+            "Not every lecture needs all five.",
+        )
     else:
-        report.failed("callout boxes",
-                      f"Missing callout types: {', '.join(missing)}. "
-                      f"Found: {', '.join(found) if found else 'none'}. "
-                      "Every notes page must use all five: "
-                      ".key-concept, .important-note, .example-box, .warning-box, .key-takeaway.")
+        report.warned(
+            "callout boxes",
+            "No callout boxes found. Add one only where it materially helps; "
+            "do not create filler to satisfy the linter.",
+        )
 
 
 def check_style_separation(parser, report):
@@ -506,7 +505,7 @@ _DOUBLE_BACKSLASH_MATH = re.compile(r"\\\\[(\[)\]]")
 
 
 def check_math(raw, report):
-    """Flag double-backslash math delimiters in the visible body.
+    """Reject double-backslash math delimiters in the visible body.
 
     In the final HTML, MathJax delimiters must be single-backslash: \\( \\)
     and \\[ \\]. A literal '\\\\(' (two backslashes) renders as an escaped
@@ -522,7 +521,7 @@ def check_math(raw, report):
 
     hits = _DOUBLE_BACKSLASH_MATH.findall(visible)
     if hits:
-        report.warned(
+        report.failed(
             "math delimiters",
             f"{len(hits)} double-backslash math delimiter(s) found in the body "
             "(e.g. '\\\\(' or '\\\\['). MathJax will not render these. "
@@ -559,8 +558,8 @@ def check_pii_and_secrets(raw, report):
             pii_hits.append(f"{label}: \"{snippet}\"")
     if pii_hits:
         report.failed("PII / anonymization",
-                      "Possible PII or transcript references found (notes must read as "
-                      "a standalone textbook with no person/institute names or transcript mentions):\n  "
+                      "Possible PII or source-file references found (notes must stand alone "
+                      "without person/institute names while preserving anonymous Q&A):\n  "
                       + "\n  ".join(pii_hits))
     else:
         report.passed("PII / anonymization",
@@ -571,14 +570,33 @@ _SENTENCE_SPLIT = re.compile(r"(?<=[.!?])\s+|(?<=[.!?][\"\u201d])\s+")
 _WORD = re.compile(r"\S+")
 
 
+def _prose_for_readability(prose):
+    """Remove mathematical regions before applying language heuristics."""
+    clean = re.sub(
+        r"\\begin\{([A-Za-z*]+)\}.*?\\end\{\1\}",
+        " ",
+        prose,
+        flags=re.DOTALL,
+    )
+    clean = re.sub(r"\\\(.*?\\\)|\\\[.*?\\\]|\$\$.*?\$\$", " ", clean,
+                   flags=re.DOTALL)
+    lines = []
+    for line in clean.splitlines():
+        if (
+            re.search(r"\\(?:frac|sum|prod|int|mathbb|mathbf|begin|end)\b", line)
+            or "\\[" in line
+            or "\\]" in line
+        ):
+            continue
+        lines.append(line)
+    return "\n".join(lines)
+
+
 def check_readability(parser, report):
-    prose = parser.prose
+    prose = _prose_for_readability(parser.prose)
     if not prose.strip():
         report.warned("readability", "No visible prose extracted; cannot assess.")
         return
-
-    prose = re.sub(r"\\\(.*?\\\)|\\\[.*?\\\]|\$\$.*?\$\$", " ", prose,
-                   flags=re.DOTALL)
 
     sentences = []
     for line in prose.split("\n"):
@@ -607,14 +625,18 @@ def check_readability(parser, report):
             f"({ratio*100:.0f}%).")
     if n_long == 0:
         report.passed("readability", base + " Sentences are short and clear.")
-    elif n_long >= SENTENCE_FAIL_ABS or ratio > SENTENCE_FAIL_RATIO:
-        report.warned("readability",
-                      base + " Too many long sentences for the easy-language mandate (handled by Agent 2).\n"
-                      "Longest:\n" + longest_preview)
+    elif n_long >= SENTENCE_MANY_ABS or ratio > SENTENCE_MANY_RATIO:
+        report.warned(
+            "readability",
+            base + " Review only genuinely difficult prose; math has been excluded and this is not blocking.\n"
+            "Longest prose samples:\n" + longest_preview,
+        )
     else:
-        report.warned("readability",
-                      base + " A few long sentences — consider splitting.\n"
-                      "Longest:\n" + longest_preview)
+        report.warned(
+            "readability",
+            base + " Advisory only; do not alter mathematical content to shorten text.\n"
+            "Longest prose samples:\n" + longest_preview,
+        )
 
 
 def check_handwaving(parser, report):
@@ -633,7 +655,7 @@ def check_handwaving(parser, report):
 
 def check_fancy_words(parser, report):
     """Flag fancy/academic words that have plain alternatives (WARN)."""
-    prose = parser.prose
+    prose = _prose_for_readability(parser.prose)
     hits = PL.find_fancy(prose)
     if not hits:
         report.passed("fancy words", "No fancy-word offenders detected.")
@@ -652,7 +674,7 @@ def check_fancy_words(parser, report):
 
 def check_flesch(parser, report):
     """Estimate Flesch Reading Ease of the prose (WARN if too hard)."""
-    prose = parser.prose
+    prose = _prose_for_readability(parser.prose)
     score, n_words, n_sent = PL.flesch_reading_ease(prose)
     if n_words < 50:
         report.passed("Flesch reading ease",
@@ -738,13 +760,11 @@ def check_verify_markers(raw, report):
     hits = _VERIFY_MARKER.findall(visible)
     if hits:
         sample = "; ".join(h[:60] for h in hits[:5])
-        report.warned(
+        report.failed(
             "math verify markers",
             f"{len(hits)} leftover *[verify]* marker(s) found in the visible "
-            f"body. These are Agent 1/2 process markers for uncertain math "
-            f"reconstructions and must be resolved before shipping: either "
-            f"remove (resolved by Agent 2) or convert into a .warning-box "
-            f"callout (escalated for human review). Sample: {sample}")
+            f"body. Uncertain math must be resolved or the pipeline must stop "
+            f"for human review before HTML conversion. Sample: {sample}")
     else:
         report.passed("math verify markers",
                       "No leftover *[verify]* markers in the visible body.")

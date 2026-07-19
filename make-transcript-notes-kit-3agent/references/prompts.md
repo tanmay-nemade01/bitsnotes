@@ -2,44 +2,44 @@
 
 ## Full conversion (with topic mapping)
 ```text
-Use make-transcript-notes-kit to convert the lecture transcript for
-<Lecture Name> in <Subject>. Go through all three phases: exhaustive
-extraction, domain knowledge supplementation with the full 9-step teaching
-spine, and HTML formatting. Read topic_mappings/<Subject>.yaml for
-prerequisite detection, generate the prerequisite section, and update
-the YAML. Run the lint gate at the end.
+Use make-transcript-notes-kit to convert the transcript for <Lecture Name> in
+<Subject>. Run all three agents. Preserve source-anchored Q&A, misconceptions,
+terminology corrections, professor intuition, worked reasoning, and lecture
+flow. Agent 2 updates topic_mappings/<Subject>.yaml after enrichment; Agent 3
+reads it for prerequisites and never writes it. Run manifest verification on
+both dense and enriched drafts, then run the final HTML lint gate.
 ```
 
 ## Full conversion (no topic mapping)
 ```text
-Use make-transcript-notes-kit to convert the lecture transcript for
-<Lecture Name> in <Subject>. Go through all three phases: exhaustive
-extraction, domain knowledge supplementation with the full 9-step teaching
-spine, and HTML formatting. Generate the metadata JSON, exam revision notes,
-and every callout box. Run the lint gate at the end.
+Use make-transcript-notes-kit to convert the transcript for <Lecture Name> in
+<Subject>. Go through exhaustive source-anchored extraction, lecture-faithful
+teaching edits, and format-only HTML conversion. Embed metadata in the HTML;
+do not create a companion JSON file. Use callouts only where they help. Run
+manifest verification and the final lint gate.
 ```
 
-## Quick notes (extraction + formatting only)
+## Faster notes (lighter enrichment, all gates retained)
 ```text
-Use make-transcript-notes-kit to convert the <Lecture Name> transcript.
-Focus on Phase 1 (exhaustive extraction) and Phase 3 (HTML formatting).
-Skip heavy domain knowledge supplementation.
+Use all three agents for <Lecture Name>, but keep Agent 2 supplementation light.
+Do not skip manifest closure, Q&A/correction preservation, math reconciliation,
+or strict section assembly. Agent 3 remains format-only.
 ```
 
 ## Enrich existing notes (Phase 2 pass)
 ```text
-Take the existing notes in <path/to/LectureName.html> and run Phase 2 against
-them — supplement every concept with domain knowledge, analogies, worked
-examples, pitfalls, and domain connections. Complete the 9-step spine for
-every major concept. Self-score against the quality rubric when done.
+Take the existing enriched markdown at <path/to/LectureName_notes_enriched.md>
+and its extraction manifest. Run Agent 2 section-by-section. Preserve every
+essential teaching moment and fill only useful spine gaps. Do not force all
+spine steps or callouts. Verify the result with verify_manifest.py.
 ```
 
 ## One concept deep-dive
 ```text
-In the notes for <Lecture Name>, apply the full 9-step teaching spine to
-the section on <specific concept>. Add hook, intuition+analogy, step-by-step
-math with every symbol named, fully worked example with real numbers,
-pitfall warning box, domain connection, and recap.
+In the notes for <Lecture Name>, improve <specific concept> without replacing
+its original explanation flow. Preserve source Q&A, corrections, analogies,
+and terminology. Add only the missing elements that materially improve
+understanding, such as a worked example or scope boundary.
 ```
 
 ## Easy-language & Writing Style Pass
@@ -48,12 +48,15 @@ Run an easy-language and writing style pass on the notes at <path>.
 The notes should sound like a knowledgeable person explaining things
 to a friend — not like an AI chatbot or a corporate press release.
 Focus on:
-- Splitting sentences longer than 22 words (aim for ~15 words target).
+- Fixing ordinary prose only when it is genuinely hard to follow.
 - Defining terms on first use inline.
 - Using active voice and conversational tone.
 - Cutting filler phrases ("It's important to note that" → just say the thing).
 - Cutting marketing-speak and AI clichés (the lint gate will flag any remaining).
 - Ensuring every formula has a plain-English intuition explanation.
+Ignore LaTeX, derivations, symbol registries, tables, and code when judging
+sentence length or Flesch score. Never rewrite correct math merely to satisfy
+a readability heuristic.
 Technical terms are fine when they are the right word (e.g., "Fourier transform"
 is not marketing-speak). Words like "could" and "may" are appropriate when
 expressing genuine uncertainty.

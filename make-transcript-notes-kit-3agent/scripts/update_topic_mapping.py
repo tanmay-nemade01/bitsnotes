@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 r"""Update a topic_mapping YAML file with a new lecture's details.
 
-Called by Agent 3 (formatter) AFTER generating the HTML file but BEFORE the
-lint gate runs. Appends or updates the lecture entry in the YAML file.
+Called by Agent 2 (enricher) after the enriched heading tree is final. Appends
+or replaces the lecture entry in the YAML file; Agent 3 only reads this map.
 
 Usage:
     python scripts/update_topic_mapping.py <subject> <lecture_number> \
@@ -21,7 +21,7 @@ complete list of topics_covered for this lecture.
 The script:
   1. Reads the existing YAML file (or creates one if it doesn't exist).
   2. Checks if a lecture with the same lecture_number already exists.
-     - If yes: updates it (keeping existing topics_covered, appending new ones).
+     - If yes: replaces its topics_covered with the final current heading list.
      - If no: appends a new entry and writes the file.
   3. Writes the updated YAML back (preserving formatting as much as possible).
 
@@ -110,6 +110,9 @@ def update_or_add_lecture(subject_name, lecture_number, lecture_topic,
     lecture_topic = html.unescape(lecture_topic)
     file_name = html.unescape(file_name)
     new_topics = [html.unescape(t) for t in new_topics]
+    new_topics = list(dict.fromkeys(t for t in new_topics if t.strip()))
+    if not new_topics:
+        raise ValueError("At least one final topic is required; refusing an empty mapping update.")
 
     # Try to load existing map
     topic_map = TMU.load_topic_map(subject_name)
@@ -135,25 +138,13 @@ def update_or_add_lecture(subject_name, lecture_number, lecture_topic,
             break
 
     if existing_idx is not None:
-        # Update existing — merge topics (keep old, append new not already present)
-        existing_lec = lectures[existing_idx]
-        existing_topics = set(existing_lec.get("topics_covered", []))
-        new_set = set(new_topics)
-        merged = list(existing_topics | new_set)
-
-        # Preserve original order: keep existing in place, append new at end
-        ordered = list(existing_lec.get("topics_covered", []))
-        seen = set(ordered)
-        for t in new_topics:
-            if t not in seen:
-                ordered.append(t)
-                seen.add(t)
-
+        # The enriched heading tree is authoritative. Replacing avoids stale
+        # topics surviving after a section is renamed or removed.
         lectures[existing_idx] = {
             "lecture_number": str(lecture_number),
             "topic": lecture_topic,
             "file_name": file_name,
-            "topics_covered": ordered,
+            "topics_covered": new_topics,
         }
         was_updated = True
     else:
@@ -214,10 +205,9 @@ def main():
                 break
 
     if not new_topics:
-        print("WARNING: No topics provided. The YAML file will not be updated.",
+        print("ERROR: No topics provided. The YAML file was not updated.",
               file=sys.stderr)
-        # Still write with an empty topics list to record the lecture exists
-        new_topics = []
+        sys.exit(1)
 
     path, was_added, was_updated = update_or_add_lecture(
         subject_name, lecture_number, lecture_topic, file_name, new_topics)
