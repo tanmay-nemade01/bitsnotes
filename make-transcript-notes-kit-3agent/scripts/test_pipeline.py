@@ -446,9 +446,30 @@ The reward error question appears later.
 </main></body></html>"""
         self.assertFalse(self._verify(manifest, html, phase="html").failures)
 
+        # Test double-backslash math delimiters
         report = html_lint.Report()
         html_lint.check_math(r"<main>\\(x + y\\)</main>", report)
         self.assertTrue(report.has_fail)
+
+        # Test split delimiters
+        report2 = html_lint.Report()
+        html_lint.check_math("<p>\\[</p><p>x + y</p><p>\\]</p>", report2)
+        self.assertTrue(report2.has_fail)
+
+        # Test nested delimiters
+        report3 = html_lint.Report()
+        html_lint.check_math("<p>\\[\\[x + y\\]\\]</p>", report3)
+        self.assertTrue(report3.has_fail)
+
+        # Test raw less-than inside math block
+        report4 = html_lint.Report()
+        html_lint.check_math("<p>\\[y_{<t}\\]</p>", report4)
+        self.assertTrue(report4.has_fail)
+
+        # Test normal math block (no failure)
+        report5 = html_lint.Report()
+        html_lint.check_math("<p>\\[y_{&lt;t}\\]</p>", report5)
+        self.assertFalse(report5.has_fail)
 
 
 if __name__ == "__main__":
