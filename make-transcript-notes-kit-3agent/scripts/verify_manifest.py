@@ -231,12 +231,15 @@ def extract_qna_blocks(text, phase):
 
 
 def validate_trace_fields(report, item, name, schema_version):
-    """Require provenance fields for schema v2 manifests."""
+    """Require provenance fields for schema v2 manifests.
+
+    The manifest is a condensed checksum of the dense draft, so only a
+    source anchor is required — the prose itself carries the detail.
+    """
     if schema_version < 2:
         return
-    for field in ("anchor_quote", "source_anchor"):
-        if not str(item.get(field, "")).strip():
-            report.fail(name, f"Schema v2 item is missing required '{field}' provenance.")
+    if not str(item.get("source_anchor", "")).strip():
+        report.fail(name, "Schema v2 item is missing required 'source_anchor' provenance.")
 
 
 def item_evidence_matches(item, text, fields):
@@ -366,7 +369,7 @@ def verify_manifest(manifest_path, markdown_path, phase="enriched"):
         
         if cid in sections:
             sect_text = sections[cid]["text"]
-            if not item_evidence_matches(example, sect_text, ("description", "anchor_quote")):
+            if not item_evidence_matches(example, sect_text, ("description",)):
                 report_item_miss(
                     report,
                     f"Worked Example ({cid})",
@@ -394,7 +397,7 @@ def verify_manifest(manifest_path, markdown_path, phase="enriched"):
         if cid in sections:
             sect_text = sections[cid]["text"]
             if not has_math_markup(sect_text) or not item_evidence_matches(
-                formula, sect_text, ("description", "anchor_quote")
+                formula, sect_text, ("description",)
             ):
                 report_item_miss(
                     report,
@@ -429,14 +432,6 @@ def verify_manifest(manifest_path, markdown_path, phase="enriched"):
                 qna_match = bool(question and answer) and any(
                     keyword_match(question, block, threshold=2)
                     and keyword_match(answer, block, threshold=2)
-                    and (
-                        content_phase != "dense"
-                        or keyword_match(
-                            str(qna.get("anchor_quote", "")),
-                            block,
-                            threshold=2,
-                        )
-                    )
                     for block in qna_blocks
                 )
             else:
@@ -444,7 +439,7 @@ def verify_manifest(manifest_path, markdown_path, phase="enriched"):
                     item_evidence_matches(
                         qna,
                         block,
-                        ("question_summary", "answer_summary", "anchor_quote"),
+                        ("question_summary", "answer_summary"),
                     )
                     for block in qna_blocks
                 )
@@ -506,14 +501,7 @@ def verify_manifest(manifest_path, markdown_path, phase="enriched"):
             matched = item_evidence_matches(
                 moment,
                 sect_text,
-                ("resolution", "anchor_quote"),
-            )
-
-        if content_phase == "dense" and moment.get("anchor_quote"):
-            matched = matched and keyword_match(
-                str(moment["anchor_quote"]),
-                sect_text,
-                threshold=2,
+                ("resolution", "summary"),
             )
 
         if not matched:
@@ -544,7 +532,6 @@ def verify_manifest(manifest_path, markdown_path, phase="enriched"):
         order = entry.get("order")
         cid = entry.get("concept")
         summary = str(entry.get("summary", "")).strip()
-        anchor_quote = str(entry.get("anchor_quote", "")).strip()
         source_anchor = str(entry.get("source_anchor", "")).strip()
         keywords = entry.get("keywords", [])
         name = f"Lecture flow {order!r}"
@@ -553,22 +540,10 @@ def verify_manifest(manifest_path, markdown_path, phase="enriched"):
             report.fail(name, "Flow order values must be strictly increasing integers.")
         elif isinstance(order, int):
             previous_order = order
-        if (
-            not summary
-            or not source_anchor
-            or (
-                schema_version >= 2
-                and (
-                    not anchor_quote
-                    or not isinstance(keywords, list)
-                    or len(keywords) < 2
-                )
-            )
-        ):
+        if not summary or not source_anchor:
             report.fail(
                 name,
-                "Flow entries require summary, source_anchor, and schema-v2 "
-                "anchor_quote plus at least two ordered evidence keywords.",
+                "Flow entries require a summary and a source_anchor.",
             )
             continue
         if cid not in sections:
@@ -576,10 +551,11 @@ def verify_manifest(manifest_path, markdown_path, phase="enriched"):
             continue
 
         sect_text = sections[cid]["text"]
+        # Prefer explicit keywords when present; otherwise match on the summary.
         evidence = (
             " ".join(str(keyword) for keyword in keywords)
-            if schema_version >= 2
-            else (anchor_quote if content_phase == "dense" else summary)
+            if isinstance(keywords, list) and keywords
+            else summary
         )
         evidence_keyword_count = len(extract_keywords(evidence))
         position = keyword_match_position(

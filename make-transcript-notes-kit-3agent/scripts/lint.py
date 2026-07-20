@@ -505,7 +505,7 @@ _DOUBLE_BACKSLASH_MATH = re.compile(r"\\\\[(\[)\]]")
 
 
 def check_math(raw, report):
-    """Reject double-backslash math delimiters in the visible body.
+    """Reject invalid math formatting, delimiters, and HTML-incompatible syntax in the visible body.
 
     In the final HTML, MathJax delimiters must be single-backslash: \\( \\)
     and \\[ \\]. A literal '\\\\(' (two backslashes) renders as an escaped
@@ -519,6 +519,9 @@ def check_math(raw, report):
     visible = re.sub(r"<style\b.*?</style>", "", visible,
                      flags=re.DOTALL | re.IGNORECASE)
 
+    failed = False
+
+    # 1. Double-backslash check
     hits = _DOUBLE_BACKSLASH_MATH.findall(visible)
     if hits:
         report.failed(
@@ -526,9 +529,49 @@ def check_math(raw, report):
             f"{len(hits)} double-backslash math delimiter(s) found in the body "
             "(e.g. '\\\\(' or '\\\\['). MathJax will not render these. "
             "Use single-backslash \\( ... \\) for inline and \\[ ... \\] for blocks.")
-    else:
+        failed = True
+
+    # 2. Split delimiter check (delimiters alone inside HTML tags)
+    # matching things like <p>\[</p> or <li>\)</li>
+    split_hits = re.findall(r"<([a-zA-Z0-9]+)\b[^>]*>\s*\\(?:\[|\]|\(|\))\s*</\1>", visible, re.IGNORECASE)
+    if split_hits:
+        report.failed(
+            "math delimiters",
+            f"Found {len(split_hits)} math delimiter(s) isolated in separate HTML tags (e.g. <{split_hits[0]}>\[</{split_hits[0]}>). "
+            "The math expression and its delimiters must be contained within the same HTML element for MathJax to render it."
+        )
+        failed = True
+
+    # 3. Nested/double delimiter check (e.g., \[\[ or \]\] or \(\( or \)\))
+    nested_hits = re.findall(r"\\\[\s*\[|\]\s*\\\]|\\\(\s*\(|\)\s*\\\)", visible)
+    if nested_hits:
+        report.failed(
+            "math delimiters",
+            f"Found {len(nested_hits)} nested or double math delimiters in the body (e.g. '\\\\[\\\\[' or '\\\\]\\\\]'). "
+            "Use single delimiters like '\\[' and '\\]' instead."
+        )
+        failed = True
+
+    # 4. Raw '<' or '<' followed by letters check inside math blocks
+    math_blocks = re.findall(r"\\\(.*?\\\)|\\\[.*?\\\]", visible, re.DOTALL)
+    raw_char_hits = []
+    for block in math_blocks:
+        if re.search(r"<[a-zA-Z/]", block):
+            raw_char_hits.append(block)
+    if raw_char_hits:
+        sample = raw_char_hits[0].strip().replace("\n", " ")
+        if len(sample) > 80:
+            sample = sample[:77] + "..."
+        report.failed(
+            "math delimiters",
+            f"Found {len(raw_char_hits)} math block(s) containing raw '<' or '<' followed by letters (e.g., '{sample}'). "
+            "Browsers will parse these as HTML tags and break rendering. Use '\\lt' or '&lt;' instead."
+        )
+        failed = True
+
+    if not failed:
         report.passed("math delimiters",
-                      "No double-backslash math delimiters in the visible body.")
+                      "No invalid math delimiters, split tags, nested delimiters, or raw HTML-breaking character issues found.")
 
 
 def check_pii_and_secrets(raw, report):

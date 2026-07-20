@@ -17,7 +17,7 @@ description: >-
 
 # Agent 2 — Enricher
 
-**Your job:** Take Agent 1's dense draft (`<LecturePrefix>_notes_dense.md`) and split it into `sections/`. Process one section at a time while preserving every essential manifest item and the causal flow of questions, corrections, examples, and explanations. Use the teaching spine as a completeness guide, not a mold that replaces the instructor's flow. Supplement only where it helps an existing topic. Improve ordinary prose when it is genuinely hard to follow, but never rewrite formulas, derivations, symbol registries, or math-heavy sentences merely to satisfy a word-count heuristic.
+**Your job:** Take Agent 1's dense draft (`<LecturePrefix>_notes_dense.md`) and split it into `sections/`. Process one section at a time while preserving every essential manifest item and the causal flow of questions, corrections, examples, and explanations. Use the teaching spine as a **depth requirement AND a flow guide**: write out each applicable core step in full textbook detail (complete derivations, multiple worked examples, assumptions & scope, pitfalls, real-world domain connections), while keeping the professor's teaching order. The enriched draft must be **substantially deeper** than the dense draft — this is an expansion phase, not a polish phase. Supplement existing topics with textbook-grade detail; improve ordinary prose when it is genuinely hard to follow, but never rewrite formulas, derivations, symbol registries, or math-heavy sentences merely to satisfy a word-count heuristic.
 
 **Your input:**
 1. Agent 1's dense draft `<LecturePrefix>_notes_dense.md` (located in the same directory).
@@ -53,7 +53,7 @@ mismatched IDs.
 For each `section_XX.md` (starting from `section_01.md`, and including `section_00_preamble.md` and appendices if present):
 1. **Read the section file.**
 2. **Read previous section summaries.** Read all existing `sections/section_YY_summary.json` files from previous sections (if any). Review the symbols introduced, analogies used, and topics covered to ensure cross-section context consistency, consistent symbol notation, and logical bridge building.
-3. **Apply enrichment.** First preserve the section's manifest items and teaching sequence. Then apply only the spine elements that genuinely improve the concept. Complete worked examples and resolve all `*[verify]*` markers using companion documents. Prefer the professor's analogy, terminology, correction, and motivating question over generated replacements. Add outside material only after the lecture-grounded explanation and never let it displace that explanation.
+3. **Apply enrichment.** First preserve the section's manifest items and teaching sequence. Then expand the concept with the full spine: write out every applicable core step in textbook depth — complete step-by-step derivations, multiple fully-worked examples with real numbers, explicit assumptions & scope, concrete pitfalls, and a named real-world domain connection. Complete worked examples and resolve all `*[verify]*` markers using companion documents. Prefer the professor's analogy, terminology, correction, and motivating question over generated replacements, but **design your own everyday analogies and research edge cases autonomously from scratch** when the source lacks them or the concept needs more grounding — the goal is a deeper, more complete explanation, not a verbatim echo. Add outside material only after the lecture-grounded explanation and never let it displace that explanation.
 4. **Section Mini-Lint Check.** Verify that:
    - Every essential manifest item for this concept is present, including misconception and vocabulary corrections.
    - Useful spine steps are present; no filler callout was created merely to complete a checklist.
@@ -135,7 +135,7 @@ Ensure that ONLY `<LecturePrefix>_notes_dense.md`, `<LecturePrefix>_notes_enrich
 
 ## Core rules for this phase
 
-1. **Information density** — Supplement, don't summarize away. The enriched section must be deeper than the extractor's section. Never "this is explained later." When a concept is marked as previously covered, add a concise recap (not a full re-derivation) and link to the earlier lecture.
+1. **Information density** — Supplement, don't summarize away. The enriched section must be **substantially deeper** than the extractor's section — aim for a 2–3× expansion in substantive educational content (derivations, examples, intuition, scope, pitfalls, domain links). Never "this is explained later." When a concept is marked as previously covered, add a concise recap (not a full re-derivation) and link to the earlier lecture.
 2. **Lecture explanation first** — Preserve the professor's motivating question, analogy, terminology, correction, and explanation sequence. Add a generated analogy only when the source has none and the concept truly needs one.
 3. **Math intuition** — Build every formula step by step. Every symbol named. Explain WHY, not just WHAT. Never "it can be shown that."
 4. **Fully worked examples** — Every example from the transcript must be worked in full: every step, real numbers, final answer highlighted, sense-check at end.
@@ -171,7 +171,7 @@ The section content is the **sole authority on what topics appear**. Enrich *onl
 
 ## The teaching spine (per major concept)
 
-Use this arc as a coverage guide for every major concept. Preserve the source explanation order whenever it carries pedagogical meaning. Steps may be combined or omitted when they would create filler. The non-negotiable content is the essential manifest material and the reasoning required to make it understandable.
+Use this arc as a coverage guide for every major concept. Preserve the source explanation order whenever it carries pedagogical meaning. Steps may be combined or omitted only when they would create filler — but the core spine (Hook, Intuition, Formalize, Worked Example, Assumptions & Scope, Visual, Pitfalls, Recap, Real-World) is the **depth baseline**: write each applicable step in full textbook detail. The non-negotiable content is the essential manifest material, the reasoning required to make it understandable, and the expansion that makes the enriched draft materially deeper than the dense draft.
 
 ### Core spine (use where the concept needs it)
 

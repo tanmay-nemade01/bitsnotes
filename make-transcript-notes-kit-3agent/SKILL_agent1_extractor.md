@@ -17,7 +17,7 @@ description: >-
 
 **Your job:** Read a raw `.txt` lecture transcript and produce an **exhaustive, maximally detailed dense markdown draft** — a document so thorough that a student who missed the lecture could learn EVERYTHING from it alone. This is not a summary or an outline for someone else to flesh out. It is the substantive educational document. Agent 2 will add structural polish, reconcile math, and add callout formatting — but the depth, detail, and teaching content must already be here. Capture EVERY educational dimension — not just concepts and definitions, but also student questions, professor answers, industry applications, worked computations, exam guidance, named references, and every pedagogical moment. Filter NOTHING that has educational value.
 
-**Depth expectation:** Major concepts (`##` sections) where the professor spent significant time — explaining, deriving, working examples, fielding questions — should be substantial mini-lessons, typically 400–800 words of prose plus math and Q&A. If such a section is under 200 words, re-read the transcript — you likely missed explanations, examples, or intuition. However, not every concept warrants this depth: brief definitions, transitional remarks, or topics the professor only mentioned in passing may naturally be short. Match your depth to how much the professor actually said, not to an arbitrary word floor. Thin sections on *major* concepts are the #1 failure mode of this phase.
+**Depth expectation:** Major concepts (`##` sections) where the professor spent significant time — explaining, deriving, working examples, fielding questions — must be substantial mini-lessons, typically 600–1000 words of prose plus math and Q&A. If such a section is under 350 words, re-read the transcript — you likely missed explanations, examples, or intuition. However, not every concept warrants this depth: brief definitions, transitional remarks, or topics the professor only mentioned in passing may naturally be short. Match your depth to how much the professor actually said, not to an arbitrary word floor. Thin sections on *major* concepts are the #1 failure mode of this phase. **The dense draft is the primary deliverable.** Write the full educational content here, in prose. Do not defer detail to the manifest — the manifest is only a checksum of what you wrote (see Step 6).
 
 **Your output:** Save your outputs inside the lecture directory `outputs/<Subject>/<LecturePrefix>/` (e.g. `outputs/Machine Learning/ML_Lecture_6/`):
 1. Create the project folder `outputs/<Subject>/<LecturePrefix>/` if it does not already exist.
@@ -221,7 +221,7 @@ Before writing a single paragraph, scan the transcript and enumerate the followi
 8. **Every teaching moment** — misconception, vocabulary correction, rejected analogy, warning, re-explanation, or terminology contrast. Record its transcript line/timestamp, the trigger, and the resolution.
 9. **The lecture-flow ledger** — record the chronological order of concept introductions, motivating questions, student interruptions, corrections, worked examples, and transitions. This ledger goes in the manifest so later agents can preserve causal teaching flow even when the main draft is grouped by concept.
 
-**This checklist is your contract with completeness.** A dropped item is a failed extraction. You may start writing prose only AFTER the checklist is complete.
+**This checklist is your contract with completeness — for the PROSE.** Every item here must appear, in full, in the dense draft itself. The manifest (Step 6) is only a condensed checksum of this list, so a manifest entry with no matching prose is a failure, not a substitute. A dropped item is a failed extraction. You may start writing prose only AFTER the checklist is complete.
 
 ### Step 1 — Second pass: extract sentence by sentence
 
@@ -310,9 +310,10 @@ python scripts/lint_dense.py outputs/Machine_Learning/ML_Lecture_5/ML_Lecture_5_
 ```
 You MUST resolve all FAIL items flagged by the lint gate and re-run until it passes.
 
-### Step 6 — Write and verify the extraction manifest JSON (MANDATORY)
+### Step 6 — Write and verify the extraction manifest JSON (MANDATORY, but SECONDARY)
 
-**Write this AFTER the dense draft is complete.** Generate the manifest by scanning your finished draft — it is a machine-readable summary of what you already wrote, not a parallel planning document. For each concept, example, formula, and Q&A in your draft, create the corresponding manifest entry with source anchors. Save it as `<LecturePrefix>_extraction_manifest.json` under the lecture directory. The manifest is a traceable contract. Every essential item needs a source anchor and enough detail for a later agent to detect accidental loss:
+**The dense draft is the deliverable; the manifest is only its checksum.** Write the full educational content in the prose draft (Step 2). Then, AFTER the draft is complete, generate a *condensed* manifest by scanning what you wrote — it exists so a later agent can detect accidental loss, NOT to carry content the prose omitted. Keep it short: one compact line per item, `source_anchor` only (drop `anchor_quote`), and no duplicated prose. Target roughly 1 line of manifest per major concept plus its items — not hundreds of lines. If a teaching moment is only in the manifest and not in the prose, that is a failure: put it in the draft.
+
 ```json
 {
   "schema_version": 2,
@@ -324,64 +325,35 @@ You MUST resolve all FAIL items flagged by the lint gate and re-run until it pas
       "salience": "essential",
       "has_formula": true,
       "has_worked_example": true,
-      "has_qna": true,
-      "dimensions_present": ["concept", "math", "worked_example", "qna", "pedagogy"]
+      "has_qna": true
     }
   ],
   "worked_examples": [
-    {
-      "id": "L.T.example.1",
-      "concept": "L.T",
-      "salience": "essential",
-      "description": "Short description of the worked computation / example",
-      "anchor_quote": "short exact source phrase",
-      "source_anchor": "timestamp or transcript line range"
-    }
+    { "id": "L.T.example.1", "concept": "L.T", "salience": "essential",
+      "description": "One-line description of the worked computation",
+      "source_anchor": "timestamp or transcript line range" }
   ],
   "formulas": [
-    {
-      "id": "L.T.formula.1",
-      "concept": "L.T",
-      "salience": "essential",
-      "description": "Short description of the formula",
-      "anchor_quote": "plain-language source description",
-      "source_anchor": "timestamp or transcript line range"
-    }
+    { "id": "L.T.formula.1", "concept": "L.T", "salience": "essential",
+      "description": "One-line description of the formula",
+      "source_anchor": "timestamp or transcript line range" }
   ],
   "qna_exchanges": [
-    {
-      "id": "L.T.qna.1",
-      "concept": "L.T",
-      "salience": "essential",
+    { "id": "L.T.qna.1", "concept": "L.T", "salience": "essential",
       "question_summary": "Summary of the student's question or doubt",
       "answer_summary": "The explanation that resolved it",
-      "anchor_quote": "short exact phrase from the exchange",
-      "source_anchor": "timestamp or transcript line range"
-    }
+      "source_anchor": "timestamp or transcript line range" }
   ],
   "teaching_moments": [
-    {
-      "id": "L.T.moment.1",
-      "concept": "L.T",
-      "type": "misconception_correction",
+    { "id": "L.T.moment.1", "concept": "L.T", "type": "misconception_correction",
       "salience": "essential",
-      "trigger": "The plausible but incorrect interpretation",
-      "resolution": "Why it is incomplete or wrong",
-      "preferred_term": "Preferred vocabulary, when applicable",
-      "anchor_quote": "short exact phrase",
-      "source_anchor": "timestamp or transcript line range"
-    }
+      "summary": "trigger → resolution (one line)",
+      "source_anchor": "timestamp or transcript line range" }
   ],
   "lecture_flow": [
-    {
-      "order": 1,
-      "concept": "L.T",
-      "type": "concept_intro|question|correction|example|transition",
-      "summary": "What happened and why it led to the next explanation",
-      "anchor_quote": "short exact phrase",
-      "keywords": ["two", "to four", "event-specific", "terms"],
-      "source_anchor": "timestamp or transcript line range"
-    }
+    { "order": 1, "concept": "L.T", "type": "concept_intro|question|correction|example|transition",
+      "summary": "What happened and why it led to the next explanation (one line)",
+      "source_anchor": "timestamp or transcript line range" }
   ],
   "exam_guidance": [
     { "concept": "L.T", "guidance": "Consolidated guidance or notes about the exam questions" }
@@ -391,7 +363,7 @@ You MUST resolve all FAIL items flagged by the lint gate and re-run until it pas
   ]
 }
 ```
-Allowed teaching-moment types include `misconception_correction`, `vocabulary_correction`, `rejected_analogy`, `professor_analogy`, `warning`, `intuition`, `re_explanation`, and `terminology_contrast`. Use `essential`, `useful`, or `optional` salience. All entries must be directly derived from the source and actual extracted content.
+Allowed teaching-moment types include `misconception_correction`, `vocabulary_correction`, `rejected_analogy`, `professor_analogy`, `warning`, `intuition`, `re_explanation`, and `terminology_contrast`. Use `essential`, `useful`, or `optional` salience. All entries must be directly derived from the source and actual extracted content — never write a manifest item whose detail lives only in the manifest.
 
 Run the manifest verifier against the dense draft:
 ```bash
@@ -544,7 +516,7 @@ If a check fails and you cannot resolve it, mark the formula `*[verify]*` with t
 
 ## Professor intuition retention test
 
-Use Dimension 7 as the canonical list. Keep a fragment when removing it would eliminate a way of understanding, a warning, a motivation, or a transition that the formal definition does not provide. Record high-value fragments in `teaching_moments` with source anchors.
+Use Dimension 7 as the canonical list. Keep a fragment when removing it would eliminate a way of understanding, a warning, a motivation, or a transition that the formal definition does not provide. **Write every such fragment into the prose draft in full** — the `teaching_moments` manifest array is only a one-line checksum of what you already wrote, never a place to store detail the prose lacks.
 
 **Reference: types of professor intuition to preserve (these are NOT banter)**
 
@@ -660,9 +632,9 @@ Save your output to the file `<LecturePrefix>_notes_dense.md` (creating it if it
 
 ## Handoff to Agent 2
 
-When you finish, your dense draft must already be a **deep, substantive educational document** — not a skeleton for someone else to flesh out. A student reading only your draft (without Agent 2's enrichment) should be able to learn the material.
+When you finish, your dense draft must already be a **deep, substantive educational document** — not a skeleton for someone else to flesh out, and not a thin outline padded by a long manifest. A student reading only your draft (without Agent 2's enrichment) should be able to learn the material. **The prose draft is the product; the manifest is a checksum of it.**
 
-Agent 2 (Enricher) will then add *structural polish on top of your depth*:
+Agent 2 (Enricher) will then add *structural polish and depth on top of your depth*:
 - Apply teaching spine formatting (hook, recap, callout boxes) — structural organization, not new content
 - Add domain connections and analogies where yours are missing — supplementary, not primary
 - **Reconcile every `*[verify]*` marker** against the enrichment docs — confirming, correcting, or filling professor-skipped derivation steps

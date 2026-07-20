@@ -141,10 +141,13 @@ This confines errors to individual sections and makes quality checks targeted.
 
 ## Fidelity contract
 
-`<LecturePrefix>_extraction_manifest.json` uses schema version 2. Essential
-examples, Q&A, formulas, and teaching moments carry a timestamp or source line
-range plus a short anchor quote. Misconception and vocabulary-correction items
-also record the trigger, resolution, and preferred term.
+`<LecturePrefix>_extraction_manifest.json` uses schema version 2. It is a
+**condensed checksum of the dense draft**, not a content store: each essential
+example, Q&A, formula, and teaching moment carries a `source_anchor` (timestamp
+or source line range) and a one-line summary, but the full detail lives in the
+prose. Misconception and vocabulary-correction items also record the trigger and
+resolution. The manifest should stay short — roughly one line per major item,
+not hundreds of lines.
 
 Run the verifier twice:
 
