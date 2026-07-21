@@ -88,7 +88,7 @@ export const GET: APIRoute = async () => {
     }
 
     const rawIndex = await obj.json() as any[];
-    // Truncate text to snippets to prevent bulk content scraping
+    // Truncate text to snippets to keep the search index payload small
     const safeIndex = rawIndex.map((item: any) => ({
       title: item.title,
       subject: item.subject,
