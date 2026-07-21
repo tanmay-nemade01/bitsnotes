@@ -204,7 +204,7 @@ Use `templates/notes.html`. Replace every `{{PLACEHOLDER}}`:
 | `{{TARGET_AUDIENCE}}` | Who these notes are for (e.g., "Postgraduate students in Machine Learning"). **No course codes** (e.g., never "S1-25_AIMLCZG565"). |
 | `{{SUMMARY_TEXT_PLAIN}}` | Plain-text SEO description, 100-155 chars — see SEO below. This is for search engines only, not a visible section. |
 | `{{KEYWORDS}}` | Comma-separated: subject name, lecture topic, all key concepts |
-| `{{CANONICAL_URL}}` | `https://bitsnotes.com/<subject-slug>/<lecture-slug>` |
+| `{{CANONICAL_URL}}` | `https://bitsnotes.com/view/<subject-slug>/<lecture-slug>` |
 | `{{STRUCTURED_DATA_JSON}}` | Minified JSON-LD — see SEO below |
 | `{{RAW_METADATA_JSON}}` | Full metadata JSON — see Step 5 below |
 | `{{PREREQUISITE_KNOWLEDGE}}` | Optional HTML for "Previously covered" section — see Step 8 (Topic Mapping) |
