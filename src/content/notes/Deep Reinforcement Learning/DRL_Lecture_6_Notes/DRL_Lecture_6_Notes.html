@@ -114,7 +114,7 @@
     },
     {
       "title": "6.14 Diabetes Treatment Case Study",
-      "description": "MDP applied to healthcare"
+      "description": "Finite-horizon MDP formulation, state-dependent action sets, piecewise transitions, QALY rewards, and backward DP/VI/PI algorithms for chronic disease treatment"
     },
     {
       "title": "6.15 Planning Algorithms",
@@ -1949,92 +1949,191 @@
 
       <h2 class="section-title">6.14 Diabetes Treatment as an MDP: Case Study</h2>
 
-      <h3>6.14.1 Problem Setup and MDP Formulation</h3>
+      <h3>6.14.1 Case Study Overview & Sequential Decision Problem</h3>
 
       <div class="important-note">
-        <strong>Hook:</strong> Can we use DP to save lives? A research paper modeled Type 2 diabetes treatment as an MDP
-        — physicians as agents, medical states as states, medication choices as actions, and Quality Adjusted Life Years
-        as rewards. The result: an optimal treatment policy computed entirely on paper.
+        <strong>Hook:</strong> Can Dynamic Programming save lives? In chronic disease management (such as Type 2 diabetes), medical treatment decisions are not one-time classification problems. They are repeated, sequential decisions over time. A medication initiated now reduces future risk of cardiovascular complications like coronary heart disease (CHD) or stroke, but incurs immediate medication cost, burden, and side effects. Dynamic Programming computes an optimal, state-dependent clinical treatment policy by weighing immediate costs against long-term health values.
       </div>
 
-      <p>The professor shared a research paper on modeling Type 2 diabetes treatment as an MDP — a real-world
-        application of dynamic programming to chronic disease management.</p>
+      <p>This case study is based on the landmark paper by <strong>Steimle and Denton (2017)</strong>: <em>Markov Decision Processes for Screening and Treatment of Chronic Diseases</em> (with related work by Mason et al., 2014). It formulates repeated medication initiation as a finite-horizon Markov Decision Process (MDP).</p>
 
-      <strong>Problem setup.</strong> Patients with Type 2 diabetes are reviewed frequently by physicians. At each
-      review, the physician examines the patient's metabolic state and medical conditions, then decides on medication
-      adjustments to maximize long-term health outcomes. The patient's health evolves probabilistically.
+      <div class="important-note">
+        <strong>Sequential Decision Question:</strong> At each periodic clinical epoch (e.g., annual review), given the patient's current metabolic state and medication history, which medication decision (if any) should be initiated so that long-term expected quality-adjusted health outcome is maximized?
+      </div>
+
+      <h3>6.14.2 Detailed MDP Formulation</h3>
+
+      <p>The chronic disease treatment decision is formalized as a finite-horizon MDP: \((S, A, P, R, \gamma)\).</p>
 
       <div class="key-concept">
-        <strong>MDP Formulation for Diabetes Treatment:</strong>
+        <strong>1. Decision Epochs & Horizon:</strong>
+        <p>Decision points occur periodically (e.g., annual clinical reviews) over a finite planning horizon \(t = 0, 1, 2, \dots, N\), representing the patient's lifetime or long-term management period.</p>
 
-        <strong>State space:</strong> The state includes:
+        <strong>2. State Space (\(S = S_L \cup S_D\)):</strong>
+        <p>The state space is partitioned into living states (\(S_L\)) and absorbing event/terminal states (\(S_D\)):</p>
         <ul>
-          <li>Patient's medical indicators (metabolic state, risk level)</li>
-          <li>Medication history (M1, M2 indicating medications received so far)</li>
-          <li>Death indicator (terminal state)</li>
+          <li><strong>Detailed Living State (\(s \in S_L\)):</strong> \(s = (TC, HDL, SBP, m_1, m_2, \dots, m_M)\), where \(TC\) is total cholesterol category, \(HDL\) is HDL cholesterol category, \(SBP\) is systolic blood pressure category, and \(m_i \in \{0, 1\}\) records whether medication \(i\) has already been initiated.</li>
+          <li><strong>Compact Explanatory Living State:</strong> \(s = (\text{risk level}, \text{cholesterol-med status}, \text{BP-med status})\), with \(\text{risk level} \in \{\text{Low}, \text{Medium}, \text{High}\}\).</li>
+          <li><strong>Absorbing Event States (\(S_D\)):</strong> Includes major event states like CHD event (\(d_C\)), stroke event (\(d_S\)), and death from other causes (\(d_O\)). Once entered, the patient remains in \(S_D\) with no further decision-making.</li>
         </ul>
 
-        <p>Professor's note: "Academically speaking, if you want to solve it for a classroom problem, I would look at a
-          simple state description. In the real problem, you would have a pretty elaborate state description."</p>
+        <strong>3. Action Space & State-Dependent Action Sets (\(A(s)\)):</strong>
+        <p>Actions represent medication initiation choices: \(A = \{\text{Start none}, \text{Start cholesterol med}, \text{Start BP med}, \text{Start both}\}\).</p>
+        <p><strong>Critical constraint:</strong> The action set \(A(s)\) is <em>state-dependent</em> to prevent unrealistic repeated initiation of a drug already being taken:</p>
+        <table>
+          <thead>
+            <tr>
+              <th>Current Medication Status</th>
+              <th>Feasible Action Set \(A(s)\)</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>No medication started</td>
+              <td>Start none, Start cholesterol med, Start BP med, Start both</td>
+            </tr>
+            <tr>
+              <td>Cholesterol med already started</td>
+              <td>Start none, Start BP med</td>
+            </tr>
+            <tr>
+              <td>BP med already started</td>
+              <td>Start none, Start cholesterol med</td>
+            </tr>
+            <tr>
+              <td>Both medication groups started</td>
+              <td>Start none</td>
+            </tr>
+          </tbody>
+        </table>
 
-        <strong>Actions:</strong> For the main states, the possible actions are:
+        <strong>4. Transition Probabilities (\(P_t(j \mid s, a_t)\)):</strong>
+        <p>Let \(p_t^S(s, a_t)\) be the age/state-dependent stroke probability, \(p_t^C(s, a_t)\) the CHD probability, and \(p_t^O\) the probability of death from other causes. The transition kernel is defined piecewise:</p>
+        <p>\[
+        P_t(j \mid s, a_t) = \begin{cases}
+        \left[ 1 - p_t^S(s, a_t) - p_t^C(s, a_t) - p_t^O \right] p(j \mid s), & s, j \in S_L \\
+        p_t^S(s, a_t), & j = d_S, \; s \in S_L \\
+        p_t^C(s, a_t), & j = d_C, \; s \in S_L \\
+        p_t^O, & j = d_O, \; s \in S_L \\
+        1, & s = j, \; s \in S_D \\
+        0, & \text{otherwise}
+        \end{cases}
+        \]</p>
+
+        <strong>5. Reward Function (\(R_t(s, a, j)\)):</strong>
+        <p>The reward reflects Quality-Adjusted Life Years (QALYs), treatment costs, side effects, and event penalties:</p>
+        <p>\[
+        R_t(s, a, j) = \text{QALY}(s, j) - \lambda \cdot \text{MedicationCost}(a) - \text{EventPenalty}(j)
+        \]</p>
+        <p>Illustrative numerical breakdown:</p>
         <ul>
-          <li>Do nothing</li>
-          <li>Start no action</li>
-          <li>Start cholesterol medication</li>
-          <li>Start BP (blood pressure) medication</li>
-          <li>Start both medications</li>
+          <li>Survive 1 year without major event: <strong>+1.0</strong></li>
+          <li>Medication cost/burden for Start C: <strong>-0.03</strong></li>
+          <li>Medication cost/burden for Start B: <strong>-0.03</strong></li>
+          <li>Medication cost/burden for Start Both: <strong>-0.06</strong></li>
+          <li>CHD or Stroke event penalty: <strong>-5.0</strong></li>
+          <li>Death: <strong>0 continuation value</strong></li>
         </ul>
 
-        <strong>Transition probabilities:</strong> A probability matrix P(s'|s,a) defines how medical decisions affect
-        the next medical condition. These probabilities are learned from past clinical experience or domain expertise.
-
-        <strong>Reward function:</strong> Based on Quality Adjusted Life Years (QALY) — how long and how healthily the
-        patient lives after treatment — plus a fraction of medical costs, plus penalties for side effects.
+        <strong>6. Objective:</strong>
+        <p>Find optimal policy \(\pi_t^*(s)\) maximizing long-term expected discounted reward with discount factor \(\gamma \approx 1.0\) (since long-term health outcomes are clinically critical):</p>
+        <p>\[
+        V_t^*(s) = \max_{\pi} \mathbb{E} \left[ \sum_{k=t}^N \gamma^{k-t} R_k(S_k, A_k, S_{k+1}) \;\middle|\; S_t = s \right]
+        \]</p>
       </div>
 
-      <div class="warning-box">
-        <strong>Caveat (Professor's Warning):</strong> "It may not be possible to have realistic estimates of these
-        probabilities. There's no guarantee these numbers are exactly correct. They come from domain expertise."
-
-        <p>The transition probabilities in healthcare MDPs are not perfectly known — they are estimates from clinical
-          data and expert judgment. This is different from the race car example where the probabilities were given
-          exactly.</p>
-      </div>
-
-      <strong>Resulting policy.</strong> After solving the MDP, the optimal policy suggests:
-      <ul>
-        <li>Low risk, no medication → wait</li>
-        <li>Medium risk, no medication → a specific medication action</li>
-        <li>High risk, no medication → start both medications</li>
-        <li>Any terminal (death) state → do nothing</li>
-      </ul>
-
-      <div class="warning-box">
-        <strong>Scalability Caveat:</strong> "You cannot have this transition table for all problems. It's only for very
-        small problems with very small state space and very small possible actions. It doesn't scale so well. If you
-        want to scale, you will discretize the states and action space."
-
-        <p>Real-world: MDPs with known transition models are powerful but limited to domains where the state space is
-          manageable and reliable probability estimates are available from historical data or expert knowledge.</p>
-      </div>
+      <h3>6.14.3 Solving the MDP via Dynamic Programming Algorithms</h3>
 
       <div class="important-note">
-        <strong>Intuition:</strong> This case study shows both the power and the limits of DP. Power: you can compute an
-        optimal treatment policy without experimenting on real patients. Limits: you need a model (transition
-        probabilities), and those probabilities must come from somewhere — usually clinical data or expert opinion, not
-        from a known physical law like in the race car example.
+        <strong>1. Backward Dynamic Programming (Finite Horizon):</strong>
+        <p>Initialized with terminal value \(V_N(s) = 0\) for all states. For \(t = N-1, N-2, \dots, 0\), Bellman backups are computed backward in time:</p>
+        <p>\[
+        V_t(s) = \max_{a \in A(s)} \sum_{j \in S} P_t(j \mid s, a) \left[ R_t(s, a, j) + \gamma \, V_{t+1}(j) \right]
+        \]</p>
+        <p>Optimal policy selection: \(\pi_t^*(s) = \arg\max_{a \in A(s)} \sum_{j \in S} P_t(j \mid s, a) \left[ R_t(s, a, j) + \gamma \, V_{t+1}(j) \right]\). Output is an age- and state-dependent decision table.</p>
+
+        <strong>2. Value Iteration View (Stationary Discounted MDP):</strong>
+        <p>Repeatedly applies Bellman optimality backup \(V_{k+1}(s) = \max_{a \in A(s)} \sum_{j \in S} P(j \mid s, a) [R(s, a, j) + \gamma V_k(j)]\) until \(\Delta = \max_s |V_{k+1}(s) - V_k(s)| < \theta\).</p>
+
+        <strong>3. Policy Iteration View (Stationary Model):</strong>
+        <ul>
+          <li><em>Step 1 (Initialize):</em> Start with baseline clinical guideline (e.g., no med for low risk, 1 med for medium risk, both for high risk).</li>
+          <li><em>Step 2 (Policy Evaluation):</em> Solve \(V^{\pi}(s) = \sum_{j \in S} P(j \mid s, \pi(s)) [R(s, \pi(s), j) + \gamma V^{\pi}(j)]\).</li>
+          <li><em>Step 3 (Policy Improvement):</em> Extract \(\pi_{\text{new}}(s) = \arg\max_{a \in A(s)} \sum_{j \in S} P(j \mid s, a) [R(s, a, j) + \gamma V^{\pi}(j)]\).</li>
+          <li><em>Step 4 (Iterate):</em> Repeat until policy \(\pi\) stabilizes.</li>
+        </ul>
+      </div>
+
+      <h3>6.14.4 Optimal Policy Output & Interpretation</h3>
+
+      <div class="example-box">
+        <strong>Illustrative Optimal Policy Table:</strong>
+        <table>
+          <thead>
+            <tr>
+              <th>Patient State</th>
+              <th>Optimal Action \(\pi^*(s)\)</th>
+              <th>Clinical Rationale</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>Low risk, no medication</td>
+              <td>Wait (Start none)</td>
+              <td>Event risk reduction does not justify immediate medication cost/burden.</td>
+            </tr>
+            <tr>
+              <td>Medium risk, no medication</td>
+              <td>Start cholesterol medication</td>
+              <td>Targeted risk reduction balances treatment burden.</td>
+            </tr>
+            <tr>
+              <td>High risk, no medication</td>
+              <td>Start both medications</td>
+              <td>High immediate cost is offset by major reduction in high event loss (-5.0).</td>
+            </tr>
+            <tr>
+              <td>High risk, cholesterol med started</td>
+              <td>Start BP medication</td>
+              <td>Adds secondary prevention to control remaining elevated risk.</td>
+            </tr>
+            <tr>
+              <td>Absorbing event state (\(S_D\))</td>
+              <td>No further initiation decision</td>
+              <td>Terminal state / decision process ends.</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="warning-box">
+        <strong>Practical Limitations & Clinical Cautions:</strong>
+        <ol>
+          <li><strong>Transition Probability Estimation:</strong> Probabilities are estimated from epidemiological models and clinical trials; they are subject to statistical uncertainty.</li>
+          <li><strong>Discretization Loss:</strong> Continuous medical parameters (e.g., blood pressure, cholesterol levels) must be discretized, which may lose fine-grained diagnostic information.</li>
+          <li><strong>Imperfect Medication Adherence:</strong> Real patients may forget or skip doses, degrading real-world effectiveness relative to model assumptions.</li>
+          <li><strong>Heterogeneous Patient Preferences & Side Effects:</strong> Individual tolerance and quality-of-life impact vary across patients.</li>
+          <li><strong>Decision Support, Not Automated Physician Replacement:</strong> DP models serve as decision support tools to guide clinicians, not autonomous medical decision makers.</li>
+        </ol>
+      </div>
+
+      <div class="example-box">
+        <strong>Case Study Review Questions:</strong>
+        <ol>
+          <li>Identify the state, action, transition probability, and reward components in the Type 2 diabetes treatment MDP.</li>
+          <li>Why is chronic disease medication a sequential decision problem rather than a standard one-step classification problem?</li>
+          <li>Write the Bellman optimality equation for the finite-horizon chronic treatment problem.</li>
+          <li>Explain how an action with a small immediate negative reward (medication cost/side effect) can have a higher long-term expected value.</li>
+          <li>Compare value iteration and policy iteration when solving stationary chronic treatment decision models.</li>
+        </ol>
       </div>
 
       <div class="key-takeaway">
-        <strong>Recap:</strong> The diabetes treatment case study demonstrates DP applied to healthcare: states are
-        medical conditions, actions are medication choices, rewards are QALY-based. The approach works when the state
-        space is small and transition probabilities can be reliably estimated, but does not scale to complex,
-        high-dimensional medical decisions.
+        <strong>Recap:</strong> The diabetes case study proves DP's real-world power: by modeling patient health as an MDP, Bellman backups compute personalized, risk-dependent medication strategies that maximize long-term QALYs while penalizing treatment burden and severe cardiovascular events.
       </div>
 
-      <strong>Bridge:</strong> This case study illustrates the broader principle: DP methods are <em>planning
-        algorithms</em> that work when you have a model. What happens when you don't have a model?
+      <strong>Bridge:</strong> This case study illustrates the broader principle: DP methods are <em>planning algorithms</em> that work when you have a model. What happens when you don't have a model?
+
 
       <h2 class="section-title">6.15 Planning Algorithms and the Model-Based Paradigm</h2>
 
@@ -2144,6 +2243,14 @@
         <li><strong>Transition probabilities from domain expertise:</strong> In healthcare and other domains, the model
           dynamics (P function) come from clinical data and expert knowledge rather than being perfectly known.</li>
       </ul>
+
+      <h2 class="section-title">References & Further Reading</h2>
+
+      <ol class="references-list">
+        <li><strong>Steimle, L. N., and Denton, B. T. (2017).</strong> <em>Markov Decision Processes for Screening and Treatment of Chronic Diseases.</em> In Markov Decision Processes in Practice, Springer, pp. 189–222. <a href="https://btdenton.engin.umich.edu/wp-content/uploads/sites/138/2015/10/Steimle-2015.pdf" target="_blank" rel="noopener">Paper Link</a></li>
+        <li><strong>Mason, J. E., Denton, B. T., Shah, N. D., and Smith, S. A. (2014).</strong> <em>Optimizing the simultaneous management of blood pressure and cholesterol for type 2 diabetes patients.</em> European Journal of Operational Research, 233(3), 727–738.</li>
+        <li><strong>Sutton, R. S., and Barto, A. G. (2018).</strong> <em>Reinforcement Learning: An Introduction</em>, 2nd edition. MIT Press. Chapter 4: Dynamic Programming.</li>
+      </ol>
       </main>
 
       <!-- ============================================================
