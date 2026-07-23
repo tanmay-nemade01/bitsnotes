@@ -543,7 +543,7 @@ def check_math(raw, report):
         failed = True
 
     # 3. Nested/double delimiter check (e.g., \[\[ or \]\] or \(\( or \)\))
-    nested_hits = re.findall(r"\\\[\s*\[|\]\s*\\\]|\\\(\s*\(|\)\s*\\\)", visible)
+    nested_hits = re.findall(r"\\\[\s*\\\[|\\\]\s*\\\]|\\\(\s*\\\(|\\\)\s*\\\)", visible)
     if nested_hits:
         report.failed(
             "math delimiters",
