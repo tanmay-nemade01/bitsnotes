@@ -14,11 +14,9 @@ const RED = '\x1b[31m';
 const BOLD = '\x1b[1m';
 const RESET = '\x1b[0m';
 
-console.log(`${BOLD}BitsNotes R2 Upload Script${RESET}\n`);
-
-if (!fs.existsSync(NOTES_DIR)) {
-  console.error(`${RED}Error: notes directory not found at ${NOTES_DIR}${RESET}`);
-  process.exit(1);
+const FORCE_UPLOAD = process.argv.includes('--force') || process.argv.includes('-f');
+if (FORCE_UPLOAD) {
+  console.log(`${YELLOW}Force mode enabled: Bypassing cache checks for all files.${RESET}\n`);
 }
 
 // ─── Cache & MD5 Helpers ──────────────────────────────────────────────────────
@@ -47,6 +45,35 @@ function saveCache() {
   } catch (err) {
     console.error(`${RED}Warning: Failed to save upload cache file: ${err.message}${RESET}`);
   }
+}
+
+function getCachedHash(key) {
+  if (uploadCache[key] !== undefined) {
+    return uploadCache[key];
+  }
+  // Fallback: Case-insensitive match to handle casing changes gracefully
+  const lowerKey = key.toLowerCase();
+  for (const existingKey of Object.keys(uploadCache)) {
+    if (existingKey.toLowerCase() === lowerKey) {
+      const hash = uploadCache[existingKey];
+      delete uploadCache[existingKey];
+      uploadCache[key] = hash;
+      saveCache();
+      return hash;
+    }
+  }
+  return undefined;
+}
+
+function updateCacheEntry(key, hash) {
+  const lowerKey = key.toLowerCase();
+  for (const existingKey of Object.keys(uploadCache)) {
+    if (existingKey.toLowerCase() === lowerKey && existingKey !== key) {
+      delete uploadCache[existingKey];
+    }
+  }
+  uploadCache[key] = hash;
+  saveCache();
 }
 
 // ─── Metadata Helpers ────────────────────────────────────────────────────────
@@ -332,7 +359,7 @@ for (const subjectName of subjectFolders) {
     // Add HTML note to upload queue ONLY if it changed
     const htmlHash = getFileMd5(htmlPath);
     const remoteHtmlKey = `notes/${subjectName}/${lectureFolder}/${htmlFile}`;
-    if (uploadCache[remoteHtmlKey] !== htmlHash) {
+    if (FORCE_UPLOAD || getCachedHash(remoteHtmlKey) !== htmlHash) {
       uploadQueue.push({
         localPath: htmlPath,
         remoteKey: remoteHtmlKey,
@@ -348,7 +375,7 @@ for (const subjectName of subjectFolders) {
       const jsonPath = path.join(lecturePath, jsonFile);
       const jsonHash = getFileMd5(jsonPath);
       const remoteJsonKey = `notes/${subjectName}/${lectureFolder}/${jsonFile}`;
-      if (uploadCache[remoteJsonKey] !== jsonHash) {
+      if (FORCE_UPLOAD || getCachedHash(remoteJsonKey) !== jsonHash) {
         uploadQueue.push({
           localPath: jsonPath,
           remoteKey: remoteJsonKey,
@@ -457,10 +484,9 @@ async function uploadFile(item, index, total) {
   try {
     execSync(cmd, { stdio: 'ignore' });
     
-    // Save successful upload to local cache
+    // Save successful upload to local cache with stale key cleanup
     if (item.hash) {
-      uploadCache[item.remoteKey] = item.hash;
-      saveCache();
+      updateCacheEntry(item.remoteKey, item.hash);
     }
   } catch (err) {
     console.error(`${RED}Failed to upload ${item.remoteKey}: ${err.message}${RESET}`);
