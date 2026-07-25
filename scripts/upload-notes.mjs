@@ -280,8 +280,8 @@ for (const subjectName of subjectFolders) {
     const lecturePath = path.join(subjectPath, lectureFolder);
     const files = fs.readdirSync(lecturePath);
     
-    // Find HTML file
-    const htmlFile = files.find(f => f.endsWith('.html'));
+    // Find HTML file (prefer enhanced HTML if present)
+    const htmlFile = files.find(f => f.endsWith('_notes_enhanced.html')) || files.find(f => f.endsWith('.html'));
     if (!htmlFile) {
       console.warn(`${YELLOW}Warning: No HTML file found in ${subjectName}/${lectureFolder}${RESET}`);
       continue;
@@ -294,7 +294,7 @@ for (const subjectName of subjectFolders) {
 
     // Find companion JSON or extract embedded metadata
     let metadata = null;
-    const jsonFile = files.find(f => f.endsWith('.json'));
+    const jsonFile = files.find(f => f.endsWith('.json') && !f.endsWith('_enhancement_audit.json'));
     if (jsonFile) {
       try {
         metadata = JSON.parse(fs.readFileSync(path.join(lecturePath, jsonFile), 'utf-8'));
@@ -354,6 +354,42 @@ for (const subjectName of subjectFolders) {
           remoteKey: remoteJsonKey,
           contentType: 'application/json',
           hash: jsonHash
+        });
+      } else {
+        skippedCount++;
+      }
+    }
+
+    // Add companion CSS files (e.g. per-lecture enhancements CSS) to upload queue
+    const cssFiles = files.filter(f => f.endsWith('.css'));
+    for (const cssFile of cssFiles) {
+      const cssPath = path.join(lecturePath, cssFile);
+      const cssHash = getFileMd5(cssPath);
+      const remoteCssKey = `notes/${subjectName}/${lectureFolder}/${cssFile}`;
+      if (FORCE_UPLOAD || getCachedHash(remoteCssKey) !== cssHash) {
+        uploadQueue.push({
+          localPath: cssPath,
+          remoteKey: remoteCssKey,
+          contentType: 'text/css',
+          hash: cssHash
+        });
+      } else {
+        skippedCount++;
+      }
+    }
+
+    // Add companion JS files (e.g. per-lecture enhancements JS) to upload queue
+    const jsFiles = files.filter(f => f.endsWith('.js'));
+    for (const jsFile of jsFiles) {
+      const jsPath = path.join(lecturePath, jsFile);
+      const jsHash = getFileMd5(jsPath);
+      const remoteJsKey = `notes/${subjectName}/${lectureFolder}/${jsFile}`;
+      if (FORCE_UPLOAD || getCachedHash(remoteJsKey) !== jsHash) {
+        uploadQueue.push({
+          localPath: jsPath,
+          remoteKey: remoteJsKey,
+          contentType: 'application/javascript',
+          hash: jsHash
         });
       } else {
         skippedCount++;

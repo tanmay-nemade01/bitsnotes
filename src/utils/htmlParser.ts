@@ -88,7 +88,7 @@ function scopeStylesToWrapper(css: string): string {
  * Also sanitizes inline styles by removing bare body, .container, and .hidden
  * rules that would conflict with the viewer's layout.
  */
-export function parseLectureHtml(htmlContent: string): ParsedLectureHtml {
+export function parseLectureHtml(htmlContent: string, extraCss?: string): ParsedLectureHtml {
   // Match body content case-insensitively
   const bodyMatch = htmlContent.match(/<body[^>]*>([\s\S]*?)<\/body>/i);
   let bodyContent: string;
@@ -111,20 +111,17 @@ export function parseLectureHtml(htmlContent: string): ParsedLectureHtml {
     const headContent = headStyleMatch[0];
     const styleMatches = headContent.match(/<style[^>]*>([\s\S]*?)<\/style>/gi);
     if (styleMatches) {
-      // Extract only the CSS between the <style> tags. Passing the raw
-      // `<style>`/`</style>` wrappers into scopeStylesToWrapper would turn the
-      // opening tag into a malformed selector (e.g. `.lecture-notes-wrapper
-      // <style> .x { ... }`), silently dropping the first rule and breaking
-      // theme isolation.
       inlineStyles = styleMatches
         .map((m) => m.replace(/^<style[^>]*>/i, '').replace(/<\/style>$/i, ''))
         .join('\n');
     }
   }
 
+  if (extraCss) {
+    inlineStyles = (inlineStyles ? inlineStyles + '\n' : '') + extraCss;
+  }
+
   // Strip conflicting unscoped CSS rules from inline styles that break mobile layout.
-  // These rules (body padding, .container max-width) are already properly handled
-  // with mobile-responsive overrides in lecture-notes.css via .lecture-notes-wrapper scoping.
   if (inlineStyles) {
     inlineStyles = inlineStyles
       .replace(/body\s*\{[^}]*\}/gi, '')
@@ -132,15 +129,13 @@ export function parseLectureHtml(htmlContent: string): ParsedLectureHtml {
       .replace(/\.hidden\s*\{[^}]*\}/gi, '')
       .replace(/:root\s*\{[^}]*\}/gi, '');
 
-    // Scope the remaining content-specific rules to .lecture-notes-wrapper so they
-    // cannot leak into the chrome and so canonical lecture-notes.css (loaded after)
-    // can override them for theming. We wrap each top-level rule's selector.
+    // Scope the remaining content-specific rules to .lecture-notes-wrapper
     inlineStyles = scopeStylesToWrapper(inlineStyles);
   }
 
-  // Remove duplicate stylesheet link and duplicate body tags to prevent double loading
+  // Remove duplicate stylesheet links and duplicate body tags to prevent double loading
   bodyContent = bodyContent
-    .replace(/<link[^>]*href=["']\/lecture-notes\.css["'][^>]*>/gi, '')
+    .replace(/<link[^>]*href=["'][^"']*\.css["'][^>]*>/gi, '')
     .replace(/<body[^>]*>/gi, '')
     .replace(/<\/body>/gi, '');
 
