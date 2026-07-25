@@ -17,6 +17,8 @@ export interface LectureSummary {
 
 export interface LectureContent {
   htmlContent: string;
+  cssContent?: string;
+  jsContent?: string;
   metadata: Record<string, any> | null;
   fileName: string;
 }
@@ -67,6 +69,14 @@ interface NotesManifest {
 // inside the sandboxed Cloudflare workerd runtime.
 const htmlFiles = import.meta.env.DEV
   ? import.meta.glob('/src/content/notes/**/*.html', { query: '?raw', import: 'default' })
+  : {};
+
+const cssFiles = import.meta.env.DEV
+  ? import.meta.glob('/src/content/notes/**/*.css', { query: '?raw', import: 'default' })
+  : {};
+
+const jsFiles = import.meta.env.DEV
+  ? import.meta.glob('/src/content/notes/**/*.js', { query: '?raw', import: 'default' })
   : {};
 
 const jsonFiles = import.meta.env.DEV
@@ -163,6 +173,9 @@ async function buildLocalManifest(): Promise<NotesManifest> {
   const subjectsMap = new Map<string, LectureEntry[]>();
   let totalLectures = 0;
 
+  // Group html files by lecture folder to prefer _notes_enhanced.html if present
+  const folderEntriesMap = new Map<string, Array<{ key: string; subjectName: string; lectureFolder: string; fileName: string }>>();
+
   for (const key of Object.keys(htmlFiles)) {
     // Key format: /src/content/notes/Subject Name/Lecture Folder/File Name.html
     const match = key.match(/^\/src\/content\/notes\/([^\/]+)\/([^\/]+)\/([^\/]+)\.html$/);
@@ -171,6 +184,17 @@ async function buildLocalManifest(): Promise<NotesManifest> {
     const subjectName = match[1];
     const lectureFolder = match[2];
     const fileName = match[3];
+
+    const folderKey = `${subjectName}/${lectureFolder}`;
+    if (!folderEntriesMap.has(folderKey)) {
+      folderEntriesMap.set(folderKey, []);
+    }
+    folderEntriesMap.get(folderKey)!.push({ key, subjectName, lectureFolder, fileName });
+  }
+
+  for (const entries of folderEntriesMap.values()) {
+    const selected = entries.find((e) => e.fileName.endsWith('_notes_enhanced')) || entries[0];
+    const { key, subjectName, lectureFolder, fileName } = selected;
 
     const defaultDisplayName = fileName.replace(/_/g, ' ');
 
@@ -342,6 +366,8 @@ export async function getLectureContent(subjectName: string, lectureFolderName: 
   if (!lecture) return null;
 
   let htmlContent = '';
+  let cssContent = '';
+  let jsContent = '';
   
   if (import.meta.env.DEV) {
     // Development: load using Vite glob import
@@ -350,8 +376,35 @@ export async function getLectureContent(subjectName: string, lectureFolderName: 
       if (htmlFiles[key]) {
         htmlContent = await htmlFiles[key]() as string;
       } else {
-        console.error(`[notesLoader] Local file not found in glob: ${key}`);
-        return null;
+        const folderPrefix = `/src/content/notes/${subjectName}/${lectureFolderName}/`;
+        const altKey = Object.keys(htmlFiles).find(k => k.startsWith(folderPrefix) && k.endsWith('.html'));
+        if (altKey) {
+          htmlContent = await htmlFiles[altKey]() as string;
+        } else {
+          console.error(`[notesLoader] Local file not found in glob: ${key}`);
+          return null;
+        }
+      }
+
+      // Load companion CSS if present
+      const folderPrefix = `/src/content/notes/${subjectName}/${lectureFolderName}/`;
+      const cssKey = Object.keys(cssFiles).find(k => k.startsWith(folderPrefix) && k.endsWith('.css'));
+      if (cssKey) {
+        try {
+          cssContent = await cssFiles[cssKey]() as string;
+        } catch (err: any) {
+          console.warn(`[notesLoader] Error loading local CSS for ${subjectName}/${lectureFolderName}:`, err.message);
+        }
+      }
+
+      // Load companion JS if present
+      const jsKey = Object.keys(jsFiles).find(k => k.startsWith(folderPrefix) && k.endsWith('.js'));
+      if (jsKey) {
+        try {
+          jsContent = await jsFiles[jsKey]() as string;
+        } catch (err: any) {
+          console.warn(`[notesLoader] Error loading local JS for ${subjectName}/${lectureFolderName}:`, err.message);
+        }
       }
     } catch (err: any) {
       console.error(`[notesLoader] Error reading local note: ${err.message}`);
@@ -373,6 +426,21 @@ export async function getLectureContent(subjectName: string, lectureFolderName: 
         return null;
       }
       htmlContent = await obj.text();
+
+      // Fetch optional companion CSS and JS from R2
+      const basePrefix = lecture.fileName.replace(/_notes(_enhanced)?$/i, '');
+      const cssKey = `notes/${subjectName}/${lectureFolderName}/${basePrefix}_enhancements.css`;
+      const jsKey = `notes/${subjectName}/${lectureFolderName}/${basePrefix}_enhancements.js`;
+
+      try {
+        const cssObj = await bucket.get(cssKey);
+        if (cssObj) cssContent = await cssObj.text();
+      } catch { /* optional */ }
+
+      try {
+        const jsObj = await bucket.get(jsKey);
+        if (jsObj) jsContent = await jsObj.text();
+      } catch { /* optional */ }
 
       // Cache the lecture HTML at the edge, versioned by the manifest version
       // so a new content upload invalidates it (Phase 8.8). No unbounded
@@ -399,6 +467,8 @@ export async function getLectureContent(subjectName: string, lectureFolderName: 
 
   return {
     htmlContent,
+    cssContent,
+    jsContent,
     metadata: lecture.metadata,
     fileName: lecture.fileName
   };
