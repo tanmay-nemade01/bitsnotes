@@ -40,7 +40,7 @@ description: >-
 8. **Anonymize identities, not teaching interactions** — Strip professor names, institute names, and student names. Never mention "transcript", "recording", or source-file mechanics. Preserve the roles in useful exchanges as neutral `Q:` / `A:` dialogue. Privacy must never flatten a misconception-and-correction sequence into generic prose.
 9. **Factual fidelity for numbers and math** — Preserve every number, constant, dimension, and formula exactly as stated. Do not round, paraphrase, or "tidy" values. When the transcript's plain-language math is ambiguous, reconstruct the most likely LaTeX and mark it `*[verify]*` rather than silently guessing. (See the Math extraction protocol.)
 10. **Math is an audit trail, not a paraphrase** — Every reconstructed formula must keep the professor's verbal description next to it. Agent 2 will reconcile your LaTeX against the enrichment docs using that verbal description as the bridge.
-11. **Strict File Attachment Guard Rail** — Focus *only and only* on the files attached to the prompt/context. Do *not* search for or read other files in the workspace (such as other transcripts or notes) unless you are absolutely certain that the attached files do not match the expected context at all (e.g., they are completely blank, corrupted, or clearly belong to a different course/lecture, suggesting an accidental attachment). Only under that absolute certainty may you check for other files in the workspace; otherwise, restrict your processing strictly to the attached files.
+11. **Strict File Attachment Guard Rail** — Focus *only and only* on the raw `.txt` lecture transcript file attached to the prompt/context. You are strictly prohibited from reading or accessing companion documents, slides, textbooks, or other lecture files. Agent 1 operates strictly on the raw transcript. Agent 2 handles all companion documents.
 12. **Strict Script Creation Guard Rail** — You are strictly prohibited from creating or writing any script (Python, Bash, JS, etc.) inside the toolkit folder (`make-transcript-notes-kit-3agent` or its subfolders) during the process. Any intermediate or temporary scripts created in the workspace for testing or content parsing must be cleaned up and deleted before completing the task.
 
 ### Retention priority (ONLY for transcripts exceeding 25,000 words)
@@ -225,21 +225,7 @@ Before writing a single paragraph, scan the transcript and enumerate the followi
 
 ### Step 1 — Second pass: extract sentence by sentence
 
-For each sentence, ask: "Does this contain educational content?" If yes, extract into the appropriate dimension(s). Be GENEROUS — extract too much rather than miss something. A single sentence may belong to multiple dimensions.
-
-**Specific extraction triggers (if you see/hear any of these, you MUST extract):**
-
-- A student asks a question -> Dimension 4
-- The professor gives a number, formula, or computation -> Dimensions 2 and 3
-- The professor names a tool, company, or real system -> Dimension 5
-- The professor says "this will be on the exam" or discusses marks -> Dimension 6
-- The professor says "think of it like" or "analogous to" -> Dimension 7
-- The professor says "this is important" or "remember this" -> Dimension 7
-- The professor shows a step-by-step calculation -> Dimension 3
-- The professor gives a practical tip or industry practice -> Dimensions 5 and 8
-- The professor refers to a textbook or paper -> Dimension 9
-- The professor explains an algorithm or procedure -> Dimension 8
-- The professor corrects a mistake (theirs or a student''s) -> Dimension 3 or 4
+For each sentence, ask: "Does this contain educational content?" If yes, extract into the appropriate dimension(s) from the 9 dimensions above. Be GENEROUS — extract too much rather than miss something. A single sentence may belong to multiple dimensions.
 
 ### Step 2 — Third pass: organize by concept
 
@@ -273,13 +259,9 @@ After all concept sections, add:
 
 ### Step 4 — Internal verification (DO NOT include in output)
 
-**Privately verify** that every concept, example, formula, student question, industry application, exam tip, and caution from the transcript is incorporated into the draft. Tick them off mentally as you go. This is your internal completeness check — it must NEVER appear in the markdown output. The output must begin directly with the lecture content.
+**Privately verify** that every item from your Step 0.5 extraction inventory is incorporated into the draft. This is your internal completeness check — it must NEVER appear in the markdown output. The output must begin directly with the lecture content.
 
-**Specific checks:**
-- Every student question has a corresponding Q&A entry
-- Every worked computation shows ALL intermediate steps
-- Every named tool/company/system is documented
-- Every exam-related comment is captured
+**Math-specific checks:**
 - Every formula has all variables named (cross-check against the symbol registry)
 - Every formula in the draft has its source transcript quote preserved alongside it
 - Every low/medium-confidence formula carries a `*[verify: <reason>]*` marker with a reason
@@ -376,61 +358,23 @@ Resolve every failure before handoff. This gate checks that source-anchored exam
 
 ## Handling student Q&A in detail
 
-Student Q&A exchanges are the SECOND most valuable content after worked examples. Here is how to handle them:
+Student Q&A exchanges are the SECOND most valuable content after worked examples. For every Q&A exchange:
 
-### When a student asks a conceptual question
-- Capture the question (paraphrase if transcript is garbled)
-- Capture the professor''s FULL answer — including any re-explanation
-- If the professor uses a new analogy or example in the answer, capture that
-- If other students chime in, capture the discussion
-
-### When a student asks a practical/calculator question
-- "Should we use log base 10 or natural log?" -> Capture the question AND the professor''s nuanced answer
-- "How many decimal places?" -> Capture the answer
-- "Will this be on the exam?" -> Capture the answer
-
-### When a student is confused and the professor clarifies
-- These are the BEST learning moments. Capture them in full.
-- The professor often gives their clearest, most patient explanation when a student is struggling
-- Include the progression: confusion -> question -> explanation -> understanding
-
-### When multiple students ask related questions
-- This signals a COMMON confusion point. Capture all instances.
-- Note the pattern: "Multiple students asked about why the sigmoid formula differs for positive and negative context words."
-- **Repetition is expected.** Students often re-ask the same doubt in different words. Capture each occurrence here (over-inclusion is your job), but group them and tag the cluster — Agent 2 will deduplicate these into one canonical Q&A per confusion point. Flag near-identical questions explicitly so the dedup is clean.
+- Capture the question (paraphrase if garbled), the professor's FULL answer, and any re-explanation, new analogy, or follow-up discussion
+- For practical questions ("log base 10 or natural log?", "how many decimal places?", "on the exam?") — capture both question AND nuanced answer
+- Confusion → clarification sequences are the BEST learning moments — capture the full progression: confusion → question → explanation → understanding
+- When multiple students ask related questions, capture ALL instances and tag the cluster — Agent 2 will deduplicate. Flag near-identical questions explicitly so the dedup is clean
 
 ---
 
 ## Handling worked computations in detail
 
-Worked computations must be captured with ZERO information loss. Here is the standard:
+Worked computations must be captured with ZERO information loss. For every type:
 
-### For numerical calculations
-1. State the given values
-2. State the formula being used
-3. Show the substitution step (formula with numbers plugged in)
-4. Show the computation (intermediate result)
-5. State the final result
-6. Capture any commentary ("notice that this is close to 0.5, which means...")
-
-### For table-based computations
-1. Describe the table structure (what are rows? what are columns?)
-2. State each cell value and how it was computed
-3. Show row/column operations if any
-4. Capture the professor''s narrative while filling the table
-
-### For algorithmic steps
-1. State the initial conditions/values
-2. Show each iteration step with all intermediate values
-3. State the stopping condition
-4. Show the final result
-5. Capture the professor''s explanation of what each step means
-
-### For error corrections during computation
-1. Show the initial (wrong) computation
-2. Show the correction
-3. Explain what went wrong
-4. These are HIGH VALUE learning moments — never skip them
+- **Numerical:** given values → formula → substitution → intermediate result → final result → professor's commentary
+- **Table-based:** table structure (rows/columns) → each cell value and how computed → row/column operations → professor's narrative while filling
+- **Algorithmic:** initial conditions → each iteration with all intermediates → stopping condition → final result → professor's explanation per step
+- **Error corrections (HIGH VALUE):** wrong computation → correction → what went wrong — never skip these
 
 ---
 
@@ -486,11 +430,13 @@ When the professor derives one formula from another:
 
 ### Step M5 — Confidence tagging
 
-After reconstructing each formula, assign a confidence and tag accordingly. Do not include the confidence level as a heading or scoreboard in the output — only as inline markers where needed.
+After reconstructing each formula, tag inline (no confidence scoreboard in the output):
 
-- **High confidence** (professor stated the formula clearly, transcript is clean) → no marker.
-- **Medium confidence** (transcript is noisy but reconstruction is the most natural reading) → append `*[verify]*` after the LaTeX with a short reason: `*[verify: transcript says "w trans x" — assuming \(w^\top x\)]*`.
-- **Low confidence** (multiple plausible readings) → append `*[verify]*` AND list the alternative readings in a one-line note: `*[verify: could be \(x_i\) or \(x^{(i)}\); chose \(x_i\) per context]*`.
+| Confidence | Condition | Action |
+|---|---|---|
+| High | Professor stated clearly, transcript clean | No marker |
+| Medium | Noisy transcript, most natural reading chosen | `*[verify: <reason>]*` after the LaTeX |
+| Low | Multiple plausible readings | `*[verify]*` + list alternatives in one-line note |
 
 The `*[verify]*` marker is your friend. It tells Agent 2 exactly where to spend reconciliation effort against the enrichment docs, and tells a human reviewer where to look. A page full of `*[verify]*` markers is healthier than a page of silent mis-transcriptions.
 
@@ -516,26 +462,9 @@ If a check fails and you cannot resolve it, mark the formula `*[verify]*` with t
 
 ## Professor intuition retention test
 
-Use Dimension 7 as the canonical list. Keep a fragment when removing it would eliminate a way of understanding, a warning, a motivation, or a transition that the formal definition does not provide. **Write every such fragment into the prose draft in full** — the `teaching_moments` manifest array is only a one-line checksum of what you already wrote, never a place to store detail the prose lacks.
+Use the Dimension 7 table above as the canonical list of professor intuition types. **Write every such fragment into the prose draft in full** — the `teaching_moments` manifest array is only a one-line checksum of what you already wrote, never a place to store detail the prose lacks.
 
-**Reference: types of professor intuition to preserve (these are NOT banter)**
-
-| Type | Examples | Why keep |
-|------|----------|----------|
-| Casual restatements | "So really, what this is saying is..." | Makes abstract ideas concrete |
-| "Think of it like..." analogies | The professor''s own everyday comparisons | Better than any LLM can invent |
-| Motivating questions | "Here is the problem — you have got a million features..." | Natural hooks that create curiosity |
-| Debugging war stories | "I spent two weeks debugging a model that..." | Emotional texture makes warnings stick |
-| "Students always get confused here" | Explicit confusion flags | Pre-packaged pitfall content |
-| Geometric/visual descriptions | "the loss surface looks like a long narrow valley..." | Mental pictures survive longer than formulas |
-| Pedagogical humor | Jokes that genuinely map to the concept | Makes learning sticky |
-| Emphasis markers | "This is VERY important", "Remember this" | Signals exam-critical content |
-| Difficulty calibration | "This is not easy", "This is pretty simple" | Helps students allocate study time |
-| Cross-references | "This is the same idea as X" | Builds connected understanding |
-
-**The test for every fragment:** "If I remove this, does the reader lose a way of understanding the concept that the formal definition alone does not provide?" Yes → keep it. No → filter it.
-
-**How to extract these:** Capture near-verbatim. Keep the professor''s phrasing and casual tone. Tag each fragment with the concept it illuminates. Do NOT classify these as "banter" or "noise."
+**The test for every fragment:** "If I remove this, does the reader lose a way of understanding the concept that the formal definition alone does not provide?" Yes → keep it. No → filter it. Capture near-verbatim. Keep the professor's phrasing and casual tone. Tag each fragment with the concept it illuminates. Do NOT classify these as "banter" or "noise."
 
 ---
 
