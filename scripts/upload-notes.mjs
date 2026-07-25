@@ -539,7 +539,10 @@ try {
     console.log(`No notes files have changed. Uploading updated manifest and search index...`);
     await runWithLimit(CONCURRENCY_LIMIT, uploadQueue, uploadFile);
   }
-  console.log(`\n${GREEN}${BOLD}Success! Sync to R2 completed successfully.${RESET}`);
+  console.log(`\n${GREEN}${BOLD}Success! Sync to R2 completed successfully.${RESET}\n`);
+
+  // Run canonical URL verification script after upload completes
+  execSync('node scripts/verify-canonical-urls.mjs', { stdio: 'inherit' });
 } catch (err) {
   console.error(`\n${RED}${BOLD}Sync completed with errors.${RESET}`);
 } finally {
