@@ -301,52 +301,11 @@ Each entry = one `<div class="exam-revision-entry">`:
 
 ## Step 7 — SEO (all mandatory — lint enforces)
 
-### Meta description
-`<meta name="description" content="...">` — **100-155 characters**, unique per lecture, includes subject name + 2-3 key concepts naturally. Plain text only. No HTML tags.
+All SEO tags (OG, Twitter Card, canonical, robots, keywords, JSON-LD) are already present in `templates/notes.html` as `{{PLACEHOLDER}}` values — fill them according to the Step 4 placeholder table. Additional rules:
 
-### Open Graph (Facebook/LinkedIn previews)
-```html
-<meta property="og:type" content="article">
-<meta property="og:title" content="LECTURE_TITLE | SUBJECT">
-<meta property="og:description" content="SUMMARY_TEXT_PLAIN">
-<meta property="og:url" content="CANONICAL_URL">
-<meta property="og:image" content="https://bitsnotes.com/og-default.png">
-<meta property="og:image:width" content="1200">
-<meta property="og:image:height" content="630">
-<meta property="og:site_name" content="BitsNotes">
-```
-
-### Twitter Card
-```html
-<meta name="twitter:card" content="summary_large_image">
-<meta name="twitter:title" content="LECTURE_TITLE | SUBJECT">
-<meta name="twitter:description" content="SUMMARY_TEXT_PLAIN">
-<meta name="twitter:image" content="https://bitsnotes.com/og-default.png">
-<meta name="twitter:site" content="@BitsNotes">
-```
-
-### Other required tags
-```html
-<meta name="keywords" content="subject, topic, concept1, concept2, concept3">
-<meta name="author" content="BitsNotes">
-<meta name="robots" content="index, follow">
-<link rel="canonical" href="CANONICAL_URL">
-```
-
-### JSON-LD structured data (minified)
-```json
-{
-  "@context": "https://schema.org",
-  "@type": "Article",
-  "headline": "Lecture Title",
-  "description": "100-155 char description",
-  "datePublished": "YYYY-MM-DD",
-  "author": { "@type": "Organization", "name": "BitsNotes" },
-  "publisher": { "@type": "Organization", "name": "BitsNotes" },
-  "educationalLevel": "postgraduate",
-  "about": ["concept1", "concept2", "concept3"]
-}
-```
+- **Meta description:** `<meta name="description">` must be 100-155 characters, unique per lecture, includes subject name + 2-3 key concepts naturally. Plain text only.
+- **JSON-LD `about` field:** Array of key concept names from the lecture.
+- **All titles in OG/Twitter:** Use the clean `LECTURE_TITLE | SUBJECT` format — no pipeline jargon.
 
 ---
 
@@ -373,25 +332,7 @@ For each topic in the current lecture that matches a topic from a previous lectu
 
 ### 8.3 — Generate the Prerequisite Knowledge HTML
 
-If matches were found, generate the `{{PREREQUISITE_KNOWLEDGE}}` HTML:
-
-```html
-<section class="prerequisite-section">
-  <h2>Prerequisite Knowledge</h2>
-  <p class="prerequisite-intro">This lecture builds on the following
-  concepts from earlier lectures. If any feel unfamiliar, review the
-  linked notes before proceeding.</p>
-
-  <div class="prerequisite-entry">
-    <h3>Previously Covered in This Subject</h3>
-    <ul>
-      <li><strong>Concept</strong> — covered in Lecture N</li>
-    </ul>
-  </div>
-</section>
-```
-
-If no matches found, set `{{PREREQUISITE_KNOWLEDGE}}` to an empty string.
+If matches were found, generate the `{{PREREQUISITE_KNOWLEDGE}}` HTML using the prerequisite template shown in the Step 4 placeholder table (one `<li>` per matched concept). If no matches found, set `{{PREREQUISITE_KNOWLEDGE}}` to an empty string.
 
 ---
 
@@ -458,28 +399,6 @@ The lint checks: template hygiene, viewport meta, metadata completeness, SEO, ap
 
 ---
 
-## Ship checklist (all must be ✓ before finishing)
+## Ship checklist
 
-- [ ] All sections converted individually with heading numbers verified against `_inventory.json`
-- [ ] Section HTMLs assembled mechanically (no content changes during assembly)
-- [ ] HTML code formatting: All HTML files are pretty-printed, indented, and well-formatted with proper line breaks; no single-line HTML is generated.
-- [ ] Intermediate `_body.html` cleaned up (while preserving sections/ folder and md drafts)
-- [ ] Every concept present in teaching order; every transcript example worked in full
-- [ ] Every essential manifest item and useful teaching-spine element survives; no filler callouts were added
-- [ ] Sampled paragraphs pass easy-language audit (avg <~20 words, terms defined on first use) (handled by Agent 2)
-- [ ] Professor analogies and mental models are preserved; generated analogies appear only when genuinely needed
-- [ ] Math: step-by-step, every symbol named, correct single-backslash delimiters, tensor shapes stated, every derivation complete with no skipped algebra
-- [ ] No `*[verify]*` markers reached this phase
-- [ ] Every worked example: all steps, real numbers, final highlighted, sense-check
-- [ ] No thin summaries; domain knowledge supplemented
-- [ ] Clean hierarchy; hook opener; bridges between concepts
-- [ ] Anonymized: no PII or source-file mechanics; anonymous Q&A and correction flow remain intact
-- [ ] **Student-facing guardrail**: No pipeline jargon ("Enriched", agent names, callout legends, course codes) in any visible text — title, headings, body, metadata title, OG/Twitter titles
-- [ ] Metadata JSON complete with examRevisionNotes; **no** `summary`, `keyConcepts`, or `quiz` fields
-- [ ] **Upstream-content check**: No placeholders, TODOs, or task instructions remain; if any were found, the section was returned to Agent 2 rather than silently stripped or authored here
-- [ ] Topic mapping: Prerequisite section populated (or omitted for new subjects/first lectures) based on subject's YAML
-- [ ] Professor intuition preserved (analogies, stories, confusion flags — not generic substitutes)
-- [ ] Exam revision: one entry per major concept, built from core only, every formula renders
-- [ ] SEO: description 100-155 chars, unique, keyword-rich; OG, Twitter, canonical, robots, keywords, JSON-LD all present
-- [ ] Lint passes with zero FAILs (readability, sentence length, and style checks are now warnings, so focus on template, HTML, and SEO errors)
-- [ ] Score ≥ 85/100 and zero red-list items
+Run the lint gate (Step 9) and score against the rubric (Step 10). Both must pass with zero FAILs and zero red-list violations. Score must be ≥ 85/100. Additionally verify: no `*[verify]*` markers reached this phase, no pipeline jargon in any visible text (title, headings, body, metadata), no placeholders/TODOs remain, no `summary`/`keyConcepts`/`quiz` fields in metadata JSON, topic mapping prerequisite section is populated or correctly omitted, and HTML is pretty-printed (not minified).

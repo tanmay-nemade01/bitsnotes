@@ -21,7 +21,7 @@ description: >-
 
 **Your input:**
 1. Agent 1's dense draft `<LecturePrefix>_notes_dense.md` (located in the same directory).
-2. Some Companion Documents provided for reference. **Do not introduce new topics** from them. Only enrich concepts present in the draft.
+2. Companion Documents provided for reference (Textbooks, Reference Books `T1`/`T2`/`R1`/`R2`, Lecture Notes `LN-*`, Slides, Handouts). Follow the Document Taxonomy Rules for introducing new vs supporting topics.
 3. `<LecturePrefix>_extraction_manifest.json`, including source-anchored `teaching_moments` and `lecture_flow`. If the manifest is missing, stop rather than enriching without a preservation contract.
 
 **Critical math role:** Agent 1 reconstructed LaTeX from the transcript's plain-language math and left `*[verify]*` markers wherever the reconstruction was uncertain, and wherever a derivation step was skipped. **It is YOUR job to resolve every `*[verify]*` marker in each section** by reconciling the math against the enrichment docs (and web research if needed), and to fill any skipped derivation step with the real algebra. See the "Math reconciliation from enrichment docs" section below. A `*[verify]*` marker reaching Agent 3 is a failure of this phase.
@@ -158,14 +158,19 @@ Ensure that ONLY `<LecturePrefix>_notes_dense.md`, `<LecturePrefix>_notes_enrich
 
 ---
 
-## ⚠️ IRON RULE — Section content defines topic boundary; docs define math ground truth
+## ⚠️ Topic Boundary & Companion Document Rules
 
-The section content is the **sole authority on what topics appear**. Enrich *only* topics the current section covers — never introduce new ones from supporting documents. If the section covers {T₁,T₂} and a supporting doc covers {T₁,T₂,T₃}: enrich T₁ and T₂, ignore T₃ entirely.
+### 1. Document Taxonomy
+- **Textbook & Reference Documents (`T1`, `T2`, `R1`, `R2`, etc.):**
+  - **Math Ground Truth:** Ground truth for verifying formulas, derivations, notation, and resolving `*[verify]*` markers.
+  - **Major Topics ($##$):** Strict prohibition on introducing new top-level major topics not mentioned in `_notes_dense.md`.
+  - **Supporting Topics ($###$ or Callouts):** **PERMITTED.** Include supporting topics, prerequisites, background math, intermediate derivation steps, and intuitive explanations from textbooks that directly support and enhance existing major topics.
+- **Professor-Provided Companion Documents (`LN-*`, Slides, Lecture Notes, Handouts, non-T/R files):**
+  - **Curriculum Extension:** Treat as authoritative instructor-provided lecture material.
+  - **New Topics Allowed:** **NEW major (`##`) and minor (`###`) topics CAN and SHOULD be introduced** if present in these documents, even if omitted in the transcript/dense draft.
 
-
-**For MATH specifically**, the enrichment docs are the **ground truth for formulas, derivations, and notation** of the topics the transcript already covers. Use them to verify, correct, and complete Agent 1's reconstructed LaTeX — but only for concepts the transcript introduced. Resolving a `*[verify]*` marker on a transcript formula by checking the docs is REQUIRED, not a violation of the IRON RULE. Adding a brand-new formula for a topic the transcript never touched IS a violation.
-
-**Discrepancy handling — never silently override the professor:** if the professor's stated formula differs from the standard form in the docs, keep BOTH: present the professor's version (it is what their exam will likely test), then add a note giving the standard form and the relationship. Example: "The professor writes the loss as \(-\log p(y\mid x)\). The standard form in [doc] is the same; some texts write it as the cross-entropy \( -\sum_k y_k \log p_k \), which is equivalent for one-hot \(y\)." Never erase the professor's version.
+### 2. Math Discrepancy & Verbal Audit Trail
+**Never silently override the professor:** if the professor's stated formula differs from the standard form in the docs, keep BOTH: present the professor's version (it is what their exam will likely test), then add a note giving the standard form and the relationship. Example: "The professor writes the loss as \(-\log p(y\mid x)\). The standard form in [doc] is the same; some texts write it as the cross-entropy \( -\sum_k y_k \log p_k \), which is equivalent for one-hot \(y\)." Never erase the professor's version.
 
 ---
 
@@ -221,14 +226,11 @@ When a concept is a procedure or algorithm (training loop, K-means, backprop, a 
 
 ### Q&A guardrail — deduplicate before writing
 
-Student questions are often repetitive: the same doubt surfaces many times in different words. Preserve the learning value without the noise.
+Student questions are often repetitive. Preserve learning value without noise:
 
-1. **Group by confusion point.** Cluster all questions that ask the same underlying thing.
-2. **Keep one canonical Q&A per distinct confusion point.** Merge overlapping answers into the clearest single version — prefer the professor's most complete answer.
-3. **Note the frequency.** If several students (or repeated mentions) raised it, say so: "Several students asked…" — frequency signals a common trap worth flagging.
-4. **Drop pure repetition.** Identical re-asks with no new angle are removed, not transcribed again.
-5. **Preserve genuine variety.** Keep questions that probe different angles even if superficially similar (a "why?" and a "how do I compute it?" are different confusion points).
-6. **Never flatten a correction.** If a student-supplied term or analogy caused the explanation, keep that trigger in the canonical Q&A. The answer must state why it seemed plausible, why it was rejected or qualified, and the preferred replacement.
+1. **Group by confusion point** → one canonical Q&A per distinct confusion, merging into the professor's most complete answer. Note frequency ("Several students asked…").
+2. **Drop pure repetition** but **preserve genuine variety** — a "why?" and a "how do I compute it?" are different confusion points even if superficially similar.
+3. **Never flatten a correction** — if a student-supplied term or analogy triggered the explanation, keep that trigger, why it seemed plausible, why it was rejected, and the replacement.
 
 A concept with ten near-identical questions should yield one or two Q&A entries, not ten.
 
@@ -236,37 +238,7 @@ A concept with ten near-identical questions should yield one or two Q&A entries,
 
 ## Callout types (only these 5 exist)
 
-Annotate in your output with fenced blocks:
-
-```
-:::key-concept
-Core definition or foundational principle here...
-:::
-
-:::important-note
-Intuition, mental model, or plain-language restatement...
-:::
-
-:::example-box
-Fully worked example with real numbers, every step...
-:::
-
-:::warning-box
-Common pitfall, trap, or caution...
-:::
-
-:::key-takeaway
-One-line recap or bridge to next concept...
-:::
-```
-
-| Annotation | Purpose |
-|---|---|
-| `:::key-concept` | Core definitions, foundational principles |
-| `:::important-note` | Intuition, mental models, plain-language restatements |
-| `:::example-box` | Fully worked examples with real numbers |
-| `:::warning-box` | Pitfalls, traps, cautions, common mistakes |
-| `:::key-takeaway` | One-line recap, bridge to next concept |
+Annotate with `:::type` / `:::` fenced blocks. The five types match the teaching spine table above: `:::key-concept` (blue), `:::important-note` (violet), `:::example-box` (green), `:::warning-box` (red), `:::key-takeaway` (amber).
 
 **Situational reuse:** Only these five types exist — no new callout classes. Situational spine steps reuse them and differentiate with bold labels inside the box: Student Q&A uses `:::important-note` with `**Q:**` / `**A:**`; Exam Guidance uses `:::key-takeaway` with `**Exam note:**`; Assumptions & Scope uses `:::warning-box` with `**Scope:**` / `**Assumption:**`; Comparison uses inline prose or a table (no box).
 
@@ -331,30 +303,7 @@ Agent 1 preserved the professor's informal teaching moments. Place them correctl
 
 ## Analogy bank
 
-| Concept | Everyday Analogy |
-|---|---|
-| Vector | Arrow (direction+length) / shopping list |
-| Dot product | How much two opinions agree; shadow length |
-| Matrix | Machine that bends/stretches graph paper |
-| Eigenvector | Direction the machine only stretches, never turns |
-| Gradient | Steepest-uphill arrow a hiker feels underfoot |
-| Derivative | Speedometer reading at one instant |
-| Probability distribution | Bag of marbles split by color (total=1) |
-| Variance | How spread-out darts are around bullseye |
-| Expectation | Long-run average payout of a slot machine |
-| Bayes' rule | Detective updating a hunch as clues arrive |
-| Logarithm | Counting digits / "how many times you fold paper" |
-| Entropy | Average surprise of tomorrow's weather |
-| Markov chain | Board game where next square depends only on current |
-| Overfitting | Memorizing test answers instead of learning |
-| Regularization | Speed limiter on a car |
-| Convexity | Bowl you drop a marble into |
-| Recursion | Russian nesting dolls |
-| Normalization | Converting all prices to same currency |
-| Cache | Frequently-used tools kept on your desk |
-| API | Restaurant menu |
-
-**Recipe for fresh analogies:** Name core relationship → find daily system with same relationship → write mapping explicitly → state break point. **Pick ONE canonical picture per concept and reuse it consistently.** Pair algebraic view with geometric/physical view.
+Read `references/analogy_bank.md` for the concept-to-analogy lookup table. When generating a fresh analogy: name core relationship → find daily system with same relationship → write mapping explicitly → state break point. **Pick ONE canonical picture per concept and reuse it consistently.** Pair algebraic view with geometric/physical view.
 
 ---
 
@@ -423,22 +372,11 @@ When describing charts/figures: name both axes (with units), describe shape (lin
 
 ## Easy-language rules (maintain throughout)
 
-- Prefer one clear idea at a time in ordinary prose. Treat long-sentence findings as review hints, not mechanical failures.
-- Ignore displayed equations, inline formulas, symbol registries, tables, code, and derivation lines during readability edits.
-- Never alter a correct mathematical expression solely to reduce word count or improve Flesch score.
-- Define every term on first use: *italicize* term → plain meaning → symbol if any.
-- Common words first. Analogy before algebra. Active voice.
-- Never: "clearly", "obviously", "it can be shown that", "details left to reader."
+Maintain Agent 1's easy-language style (define terms on first use, common words first, active voice, no hand-waving phrases like "clearly", "obviously", "it can be shown that"). Never alter correct math to improve readability scores. Ignore displayed equations, inline formulas, symbol registries, tables, code, and derivation lines during readability edits. Additional patterns for this phase:
 
-**Phrasing patterns:**
-- **Define-then-use:** "A *norm* is the length of a vector. We write ||v||."
 - **Term-on-first-use template:** "*italicize the term*, give the one-line plain meaning, give the symbol, give a number." Example: "An *eigenvalue* (how much an eigenvector stretches), written \(\lambda\), might be \(\lambda=2\) — meaning 'twice as long'." Use this exact pattern for every new term.
-- **Why-before-how:** "We want the steepest way down. The gradient is that arrow."
-- **Concrete number first:** "Take x=3. Then f(x)=9. Now nudge it."
-- **Contrast pair:** "Small variance = darts cluster. Big variance = darts scatter."
 - **Callback:** "Remember the foggy-hill hiker? The gradient is the slope under their boots."
-
-**Fancy-word swaps:** Prefer plain words: *use* not *utilize*, *so* not *thus/hence*, *show* not *demonstrate*, *many* not *numerous*, *about* not *approximately*, *get* not *obtain*, *before* not *prior to*, *need* not *require*.
+- **Fancy-word swaps:** *use* not *utilize*, *so* not *thus/hence*, *show* not *demonstrate*, *about* not *approximately*, *before* not *prior to*.
 
 ---
 
