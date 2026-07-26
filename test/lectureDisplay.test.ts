@@ -118,6 +118,12 @@ describe('formatLectureLabel', () => {
 });
 
 describe('normalizeCatalogEntry', () => {
+  it('extracts canonical slug from HTML content when present', () => {
+    const htmlContent = '<link rel="canonical" href="https://bitsnotes.com/view/artificial-computational-intelligence/aci_lecture_10">';
+    const entry = normalizeCatalogEntry(raw({ folderName: 'ACI_Lecture_10_notes', htmlContent }));
+    expect(entry.slug).toBe('aci_lecture_10');
+  });
+
   it('prefers metadata.lectureNumber over folder name', () => {
     const md = { lectureNumber: 12, topicTitle: 'Custom Title' } as DocumentMetadata;
     const entry = normalizeCatalogEntry(raw({ folderName: 'Lecture_07', metadata: md }));
