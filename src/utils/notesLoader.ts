@@ -48,6 +48,7 @@ interface LectureEntry {
   folderName: string;
   fileName: string;
   metadata: any;
+  htmlContent?: string | null;
 }
 
 interface SubjectEntry {
@@ -209,13 +210,13 @@ async function buildLocalManifest(): Promise<NotesManifest> {
       }
     }
 
-    if (!metadata) {
-      try {
-        const htmlContent = await htmlFiles[key]() as string;
-        metadata = extractEmbeddedMetadata(htmlContent);
-      } catch (err: any) {
-        console.error(`[notesLoader] Error loading local html for ${subjectName}/${lectureFolder}:`, err.message);
-      }
+    let htmlContent: string | null = null;
+    try {
+      htmlContent = await htmlFiles[key]() as string;
+    } catch { /* optional */ }
+
+    if (!metadata && htmlContent) {
+      metadata = extractEmbeddedMetadata(htmlContent);
     }
 
     if (!metadata) {
@@ -232,7 +233,8 @@ async function buildLocalManifest(): Promise<NotesManifest> {
       name: displayName,
       folderName: lectureFolder,
       fileName: fileName,
-      metadata: metadata
+      metadata: metadata,
+      htmlContent: htmlContent,
     });
 
     totalLectures++;
@@ -250,6 +252,7 @@ async function buildLocalManifest(): Promise<NotesManifest> {
           fileName: lec.fileName,
           name: lec.name,
           metadata: lec.metadata as DocumentMetadata | null,
+          htmlContent: lec.htmlContent,
         };
         // Keep the normalized catalog fields AND the raw metadata so that
         // getLectureContent() can return the original metadata (scope,

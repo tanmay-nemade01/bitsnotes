@@ -97,11 +97,30 @@ function getFallbackMetadata(lectureName, subjectName) {
   };
 }
 
-function normalizeCatalogEntry({ folderName, fileName, name, metadata }) {
+function extractCanonicalSlug(htmlContent) {
+  if (!htmlContent) return null;
+  const match = htmlContent.match(/<link\s+[^>]*rel=["']canonical["'][^>]*href=["']([^"']+)["']/i) ||
+                htmlContent.match(/<link\s+[^>]*href=["']([^"']+)["'][^>]*rel=["']canonical["']/i);
+  if (!match) return null;
+  const urlStr = match[1].trim();
+  try {
+    const urlObj = new URL(urlStr);
+    const parts = urlObj.pathname.split('/').filter(Boolean);
+    if (parts.length > 0) return parts[parts.length - 1];
+  } catch {
+    const parts = urlStr.split('/').filter(Boolean);
+    if (parts.length > 0) return parts[parts.length - 1];
+  }
+  return null;
+}
+
+function normalizeCatalogEntry({ folderName, fileName, name, metadata, htmlContent }) {
   const resourceKind = detectResourceKind(folderName, metadata);
   const topicTitle = deriveTopicTitle(folderName, metadata);
+  const canonicalSlug = extractCanonicalSlug(htmlContent);
+  const slug = (metadata && metadata.slug) || canonicalSlug || slugify(topicTitle) || slugify(folderName);
   return {
-    slug: slugify(topicTitle),
+    slug,
     topicTitle
   };
 }
@@ -198,7 +217,8 @@ function verifyCanonicalUrls() {
         folderName: lectureFolder,
         fileName,
         name: defaultDisplayName,
-        metadata
+        metadata,
+        htmlContent
       });
 
       const subjectSlug = slugify(subjectName);

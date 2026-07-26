@@ -52,12 +52,29 @@ export interface CatalogEntry {
   authoredQuizCount: number;
 }
 
+export function extractCanonicalSlug(htmlContent?: string | null): string | null {
+  if (!htmlContent) return null;
+  const match = htmlContent.match(/<link\s+[^>]*rel=["']canonical["'][^>]*href=["']([^"']+)["']/i) ||
+                htmlContent.match(/<link\s+[^>]*href=["']([^"']+)["'][^>]*rel=["']canonical["']/i);
+  if (!match) return null;
+  const urlStr = match[1].trim();
+  try {
+    const urlObj = new URL(urlStr);
+    const parts = urlObj.pathname.split('/').filter(Boolean);
+    if (parts.length > 0) return parts[parts.length - 1];
+  } catch {
+    const parts = urlStr.split('/').filter(Boolean);
+    if (parts.length > 0) return parts[parts.length - 1];
+  }
+  return null;
+}
+
 export function slugify(text: string): string {
   return text
     .toString()
     .toLowerCase()
     .trim()
-    .replace(/\s+/g, '-')           // Replace spaces with -
+    .replace(/[\s_]+/g, '-')        // Replace spaces and underscores with -
     .replace(/[^\w\-]+/g, '')       // Remove all non-word chars except -
     .replace(/\-\-+/g, '-')         // Replace multiple - with single -
     .replace(/^-+/, '')             // Trim - from start
@@ -71,6 +88,7 @@ export interface RawCatalogEntry {
   /** Raw display name (filename with underscores → spaces). */
   name: string;
   metadata?: DocumentMetadata | null;
+  htmlContent?: string | null;
 }
 
 // ─── Resource-kind detection ────────────────────────────────────────────────
@@ -141,7 +159,7 @@ export function parseFolderLectureNumbers(
 
 function deriveTopicTitle(
   folderName: string,
-  _subject: string,
+  subject: string,
   metadata?: DocumentMetadata | null,
 ): string {
   if (metadata?.topicTitle) return metadata.topicTitle;
@@ -217,7 +235,7 @@ function defaultModesFor(
 function defaultSortOrder(
   resourceKind: ResourceKind,
   lectureNumber?: number,
-  _lectureNumberEnd?: number,
+  lectureNumberEnd?: number,
 ): number {
   if (resourceKind === 'lecture') {
     // Use the start of the range when present, else the single number.
@@ -230,7 +248,7 @@ function defaultSortOrder(
 // ─── Normalization entry point ──────────────────────────────────────────────
 
 export function normalizeCatalogEntry(entry: RawCatalogEntry): CatalogEntry {
-  const { subject, folderName, fileName, name, metadata } = entry;
+  const { subject, folderName, fileName, name, metadata, htmlContent } = entry;
 
   const resourceKind = detectResourceKind(folderName, metadata);
   const scope: ResourceScope =
@@ -261,6 +279,9 @@ export function normalizeCatalogEntry(entry: RawCatalogEntry): CatalogEntry {
     resourceKind,
   });
 
+  const canonicalSlug = extractCanonicalSlug(htmlContent);
+  const slug = (metadata && metadata.slug) || canonicalSlug || slugify(topicTitle) || slugify(folderName);
+
   return {
     subject,
     folderName,
@@ -268,7 +289,7 @@ export function normalizeCatalogEntry(entry: RawCatalogEntry): CatalogEntry {
     name,
     displayTitle,
     topicTitle,
-    slug: slugify(topicTitle),
+    slug,
     lectureNumber,
     lectureNumberEnd,
     resourceKind,
