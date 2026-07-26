@@ -68,7 +68,7 @@ For each `<h2>` section in the inventory, evaluate it against the qualification 
 
 **Qualifies when ALL of:**
 - The section contains a display math formula (`\[ ... \]`) inside a `.key-concept` div
-- The formula has ≥ 2 named input variables with types/domains defined in a symbol registry or surrounding prose
+- The formula has ≥ 2 named input variables with types/domains defined in surrounding prose
 - The section contains a worked example (`.example-box`) that provides concrete numerical values for those variables (establishing plausible slider ranges)
 
 **Does NOT qualify when ANY of:**

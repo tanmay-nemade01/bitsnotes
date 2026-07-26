@@ -54,7 +54,7 @@ Focus on:
 - Cutting filler phrases ("It's important to note that" → just say the thing).
 - Cutting marketing-speak and AI clichés (the lint gate will flag any remaining).
 - Ensuring every formula has a plain-English intuition explanation.
-Ignore LaTeX, derivations, symbol registries, tables, and code when judging
+Ignore LaTeX, derivations, symbol definitions, tables, and code when judging
 sentence length or Flesch score. Never rewrite correct math merely to satisfy
 a readability heuristic.
 Technical terms are fine when they are the right word (e.g., "Fourier transform"
@@ -93,8 +93,8 @@ Use Agent 1 (extractor) to process transcript.txt into <LecturePrefix>_notes_den
 This lecture is math-heavy and the transcript describes formulas and
 derivations in plain language. Follow the Math extraction protocol strictly:
 reconstruct real LaTeX for every formula, keep the professor's verbal
-description next to each equation as the audit trail, build a symbol registry
-per concept (name, meaning, type, units/domain, LaTeX), capture every
+description next to each equation as the audit trail, define every symbol
+on first use in surrounding prose (name, meaning, type, units/domain), capture every
 derivation step and mark skipped steps with *[verify]*, dimension/shape-check
 every vector/matrix formula, and tag any uncertain reconstruction with
 *[verify: <reason>]* instead of silently guessing. Output the math map as
@@ -129,10 +129,4 @@ etc.). Source each non-trivial step from <enrichment doc> or a standard
 identity. Remove any *[verify]* marker once the gap is filled.
 ```
 
-## Symbol-registry pass
-```text
-For each section in <path> that introduces three or more new symbols, add a
-Symbol Registry block listing: symbol, plain-language meaning, LaTeX, type
-(scalar/vector/matrix), and units or domain. Ensure every symbol used in
-that section's math appears in the registry.
-```
+

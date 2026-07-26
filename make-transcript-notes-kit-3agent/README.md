@@ -172,7 +172,7 @@ Missing essential items are failures, not warnings.
 ## Readability policy for math-heavy notes
 
 Readability is a judgment aid, not an optimization target. The linters remove
-LaTeX environments, inline/display math, symbol registries, code, and tables
+LaTeX environments, inline/display math, symbol definitions, code, and tables
 before computing prose metrics. Sentence-length, Flesch, and fancy-word
 findings are advisory. Agents should fix genuinely confusing prose once, but
 must not split formulas or repeatedly rewrite derivations to improve a score.
