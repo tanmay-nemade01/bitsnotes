@@ -106,6 +106,50 @@ function normalizeCatalogEntry({ folderName, fileName, name, metadata }) {
   };
 }
 
+function autoFixCanonicalAndOgUrls(htmlContent, expectedUrl) {
+  let updated = htmlContent;
+
+  const canonicalUrlMatch = updated.match(/<link\s+rel=["']canonical["']\s+href=["']([^"']+)["']/i) ||
+                            updated.match(/<link\s+href=["']([^"']+)["']\s+rel=["']canonical["']/i);
+  const canonicalUrl = canonicalUrlMatch ? canonicalUrlMatch[1] : null;
+
+  const ogUrlValMatch = updated.match(/<meta\s+property=["']og:url["']\s+content=["']([^"']+)["']/i) ||
+                        updated.match(/<meta\s+content=["']([^"']+)["']\s+property=["']og:url["']/i);
+  const ogUrl = ogUrlValMatch ? ogUrlValMatch[1] : null;
+
+  if (canonicalUrl === expectedUrl && ogUrl === expectedUrl) {
+    return { updated, fixed: false };
+  }
+
+  const canonicalTagMatch = updated.match(/<link\s+[^>]*rel=["']canonical["'][^>]*>/i) ||
+                            updated.match(/<link\s+[^>]*href=["'][^"']+["']\s+rel=["']canonical["'][^>]*>/i);
+
+  if (canonicalTagMatch) {
+    updated = updated.replace(
+      canonicalTagMatch[0],
+      `<link rel="canonical" href="${expectedUrl}">`
+    );
+  } else if (updated.includes('</head>')) {
+    updated = updated.replace('</head>', `  <link rel="canonical" href="${expectedUrl}">\n</head>`);
+  }
+
+  const ogUrlTagMatch = updated.match(/<meta\s+[^>]*property=["']og:url["'][^>]*>/i) ||
+                        updated.match(/<meta\s+[^>]*content=["'][^"']+["']\s+property=["']og:url["'][^>]*>/i);
+
+  if (ogUrlTagMatch) {
+    updated = updated.replace(
+      ogUrlTagMatch[0],
+      `<meta property="og:url" content="${expectedUrl}">`
+    );
+  } else if (updated.includes('</head>')) {
+    updated = updated.replace('</head>', `  <meta property="og:url" content="${expectedUrl}">\n</head>`);
+  }
+
+  return { updated, fixed: true };
+}
+
+const SHOULD_FIX = process.argv.includes('--fix') || process.argv.includes('-f');
+
 function verifyCanonicalUrls() {
   console.log(`${BOLD}Checking lecture HTML canonical URLs against website routing format...${RESET}`);
 
@@ -114,6 +158,7 @@ function verifyCanonicalUrls() {
     .map(dirent => dirent.name);
 
   let totalChecked = 0;
+  let totalFixed = 0;
   const errors = [];
 
   for (const subjectName of subjectFolders) {
@@ -130,7 +175,7 @@ function verifyCanonicalUrls() {
       if (!htmlFile) continue;
 
       const htmlPath = path.join(lecturePath, htmlFile);
-      const htmlContent = fs.readFileSync(htmlPath, 'utf-8');
+      let htmlContent = fs.readFileSync(htmlPath, 'utf-8');
       const fileName = htmlFile.replace(/\.html?$/i, '');
       const defaultDisplayName = fileName.replace(/_/g, ' ');
 
@@ -183,11 +228,20 @@ function verifyCanonicalUrls() {
       }
 
       if (issues.length > 0) {
-        errors.push({
-          file: path.relative(NOTES_DIR, htmlPath),
-          expectedUrl,
-          issues
-        });
+        if (SHOULD_FIX) {
+          const { updated, fixed } = autoFixCanonicalAndOgUrls(htmlContent, expectedUrl);
+          if (fixed) {
+            fs.writeFileSync(htmlPath, updated, 'utf-8');
+            totalFixed++;
+            console.log(`${YELLOW}Auto-fixed canonical & og:url tags for ${path.relative(NOTES_DIR, htmlPath)}${RESET}`);
+          }
+        } else {
+          errors.push({
+            file: path.relative(NOTES_DIR, htmlPath),
+            expectedUrl,
+            issues
+          });
+        }
       }
     }
   }
@@ -202,8 +256,10 @@ function verifyCanonicalUrls() {
     }
     process.exit(1);
   } else {
-    console.log(`${GREEN}${BOLD}✓ Canonical URL check passed: All ${totalChecked} lecture HTML files have canonical tags matching the website URL format.${RESET}\n`);
+    const fixedMsg = totalFixed > 0 ? ` (${totalFixed} auto-fixed)` : '';
+    console.log(`${GREEN}${BOLD}✓ Canonical URL check passed: All ${totalChecked} lecture HTML files have canonical tags matching the website URL format.${fixedMsg}${RESET}\n`);
   }
 }
 
 verifyCanonicalUrls();
+

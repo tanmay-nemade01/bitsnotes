@@ -6,7 +6,7 @@ description: >-
   example, formula, student Q&A, industry application, exam tip, professor intuition,
   worked computation, and named reference. Filters ONLY administrative noise and PII.
   Reconstructs real LaTeX from the transcript's plain-language descriptions of math
-  (formulas, derivations, symbols), keeps a per-lecture symbol registry, flags
+  (formulas, derivations, symbols), flags
   ambiguous math with a *[verify: reason]* marker, and preserves the professor's verbal
   explanation alongside every equation so Agent 2 can reconcile it against the
   enrichment docs. Output is plain markdown, no callout boxes or HTML.
@@ -240,7 +240,7 @@ Weave the 9 dimensions into flowing prose within each concept section. A concept
 
 [Rich prose covering: definition, explanation, professor's plain-language restatement,
  context for why this matters — Dimensions 1, 7]
-[Mathematics built step by step with symbol registry — Dimension 2]
+[Mathematics built step by step — Dimension 2]
 [Every worked example in FULL: setup, substitution, every intermediate step,
  final answer, professor's commentary — Dimension 3]
 [Student Q&A woven in where they occurred — Dimension 4]
@@ -262,7 +262,7 @@ After all concept sections, add:
 **Privately verify** that every item from your Step 0.5 extraction inventory is incorporated into the draft. This is your internal completeness check — it must NEVER appear in the markdown output. The output must begin directly with the lecture content.
 
 **Math-specific checks:**
-- Every formula has all variables named (cross-check against the symbol registry)
+- Every formula has all variables named on first appearance
 - Every formula in the draft has its source transcript quote preserved alongside it
 - Every low/medium-confidence formula carries a `*[verify: <reason>]*` marker with a reason
 - Every derivation's gaps are marked `*[verify: <reason>]*` rather than silently filled
@@ -276,7 +276,7 @@ Re-read the LAST 3 sections of your generated markdown output. For each, cross-c
 - Is every worked example worked in full (all intermediate steps, not just "we get...")?
 - Is every Q&A exchange captured with the professor's full answer?
 - Is every formula reconstructed with symbol definitions?
-- Is the math quality (verify markers, symbol registries) at the same level as the first 3 sections?
+- Is the math quality (verify markers, symbol definitions) at the same level as the first 3 sections?
 
 If any section is thinner or less detailed than the early sections, re-read the raw transcript and patch the markdown.
 
@@ -403,21 +403,10 @@ Reconstruct the formula as proper LaTeX using single-backslash delimiters `\(...
 - **Distributions:** "normal with mean mu and variance sigma squared" → \(X \sim \mathcal{N}(\mu, \sigma^2)\). Note: variance vs standard deviation is a common transcription trap — if the professor says "variance sigma squared" use \(\sigma^2\); if they say "standard deviation sigma" the parameter is \(\sigma\) and variance is \(\sigma^2\). When unsure, mark `*[verify]*`.
 - **Log base:** listen carefully. "log" alone → \(\log\) (natural log in ML context unless the professor says otherwise). "log base 2" → \(\log_2\). "log base 10" → \(\log_{10}\). "ln" → \(\ln\). Never assume; transcribe what was said.
 
-### Step M3 — Build the symbol registry (per concept)
+### Step M3 — Define symbols on first use (inline / prose)
 
-For every concept that introduces math, list every new symbol with: name, plain-language meaning, LaTeX, type, units/domain. Example:
-
-```
-Symbol registry — Logistic regression
-- x     — input feature vector          — \(\mathbf{x}\)        — vector in \(\mathbb{R}^d\)
-- w     — weight vector                 — \(\mathbf{w}\)        — vector in \(\mathbb{R}^d\)
-- b     — bias term                     — \(b\)                 — scalar
-- z     — pre-activation (linear part)  — \(z = \mathbf{w}^\top \mathbf{x} + b\) — scalar
-- sigma — logistic sigmoid              — \(\sigma(z) = \frac{1}{1+e^{-z}}\) — scalar in (0,1)
-- y     — true label                    — \(y \in \{0,1\}\)     — scalar
-```
-
-A student who reads only the symbol registry of a section must understand every symbol used in that section's math. This registry is mandatory for any section containing three or more new symbols.
+For every concept that introduces math, name and define every new symbol on first appearance in surrounding prose (name, plain-language meaning, LaTeX, type, units/domain). Do NOT create a separate topic-level symbol registry section or block — define symbols naturally in context to avoid redundant text. Example:
+"where \(\mathbf{x} \in \mathbb{R}^d\) is the input feature vector, \(\mathbf{w} \in \mathbb{R}^d\) is the weight vector, and \(b \in \mathbb{R}\) is the scalar bias term."
 
 ### Step M4 — Derivations: capture every step, mark every gap
 
@@ -492,7 +481,7 @@ Use the Dimension 7 table above as the canonical list of professor intuition typ
 
 Write for a **smart beginner**: clever, motivated, meeting this topic for the first time.
 
-- **Prefer one clear idea at a time.** Treat 22 words as a review hint for ordinary prose, not a hard limit. Ignore displayed equations, inline formulas, symbol registries, tables, and derivation lines. Never damage LaTeX or split a mathematical statement solely to satisfy a word count.
+- **Prefer one clear idea at a time.** Treat 22 words as a review hint for ordinary prose, not a hard limit. Ignore displayed equations, inline formulas, symbol definitions, tables, and derivation lines. Never damage LaTeX or split a mathematical statement solely to satisfy a word count.
 - **Define every term on first use**: *italicize* the term -> give plain meaning -> give symbol if any. Example: "An *eigenvalue* — how much an eigenvector stretches — is written lambda."
 - **Common words first**: "average" before "mean", "spread" before "variance."
 - **Active voice**: "We compute the loss" not "The loss is computed."
@@ -516,7 +505,7 @@ Save your output to the file `<LecturePrefix>_notes_dense.md` (creating it if it
 - `##` for major concepts, strictly using the topic numbering system `lecture_number.topic_number` (e.g., `## 5.1 [Concept Name]` for Lecture 5, Topic 1).
 - `###` for sub-concepts, strictly using the sub-topic numbering system `lecture_number.topic_number.sub_topic_number` (e.g., `### 5.1.1 [Sub-concept Name]` under Topic 5.1).
 - Formulas in `\(...\)` (inline) or `\[...\]` (block) — single backslash only
-- A **symbol registry** at the top of any section introducing three or more new symbols (see Math extraction protocol Step M3)
+- All symbols defined clearly in surrounding prose on first appearance (see Math extraction protocol Step M3)
 - The professor's plain-language description of the math preserved next to every reconstructed formula (the audit trail for Agent 2)
 - `*[verify: <reason>]*` markers next to any formula or derivation step whose reconstruction is uncertain — never silently guess
 - All professor intuition woven into prose (never as attributed quotes)
@@ -533,8 +522,6 @@ Save your output to the file `<LecturePrefix>_notes_dense.md` (creating it if it
 # [Topic]
 
 ## <lecture_number>.<topic_number> [First Concept]
-### <lecture_number>.<topic_number>.<sub_topic_number> Definition and Explanation
-### <lecture_number>.<topic_number>.<sub_topic_number> Symbol Registry            ← if 3+ new symbols
 ### <lecture_number>.<topic_number>.<sub_topic_number> Mathematical Formulation   ← reconstructed LaTeX + professor's verbal description alongside, *[verify]* where uncertain
 ### <lecture_number>.<topic_number>.<sub_topic_number> Worked Examples
   - Example 1: [full walkthrough]

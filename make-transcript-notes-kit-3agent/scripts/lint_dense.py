@@ -172,24 +172,7 @@ def check_math_delimiters(text, report):
         report.passed("math delimiters", "Single-backslash math delimiters correctly formatted, no raw dollars/double backslashes found.")
 
 
-def check_symbol_registries(text, report):
-    h2_matches = []
-    for match in H2_PATTERN.finditer(text):
-        h2_matches.append((match.group(1).strip(), match.start()))
 
-    for i, (title, start) in enumerate(h2_matches):
-        if title in ("Exam Guidance Summary", "Key Industry Applications"):
-            continue
-        
-        section_end = h2_matches[i+1][1] if i + 1 < len(h2_matches) else len(text)
-        section_text = text[start:section_end]
-        
-        # Count math expressions using \( and \[
-        math_blocks = len(re.findall(r"\\\(.*?\\\)|\\\[.*?\\\]", section_text, re.DOTALL))
-        has_registry = "symbol registry" in section_text.lower()
-        
-        if math_blocks >= 3 and not has_registry:
-            report.warned("symbol registry", f"Section '{title}' contains {math_blocks} math expression(s) but has no Symbol Registry. A registry is mandatory if 3+ new symbols are introduced.")
 
 
 def check_pii_and_anonymization(text, report):
@@ -228,7 +211,7 @@ def check_verify_markers(text, report, strict=False):
 def extract_readable_prose(text):
     """Remove math/code/table material before heuristic prose checks.
 
-    Readability metrics are unreliable on LaTeX, symbol registries, derivations,
+    Readability metrics are unreliable on LaTeX, symbol definitions, derivations,
     and markdown tables. It is safer to omit those regions than to encourage an
     agent to break correct mathematics while chasing a word-count score.
     """
@@ -348,7 +331,6 @@ def lint_dense_file(path, lecture_num=None, phase="dense"):
     
     check_numbering(text, lecture_num, report)
     check_math_delimiters(text, report)
-    check_symbol_registries(text, report)
     check_pii_and_anonymization(text, report)
     
     strict_verify = (phase == "enriched")

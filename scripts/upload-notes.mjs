@@ -282,6 +282,48 @@ function normalizeCatalogEntry({ folderName, fileName, name, metadata }) {
   };
 }
 
+function autoFixCanonicalAndOgUrls(htmlContent, expectedUrl) {
+  let updated = htmlContent;
+
+  const canonicalUrlMatch = updated.match(/<link\s+rel=["']canonical["']\s+href=["']([^"']+)["']/i) ||
+                            updated.match(/<link\s+href=["']([^"']+)["']\s+rel=["']canonical["']/i);
+  const canonicalUrl = canonicalUrlMatch ? canonicalUrlMatch[1] : null;
+
+  const ogUrlValMatch = updated.match(/<meta\s+property=["']og:url["']\s+content=["']([^"']+)["']/i) ||
+                        updated.match(/<meta\s+content=["']([^"']+)["']\s+property=["']og:url["']/i);
+  const ogUrl = ogUrlValMatch ? ogUrlValMatch[1] : null;
+
+  if (canonicalUrl === expectedUrl && ogUrl === expectedUrl) {
+    return { updated, fixed: false };
+  }
+
+  const canonicalTagMatch = updated.match(/<link\s+[^>]*rel=["']canonical["'][^>]*>/i) ||
+                            updated.match(/<link\s+[^>]*href=["'][^"']+["']\s+rel=["']canonical["'][^>]*>/i);
+
+  if (canonicalTagMatch) {
+    updated = updated.replace(
+      canonicalTagMatch[0],
+      `<link rel="canonical" href="${expectedUrl}">`
+    );
+  } else if (updated.includes('</head>')) {
+    updated = updated.replace('</head>', `  <link rel="canonical" href="${expectedUrl}">\n</head>`);
+  }
+
+  const ogUrlTagMatch = updated.match(/<meta\s+[^>]*property=["']og:url["'][^>]*>/i) ||
+                        updated.match(/<meta\s+[^>]*content=["'][^"']+["']\s+property=["']og:url["'][^>]*>/i);
+
+  if (ogUrlTagMatch) {
+    updated = updated.replace(
+      ogUrlTagMatch[0],
+      `<meta property="og:url" content="${expectedUrl}">`
+    );
+  } else if (updated.includes('</head>')) {
+    updated = updated.replace('</head>', `  <meta property="og:url" content="${expectedUrl}">\n</head>`);
+  }
+
+  return { updated, fixed: true };
+}
+
 // ─── Main Scanning ──────────────────────────────────────────────────────────
 
 const subjects = [];
@@ -315,7 +357,7 @@ for (const subjectName of subjectFolders) {
     }
 
     const htmlPath = path.join(lecturePath, htmlFile);
-    const htmlContent = fs.readFileSync(htmlPath, 'utf-8');
+    let currentHtmlContent = fs.readFileSync(htmlPath, 'utf-8');
     const fileName = htmlFile.replace(/\.html?$/i, '');
     const defaultDisplayName = fileName.replace(/_/g, ' ');
 
@@ -331,7 +373,7 @@ for (const subjectName of subjectFolders) {
     }
     
     if (!metadata) {
-      metadata = extractEmbeddedMetadata(htmlContent);
+      metadata = extractEmbeddedMetadata(currentHtmlContent);
     }
     if (!metadata) {
       metadata = getFallbackMetadata(defaultDisplayName, subjectName);
@@ -350,16 +392,26 @@ for (const subjectName of subjectFolders) {
       metadata: metadata
     });
 
+    // Auto-fix canonical URL & og:url in HTML content if missing or mismatched
+    const subjectSlug = slugify(subjectName);
+    const expectedUrl = `https://bitsnotes.com/view/${subjectSlug}/${catalogEntry.slug}`;
+    const { updated: fixedHtml, fixed } = autoFixCanonicalAndOgUrls(currentHtmlContent, expectedUrl);
+    if (fixed) {
+      console.log(`${YELLOW}Auto-fixed canonical/og:url in ${subjectName}/${lectureFolder}/${htmlFile}${RESET}`);
+      fs.writeFileSync(htmlPath, fixedHtml, 'utf-8');
+      currentHtmlContent = fixedHtml;
+    }
+
     // Retain the raw metadata so getLectureContent() can return it to the
     // viewer (scope, resourceKind, topicTitle, summary, quiz, etc.).
     lecturesList.push({ ...catalogEntry, metadata });
 
     totalLectures++;
 
-    // Add HTML note to upload queue ONLY if it changed
+    // Add HTML note to upload queue ONLY if it changed or was fixed
     const htmlHash = getFileMd5(htmlPath);
     const remoteHtmlKey = `notes/${subjectName}/${lectureFolder}/${htmlFile}`;
-    if (FORCE_UPLOAD || getCachedHash(remoteHtmlKey) !== htmlHash) {
+    if (fixed || FORCE_UPLOAD || getCachedHash(remoteHtmlKey) !== htmlHash) {
       uploadQueue.push({
         localPath: htmlPath,
         remoteKey: remoteHtmlKey,
@@ -424,7 +476,7 @@ for (const subjectName of subjectFolders) {
     }
 
     // Add to search index — use the normalized display title for better matches.
-    const cleanText = cleanHtmlText(htmlContent);
+    const cleanText = cleanHtmlText(currentHtmlContent);
     const title = catalogEntry.displayTitle || defaultDisplayName;
     searchIndex.push({
       title,
