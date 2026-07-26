@@ -32,7 +32,7 @@ describe('splitLectureTopics', () => {
     expect(result.topics[1].html).toContain('Vectors are cool');
   });
 
-  it('extracts h3 subtopics within each topic chunk', () => {
+  it('extracts h3 subtopics within each topic chunk and injects ids', () => {
     const html = `
       <h2 class="section-title">9.1 Title</h2>
       <h3 class="subsection-title">9.1.1 Subtitle</h3>
@@ -42,7 +42,12 @@ describe('splitLectureTopics', () => {
     const result = splitLectureTopics(html);
     expect(result.topics[0].subtopics).toHaveLength(2);
     expect(result.topics[0].subtopics[0].title).toBe('9.1.1 Subtitle');
+    expect(result.topics[0].subtopics[0].slug).toBe('9-1-1-subtitle');
     expect(result.topics[0].subtopics[1].title).toBe('9.1.2 Another Subtitle');
+    expect(result.topics[0].subtopics[1].slug).toBe('9-1-2-another-subtitle');
+
+    expect(result.topics[0].html).toContain('<h3 id="9-1-1-subtitle" class="subsection-title">9.1.1 Subtitle</h3>');
+    expect(result.topics[0].html).toContain('<h3 id="9-1-2-another-subtitle">9.1.2 Another Subtitle</h3>');
   });
 
   it('combines non-trivial preambles with the first topic', () => {
