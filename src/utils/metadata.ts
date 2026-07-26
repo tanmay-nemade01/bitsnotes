@@ -52,7 +52,8 @@ export interface DocumentMetadata {
   examRevisionNotes?: ExamRevisionItem[];
   pageTranscripts?: string[];
 
-  // ─── Phase 2 catalog metadata ───────────────────────────────────────────
+  /** Explicit slug override. */
+  slug?: string;
   /** Human topic title, preferred over the raw filename. */
   topicTitle?: string;
   /** Parsed lecture number (never derived from array index). */
