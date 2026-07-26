@@ -1,5 +1,6 @@
 export interface Subtopic {
   title: string;
+  slug: string;
 }
 
 export interface Topic {
@@ -34,24 +35,43 @@ function getTopicId(titleText: string, index: number): string {
   return slugify(titleText) || `topic-${index + 1}`;
 }
 
-function parseSubtopics(html: string): Subtopic[] {
+function parseAndInjectSubtopics(html: string): { subtopics: Subtopic[]; html: string } {
   const subtopics: Subtopic[] = [];
+  const usedSlugs = new Set<string>();
   const h3Regex = /<h3([^>]*)>([\s\S]*?)<\/h3>/gi;
-  let match;
-  while ((match = h3Regex.exec(html)) !== null) {
-    const attrs = match[1];
-    const innerHtml = match[2];
+
+  const processedHtml = html.replace(h3Regex, (fullMatch, attrs, innerHtml) => {
     const titleText = stripHtml(innerHtml);
 
     const isSubtopic =
       /class=["'][^"']*subsection-title[^"']*["']/i.test(attrs) ||
       /^\d+\.\d+\.\d+\b/.test(titleText);
 
-    if (isSubtopic) {
-      subtopics.push({ title: titleText });
+    if (!isSubtopic) {
+      return fullMatch;
     }
-  }
-  return subtopics;
+
+    let slug = '';
+    const idMatch = attrs.match(/\bid=["']([^"']+)["']/i);
+    if (idMatch) {
+      slug = idMatch[1];
+    } else {
+      const baseSlug = slugify(titleText) || 'subtopic';
+      slug = baseSlug;
+      let count = 1;
+      while (usedSlugs.has(slug)) {
+        slug = `${baseSlug}-${count++}`;
+      }
+      attrs = ` id="${slug}"` + attrs;
+    }
+
+    usedSlugs.add(slug);
+    subtopics.push({ title: titleText, slug });
+
+    return `<h3${attrs}>${innerHtml}</h3>`;
+  });
+
+  return { subtopics, html: processedHtml };
 }
 
 export function splitLectureTopics(bodyContent: string): SplitResult {
@@ -86,13 +106,14 @@ export function splitLectureTopics(bodyContent: string): SplitResult {
 
   // Fallback: zero topics found
   if (h2s.length === 0) {
+    const { subtopics, html: processedBody } = parseAndInjectSubtopics(cleanBody);
     return {
       topics: [
         {
           id: 'full',
           title: 'Full lecture',
-          html: cleanBody,
-          subtopics: parseSubtopics(cleanBody),
+          html: processedBody,
+          subtopics,
           slug: 'full',
         },
       ],
@@ -116,19 +137,22 @@ export function splitLectureTopics(bodyContent: string): SplitResult {
       ? cleanBody.substring(current.index, next.index)
       : cleanBody.substring(current.index);
 
+    const { subtopics, html: processedTopicHtml } = parseAndInjectSubtopics(topicHtml);
+
     topics.push({
       id: getTopicId(current.titleText, i),
       title: current.titleText,
-      html: topicHtml,
-      subtopics: parseSubtopics(topicHtml),
+      html: processedTopicHtml,
+      subtopics,
       slug: slugify(current.titleText),
     });
   }
 
   // Handle preamble
   if (preamble.trim()) {
-    // Prepend preamble to the first topic
-    topics[0].html = preamble + topics[0].html;
+    const { subtopics: preambleSubtopics, html: processedPreamble } = parseAndInjectSubtopics(preamble);
+    topics[0].html = processedPreamble + topics[0].html;
+    topics[0].subtopics = [...preambleSubtopics, ...topics[0].subtopics];
   }
 
   return {
