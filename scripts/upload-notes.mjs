@@ -475,6 +475,32 @@ for (const subjectName of subjectFolders) {
       }
     }
 
+    // Add generic companion assets (images, graphics, sub-components) to upload queue
+    const mediaExtensions = ['.svg', '.png', '.jpg', '.jpeg', '.webp', '.gif'];
+    const mediaFiles = files.filter(f => mediaExtensions.some(ext => f.toLowerCase().endsWith(ext)));
+    for (const mediaFile of mediaFiles) {
+      const mediaPath = path.join(lecturePath, mediaFile);
+      const mediaHash = getFileMd5(mediaPath);
+      const remoteMediaKey = `notes/${subjectName}/${lectureFolder}/${mediaFile}`;
+      let cType = 'application/octet-stream';
+      if (mediaFile.toLowerCase().endsWith('.svg')) cType = 'image/svg+xml';
+      else if (mediaFile.toLowerCase().endsWith('.png')) cType = 'image/png';
+      else if (mediaFile.toLowerCase().endsWith('.jpg') || mediaFile.toLowerCase().endsWith('.jpeg')) cType = 'image/jpeg';
+      else if (mediaFile.toLowerCase().endsWith('.webp')) cType = 'image/webp';
+      else if (mediaFile.toLowerCase().endsWith('.gif')) cType = 'image/gif';
+
+      if (FORCE_UPLOAD || getCachedHash(remoteMediaKey) !== mediaHash) {
+        uploadQueue.push({
+          localPath: mediaPath,
+          remoteKey: remoteMediaKey,
+          contentType: cType,
+          hash: mediaHash
+        });
+      } else {
+        skippedCount++;
+      }
+    }
+
     // Add to search index — use the normalized display title for better matches.
     const cleanText = cleanHtmlText(currentHtmlContent);
     const title = catalogEntry.displayTitle || defaultDisplayName;

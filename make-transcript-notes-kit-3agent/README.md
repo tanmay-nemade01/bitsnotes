@@ -26,7 +26,8 @@ Does: exhaustive extraction,    Does: manifest closure,     Does: section-by-sec
       source anchors               selective teaching spine,    exam-summary rendering,       interactive widget
                                    smart readability checks,    prerequisite HTML,            injection (playgrounds,
                                    topic mapping YAML update    HTML/SEO lint gate            step-throughs, concept
-                                   (processed per-section)                                    checks, concept maps),
+                                   (processed per-section)                                    checks, concept maps,
+                                                                                              visual diagrams),
                                                                                               per-lecture CSS/JS
 
 Output: dense draft         Output: enriched sections    Output: <LecturePrefix>_notes.html   Output: <LecturePrefix>_notes.html (modified)
@@ -91,7 +92,7 @@ Run the process in the following sequence:
 
 3. "Use Agent 3 (formatter) to re-split <LecturePrefix>_notes_enriched.md, convert every section without inventing or dropping content, assemble strictly, read topic_mappings/<Subject>.yaml for prerequisite detection, run lint.py, and produce the final HTML under <LecturePrefix>_notes/. Return placeholders or missing instructional content to Agent 2."
 
-4. (OPTIONAL) "Use Agent 4 (enhancer) to audit <LecturePrefix>_notes.html for interactive enhancement opportunities, present the audit for approval, then inject approved interactive elements (parameter playgrounds, algorithm step-throughs, concept checks, curated external resources, concept maps) directly into <LecturePrefix>_notes.html with per-lecture CSS/JS files. If no content qualifies for enhancement, stop after the audit."
+4. (OPTIONAL) "Use Agent 4 (enhancer) to audit <LecturePrefix>_notes.html for interactive enhancement & diagram opportunities, present the audit for approval, then inject approved elements (parameter playgrounds, algorithm step-throughs, concept checks, curated external resources, concept maps, visual diagrams/flowcharts) directly into <LecturePrefix>_notes.html with per-lecture CSS/JS files. If no content qualifies for enhancement, stop after the audit."
 ```
 
 ## What's inside

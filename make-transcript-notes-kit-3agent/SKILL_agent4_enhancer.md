@@ -4,24 +4,24 @@ description: >-
   Phase 4 of make-transcript-notes-kit. A standalone post-processing agent that
   takes Agent 3's final HTML file and injects interactive learning elements —
   parameter playgrounds, algorithm step-through visualizers, concept check cards,
-  curated external resources, and concept relationship maps. Modifies the existing
-  HTML file directly in-place alongside per-lecture CSS and JS files. Never modifies Agents
-  1–3's files, scripts, or intermediate artifacts. Operates on an audit-first,
-  no-force principle: if no content in the HTML naturally warrants interactivity,
-  the agent says so and stops. Every interactive element must trace to specific
+  curated external resources, concept relationship maps, and visual diagrams/flowcharts.
+  Modifies the existing HTML file directly in-place alongside per-lecture CSS and JS files.
+  Never modifies Agents 1–3's files, scripts, or intermediate artifacts. Operates on an audit-first,
+  no-force principle: if no content in the HTML naturally warrants interactivity or visual diagramming,
+  the agent says so and stops. Every interactive element or diagram must trace to specific
   content in the source HTML with zero invented educational content.
   Trigger after Agent 3 (formatter).
 ---
 
 # Agent 4 — Enhancer
 
-**Your job:** Take Agent 3's final HTML file (`<LecturePrefix>_notes/<LecturePrefix>_notes.html`) and add interactive learning elements directly into the HTML file that serve as cognitive relief between dense text sections and help readers internalize difficult concepts through manipulation. You are a post-processor, not a content author. Every element you add must trace directly to specific content already present in the HTML. If the HTML does not naturally lend itself to interactivity, say so and stop.
+**Your job:** Take Agent 3's final HTML file (`<LecturePrefix>_notes/<LecturePrefix>_notes.html`) and add interactive learning elements and visual diagrams directly into the HTML file that serve as cognitive relief between dense text sections and help readers internalize difficult concepts through manipulation and visualization. You are a post-processor, not a content author. Every element you add must trace directly to specific content already present in the HTML. If the HTML does not naturally lend itself to interactivity or visual diagrams, say so and stop.
 
 **Your input:**
 1. Agent 3's final HTML: `outputs/<Subject>/<LecturePrefix>/<LecturePrefix>_notes/<LecturePrefix>_notes.html`
 
 **Your output:** Inside the same `<LecturePrefix>_notes/` directory:
-1. `<LecturePrefix>_notes.html` — the existing HTML file, modified in-place with injected interactive learning elements
+1. `<LecturePrefix>_notes.html` — the existing HTML file, modified in-place with injected interactive learning elements and visual diagrams
 2. `<LecturePrefix>_enhancements.css` — per-lecture CSS for enhancement widgets only
 3. `<LecturePrefix>_enhancements.js` — per-lecture JS for interactive widgets
 4. `<LecturePrefix>_enhancement_audit.json` — the opportunity audit report
@@ -32,11 +32,11 @@ description: >-
 
 ## Core rules for this phase
 
-1. **No-force policy** — If no content in the HTML qualifies for any of the 5 enhancement types, produce the audit file documenting "no opportunities found" and STOP. Shipping a lecture with zero enhancements is an acceptable, expected outcome. Never manufacture interactivity for its own sake.
-2. **Source-lock** — Every interactive element must trace to a specific, identifiable element in the original HTML — a formula (`\[ ... \]`), a worked example (`.example-box`), a tree diagram (`<pre>`), a Q&A block (`.important-note` with **Q:**/**A:**), or an exam revision entry (`.exam-revision-entry`). If you cannot cite the exact heading ID or element, the enhancement is rejected.
-3. **No invented content** — You do not write explanations, definitions, formulas, or educational prose. You restructure existing HTML content into interactive form. The words, numbers, math, and step sequences come from the HTML.
+1. **No-force policy** — If no content in the HTML qualifies for any of the 6 enhancement types, produce the audit file documenting "no opportunities found" and STOP. Shipping a lecture with zero enhancements is an acceptable, expected outcome. Never manufacture interactivity or diagrams for their own sake.
+2. **Source-lock** — Every interactive element or visual diagram must trace to a specific, identifiable element in the original HTML — a formula (`\[ ... \]`), a worked example (`.example-box`), a tree/graph diagram (`<pre>`), a verbal visual intuition description ("Visual Intuition", chart specs with axes), a state transition sequence (e.g. MDP backup tree), an architectural pipeline, a Q&A block (`.important-note` with **Q:**/**A:**), or an exam revision entry (`.exam-revision-entry`). If you cannot cite the exact heading ID or element, the enhancement is rejected.
+3. **No invented content** — You do not write explanations, definitions, formulas, or educational prose. You restructure existing HTML content into interactive or visual diagrammatic form. The words, numbers, math, step sequences, and axis/node labels come from the HTML.
 4. **Progressive enhancement** — All enhancements are additive overlays. The original HTML content remains intact and fully readable with JavaScript disabled. Every widget includes a `<noscript>` fallback.
-5. **CSS isolation** — The per-lecture `_enhancements.css` file must NOT define rules for any existing CSS class from `/lecture-notes.css`. All enhancement classes use the `enh-` prefix (e.g., `.enh-playground`, `.enh-stepper`, `.enh-concept-check`). No `!important` overrides on existing styles.
+5. **CSS isolation** — The per-lecture `_enhancements.css` file must NOT define rules for any existing CSS class from `/lecture-notes.css`. All enhancement classes use the `enh-` prefix (e.g., `.enh-playground`, `.enh-stepper`, `.enh-concept-check`, `.enh-diagram`). No `!important` overrides on existing styles.
 6. **Strict File Attachment Guard Rail** — Focus *only and only* on the HTML file attached to the prompt/context. Do *not* search for or read other lecture files, enriched drafts, or section files. Your sole input is the final HTML.
 7. **Strict Script Creation Guard Rail** — You are strictly prohibited from creating or writing any script (Python, Bash, JS, etc.) inside the toolkit folder (`make-transcript-notes-kit-3agent` or its subfolders). The only files you create or modify are the 4 output files listed above, inside the lecture's `<LecturePrefix>_notes/` directory.
 8. **Agents 1–3 are untouchable** — Never modify, read, or reference SKILL files, templates, scripts, or intermediate artifacts belonging to Agents 1–3. You operate exclusively on Agent 3's final HTML output.
@@ -55,6 +55,8 @@ Read the input HTML file and extract a structured inventory:
 6. **Q&A blocks:** Every `.important-note` div containing `<strong>Q:</strong>` / `<strong>A:</strong>` patterns. Record the parent heading and the Q/A text.
 7. **Exam revision entries:** Every `.exam-revision-entry` div with its `.revision-check` (self-check question) content.
 8. **Relationship language:** Phrases in body text that explicitly connect sections: "this builds on...", "unlike X...", "this is an optimization of...", "alternative to...", "feeds into...", "requires...". Record the source heading, target concept, and the exact phrase.
+9. **Visual intuition & chart specifications:** Text containing "Visual Intuition", chart descriptions specifying axes (X/Y), curve shapes (linear, exponential, U-shaped, S-curve, loss landscapes, value functions), landmarks (peaks, troughs, asymptotes, crossing points), or visual takeaways.
+10. **State transitions, pipelines, flowcharts, & architecture descriptions:** Text or ASCII describing sequence of operations, state transitions (e.g. RL MDP state-action-reward backups, state machine transitions, neural network layer stacks, data pipelines, decision flowcharts).
 
 Save this inventory internally (not as a file) for use in Step 1.
 
@@ -245,6 +247,40 @@ For each `<h2>` section in the inventory, evaluate it against the qualification 
     }
   ],
   "rationale": "3 core concepts with explicitly stated progressive relationships in the prose. Map shows the pedagogical flow: evaluate → prune → go heuristic-free."
+}
+```
+
+---
+
+### Enhancement Type 6: Visual Diagram & Flowchart Generator
+
+**Qualifies when ANY of:**
+- The section contains a verbal/textual description of a chart, curve, or plot specifying X/Y axes, curve dynamics (linear, exponential, U-shaped, S-curve, loss landscape, value function), or landmark points (peaks, troughs, asymptotes, crossing points).
+- The section describes state-action transitions, Markov chains, MDP backup trees (state node → action node → next state node), or dynamic programming state graphs in prose or mathematical text.
+- The section contains a standalone pre-formatted ASCII tree/graph or architectural block diagram in a `<pre>` block that does NOT have an associated 5-step numerical stepper.
+- The section describes a multi-stage architectural pipeline, neural network layer stack, data processing workflow, or decision tree/flowchart in prose or list form.
+
+**Does NOT qualify when ANY of:**
+- The section only mentions a concept abstractly without describing visual structure, axes, curves, components, transitions, or pipelines.
+- The diagram would require inventing structural relationships, nodes, axes, or values not supported by the HTML prose or ASCII art.
+- The concept is already covered by a Type 2 Algorithm Stepper in the same section.
+
+**Audit entry format:**
+```json
+{
+  "type": "visual-diagram",
+  "qualifies": true,
+  "source_heading_id": "5.2",
+  "source_heading_text": "Bellman Expectation Equation & Backup Diagram",
+  "diagram_category": "state-transition",
+  "render_engine": "inline-svg",
+  "axes_or_nodes": {
+    "x_axis": null,
+    "y_axis": null,
+    "nodes": ["State s", "Actions a", "Rewards r", "Next States s'"],
+    "landmark_or_flow": "Root state s branches to actions a with probability π(a|s), leading to next states s' with transition probability P(s'|s,a)"
+  },
+  "rationale": "Section explicitly describes the Bellman expectation backup tree structure in prose. Rendering an inline SVG backup diagram turns dense equations into visual intuition."
 }
 ```
 
@@ -441,6 +477,66 @@ Injected once, at the top of `<main>` (after the hero header and prerequisite se
 - Include Mermaid CDN (`<script src="https://cdn.jsdelivr.net/npm/mermaid/dist/mermaid.min.js"></script>`) in the `<head>`
 - Node click handlers scroll to the corresponding `<h2>` heading
 
+### Type 6: Visual Diagram & Flowchart Implementation
+
+Enhancement Type 6 injects visual diagrams directly into the lecture notes for sections that contain visual intuition descriptions, state transitions (e.g., MDP backup diagrams), ASCII art diagrams, or multi-stage architectural pipelines.
+
+#### A. Inline SVG Diagram Template (Plots, Curves, State-Action Backup Trees, ASCII Conversions)
+
+```html
+<div class="enh-widget" data-type="visual-diagram" data-source="5.2">
+  <h4 class="enh-widget-title">📊 Visual Diagram: Bellman Expectation Backup</h4>
+  <figure class="enh-diagram">
+    <div class="enh-diagram-canvas">
+      <svg class="enh-svg-diagram" viewBox="0 0 500 300" role="img" aria-label="Bellman Expectation Backup Tree">
+        <defs>
+          <marker id="enh-arrow" viewBox="0 0 10 10" refX="6" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+            <path d="M 0 0 L 10 5 L 0 10 z" fill="var(--enh-accent)" />
+          </marker>
+        </defs>
+        <!-- Nodes, edges, markers, and axis lines formatted with theme CSS custom properties -->
+      </svg>
+    </div>
+    <figcaption class="enh-diagram-caption">
+      <strong>Key Takeaway:</strong> [1-sentence insight extracted verbatim or structurally derived from the HTML prose]
+    </figcaption>
+  </figure>
+</div>
+```
+
+#### B. Mermaid Flowchart Template (Process Pipelines & Architectural Workflows)
+
+```html
+<div class="enh-widget" data-type="visual-diagram" data-source="4.1">
+  <h4 class="enh-widget-title">🔀 Flowchart: Neural Network Forward & Backward Pass</h4>
+  <figure class="enh-diagram">
+    <div class="enh-diagram-canvas">
+      <div class="mermaid">
+        graph LR
+          Input["Input X"] --> Hidden["Hidden Layers H"]
+          Hidden --> Output["Output \hat{Y}"]
+          Output --> Loss["Loss L"]
+          Loss -.->|"Backprop Gradient"| Hidden
+      </div>
+    </div>
+    <figcaption class="enh-diagram-caption">
+      <strong>Process Flow:</strong> [1-sentence description extracted from the HTML prose]
+    </figcaption>
+  </figure>
+  <noscript><p class="enh-fallback">Diagram requires JavaScript (Mermaid).</p></noscript>
+</div>
+```
+
+#### Visual Description Quality Rules (inspired by `make-transcript-notes-kit`)
+
+When creating SVG or Mermaid diagrams from section content:
+1. **Name the Axes (for plots/curves):** Name both X and Y axes with units whenever provided in the text.
+2. **Describe Curve Shapes & Dynamics:** Accurately reflect whether a curve is linear, exponential, U-shaped, S-shaped, a bell curve, or a loss landscape.
+3. **Highlight Landmarks:** Highlight key landmarks (peaks, troughs, crossing points, asymptotes, decision splits, or state-action nodes) using distinct circle markers, labeled callouts, or colored node fills.
+4. **Clear Directional Flow:** For state transitions (MDP backup trees, Markov chains, dynamic programming grids) and architectural pipelines, use explicit directional arrowheads (`marker-end="url(#enh-arrow)"`), distinct node shapes (circles for states, rectangles for actions/processes), and explicit transition labels.
+5. **Theme-Adaptive Colors:** Never hardcode hex color strings like `#000000` or `#FFFFFF` inside SVG `fill` or `stroke` attributes. Always use CSS custom properties (`var(--enh-accent)`, `var(--enh-border)`, `var(--enh-text)`, `var(--enh-bg-subtle)`, `var(--enh-text-muted)`) so diagrams automatically adapt when `html[data-theme="dark"]` is active.
+6. **Strict Source Lock:** All node names, axis labels, curve behaviors, and takeaway captions MUST trace directly to the lecture HTML prose or ASCII art. Never invent unmentioned nodes or steps.
+
 ---
 
 ## Step 5 — Generate Per-Lecture CSS
@@ -450,7 +546,7 @@ Create `<LecturePrefix>_enhancements.css` in the same output directory. This fil
 - Contains ONLY classes prefixed with `enh-`
 - Does NOT redefine or override any class from `/lecture-notes.css`
 - Does NOT use `!important`
-- Provides all styling for the 5 enhancement widget types
+- Provides all styling for the 6 enhancement widget types (Playgrounds, Steppers, Concept Cards, Resources, Concept Maps, Visual Diagrams)
 - Inherits BitsNotes design system tokens from `/lecture-notes.css` and `tokens.css` for seamless light/dark mode adaptation
 - Uses `references/enhancements_reference.css` in the toolkit as the canonical styling blueprint
 
@@ -525,8 +621,8 @@ Create `<LecturePrefix>_enhancements.js` in the same output directory. This file
     // Initialize widgets present in this lecture
     initPlaygrounds();
     initSteppers();
-    // Concept checks and external resources need no JS
-    // Concept maps initialized by Mermaid CDN
+    // Concept checks, external resources, and visual diagrams (SVG/Mermaid) need no custom JS unless interactive tooltips are active
+    // Concept maps and Mermaid flowcharts initialized by Mermaid CDN
   });
 
   function initPlaygrounds() { /* ... */ }
@@ -539,7 +635,7 @@ Add a `<script>` tag for this JS at the bottom of `<LecturePrefix>_notes.html`'s
 <script src="<LecturePrefix>_enhancements.js"></script>
 ```
 
-If the concept map enhancement is present, also add the Mermaid CDN in the `<head>`:
+If concept maps or Mermaid flowchart visual diagrams are present, also add the Mermaid CDN in the `<head>`:
 ```html
 <script src="https://cdn.jsdelivr.net/npm/mermaid/dist/mermaid.min.js"></script>
 <script>mermaid.initialize({startOnLoad: true, theme: 'neutral'});</script>
@@ -555,10 +651,11 @@ Before saving the modified `<LecturePrefix>_notes.html`, verify EVERY injected e
 
 | Check | What to verify | Failure action |
 |---|---|---|
-| **Source-lock** | Can you cite the exact heading ID and element type (formula, example, tree, Q&A) in the original HTML that this enhancement derives from? | Remove the enhancement |
-| **Content fidelity** | Is every piece of text in the widget (labels, step narratives, questions, answers) an exact copy from the HTML, or a direct structural transformation of it (e.g., LaTeX → JS math expression)? | Remove the enhancement |
+| **Source-lock** | Can you cite the exact heading ID and element type (formula, example, tree, visual intuition description, state transition, Q&A) in the original HTML that this enhancement derives from? | Remove the enhancement |
+| **Content fidelity** | Is every piece of text in the widget (labels, step narratives, questions, answers, node labels, axis names) an exact copy from the HTML, or a direct structural transformation of it (e.g., LaTeX → JS math expression, prose → SVG backup tree)? | Remove the enhancement |
 | **Formula integrity** | For playgrounds: does the JS computation exactly implement the LaTeX formula? Verify with one numerical spot-check using values from the worked example. | Remove the enhancement |
 | **Step fidelity** | For steppers: does every step label and narrative match the numbered walkthrough in the HTML? Is the step count identical? | Remove the enhancement |
+| **Diagram fidelity** | For visual diagrams: do axis names, curve shapes, landmark markers, node labels, and directional arrows strictly match the HTML prose/ASCII? Does SVG stroke/fill use theme CSS custom properties (`var(--enh-*)`)? | Remove/fix the diagram |
 | **Link verification** | For external resources: does every URL still return HTTP 200? Does the page title/content match the claimed topic? | Remove the dead/mismatched link |
 | **No invented prose** | Does the enhancement contain ANY text not traceable to the HTML or to verified external source metadata (title, channel name)? | Remove the invented text |
 | **CSS isolation** | Does `_enhancements.css` define any class without the `enh-` prefix? Does it override any existing class? | Fix the CSS |
@@ -590,7 +687,7 @@ outputs/<Subject>/<LecturePrefix>/
 ├── <LecturePrefix>_extraction_manifest.json ← Agent 1 (untouched)
 ├── sections/                                ← Agents 2-3 (untouched)
 └── <LecturePrefix>_notes/
-    ├── <LecturePrefix>_notes.html           ← Modified in-place by Agent 4 (interactive elements injected)
+    ├── <LecturePrefix>_notes.html           ← Modified in-place by Agent 4 (interactive elements and visual diagrams injected)
     ├── <LecturePrefix>_enhancements.css     ← Agent 4 output
     ├── <LecturePrefix>_enhancements.js      ← Agent 4 output
     └── <LecturePrefix>_enhancement_audit.json ← Agent 4 audit report
@@ -603,6 +700,8 @@ outputs/<Subject>/<LecturePrefix>/
 - Enhancement contains educational prose not present in the source HTML
 - Formula in a playground does not match the LaTeX in the HTML
 - Step-through has steps added, removed, or reworded vs. the HTML walkthrough
+- Visual diagram contains nodes, axes, or curve shapes not supported by the HTML prose or ASCII art
+- Visual diagram hardcodes hex colors (`#000000`/`#FFFFFF`) instead of using CSS custom properties (`var(--enh-*)`)
 - External resource link is dead, paywalled, or from a blocked source
 - Concept map contains a node that doesn't correspond to an `<h2>` heading
 - Concept map contains an edge whose relationship text is not a direct quote from the prose
@@ -623,6 +722,7 @@ outputs/<Subject>/<LecturePrefix>/
 - [ ] Modified HTML file includes `<link>` to per-lecture CSS and `<script>` to per-lecture JS
 - [ ] All `.enh-widget` containers have `data-type` and `data-source` attributes
 - [ ] Every enhancement passed the per-enhancement verification checks
+- [ ] Visual diagrams use theme-adaptive CSS custom properties and include accessible `<figcaption>` takeaways
 - [ ] Every external resource link was verified (HTTP 200 + content match)
 - [ ] CSS uses only `enh-` prefixed classes, no `!important`
 - [ ] JS is wrapped in IIFE, only touches `.enh-widget` DOM
@@ -631,3 +731,4 @@ outputs/<Subject>/<LecturePrefix>/
 - [ ] `<noscript>` fallback present on every JS-dependent widget
 - [ ] No red-list items
 - [ ] If no enhancements qualified, audit file documents this and `_notes.html` was not modified
+
