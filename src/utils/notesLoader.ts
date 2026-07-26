@@ -388,20 +388,22 @@ export async function getLectureContent(subjectName: string, lectureFolderName: 
 
       // Load companion CSS if present
       const folderPrefix = `/src/content/notes/${subjectName}/${lectureFolderName}/`;
-      const cssKey = Object.keys(cssFiles).find(k => k.startsWith(folderPrefix) && k.endsWith('.css'));
-      if (cssKey) {
+      const cssKeys = Object.keys(cssFiles).filter(k => k.toLowerCase().startsWith(folderPrefix.toLowerCase()) && k.endsWith('.css'));
+      for (const cssKey of cssKeys) {
         try {
-          cssContent = await cssFiles[cssKey]() as string;
+          const c = await cssFiles[cssKey]() as string;
+          cssContent += '\n' + c;
         } catch (err: any) {
           console.warn(`[notesLoader] Error loading local CSS for ${subjectName}/${lectureFolderName}:`, err.message);
         }
       }
 
       // Load companion JS if present
-      const jsKey = Object.keys(jsFiles).find(k => k.startsWith(folderPrefix) && k.endsWith('.js'));
-      if (jsKey) {
+      const jsKeys = Object.keys(jsFiles).filter(k => k.toLowerCase().startsWith(folderPrefix.toLowerCase()) && k.endsWith('.js'));
+      for (const jsKey of jsKeys) {
         try {
-          jsContent = await jsFiles[jsKey]() as string;
+          const j = await jsFiles[jsKey]() as string;
+          jsContent += '\n' + j;
         } catch (err: any) {
           console.warn(`[notesLoader] Error loading local JS for ${subjectName}/${lectureFolderName}:`, err.message);
         }
@@ -428,19 +430,35 @@ export async function getLectureContent(subjectName: string, lectureFolderName: 
       htmlContent = await obj.text();
 
       // Fetch optional companion CSS and JS from R2
-      const basePrefix = lecture.fileName.replace(/_notes(_enhanced)?$/i, '');
-      const cssKey = `notes/${subjectName}/${lectureFolderName}/${basePrefix}_enhancements.css`;
-      const jsKey = `notes/${subjectName}/${lectureFolderName}/${basePrefix}_enhancements.js`;
-
+      const folderPrefixKey = `notes/${subjectName}/${lectureFolderName}/`;
       try {
-        const cssObj = await bucket.get(cssKey);
-        if (cssObj) cssContent = await cssObj.text();
-      } catch { /* optional */ }
-
-      try {
-        const jsObj = await bucket.get(jsKey);
-        if (jsObj) jsContent = await jsObj.text();
-      } catch { /* optional */ }
+        const listRes = await bucket.list({ prefix: folderPrefixKey });
+        if (listRes && listRes.objects) {
+          for (const item of listRes.objects) {
+            if (item.key.endsWith('.css')) {
+              const cObj = await bucket.get(item.key);
+              if (cObj) cssContent += '\n' + (await cObj.text());
+            } else if (item.key.endsWith('.js')) {
+              const jObj = await bucket.get(item.key);
+              if (jObj) jsContent += '\n' + (await jObj.text());
+            }
+          }
+        }
+      } catch {
+        // Fallback candidate keys if bucket.list is unpermitted
+        const basePrefix = lecture.fileName.replace(/_notes(_enhanced)?$/i, '');
+        const candidateJsKeys = [
+          `${folderPrefixKey}${lecture.fileName}.js`,
+          `${folderPrefixKey}${basePrefix}_enhancements.js`,
+          `${folderPrefixKey}${basePrefix}.js`
+        ];
+        for (const jKey of candidateJsKeys) {
+          try {
+            const jsObj = await bucket.get(jKey);
+            if (jsObj) { jsContent += '\n' + (await jsObj.text()); break; }
+          } catch { /* optional */ }
+        }
+      }
 
       // Cache the lecture HTML at the edge, versioned by the manifest version
       // so a new content upload invalidates it (Phase 8.8). No unbounded
