@@ -401,18 +401,32 @@
     }
 
     function getSearchSnippet(text: string, query: string, maxLen = 160) {
-      if (!query) return text.slice(0, maxLen) + (text.length > maxLen ? '...' : '');
-      const terms = query.toLowerCase().split(/\s+/).filter(Boolean);
+      if (!query || !text) return (text || '').slice(0, maxLen) + ((text || '').length > maxLen ? '...' : '');
+      const rawQuery = query.trim().toLowerCase();
+      const terms = rawQuery.split(/\s+/).filter(Boolean);
       if (terms.length === 0) return text.slice(0, maxLen) + (text.length > maxLen ? '...' : '');
 
       let firstIndex = -1;
-      let matchedTerm = '';
+      let matchedLength = 0;
       const lowerText = text.toLowerCase();
-      for (const term of terms) {
-        const idx = lowerText.indexOf(term);
-        if (idx !== -1 && (firstIndex === -1 || idx < firstIndex)) {
-          firstIndex = idx;
-          matchedTerm = term;
+
+      // First try to locate the exact full query phrase in text
+      if (rawQuery.length > 2) {
+        const phraseIdx = lowerText.indexOf(rawQuery);
+        if (phraseIdx !== -1) {
+          firstIndex = phraseIdx;
+          matchedLength = rawQuery.length;
+        }
+      }
+
+      // Fallback: locate the first occurrence of any term
+      if (firstIndex === -1) {
+        for (const term of terms) {
+          const idx = lowerText.indexOf(term);
+          if (idx !== -1 && (firstIndex === -1 || idx < firstIndex)) {
+            firstIndex = idx;
+            matchedLength = term.length;
+          }
         }
       }
 
@@ -421,7 +435,7 @@
       }
 
       const start = Math.max(0, firstIndex - 60);
-      const end = Math.min(text.length, firstIndex + matchedTerm.length + 100);
+      const end = Math.min(text.length, firstIndex + matchedLength + 100);
       let snippet = text.slice(start, end);
 
       if (start > 0) snippet = '...' + snippet;
@@ -470,7 +484,10 @@
         return;
       }
 
-      const terms = query.toLowerCase().split(/\s+/).filter(Boolean);
+      const rawQuery = query.trim();
+      const queryLower = rawQuery.toLowerCase();
+      const terms = queryLower.split(/\s+/).filter(Boolean);
+
       if (terms.length === 0) {
         resultsList = [];
         activeIndex = -1;
@@ -480,36 +497,71 @@
 
       const matches = [];
       for (const item of searchIndex) {
-        const titleLower = item.title.toLowerCase();
-        const subjectLower = item.subject.toLowerCase();
-        const textLower = (item.snippet || item.text || '').toLowerCase();
+        const titleLower = (item.title || '').toLowerCase();
+        const subjectLower = (item.subject || '').toLowerCase();
+        const topicTitleLower = (item.topicTitle || '').toLowerCase();
+        const textLower = (item.text || item.snippet || '').toLowerCase();
 
-        let match = true;
         let score = 0;
+        let termMatchesCount = 0;
 
-        for (const term of terms) {
-          const inTitle = titleLower.indexOf(term);
-          const inSubject = subjectLower.indexOf(term);
-          const inText = textLower.indexOf(term);
+        // Massive bonus for exact multi-character contiguous query match
+        if (queryLower.length > 2) {
+          if (titleLower.includes(queryLower)) score += 1000;
+          if (topicTitleLower.includes(queryLower)) score += 800;
+          if (subjectLower.includes(queryLower)) score += 300;
 
-          if (inTitle === -1 && inSubject === -1 && inText === -1) {
-            match = false;
-            break;
-          }
-
-          if (inTitle !== -1) {
-            score += inTitle === 0 ? 100 : 50;
-          }
-          if (inSubject !== -1) {
-            score += inSubject === 0 ? 30 : 15;
-          }
-          if (inText !== -1) {
-            const occurrences = textLower.split(term).length - 1;
-            score += Math.min(10, occurrences);
+          if (textLower.includes(queryLower)) {
+            const exactCount = textLower.split(queryLower).length - 1;
+            score += 500 + Math.min(exactCount * 50, 500);
           }
         }
 
-        if (match) {
+        // Score individual term occurrences
+        for (const term of terms) {
+          let termMatched = false;
+
+          const inTitleIdx = titleLower.indexOf(term);
+          if (inTitleIdx !== -1) {
+            termMatched = true;
+            score += (inTitleIdx === 0 ? 200 : 100);
+          }
+
+          const inTopicIdx = topicTitleLower.indexOf(term);
+          if (inTopicIdx !== -1) {
+            termMatched = true;
+            score += (inTopicIdx === 0 ? 150 : 80);
+          }
+
+          const inSubjectIdx = subjectLower.indexOf(term);
+          if (inSubjectIdx !== -1) {
+            termMatched = true;
+            score += (inSubjectIdx === 0 ? 50 : 25);
+          }
+
+          const inTextIdx = textLower.indexOf(term);
+          if (inTextIdx !== -1) {
+            termMatched = true;
+            let count = 0;
+            let pos = inTextIdx;
+            while (pos !== -1 && count < 20) {
+              count++;
+              pos = textLower.indexOf(term, pos + term.length);
+            }
+            score += 15 + Math.min(count * 5, 50);
+          }
+
+          if (termMatched) {
+            termMatchesCount++;
+          }
+        }
+
+        if (termMatchesCount > 0) {
+          if (termMatchesCount === terms.length) {
+            score += 200;
+          } else {
+            score = score * (termMatchesCount / terms.length);
+          }
           matches.push({ item, score });
         }
       }
@@ -526,14 +578,18 @@
 
     function renderResults(query: string) {
       resultsContainer!.innerHTML = resultsList.map((item, idx) => {
-        const url = `/view/${encodeURIComponent(slugify(item.subject))}/${encodeURIComponent(item.slug || item.folderName)}`;
+        const isBlog = item.type === 'blog';
+        const url = isBlog
+          ? `/blog/${encodeURIComponent(item.slug)}`
+          : `/view/${encodeURIComponent(slugify(item.subject))}/${encodeURIComponent(item.slug || item.folderName)}`;
         const highlightedTitle = getSearchTitle(item.title, query);
-        const snippet = getSearchSnippet(item.snippet || item.text || '', query);
+        const snippet = getSearchSnippet(item.text || item.snippet || '', query);
+        const badgeText = isBlog ? 'BLOG' : item.subject;
         
         return `
           <a href="${url}" class="search-modal-result-item" data-astro-prefetch data-search-index="${idx}">
             <div class="search-result-left">
-              <span class="search-result-subject">${item.subject}</span>
+              <span class="search-result-subject">${badgeText}</span>
               <span class="search-result-title">${highlightedTitle}</span>
               <p class="search-result-snippet">${snippet}</p>
             </div>

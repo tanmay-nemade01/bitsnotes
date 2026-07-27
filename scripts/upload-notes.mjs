@@ -344,6 +344,23 @@ function autoFixCanonicalAndOgUrls(htmlContent, expectedUrl) {
   return { updated, fixed: true };
 }
 
+function cleanHtmlText(html) {
+  let text = html.replace(/<style[^>]*>[\s\S]*?<\/style>/gi, ' ');
+  text = text.replace(/<script[^>]*>[\s\S]*?<\/script>/gi, ' ');
+  text = text.replace(/<head[^>]*>[\s\S]*?<\/head>/gi, ' ');
+  text = text.replace(/<iframe[^>]*>[\s\S]*?<\/iframe>/gi, ' ');
+  text = text.replace(/<svg[^>]*>[\s\S]*?<\/svg>/gi, ' ');
+  text = text.replace(/<[^>]*>/g, ' ');
+  text = text
+    .replace(/&nbsp;/g, ' ')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&amp;/g, '&')
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'");
+  return text.replace(/\s+/g, ' ').trim();
+}
+
 // ─── Main Scanning ──────────────────────────────────────────────────────────
 
 const subjects = [];
@@ -521,14 +538,17 @@ for (const subjectName of subjectFolders) {
       }
     }
 
-    // Add to search index — use the normalized display title for better matches.
+    // Add to search index — store full text for client-side deep search.
     const cleanText = cleanHtmlText(currentHtmlContent);
     const title = catalogEntry.displayTitle || defaultDisplayName;
     searchIndex.push({
+      type: 'note',
       title,
       subject: subjectName,
       folderName: lectureFolder,
       slug: catalogEntry.slug,
+      topicTitle: catalogEntry.topicTitle || '',
+      text: cleanText,
       snippet: cleanText.slice(0, 300)
     });
   }
@@ -544,6 +564,44 @@ for (const subjectName of subjectFolders) {
     lectureCount: lecturesList.length,
     lectures: lecturesList
   });
+}
+
+// Scan blog posts for search index
+const BLOG_DIR = path.join(process.cwd(), 'src/content/blog');
+if (fs.existsSync(BLOG_DIR)) {
+  const blogFolders = fs.readdirSync(BLOG_DIR, { withFileTypes: true })
+    .filter(dirent => dirent.isDirectory())
+    .map(dirent => dirent.name);
+
+  for (const blogFolder of blogFolders) {
+    const blogPath = path.join(BLOG_DIR, blogFolder);
+    const htmlPath = path.join(blogPath, 'index.html');
+    const jsonPath = path.join(blogPath, 'index.json');
+
+    if (fs.existsSync(htmlPath)) {
+      const rawHtml = fs.readFileSync(htmlPath, 'utf-8');
+      let title = blogFolder;
+      let description = '';
+      if (fs.existsSync(jsonPath)) {
+        try {
+          const meta = JSON.parse(fs.readFileSync(jsonPath, 'utf-8'));
+          if (meta.title) title = meta.title;
+          if (meta.description) description = meta.description;
+        } catch {}
+      }
+      const cleanText = cleanHtmlText(rawHtml);
+      searchIndex.push({
+        type: 'blog',
+        title,
+        subject: 'Blog',
+        folderName: blogFolder,
+        slug: blogFolder,
+        topicTitle: description,
+        text: cleanText,
+        snippet: cleanText.slice(0, 300)
+      });
+    }
+  }
 }
 
 // Sort subjects alphabetically
@@ -568,6 +626,7 @@ fs.writeFileSync(manifestPath, JSON.stringify(manifest, null, 2), 'utf-8');
 fs.writeFileSync(searchIndexPath, JSON.stringify(searchIndex), 'utf-8');
 
 // Manifest and Search Index are ALWAYS uploaded
+
 uploadQueue.push({
   localPath: manifestPath,
   remoteKey: 'notes-manifest.json',
