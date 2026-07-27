@@ -1,6 +1,7 @@
 import type { APIRoute } from 'astro';
 import { env } from 'cloudflare:workers';
 import { listCatalog, getLectureContent, getManifest } from '../utils/notesLoader';
+import { getPublishedPosts } from '../utils/blogLoader';
 
 export const prerender = false;
 
@@ -13,6 +14,8 @@ function cleanHtmlText(html: string): string {
   text = text.replace(/<head[^>]*>[\s\S]*?<\/head>/gi, ' ');
   // Strip iframe tags and content
   text = text.replace(/<iframe[^>]*>[\s\S]*?<\/iframe>/gi, ' ');
+  // Strip svg tags and content
+  text = text.replace(/<svg[^>]*>[\s\S]*?<\/svg>/gi, ' ');
 
   // Strip HTML tags
   text = text.replace(/<[^>]*>/g, ' ');
@@ -35,8 +38,9 @@ export const GET: APIRoute = async () => {
   if (import.meta.env.DEV) {
     const catalog = await listCatalog();
     const manifest = await getManifest();
-    const index = [];
+    const index: any[] = [];
 
+    // 1. Index all lecture notes
     for (const subject of catalog) {
       for (const lecture of subject.lectures) {
         const content = await getLectureContent(subject.subject, lecture.folderName);
@@ -45,22 +49,42 @@ export const GET: APIRoute = async () => {
           const fullText = cleanHtmlText(content.htmlContent);
 
           index.push({
+            type: 'note',
             title,
             subject: subject.subject,
             folderName: lecture.folderName,
             slug: lecture.slug,
+            topicTitle: lecture.topicTitle || '',
+            text: fullText,
             snippet: fullText.slice(0, 300)
           });
         }
       }
     }
 
+    // 2. Index all published blog posts
+    try {
+      const blogPosts = getPublishedPosts();
+      for (const post of blogPosts) {
+        const cleanText = cleanHtmlText(post.html);
+        index.push({
+          type: 'blog',
+          title: post.frontmatter.title,
+          subject: 'Blog',
+          folderName: post.slug,
+          slug: post.slug,
+          topicTitle: post.frontmatter.description || '',
+          text: cleanText,
+          snippet: cleanText.slice(0, 300)
+        });
+      }
+    } catch (err: any) {
+      console.warn('[search-index] Failed to index blog posts:', err.message);
+    }
+
     return new Response(JSON.stringify(index), {
       headers: {
         'Content-Type': 'application/json',
-        // Versioned by manifest version; public cache so the client can reuse
-        // the index across navigations (Phase 8.9). Snippets are already
-        // truncated to 300 chars to limit bulk content exposure.
         'Cache-Control': 'public, max-age=300',
         'ETag': `"${manifest.version}"`,
         'X-Robots-Tag': 'noindex, nofollow'
@@ -88,13 +112,16 @@ export const GET: APIRoute = async () => {
     }
 
     const rawIndex = await obj.json() as any[];
-    // Truncate text to snippets to keep the search index payload small
+    // Serve the index with full text for client-side deep search
     const safeIndex = rawIndex.map((item: any) => ({
+      type: item.type || 'note',
       title: item.title,
       subject: item.subject,
       folderName: item.folderName,
       slug: item.slug || item.folderName,
-      snippet: (item.text || item.snippet || '').slice(0, 300)
+      topicTitle: item.topicTitle || '',
+      text: item.text || item.snippet || '',
+      snippet: item.snippet || (item.text || '').slice(0, 300)
     }));
 
     // Version the cache by the current manifest version so a content upload
@@ -116,3 +143,4 @@ export const GET: APIRoute = async () => {
     });
   }
 };
+
