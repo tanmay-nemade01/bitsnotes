@@ -142,6 +142,7 @@ function cleanHtmlText(html) {
   text = text.replace(/<script[^>]*>[\s\S]*?<\/script>/gi, ' ');
   text = text.replace(/<head[^>]*>[\s\S]*?<\/head>/gi, ' ');
   text = text.replace(/<iframe[^>]*>[\s\S]*?<\/iframe>/gi, ' ');
+  text = text.replace(/<svg[^>]*>[\s\S]*?<\/svg>/gi, ' ');
   text = text.replace(/<[^>]*>/g, ' ');
   text = text
     .replace(/&nbsp;/g, ' ')
@@ -342,23 +343,6 @@ function autoFixCanonicalAndOgUrls(htmlContent, expectedUrl) {
   }
 
   return { updated, fixed: true };
-}
-
-function cleanHtmlText(html) {
-  let text = html.replace(/<style[^>]*>[\s\S]*?<\/style>/gi, ' ');
-  text = text.replace(/<script[^>]*>[\s\S]*?<\/script>/gi, ' ');
-  text = text.replace(/<head[^>]*>[\s\S]*?<\/head>/gi, ' ');
-  text = text.replace(/<iframe[^>]*>[\s\S]*?<\/iframe>/gi, ' ');
-  text = text.replace(/<svg[^>]*>[\s\S]*?<\/svg>/gi, ' ');
-  text = text.replace(/<[^>]*>/g, ' ');
-  text = text
-    .replace(/&nbsp;/g, ' ')
-    .replace(/&lt;/g, '<')
-    .replace(/&gt;/g, '>')
-    .replace(/&amp;/g, '&')
-    .replace(/&quot;/g, '"')
-    .replace(/&#39;/g, "'");
-  return text.replace(/\s+/g, ' ').trim();
 }
 
 // ─── Main Scanning ──────────────────────────────────────────────────────────
