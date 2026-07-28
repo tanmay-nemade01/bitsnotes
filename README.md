@@ -39,7 +39,7 @@ Free, open-source AI/ML study notes — **120+ lectures** across 9 subjects with
 - **Threaded comments** — Reddit-style with up/down voting, reporting, admin moderation
 - **Usefulness feedback** — "Was this useful?" voting on every page
 - **Dashboard** — Recently saved bookmarks and progress bars (when signed in)
-- **Newsletter** — Subscribe/unsubscribe via Zoho Campaigns + ZeptoMail
+- **Newsletter** — Subscribe with your account (Zoho Campaigns + ZeptoMail); unsubscribe via email link
 - **Pomodoro timer** — Built-in study timer
 
 ### Site
@@ -69,7 +69,7 @@ Free, open-source AI/ML study notes — **120+ lectures** across 9 subjects with
 | `/blog/tag/[tag]` | Static | Posts by tag |
 | `/auth/signin`, `/auth/signup`, `/auth/verify-email` | SSR | Auth pages |
 | `/admin/comments` | SSR | Comment moderation dashboard |
-| `/subscribed`, `/unsubscribed` | Static | Newsletter confirmation |
+| `/subscribed`, `/unsubscribed` | Static | Newsletter success pages |
 | `/search-index.json` | Static | Full-text search index |
 | `/sitemap.xml` | Static | XML sitemap |
 | `/404`, `/500` | Static | Error pages |
@@ -153,7 +153,8 @@ Auth modules: `src/lib/auth/` — index, audit, crypto, csrf, db, email, oauth, 
 | Endpoint | Method | Purpose |
 |----------|--------|---------|
 | `/api/contact` | POST | Contact form → email |
-| `/api/subscribe` / `/api/unsubscribe` | POST | Newsletter |
+| `/api/subscribe` | POST | Newsletter subscribe (auth required) |
+| `/api/unsubscribe` | GET/POST | Newsletter unsubscribe |
 | `/api/auth/signin` | POST | Sign-in (email or OAuth redirect) |
 | `/api/auth/signout` | POST | Revoke tokens |
 | `/api/auth/me` | GET | Current user |
