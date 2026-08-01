@@ -1,0 +1,962 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+  <!-- Primary SEO -->
+  <title>Apache Hive Bucketing Resolution, Relational Joins, Subquery Pipelines, Apache ZooKeeper, and Apache HBase | Big Data Analytics | BitsNotes</title>
+  <meta name="description" content="Big Data Analytics notes on Apache Hive bucketing, relational joins, subqueries, ZooKeeper quorum math, and HBase NoSQL storage for real-time reads.">
+  <meta name="keywords" content="Big Data Analytics, Apache Hive, Hive bucketing, HiveQL, relational joins, subqueries, MapReduce, Apache ZooKeeper, quorum, ZAB, Apache HBase, Bigtable, NoSQL, HDFS">
+  <meta name="author" content="BitsNotes">
+  <meta name="robots" content="index, follow">
+  <link rel="canonical" href="https://bitsnotes.com/view/big-data-analytics/lecture-8">
+
+  <!-- Open Graph / Facebook -->
+  <meta property="og:type" content="article">
+  <meta property="og:title" content="Apache Hive Bucketing Resolution, Relational Joins, Subquery Pipelines, Apache ZooKeeper, and Apache HBase | Big Data Analytics">
+  <meta property="og:description" content="Big Data Analytics notes on Apache Hive bucketing, relational joins, subqueries, ZooKeeper quorum math, and HBase NoSQL storage for real-time reads.">
+  <meta property="og:url" content="https://bitsnotes.com/view/big-data-analytics/lecture-8">
+  <meta property="og:image" content="https://bitsnotes.com/og-default.png">
+  <meta property="og:image:width" content="1200">
+  <meta property="og:image:height" content="630">
+  <meta property="og:site_name" content="BitsNotes">
+
+  <!-- Twitter Card -->
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="Apache Hive Bucketing Resolution, Relational Joins, Subquery Pipelines, Apache ZooKeeper, and Apache HBase | Big Data Analytics">
+  <meta name="twitter:description" content="Big Data Analytics notes on Apache Hive bucketing, relational joins, subqueries, ZooKeeper quorum math, and HBase NoSQL storage for real-time reads.">
+  <meta name="twitter:image" content="https://bitsnotes.com/og-default.png">
+  <meta name="twitter:site" content="@BitsNotes">
+
+  <!-- Stylesheet -->
+  <link rel="stylesheet" href="/lecture-notes.css">
+
+  <!-- Structured Data: JSON-LD -->
+  <script type="application/ld+json">
+{"@context":"https://schema.org","@type":"Article","headline":"Apache Hive Bucketing Resolution, Relational Joins, Subquery Pipelines, Apache ZooKeeper, and Apache HBase","description":"Big Data Analytics notes on Apache Hive bucketing, relational joins, subqueries, ZooKeeper quorum math, and HBase NoSQL storage for real-time reads.","datePublished":"2026-08-01","about":["Apache Hive","Hive bucketing","relational joins","subqueries","MapReduce","Apache ZooKeeper","quorum","Apache HBase","Bigtable","NoSQL","HDFS"],"publisher":{"@type":"Organization","name":"BitsNotes"},"author":{"@type":"Organization","name":"BitsNotes"}}
+</script>
+
+  <!-- Lecture Metadata (for the BitsNotes platform viewer) -->
+  <!-- IMPORTANT: This is the ONLY metadata source. No companion .json file
+       is created. The viewer reads everything from this embedded script.
+       Required fields: title, subject, gradeLevel, datePublished,
+       targetAudience, sections (array), examRevisionNotes (array).
+       Optional fields: prerequisites (array of {subject, lecture, topics}).
+       NOT included (removed): summary, keyConcepts, quiz. -->
+  <script type="application/json" id="lecture-metadata">
+{
+  "title": "Apache Hive Bucketing Resolution, Relational Joins, Subquery Pipelines, Apache ZooKeeper, and Apache HBase",
+  "subject": "Big Data Analytics",
+  "gradeLevel": "postgraduate",
+  "datePublished": "2026-08-01",
+  "targetAudience": "Postgraduate students in Big Data Analytics",
+  "sections": [
+    {
+      "title": "8.1 Hive Bucketing Data Types and Precision Resolution",
+      "description": "Explains how Hive assigns rows to bucket files via hash(column_value) mod N, why FLOAT/DOUBLE bucketing keys scatter rows through IEEE 754 bit-pattern hashing, how converting the key column to INT restores exact placement, and how WHERE queries on the bucketed column read only the matching bucket file."
+    },
+    {
+      "title": "8.2 Relational Joins in Apache Hive",
+      "description": "Covers why tables are normalized, the two-step relational join definition (Cartesian cross product then equality-predicate filtering), and how the same join is expressed in Hive HQL with fully qualified columns and executed as one MapReduce job."
+    },
+    {
+      "title": "8.3 Hive Subqueries and Multi-Stage MapReduce Pipeline Execution",
+      "description": "Explains Hive FROM-clause subqueries (parenthesized derived tables with a mandatory alias), the 'cannot recognize input near sum' parser error, and how a join-plus-aggregate subquery compiles into a two-stage MapReduce pipeline with intermediate results on HDFS."
+    },
+    {
+      "title": "8.4 Distributed Coordination with Apache ZooKeeper",
+      "description": "Describes the coordination problems of distributed clusters (master failover, task recovery, service discovery), the ZooKeeper ensemble with quorum Q = floor(n/2) + 1 over the ZAB protocol, the four ZNode types, Watches versus polling, and modern alternatives such as Kafka KRaft."
+    },
+    {
+      "title": "8.5 NoSQL Real-Time Distributed Storage with Apache HBase",
+      "description": "Explains why RDBMS break at petabyte scale, how HBase trades SQL joins and ACID for low-latency key-value access, the HMaster/RegionServer/ZooKeeper architecture over HDFS, the 4-dimensional sparse data model, and the create, put, and get operations."
+    },
+    {
+      "title": "8.6 Exam Guidance Summary",
+      "description": "Course logistics: Quiz 1 excludes Hive, ZooKeeper, and HBase (this lecture is Quiz 2 material alongside NoSQL and Spark), Assignment 1 (Java MapReduce join) is released September 10 with an October 15 deadline, and the mid-semester exam schedule."
+    },
+    {
+      "title": "8.7 Key Industry Applications",
+      "description": "Real-world uses of this lecture's material: partitioning plus bucketing over ORC/Parquet for petabyte data-lake query acceleration, ZooKeeper for HDFS NameNode failover and YARN recovery, and HBase for real-time single-row-key lookups."
+    }
+  ],
+  "examRevisionNotes": [
+    {
+      "topic": "8.1 Hive Bucketing Data Types and Precision Resolution",
+      "mustKnow": "bucket_id = hash(column_value) mod N; INT keys bucket exactly (value mod N) while FLOAT keys hash the IEEE 754 bit pattern and scatter rows; converting weight FLOAT-&gt;INT fixes the distribution and lets WHERE on the bucket column read only the target bucket file.",
+      "keyFormula": "\\[ \\text{bucket\\_id} = \\text{hash}(\\text{column\\_value}) \\pmod{N} \\]",
+      "commonPitfall": "Using FLOAT or DOUBLE as a bucketing key; expecting visible speedups on tiny datasets; creating so many tiny buckets that NameNode metadata overhead outweighs the query savings.",
+      "quickCheck": "With N=3 buckets, which bucket file holds weight 6, and why did it previously land in the wrong file under FLOAT bucketing?",
+      "connections": [
+        "8.2",
+        "8.7"
+      ]
+    },
+    {
+      "topic": "8.2 Relational Joins in Apache Hive",
+      "mustKnow": "Join = Cartesian cross product |T_A x T_B| = |T_A| x |T_B|, then filter by the equality predicate TableA.id == TableB.id; Hive supports only equijoins; HQL joins need fully qualified table.column names; the join runs as one MapReduce job (mappers tag by key, reducers match).",
+      "keyFormula": "\\[ |T_A \\times T_B| = |T_A| \\times |T_B| \\]",
+      "commonPitfall": "Omitting table qualification for shared columns like shop_id; expecting Hive to support inequality joins; forgetting that inner joins drop unmatched rows.",
+      "quickCheck": "With a 3-row salary table and a 4-row names table, how many tuples does the cross product generate and how many survive the inner join?",
+      "connections": [
+        "8.1",
+        "8.3"
+      ]
+    },
+    {
+      "topic": "8.3 Hive Subqueries and Multi-Stage MapReduce Pipeline Execution",
+      "mustKnow": "A FROM subquery must be enclosed in parentheses AND given an explicit alias or the parser fails at the outer query's first function (e.g. 'sum'); join+aggregate subqueries run as two chained MapReduce jobs — Stage 1 joins on shop_id, Stage 2 groups by shop_name and computes SUM(weight).",
+      "keyFormula": "",
+      "commonPitfall": "Omitting the derived-table alias; writing correlated subqueries (not supported by Hive); forgetting that every MapReduce stage writes intermediate output to HDFS (slow for many-stage pipelines).",
+      "quickCheck": "What two error-free requirements must every Hive FROM-clause subquery satisfy, and how many MapReduce jobs does a join-plus-aggregate subquery produce?",
+      "connections": [
+        "8.2",
+        "8.4"
+      ]
+    },
+    {
+      "topic": "8.4 Distributed Coordination with Apache ZooKeeper",
+      "mustKnow": "Quorum Q = floor(n/2) + 1: n=3 gives Q=2 (tolerates 1 failure), n=5 gives Q=3 (tolerates 2 failures); ensembles must be odd-sized; all writes go to the Leader and commit only after a quorum persists them (ZAB); ephemeral ZNodes auto-delete on session loss; Watches push one-time change notifications instead of polling.",
+      "keyFormula": "\\[ Q = \\left\\lfloor \\frac{n}{2} \\right\\rfloor + 1 \\]",
+      "commonPitfall": "Running an even-sized ensemble (no extra tolerance); assuming both masters can lead (split-brain); storing large payloads in ZNodes; thinking 6 nodes tolerate 3 failures.",
+      "quickCheck": "For a 5-node ensemble, what is the quorum size and how many simultaneous node failures can it tolerate?",
+      "connections": [
+        "8.3",
+        "8.5"
+      ]
+    },
+    {
+      "topic": "8.5 NoSQL Real-Time Distributed Storage with Apache HBase",
+      "mustKnow": "HBase data model is f(RowKey, ColumnFamily, ColumnQualifier, Timestamp) -&gt; CellValue, sorted by Row Key, with dynamic qualifiers, versioned cells and byte[] as the only type; HMaster handles DDL, RegionServers serve data, ZooKeeper coordinates; get requires a Row Key because HBase has no secondary indexes.",
+      "keyFormula": "\\[ f(\\text{RowKey}, \\text{ColumnFamily}, \\text{ColumnQualifier}, \\text{Timestamp}) \\rightarrow \\text{CellValue} \\]",
+      "commonPitfall": "Using HBase for multi-row transactions, column aggregations, or non-key WHERE filters ('sleepless nights'); forgetting there is only the byte[] type; designing a row key that hotspots one RegionServer.",
+      "quickCheck": "Why must every HBase get operation specify a Row Key, and what are the four coordinates of the HBase data model?",
+      "connections": [
+        "8.4",
+        "8.6"
+      ]
+    },
+    {
+      "topic": "8.6 Exam Guidance Summary",
+      "mustKnow": "Quiz 1 stops at Pig (no Hive/ZooKeeper/HBase); this lecture is Quiz 2 material alongside NoSQL and Spark. Assignment 1 (Java MapReduce join + identical Hive/Pig query) due October 15th. No class Sep 12; makeup lecture Sep 15 8 PM; mid-semester exams Sep 23-25, makeups Oct 7-9.",
+      "keyFormula": "",
+      "commonPitfall": "Assuming this lecture's Hive/ZooKeeper/HBase content is on Quiz 1 — it is excluded and appears on Quiz 2 instead.",
+      "quickCheck": "Which quiz covers Hive, ZooKeeper, and HBase, and what is the Assignment 1 deadline?",
+      "connections": [
+        "8.1",
+        "8.2",
+        "8.3",
+        "8.4",
+        "8.5"
+      ]
+    },
+    {
+      "topic": "8.7 Key Industry Applications",
+      "mustKnow": "Bucketing accelerates warehouse queries over ORC/Parquet data lakes; ZooKeeper underpins HDFS HA failover, YARN RM recovery and service registration; HBase serves single-row-key real-time lookups (Facebook profiles, Amazon cart, Google link indexing, biometric auth).",
+      "keyFormula": "",
+      "commonPitfall": "Picking HBase for workloads that need joins or aggregation (anti-patterns) instead of the single-row-key real-time workloads it is built for.",
+      "quickCheck": "Name one real-world application for each of bucketing, ZooKeeper, and HBase.",
+      "connections": [
+        "8.1",
+        "8.4",
+        "8.5"
+      ]
+    }
+  ]
+}
+</script>
+</head>
+<body>
+  <div class="container">
+    <!-- ============================================================
+    HERO HEADER
+    ============================================================ -->
+    <header class="hero-header">
+      <span class="subject-badge">Big Data Analytics</span>
+      <h1 class="lecture-title">Apache Hive Bucketing Resolution, Relational Joins, Subquery Pipelines, Apache ZooKeeper, and Apache HBase</h1>
+      <div class="meta-info">
+        <div class="meta-item"><strong>Published:</strong> 2026-08-01</div>
+        <div class="meta-item"><strong>Level:</strong> postgraduate</div>
+        <div class="meta-item"><strong>Audience:</strong> Postgraduate students in Big Data Analytics</div>
+      </div>
+    </header>
+
+    <!-- ============================================================
+    PREREQUISITE KNOWLEDGE
+    Optional section listing concepts from previous lectures that this
+    lecture builds on. Populated by Agent 3 from topic_mappings/*.yaml.
+    If no prerequisites exist, this section is omitted entirely.
+    ============================================================ -->
+    <section class="prerequisite-section">
+  <h2>Prerequisite Knowledge</h2>
+  <p class="prerequisite-intro">This lecture builds on the following
+  concepts from earlier lectures. If any feel unfamiliar, review the
+  linked notes before proceeding.</p>
+
+  <div class="prerequisite-entry">
+    <h3>Previously Covered in This Subject</h3>
+    <ul>
+      <li><strong>Hive bucketing: concept, hash-modulo formula, and CLUSTERED BY DDL</strong> — covered in Lecture 7</li>
+      <li><strong>Hive architecture, metastore management, and table DDL/DML operations</strong> — covered in Lecture 7</li>
+      <li><strong>The MapReduce programming model and key-value join mechanics</strong> — covered in Lecture 4</li>
+      <li><strong>The four core NoSQL data models and the ACID vs BASE contrast</strong> — covered in Lecture 2</li>
+      <li><strong>HDFS NameNode metadata (fsimage and editlog) and the Hadoop ecosystem</strong> — covered in Lecture 3</li>
+    </ul>
+  </div>
+</section>
+
+    <!-- ============================================================
+    MAIN LECTURE-FAITHFUL CONTENT
+    Page title = one h1.lecture-title
+    Each section = one h2.section-title
+    Each subsection = one h3.subsection-title
+    Callout boxes: .key-concept (blue), .important-note (violet),
+      .example-box (green), .warning-box (red), .key-takeaway (amber)
+    Display math: auto-scrolls via mjx-container CSS; .eqbox wrapper optional
+    ============================================================ -->
+    <main>
+<h2 id="8.1-hive-bucketing-data-types-and-precision-resolution">8.1 Hive Bucketing Data Types and Precision Resolution</h2>
+<h3 id="8.1.1-floating-point-precision-defects-in-bucketing-keys">8.1.1 Floating-Point Precision Defects in Bucketing Keys</h3>
+<div class="important-note">
+  <p><strong>Why should a tiny detail like a column's data type change where your data lands?</strong> Two rows with weights 2 and 6 — numbers that divide into 3 buckets with different remainders — ended up sitting in the <em>same</em> physical bucket file. The culprit was not the data, but the column's data type. This section shows why <code>FLOAT</code> bucketing keys quietly misplace rows, and how one schema change fixes the whole table.</p>
+</div>
+<p>In Apache Hive, bucketing organizes table data into discrete physical files based on the hash value of a designated bucketing column. Think of buckets as labeled drawers: every record gets a drawer number computed from its bucketing-column value. The hashing algorithm applies a modulo operation over the total number of defined buckets \(N\):</p>
+<p>\[ \text{bucket\_id} = \text{hash}(\text{column\_value}) \pmod{N} \]</p>
+<p>where:</p>
+<ul>
+  <li>\(\text{hash}(\cdot)\) maps the column value to a large integer,</li>
+  <li>\(N\) is the number of buckets defined in the table,</li>
+  <li>the result is an index in the range \(0, 1, \dots, N-1\), meaning one of the \(N\) bucket files on HDFS.</li>
+</ul>
+<p>For an integer column, the hash of the value is the value itself, so for an <code>INT</code> column the formula effectively becomes \(\text{bucket\_id} = \text{column\_value} \pmod{N}\). That is the clean case. The trouble starts when the bucketing column is a floating-point type.</p>
+<div class="key-concept">
+  <p><strong>Bucketing = hashing + modulo.</strong> The bucket file that stores a row is chosen by computing \(\text{bucket\_id} = \text{hash}(\text{column\_value}) \pmod{N}\). For an <code>INT</code> column this reduces to \(\text{value} \pmod{N}\), which is exact. For a <code>FLOAT</code> or <code>DOUBLE</code> column the same formula runs on a binary floating-point value, and that is where rows start landing in unexpected files.</p>
+</div>
+<p>A significant edge-case anomaly occurs when floating-point data types (<code>FLOAT</code> or <code>DOUBLE</code>) are selected as bucketing keys. In a previous session, a table named <code>clustered_metals</code> was created with a <code>weight</code> column specified as a <code>FLOAT</code> data type and partitioned into \(N = 3\) buckets.</p>
+<p>When floating-point values undergo modulo arithmetic, IEEE 754 floating-point representations introduce internal binary rounding artifacts. For instance, an integer weight of \(3\) stored as a float may be represented internally as \(2.9999999\dots\). Evaluating \(2.9999999 \pmod 3\) produces a remainder near \(2.999\dots\), placing the record into bucket index 2 instead of bucket index 0.</p>
+<div class="important-note">
+  <p><strong>A note on the exact mechanism.</strong> Strictly, IEEE 754 can store the number 3.0 <em>exactly</em>. The deeper cause of the misplacement is that Hive hashes a <code>FLOAT</code> value through its raw 32-bit IEEE 754 bit pattern rather than through its numeric value. The modulo then runs on that huge bit pattern, so the result looks unrelated to the remainder you would compute by hand. Either way the conclusion holds: floats make unreliable bucketing keys, and converting the column to <code>INT</code> restores exact placement.</p>
+</div>
+<p>During raw bucket file inspection, this precision artifact caused records with incompatible integer remainders to cluster into identical physical files. For example, records with weights \(2\) (\(2 \pmod 3 = 2\)) and \(6\) (\(6 \pmod 3 = 0\)) were improperly co-located inside bucket file 2, whereas weights \(4\) and \(7\) (\(4 \pmod 3 = 1\), \(7 \pmod 3 = 1\)) resided correctly in bucket file 1.</p>
+<p><strong>The fix: change the data type.</strong></p>
+<p>To resolve this precision defect, the table schema must be redefined to convert the bucketing column <code>weight</code> from <code>FLOAT</code> to <code>INT</code>:</p>
+<pre><code>CREATE TABLE clustered_metals (
+    shop_id INT,
+    metal STRING,
+    short_form STRING,
+    weight INT
+)
+CLUSTERED BY (weight) INTO 3 BUCKETS;
+
+INSERT INTO TABLE clustered_metals 
+SELECT shop_id, metal, short_form, weight 
+FROM metals_temp;</code></pre>
+<p>After updating the column data type to <code>INT</code> and re-ingesting raw records from <code>metals_temp</code>, Hive distributes the records into three clean HDFS files inside the table directory.</p>
+<div class="example-box">
+  <p><strong>Worked example — where each weight lands with <code>INT</code> bucketing.</strong> Suppose the table holds eight sample records with weights 1 through 8 and \(N = 3\) buckets. With an <code>INT</code> column, \(\text{bucket\_id} = \text{weight} \pmod 3\):</p>
+  <table>
+    <thead>
+      <tr>
+        <th>Weight \(w\)</th>
+        <th>\(w \pmod 3\)</th>
+        <th>Bucket file</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>1</td>
+        <td>1</td>
+        <td>1</td>
+      </tr>
+      <tr>
+        <td>2</td>
+        <td>2</td>
+        <td>2</td>
+      </tr>
+      <tr>
+        <td>3</td>
+        <td>0</td>
+        <td>0</td>
+      </tr>
+      <tr>
+        <td>4</td>
+        <td>1</td>
+        <td>1</td>
+      </tr>
+      <tr>
+        <td>5</td>
+        <td>2</td>
+        <td>2</td>
+      </tr>
+      <tr>
+        <td>6</td>
+        <td>0</td>
+        <td>0</td>
+      </tr>
+      <tr>
+        <td>7</td>
+        <td>1</td>
+        <td>1</td>
+      </tr>
+      <tr>
+        <td>8</td>
+        <td>2</td>
+        <td>2</td>
+      </tr>
+    </tbody>
+  </table>
+  <p>So the three HDFS files contain:</p>
+  <ul>
+    <li><strong>Bucket File 0 (<code>weight mod 3 == 0</code>):</strong> rows with weights \(3, 6\),</li>
+    <li><strong>Bucket File 1 (<code>weight mod 3 == 1</code>):</strong> rows with weights \(1, 4, 7\),</li>
+    <li><strong>Bucket File 2 (<code>weight mod 3 == 2</code>):</strong> rows with weights \(2, 5, 8\).</li>
+  </ul>
+  <p>Sense-check: every weight lands in exactly one file, each file holds weights with the same remainder, and all three remainders \(\{0, 1, 2\}\) appear. Before the fix, weight 6 had been drifting into bucket file 2 because of the float precision artifact, and weight 3 as well (since \(2.9999999 \pmod 3 \approx 2.999\)). After the <code>INT</code> fix, \(6 \pmod 3 = 0\) and \(3 \pmod 3 = 0\), so both return to bucket file 0 where they belong.</p>
+</div>
+<div class="important-note">
+  <p><strong>Q:</strong> Why did weights 2 and 6 end up in the same bucket file during floating-point bucketing? <strong>A:</strong> When <code>weight</code> was defined as a <code>FLOAT</code>, internal floating-point representation errors (such as storing 3 as \(2.9999999\)) altered the output of the modulo operation \(\text{weight} \pmod 3\). This caused precision-adjusted remainders to map to unexpected bucket indices. Switching the column type from <code>FLOAT</code> to <code>INT</code> ensures exact integer division and places weights 2 (\(2 \pmod 3 = 2\)) and 6 (\(6 \pmod 3 = 0\)) into their correct respective bucket files.</p>
+</div>
+<div class="warning-box">
+  <p><strong>Assumptions & scope:</strong> Bucketing by a column behaves cleanly only when the bucketing key is an exact type. <code>INT</code>, <code>BIGINT</code>, and <code>STRING</code> produce stable, predictable hashes. <code>FLOAT</code> and <code>DOUBLE</code> produce the artifacts described here because the hash runs on the binary bit pattern. If a value is truly fractional (for example a weight of 2.5 grams), converting to <code>INT</code> is not the right fix — the bucket key should be a naturally integer-valued attribute such as an ID or a count, or the value should be scaled into an integer (for example grams to milligrams) before bucketing.</p>
+</div>
+<h3 id="8.1.2-query-optimization-and-full-table-scan-avoidance">8.1.2 Query Optimization and Full Table Scan Avoidance</h3>
+<p>Bucketing provides direct performance advantages by avoiding full table scans during filtered query execution. When a query contains a <code>WHERE</code> clause on a bucketed column, Hive calculates the target bucket index prior to reading data from storage.</p>
+<p>Consider a query filtering records by weight:</p>
+<pre><code>SELECT * FROM clustered_metals WHERE weight = 1;</code></pre>
+<p>Instead of scanning all underlying HDFS data blocks, Hive evaluates \(1 \pmod 3 = 1\). The execution engine reads <em>only</em> bucket file 1 and completely skips bucket files 0 and 2.</p>
+<div class="example-box">
+  <p><strong>Worked example — skipping buckets at query time.</strong> With the eight-row <code>clustered_metals</code> table bucketed into 3 files:</p>
+  <ol>
+    <li>The query asks for <code>WHERE weight = 1</code>.</li>
+    <li>Hive computes \(\text{bucket\_id} = 1 \pmod 3 = 1\).</li>
+    <li>The engine opens only the HDFS file for bucket 1 (weights \(1, 4, 7\)) and reads it.</li>
+    <li>Bucket files 0 and 2 are never opened.</li>
+  </ol>
+  <p>Files read: 1 of 3. Files skipped: 2 of 3. Sense-check: weight 1 lives in bucket 1 from the distribution table above, so the plan finds it without touching the other files.</p>
+</div>
+<div class="warning-box">
+  <p><strong>Pitfalls:</strong></p>
+  <ul>
+    <li><strong>Small-data illusion:</strong> With 8 sample records the difference is invisible — reading any file takes milliseconds. The payoff appears only at scale, where skipping two out of three multi-gigabyte files is real saved disk I/O.</li>
+    <li><strong>Bucketing is not partitioning:</strong> Partitioning splits data into <em>directories</em> by a coarse column (such as <code>metal</code> type); bucketing splits a partition into <em>files</em> by a high-cardinality column (such as <code>shop_id</code> or <code>weight</code>). They can be combined on one table without restriction.</li>
+    <li><strong>Over-optimization backfires:</strong> Millions of tiny bucket files inflate the NameNode's memory footprint, because HDFS keeps one metadata entry per block. Excessive partitions and buckets can slow the cluster down more than they speed queries up.</li>
+  </ul>
+</div>
+<p>Real-world: While bucketing 8 sample records across weights 1 through 8 shows negligible performance differences, bucketing becomes essential when processing multi-terabyte datasets containing high-cardinality columns (such as user IDs, phone numbers, or transaction timestamps). At enterprise scale, skipping unneeded bucket files reduces disk I/O and query execution time significantly. Enterprise data warehouses combine partitioning and bucketing over ORC/Parquet files to accelerate ad-hoc queries on petabyte-scale data lakes, skipping unneeded HDFS blocks during <code>WHERE</code> evaluation.</p>
+<div class="key-takeaway">
+  <p><strong>Recap + bridge:</strong> Bucketing assigns each row to a file via \(\text{hash}(\text{value}) \pmod N\). On a <code>FLOAT</code> key, binary rounding artifacts scatter rows into wrong files; converting the key to <code>INT</code> restores exact placement and lets <code>WHERE</code> queries read only the one relevant bucket file. Buckets give cheap lookup on a single table — but combining data across tables is a join, which is exactly what comes next.</p>
+</div>
+
+<h2 id="8.2-relational-joins-in-apache-hive">8.2 Relational Joins in Apache Hive</h2>
+<h3 id="8.2.1-relational-normalization-and-mapreduce-join-execution-mechanics">8.2.1 Relational Normalization and MapReduce Join Execution Mechanics</h3>
+<div class="important-note">
+  <p><strong>How does a JOIN that feels instant in SQL actually run across a cluster?</strong> When you type <code>JOIN ... ON</code>, the engine first builds every possible pairing of rows — even the pairs you will throw away. On a 3-row table and a 4-row table that is 12 pairs; on two 1-billion-row tables it is a number too large to write out. This section shows the two-step relational machinery underneath, then how Hive expresses the same operation in HQL.</p>
+</div>
+<p>Database normalization decomposes flat tables into distinct entities to eliminate redundant data storage and prevent update anomalies. For example, maintaining employee names and salaries across separate <code>salary</code> and <code>names</code> tables prevents duplicating employee details when salary updates occur:</p>
+<ul>
+  <li><code>salary</code> table: <code>id</code>, <code>salary_amount</code> (e.g., <code>1 -> 10000</code>, <code>2 -> 10500</code>, <code>3 -> 15000</code>)</li>
+  <li><code>names</code> table: <code>id</code>, <code>employee_name</code> (e.g., <code>1 -> John</code>, <code>2 -> Clark</code>, <code>3 -> Mark</code>, <code>4 -> Alex</code>)</li>
+</ul>
+<div class="key-concept">
+  <p><strong>Why normalize at all?</strong> <em>Normalization</em> (splitting one flat table into separate entity tables) removes redundancy: the same employee's name is stored once, not repeated on every salary row. The cost is that answering a question like "who earns 10000?" now requires reading two tables and matching rows on the shared <code>id</code> key. A <em>relational join</em> is exactly that matching step — it merges records across common keys to rebuild the combined view.</p>
+</div>
+<p>When business logic requires a combined view of normalized tables, a relational join merges records across common keys. Under the hood, distributed join processing in MapReduce follows a two-step relational transformation:</p>
+<p><strong>Step 1 — Cartesian Cross Product.</strong> The execution engine pairs every record from Table A with every record from Table B. For a table with \(M\) rows and a table with \(N\) rows, the cross product generates \(M \times N\) intermediate tuples:</p>
+<p>\[ |T_A \times T_B| = |T_A| \times |T_B| = 3 \times 4 = 12 \text{ intermediate tuples} \]</p>
+<p>where \(|T_A|\) and \(|T_B|\) are the row counts of the two tables, and \(\times\) denotes the Cartesian product. The raw intermediate output pairs every salary entry with every name entry.</p>
+<p><strong>Step 2 — Predicate Verification and Filtering.</strong> The join operator evaluates the equality condition:</p>
+<p>\[ \text{TableA.id} == \text{TableB.id} \]</p>
+<p>Tuples failing this predicate match are discarded. Only tuples where <code>TableA.id</code> equals <code>TableB.id</code> are retained in the final output relation.</p>
+<div class="example-box">
+  <p><strong>Worked example — building and filtering the cross product.</strong> Take <code>salary</code> (3 rows) as \(T_A\) and <code>names</code> (4 rows) as \(T_B\). The cross product has \(|T_A| \times |T_B| = 3 \times 4 = 12\) tuples:</p>
+  <table>
+    <thead>
+      <tr>
+        <th>#</th>
+        <th>salary tuple</th>
+        <th>names tuple</th>
+        <th>id match?</th>
+        <th>kept?</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>1</td>
+        <td>(1, 10000)</td>
+        <td>(1, John)</td>
+        <td>1 == 1 ✓</td>
+        <td>kept</td>
+      </tr>
+      <tr>
+        <td>2</td>
+        <td>(1, 10000)</td>
+        <td>(2, Clark)</td>
+        <td>1 == 2 ✗</td>
+        <td>dropped</td>
+      </tr>
+      <tr>
+        <td>3</td>
+        <td>(1, 10000)</td>
+        <td>(3, Mark)</td>
+        <td>1 == 3 ✗</td>
+        <td>dropped</td>
+      </tr>
+      <tr>
+        <td>4</td>
+        <td>(1, 10000)</td>
+        <td>(4, Alex)</td>
+        <td>1 == 4 ✗</td>
+        <td>dropped</td>
+      </tr>
+      <tr>
+        <td>5</td>
+        <td>(2, 10500)</td>
+        <td>(1, John)</td>
+        <td>2 == 1 ✗</td>
+        <td>dropped</td>
+      </tr>
+      <tr>
+        <td>6</td>
+        <td>(2, 10500)</td>
+        <td>(2, Clark)</td>
+        <td>2 == 2 ✓</td>
+        <td>kept</td>
+      </tr>
+      <tr>
+        <td>7</td>
+        <td>(2, 10500)</td>
+        <td>(3, Mark)</td>
+        <td>2 == 3 ✗</td>
+        <td>dropped</td>
+      </tr>
+      <tr>
+        <td>8</td>
+        <td>(2, 10500)</td>
+        <td>(4, Alex)</td>
+        <td>2 == 4 ✗</td>
+        <td>dropped</td>
+      </tr>
+      <tr>
+        <td>9</td>
+        <td>(3, 15000)</td>
+        <td>(1, John)</td>
+        <td>3 == 1 ✗</td>
+        <td>dropped</td>
+      </tr>
+      <tr>
+        <td>10</td>
+        <td>(3, 15000)</td>
+        <td>(2, Clark)</td>
+        <td>3 == 2 ✗</td>
+        <td>dropped</td>
+      </tr>
+      <tr>
+        <td>11</td>
+        <td>(3, 15000)</td>
+        <td>(3, Mark)</td>
+        <td>3 == 3 ✓</td>
+        <td>kept</td>
+      </tr>
+      <tr>
+        <td>12</td>
+        <td>(3, 15000)</td>
+        <td>(4, Alex)</td>
+        <td>3 == 4 ✗</td>
+        <td>dropped</td>
+      </tr>
+    </tbody>
+  </table>
+  <p>The 12 raw pairs shrink to 3 surviving rows: (1, 10000, John), (2, 10500, Clark), (3, 15000, Mark). <strong>Final output relation: 3 rows.</strong> Sense-check: the inner join keeps exactly the ids present in <em>both</em> tables — Alex (id 4) has no salary row, so Alex disappears from the result.</p>
+</div>
+<div class="warning-box">
+  <p><strong>Assumptions & scope:</strong> The two-step view (cross product, then filter) is the <em>relational definition</em> of a join. Real engines never materialize the full cross product for large tables — they use hash joins, merge joins, or (in Hive) map-side joins to avoid it. The definition stays correct, though: an inner join's output is always the subset of \(T_A \times T_B\) whose rows satisfy the equality predicate. Hive only supports <em>equijoins</em> — the join predicate must use equality (<code>=</code>), not <code><</code>, <code>></code>, or <code>BETWEEN</code>.</p>
+</div>
+<div class="key-takeaway">
+  <p><strong>Exam note:</strong> Students are expected to implement distributed join algorithms manually in Java MapReduce for course assignments, handling key-value emission in Mappers and cross-table matching in Reducers. The two-step relational model above is exactly what the assignment recreates by hand: the mapper pairs by key, the reducer filters by predicate.</p>
+</div>
+<h3 id="8.2.2-hive-hql-join-syntax-and-execution">8.2.2 Hive HQL Join Syntax and Execution</h3>
+<p>In Hive QL, explicit table qualifications (<code>table_name.column_name</code>) resolve column ambiguities when joining multiple tables that share identical column identifiers.</p>
+<p>Consider two normalized Hive tables:</p>
+<ul>
+  <li><code>metals</code>: Contains transaction records with columns <code>shop_id</code>, <code>metal</code>, <code>short</code>, and <code>weight</code>.</li>
+  <li><code>metal_shops</code>: Contains lookup metadata with columns <code>shop_id</code> and <code>shop_name</code>.</li>
+</ul>
+<p>To project transaction data alongside shop names, the query must specify fully qualified column names in both the <code>SELECT</code> projection list and the <code>ON</code> join predicate:</p>
+<pre><code>SELECT metals.shop_id, metals.metal, metals.short, metal_shops.shop_name, metals.weight 
+FROM metals 
+JOIN metal_shops ON metals.shop_id = metal_shops.shop_id;</code></pre>
+<div class="warning-box">
+  <p><strong>Pitfalls:</strong></p>
+  <ul>
+    <li><strong>Ambiguous columns:</strong> Both tables have a <code>shop_id</code> column. Writing bare <code>shop_id</code> in the <code>SELECT</code> or <code>ON</code> clause leaves Hive unable to tell which table you mean — qualify every shared column as <code>table.column</code>.</li>
+    <li><strong>Equijoin only:</strong> The <code>ON</code> predicate must use <code>=</code>. Hive does not support inequality joins the way some SQL databases do.</li>
+    <li><strong>Not every row survives:</strong> An inner join keeps only matching rows. A row in <code>metals</code> whose <code>shop_id</code> has no row in <code>metal_shops</code> (or the reverse) silently disappears — use an outer join when unmatched rows must be kept.</li>
+  </ul>
+</div>
+<p>When this HQL query executes:</p>
+<ol>
+  <li>Hive compiles the declarative SQL statement into a MapReduce job plan and submits it to YARN.</li>
+  <li>The YARN ResourceManager allocates resources and launches an ApplicationMaster container on a cluster node.</li>
+  <li>Mappers tag input splits from <code>metals</code> and <code>metal_shops</code> with join key values (<code>shop_id</code>).</li>
+  <li>Reducers shuffle matching keys together, execute the join verification step, and output the joined dataset containing <code>shop_id</code>, <code>metal</code>, <code>short</code>, <code>shop_name</code>, and <code>weight</code>.</li>
+</ol>
+<div class="important-note">
+  <p><strong>Inner vs outer joins at a glance.</strong> The inner join keeps only matching rows. The textbook's <code>sales</code>/<code>things</code> example shows the contrast: a <code>LEFT OUTER JOIN</code> keeps every row of the left table and fills the right table's columns with <code>NULL</code> when no match exists; a <code>RIGHT OUTER JOIN</code> does the reverse; a <code>FULL OUTER JOIN</code> keeps both sides. Pick the inner join when you only want matched pairs, and an outer join when unmatched rows must survive (for example, finding employees with no salary record).</p>
+</div>
+<p>Real-world: Relational joins are the backbone of star-schema data warehouses, where a large fact table (transactions) joins to small dimension tables (shops, customers, dates) on key columns. Because Hive only supports equijoins, warehouse schemas are designed so that every join is an equality join on a key — a design rule that carries straight from Hive into modern SQL engines.</p>
+<div class="key-takeaway">
+  <p><strong>Recap + bridge:</strong> A join is a cross product followed by a predicate filter; Hive executes it as a MapReduce job where mappers tag rows by join key and reducers match them. HQL expresses this with <code>JOIN ... ON table.column = table.column</code>. With single-table bucketing and two-table joins in place, the next step is nesting one query inside another — subqueries and the multi-stage pipelines they trigger.</p>
+</div>
+
+<h2 id="8.3-hive-subqueries-and-multi-stage-mapreduce-pipeline-execution">8.3 Hive Subqueries and Multi-Stage MapReduce Pipeline Execution</h2>
+<h3 id="8.3.1-subqueries-and-derived-table-aggregations">8.3.1 Subqueries and Derived Table Aggregations</h3>
+<div class="important-note">
+  <p><strong>Can a query's result be used as a table inside another query?</strong> Yes — that is exactly what a subquery does. Hive lets you wrap an inner <code>SELECT</code> in parentheses, give it an alias, and then run an outer query against it as if it were a stored table. The catch: get the parentheses or the alias wrong, and Hive throws a parser error at the word <code>sum</code>.</p>
+</div>
+<p>Hive supports subqueries (also called inner queries) in the <code>FROM</code> clause. A subquery wraps an intermediate result set into a temporary named table alias, allowing outer queries to perform subsequent filtering or aggregation operations.</p>
+<div class="key-concept">
+  <p><strong>Subquery = a query inside a query.</strong> The inner <code>SELECT</code> builds an intermediate result set; the outer <code>SELECT</code> treats that set like a table. In Hive, a <code>FROM</code> subquery must be (1) wrapped in parentheses and (2) given an explicit alias (a temporary name), for example <code>temp_table</code>. The outer query then references the inner query's columns by their names.</p>
+</div>
+<p>Suppose a business requirement calls for calculating the total weight of all metals purchased from each shop, aggregating across individual metal transactions. The inner query joins <code>metals</code> and <code>metal_shops</code>, and the outer query applies <code>SUM(weight)</code> grouped by <code>shop_name</code>:</p>
+<pre><code>SELECT shop_name, SUM(weight) 
+FROM (
+    SELECT metals.shop_id, metals.metal, metals.short, metal_shops.shop_name, metals.weight 
+    FROM metals 
+    JOIN metal_shops ON metals.shop_id = metal_shops.shop_id
+) temp_table 
+GROUP BY shop_name;</code></pre>
+<div class="important-note">
+  <p><strong>Q:</strong> What causes the error <code>cannot recognize input near 'sum'</code> when executing a subquery in Hive? <strong>A:</strong> This error occurs when syntax elements are misplaced or parentheses are imbalanced. Every subquery in a Hive <code>FROM</code> clause must be enclosed in parentheses and given an explicit alias (such as <code>temp_table</code>). Omitting the alias or placing parentheses incorrectly prevents the HQL parser from recognizing the derived table — so the outer query's <code>SUM(...)</code> is no longer attached to any valid table and the parser fails at the word <code>sum</code>.</p>
+</div>
+<div class="warning-box">
+  <p><strong>Scope of subquery support in Hive:</strong> Hive supports subqueries in the <code>FROM</code> clause (derived tables, as above) and uncorrelated subqueries in the <code>WHERE</code> clause via <code>IN</code> or <code>EXISTS</code>. <em>Correlated</em> subqueries — where the inner query references a column of the outer query — are not supported. A <code>FROM</code> subquery's columns must also have unique names so the outer query can refer to them without ambiguity.</p>
+</div>
+<h3 id="8.3.2-multi-stage-mapreduce-execution-pipeline">8.3.2 Multi-Stage MapReduce Execution Pipeline</h3>
+<p>A query that combines a join with an aggregation does not run as one MapReduce job. Hive breaks it into a pipeline of stages, where each stage is its own MapReduce job.</p>
+<div class="key-concept">
+  <p><strong>Purpose of the multi-stage pipeline.</strong> One MapReduce job performs one transformation. A join is a transformation (combine rows on a key); a group-by aggregation is another (collapse rows per key). A query that needs both — like "total weight per shop" — therefore becomes two chained MapReduce jobs, where the second job reads the first job's output as its input.</p>
+</div>
+<p><strong>Inputs and outputs of the pipeline:</strong></p>
+<ul>
+  <li><em>Input:</em> raw data splits from <code>metals</code> and <code>metal_shops</code>.</li>
+  <li><em>Intermediate output (after Stage 1):</em> the joined dataset — rows of <code>shop_id, metal, short, shop_name, weight</code> written to temporary HDFS files.</li>
+  <li><em>Final output (after Stage 2):</em> one row per distinct <code>shop_name</code> with its <code>SUM(weight)</code>.</li>
+</ul>
+<p><strong>The two stages, step by step:</strong></p>
+<ol>
+  <li><strong>Stage 1 (MapReduce Job 1 — Relational Join):</strong>
+    <ul>
+      <li><em>Mapper 1:</em> Reads raw data splits from <code>metals</code> and <code>metal_shops</code>, emitting tuples keyed by <code>shop_id</code>.</li>
+      <li><em>Reducer 1:</em> Joins matching records on <code>shop_id</code> and writes the intermediate joined dataset to temporary HDFS files.</li>
+    </ul>
+  </li>
+  <li><strong>Stage 2 (MapReduce Job 2 — Group By Aggregation):</strong>
+    <ul>
+      <li><em>Mapper 2:</em> Reads the intermediate join output generated by Reducer 1 and extracts <code>shop_name</code> as the grouping key and <code>weight</code> as the value.</li>
+      <li><em>Reducer 2:</em> Computes <code>SUM(weight)</code> for each distinct <code>shop_name</code> key and writes final aggregated results to HDFS.</li>
+    </ul>
+  </li>
+</ol>
+<div class="example-box">
+  <p><strong>Worked example — tracing the two-stage pipeline.</strong> The query asks for the total weight of all metals purchased from each shop.</p>
+  <p><em>Stage 1 (join):</em> Mapper 1 reads the <code>metals</code> rows and the <code>metal_shops</code> rows. Every emitted tuple is keyed by <code>shop_id</code>, so rows from both tables that share a <code>shop_id</code> land in the same reducer. Reducer 1 pairs them on <code>shop_id</code> and writes the joined rows — one row per metal transaction, now carrying <code>shop_name</code> — to a temporary HDFS location. Suppose the joined result contains rows like <code>(1, gold, B Modulus, 844)</code>, <code>(2, silver, B Modulus, ...)</code>, <code>(3, platinum, Joyalukkas, 913)</code>, and further rows for <code>Lalitha Jewellery</code>.</p>
+  <p><em>Stage 2 (aggregation):</em> Mapper 2 reads those joined rows and emits <code>(shop_name, weight)</code> pairs; Reducer 2 adds the weights per shop:</p>
+  <table>
+    <thead>
+      <tr>
+        <th>shop_name</th>
+        <th>weight contributions</th>
+        <th>SUM(weight)</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>B Modulus</td>
+        <td>844 + ...</td>
+        <td><strong>844 grams</strong></td>
+      </tr>
+      <tr>
+        <td>Joyalukkas</td>
+        <td>913 + ...</td>
+        <td><strong>913 grams</strong></td>
+      </tr>
+      <tr>
+        <td>Lalitha Jewellery</td>
+        <td>...</td>
+        <td><strong>aggregated weight</strong></td>
+      </tr>
+    </tbody>
+  </table>
+  <p>Sense-check: the join stage must run first because <code>shop_name</code> exists only after <code>metal_shops</code> is joined in; the aggregation stage then collapses all transactions of a shop into one row. That ordering is why Hive emits two chained MapReduce jobs.</p>
+</div>
+<div class="warning-box">
+  <p><strong>Pitfalls:</strong></p>
+  <ul>
+    <li><strong>Missing alias:</strong> A <code>FROM</code> subquery without an alias is a syntax error in Hive — the alias is mandatory.</li>
+    <li><strong>Correlated subquery trap:</strong> Writing an inner query that references an outer column fails in Hive; use a join or restructure the query instead.</li>
+    <li><strong>Each stage costs a full HDFS round-trip:</strong> Every MapReduce job boundary writes its intermediate output to HDFS and reads it back. Pipelines with many stages are where Hive's disk-based execution becomes slow — engines like Tez or Spark collapse these stages into one in-memory DAG.</li>
+  </ul>
+</div>
+<p>Real-world: The "join then aggregate" pattern is the shape of most reporting queries — total sales per region, total weight per shop, average spend per customer. Because each stage is a separate MapReduce job, production warehouses watch stage counts via <code>EXPLAIN</code>, and modern engines (Tez, Spark SQL) pipeline the same logic in memory to avoid repeated HDFS round-trips.</p>
+<div class="key-takeaway">
+  <p><strong>Recap + bridge:</strong> A subquery wraps an inner <code>SELECT</code> into a parenthesized, aliased derived table; the outer query aggregates over it. The join-plus-aggregate query becomes two chained MapReduce jobs — join first, then group-by. Subqueries give us multi-step SQL within one statement; next we move off the SQL side entirely and look at coordinating a whole cluster with Apache ZooKeeper.</p>
+</div>
+
+<h2 id="8.4-distributed-coordination-with-apache-zookeeper">8.4 Distributed Coordination with Apache ZooKeeper</h2>
+<h3 id="8.4.1-coordination-challenges-in-distributed-clusters">8.4.1 Coordination Challenges in Distributed Clusters</h3>
+<div class="important-note">
+  <p><strong>Who decides which NameNode is the boss?</strong> In a distributed cluster, machines crash, networks partition, and two servers can each believe they are the leader. Left unchecked, a "split-brain" — two masters both accepting writes — corrupts the whole system. Apache ZooKeeper exists to answer the coordination questions that no single machine can answer alone: who leads, who is alive, and where is the service?</p>
+</div>
+<p>Distributed systems comprising active-passive master architectures and worker nodes encounter several critical operational challenges:</p>
+<ol>
+  <li><strong>Active/Passive Master Coordination:</strong> In high-availability HDFS setups, a primary NameNode operates as the active master while a secondary NameNode remains passive. The passive node syncs state from <code>fsimage</code> and <code>editlog</code> files. If the active master crashes, an external coordinator must detect the failure, prevent split-brain scenarios (where both masters claim leadership), and promote the passive node to active master.</li>
+  <li><strong>Task Handoff and State Recovery:</strong> In YARN, an ApplicationMaster manages container execution across slave nodes. If an ApplicationMaster crashes mid-job, the replacement node must recover the exact state of completed and pending tasks executed by its predecessor.</li>
+  <li><strong>Dynamic Service Discovery and Centralized Configuration:</strong> Cluster services (such as Hive Metastore connections to MySQL databases) require centralized configuration management. When service endpoints change IP addresses dynamically across nodes, dependent services must discover the new endpoints automatically without hardcoded configuration edits.</li>
+</ol>
+<div class="important-note">
+  <p><strong>Why the name?</strong> Apache ZooKeeper was created by Yahoo to solve coordination problems across distributed systems. It was named "ZooKeeper" because Hadoop ecosystem components are named after animals (Hadoop elephant, Hive, Pig), making ZooKeeper the service that manages the "zoo."</p>
+</div>
+<h3 id="8.4.2-zookeeper-ensemble-architecture-quorum-math-and-consistency-guarantees">8.4.2 ZooKeeper Ensemble Architecture, Quorum Math, and Consistency Guarantees</h3>
+<p>ZooKeeper operates as a small, highly redundant cluster of nodes called an <strong>ensemble</strong>.</p>
+<pre><code>+-------------------------------------------------------------+
+|                      ZooKeeper Ensemble                     |
+|                                                             |
+|   +------------------+             +------------------+     |
+|   |  Follower Node   |             |  Follower Node   |     |
+|   +--------+---------+             +--------+---------+     |
+|            ^                                ^               |
+|            |    ZAB (Atomic Broadcast)      |               |
+|            +---------------+----------------+               |
+|                            |                                |
+|                   +--------+---------+                      |
+|                   |   Leader Node    |                      |
+|                   +--------+---------+                      |
++----------------------------^--------------------------------+
+                             | Write Requests
+                    +--------+---------+
+                    | ZooKeeper Client |
+                    +------------------+</code></pre>
+<ol>
+  <li><strong>Leader-Follower Roles:</strong> One node in the ensemble is elected as the <strong>Leader</strong>, while all remaining nodes function as <strong>Followers</strong>. All write requests from application clients are directed to the Leader. Read requests can be served by any Leader or Follower node.</li>
+  <li><strong>Quorum Mathematics and Odd Node Rule:</strong> An ensemble must contain an <strong>odd number of servers</strong> (\(n = 3, 5, 7\)) to ensure clear majority voting during leader elections and quorum approvals. The minimum quorum size \(Q\) required to confirm writes is:</li>
+</ol>
+<p>\[ Q = \left\lfloor \frac{n}{2} \right\rfloor + 1 \]</p>
+<p>where \(n\) is the total number of servers in the ensemble, \(\lfloor \cdot \rfloor\) is the floor function (round down to the nearest integer), and \(Q\) is the smallest integer strictly greater than half of \(n\) — a strict majority.</p>
+<div class="example-box">
+  <p><strong>Worked example — quorum math for 3-node and 5-node ensembles.</strong></p>
+  <p><em>For \(n = 3\):</em> \[ Q = \left\lfloor \frac{3}{2} \right\rfloor + 1 = \lfloor 1.5 \rfloor + 1 = 1 + 1 = 2 \] So 2 of the 3 nodes must confirm a write.</p>
+  <p><em>For \(n = 5\):</em> \[ Q = \left\lfloor \frac{5}{2} \right\rfloor + 1 = \lfloor 2.5 \rfloor + 1 = 2 + 1 = 3 \] So 3 of the 5 nodes must confirm a write.</p>
+  <p><em>Failure tolerance:</em> An ensemble keeps working as long as a majority of nodes is up. With \(n = 3\) (\(Q = 2\)), at most 1 node can fail. With \(n = 5\) (\(Q = 3\)), at most 2 nodes can fail — the remaining 3 still form a majority.</p>
+  <p>Sense-check: a 6-node ensemble tolerates only 2 failures too, because 3 remaining nodes are not a majority of 6 (\(3 < 4\)). Adding an even node buys no extra tolerance — that is why production ensembles use odd sizes.</p>
+</div>
+<div class="warning-box">
+  <p><strong>Why 5 nodes is recommended over 3 nodes:</strong> In a 3-node ensemble (\(Q = 2\)), if a network partition isolates 1 node from the other 2, the isolated single node cannot satisfy quorum (\(1 < 2\)) and fails all operations — and if one of the remaining 2 nodes then crashes, quorum is lost entirely and the whole ensemble stops. In a 5-node ensemble (\(Q = 3\)), the system tolerates up to 2 simultaneous node failures while the remaining 3 operational nodes still maintain quorum. The odd-size rule plus the larger margin is why 5 is the common production recommendation.</p>
+</div>
+<ol start="3">
+  <li><strong>High Consistency via ZAB Protocol:</strong> ZooKeeper prioritizes consistency and partition tolerance (CP in the CAP theorem). Writes are replicated across ensemble nodes using the <strong>ZooKeeper Atomic Broadcast (ZAB)</strong> protocol, which runs in two phases:
+    <ul>
+      <li><em>Phase 1 — Leader election:</em> the machines elect a distinguished Leader; the other machines (Followers) synchronize their state with it.</li>
+      <li><em>Phase 2 — Atomic broadcast:</em> the Leader forwards every write request to the Followers and commits the change only when a majority have persisted it to disk.</li>
+    </ul>
+  </li>
+</ol>
+<p>The Leader acknowledges a write operation as successful to the client <em>only after</em> a quorum of nodes confirms writing the update to memory and disk. Subsequent reads served by any node return the updated consistent state. Because every write is committed to disk on a quorum before being acknowledged, a minority failure can never lose the latest state.</p>
+<h3 id="8.4.3-znode-types-and-notification-watches">8.4.3 ZNode Types and Notification Watches</h3>
+<p>ZooKeeper structures stored data in a hierarchical tree format similar to a Unix file system. Each node in the tree is called a <strong>ZNode</strong> (ZooKeeper Node), identified by a slash-delimited path (such as <code>/app/hadoop/master</code>). Each ZNode can store small configuration datasets (typically under a few kilobytes).</p>
+<pre><code>                      / (Root)
+                      |
+        +-------------+-------------+
+        |                           |
+     /hadoop                     /services
+        |                           |
+     /master                     /hbase
+  (ZNode: IP/Port)           (ZNode: Metadata)</code></pre>
+<p>ZooKeeper supports four distinct ZNode classifications:</p>
+<ol>
+  <li><strong>Ephemeral ZNodes:</strong> Temporary ZNodes linked directly to a client session. When the client session terminates or misses periodic heartbeats, ZooKeeper automatically deletes the Ephemeral ZNode.
+    <ul>
+      <li><em>Use case:</em> Dynamic failure detection. A master server creates an ephemeral ZNode at <code>/hadoop/master</code>. A ZooKeeper Fault Controller (<code>zkfc</code>) library embedded in each node sends heartbeats to ZooKeeper. If the active master crashes, its session expires, the ephemeral ZNode disappears, and ZooKeeper triggers an event to promote a standby master.</li>
+    </ul>
+  </li>
+  <li><strong>Persistent ZNodes:</strong> Permanent ZNodes that persist on disk regardless of client disconnects or node restarts.
+    <ul>
+      <li><em>Use case:</em> Storing cluster configuration settings, active job progress metadata, and static service endpoints accessible to all nodes.</li>
+    </ul>
+  </li>
+  <li><strong>Container ZNodes:</strong> Specialized ZNodes used for distributed mutual exclusion and leader election. When a master node attempts to claim leadership, it creates a container ZNode. The first client to write succeeds and acquires an exclusive lock. Concurrent write requests from secondary clients are denied until the lock holder releases the ZNode or crashes.</li>
+  <li><strong>Sequential ZNodes:</strong> ZNodes where ZooKeeper automatically appends a monotonically increasing 10-digit sequence number (such as <code>node-0000000001</code>) to the ZNode path, facilitating ordered queue management.</li>
+</ol>
+<div class="important-note">
+  <p><strong>A note on the standard names:</strong> The ZooKeeper API spells these modes <code>PERSISTENT</code>, <code>EPHEMERAL</code>, <code>PERSISTENT_SEQUENTIAL</code>, <code>EPHEMERAL_SEQUENTIAL</code>, plus <code>CONTAINER</code>. The professor's four-way classification (Ephemeral, Persistent, Container, Sequential) maps onto these; "sequential" and "ephemeral" are flags that can combine — an ephemeral sequential ZNode exists for the client's lifetime and carries an increasing sequence number.</p>
+</div>
+<p>These ZNode types are only half the story. The other half is how clients learn that a ZNode has changed.</p>
+<div class="important-note">
+  <p><strong>Q:</strong> How do ZooKeeper Watches eliminate polling in distributed systems? <strong>A:</strong> Clients register an asynchronous <strong>Watch</strong> on a specific ZNode path (such as <code>/hadoop/master</code>). When the target ZNode is modified, deleted, or created, ZooKeeper fires a one-time notification callback directly to the registered client. This push-based subscription model eliminates the need for clients to continuously poll ZooKeeper for state changes — the client sits idle and gets told the moment something changes.</p>
+</div>
+<h3 id="8.4.4-modern-alternatives-kubernetes-and-choreographic-architecture">8.4.4 Modern Alternatives: Kubernetes and Choreographic Architecture</h3>
+<p>Real-world: While legacy platforms (such as Apache Storm, HBase, Solr, and early Apache Kafka versions) relied heavily on ZooKeeper for distributed coordination, modern cloud-native architectures are transitioning away from dedicated coordination clusters:</p>
+<ul>
+  <li><strong>Kafka KRaft Mode:</strong> Apache Kafka version 4.0+ completely removes the ZooKeeper dependency, replacing it with an event-driven internal consensus protocol called KRaft (Kafka Raft).</li>
+  <li><strong>Kubernetes and Choreographic Architecture:</strong> Modern microservice deployments favor decentralized <strong>choreographic</strong> patterns over centralized <strong>instructive</strong> controllers like ZooKeeper. In Kubernetes environments, containers contain self-managed health rules and auto-scaling definitions rather than depending on an external ZooKeeper ensemble.</li>
+</ul>
+<div class="warning-box">
+  <p><strong>Pitfalls:</strong></p>
+  <ul>
+    <li><strong>Even-sized ensembles:</strong> Adding a 4th or 6th node does not increase failure tolerance — quorum needs a strict majority, so only odd sizes pay off.</li>
+    <li><strong>Split-brain by hand:</strong> Two masters that both believe they lead (with no quorum enforcement) will both accept writes and diverge; quorum voting exists precisely to stop this.</li>
+    <li><strong>ZooKeeper is not a database:</strong> ZNodes are meant for small metadata (a few kilobytes), not large payloads. Storing big data in ZNodes is a misuse.</li>
+  </ul>
+</div>
+<p>Real-world: Apache ZooKeeper enables high-availability active/passive NameNode failover in HDFS, ResourceManager recovery in YARN, and dynamic service registration across distributed enterprise clusters — and it coordinates HBase's master election, which is exactly where we go next.</p>
+<div class="key-takeaway">
+  <p><strong>Recap + bridge:</strong> ZooKeeper is a small, odd-sized ensemble whose Leader replicates every write to a quorum (\(Q = \lfloor n/2 \rfloor + 1\)) via the ZAB protocol; ephemeral ZNodes make failure detection automatic and Watches replace polling. It coordinates the masters we met in earlier lectures. Next, ZooKeeper becomes the nervous system of a whole NoSQL database — Apache HBase.</p>
+</div>
+
+<h2 id="8.5-nosql-real-time-distributed-storage-with-apache-hbase">8.5 NoSQL Real-Time Distributed Storage with Apache HBase</h2>
+<h3 id="8.5.1-motivation-rdbms-bottlenecks-and-anti-patterns">8.5.1 Motivation, RDBMS Bottlenecks, and Anti-Patterns</h3>
+<div class="important-note">
+  <p><strong>What happens when a database has a billion rows and users expect millisecond answers?</strong> A traditional relational database buckles: joins slow down, indexes bloat, and writes grind to a halt. Google faced exactly this problem and published a paper describing a radically simpler storage model. Apache HBase is the open-source implementation of that idea — a database that gives up SQL's power tools to get speed at massive scale.</p>
+</div>
+<p>Traditional Relational Database Management Systems (RDBMS) encounter severe scalability bottlenecks when handling massive volume and high-velocity throughput:</p>
+<ol>
+  <li><strong>RDBMS Scale Bottlenecks:</strong> At petabyte scale with billions of rows (such as Facebook user profiles or Amazon shopping carts), relational joins fail to scale, index maintenance degrades write performance, disk I/O locks up, and manual sharding requires complex database administration.</li>
+  <li><strong>Google Bigtable Paper:</strong> In 2006, Google published the foundational research paper <em>Bigtable: A Distributed Storage System for Structured Data</em>. Apache HBase was developed as an open-source implementation of Bigtable, running natively on top of HDFS.</li>
+  <li><strong>Core Philosophy:</strong> HBase provides low-latency, real-time random read and write access to petabyte-scale data stored on HDFS. It forfeits complex SQL join capabilities and ACID transactions in favor of horizontally scalable key-value lookups (<code>put</code> and <code>get</code>).</li>
+</ol>
+<div class="key-concept">
+  <p><strong>The trade HBase makes.</strong> HBase keeps two things from the relational world — tables and columns — but drops the rest: no SQL joins, no multi-row ACID transactions, no secondary indexes. In exchange it gets predictable, low-latency random access by row key at a scale where an RDBMS would fall over. The unit of work is a single-row operation: <code>put</code> (write a cell) and <code>get</code> (read a cell).</p>
+</div>
+<p><strong>When to Use HBase vs. Anti-Patterns.</strong></p>
+<table>
+  <thead>
+    <tr>
+      <th>Recommended HBase Use Cases</th>
+      <th>HBase Anti-Patterns ("Sleepless Nights")</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td>Low-latency random read/write lookups by key</td>
+      <td>Multi-row RDBMS transactions (such as banking debits/credits)</td>
+    </tr>
+    <tr>
+      <td>Sparse data tables with billions of rows</td>
+      <td>Column aggregation queries (<code>SUM</code>, <code>AVG</code>, <code>COUNT</code>)</td>
+    </tr>
+    <tr>
+      <td>Real-time user authentication and profile fetching</td>
+      <td>Queries filtering non-key attributes (<code>WHERE age < 20</code>)</td>
+    </tr>
+    <tr>
+      <td>Rapid write logging (such as clickstreams or IoT sensors)</td>
+      <td>Small datasets easily managed in standard RDBMS</td>
+    </tr>
+  </tbody>
+</table>
+<div class="warning-box">
+  <p><strong>Anti-patterns — the "sleepless nights" warning:</strong> Using HBase for the wrong workload guarantees pain. Multi-row transactions (like a bank debit plus credit) need atomicity HBase does not provide. Column aggregations (<code>SUM</code>, <code>AVG</code>, <code>COUNT</code>) force full-table scans because there is no SQL engine to do the math efficiently. Queries filtering on non-key attributes (<code>WHERE age < 20</code>) would scan every HFile on every RegionServer. And small datasets are better off in a plain RDBMS. Match the tool to the workload, not the reverse.</p>
+</div>
+<h3 id="8.5.2-hbase-system-architecture">8.5.2 HBase System Architecture</h3>
+<p>HBase follows a master-slave architecture built on top of HDFS and coordinated by Apache ZooKeeper:</p>
+<pre><code>+-----------------------------------------------------------------+
+|                        HBase Architecture                       |
+|                                                                 |
+|                     +---------------------+                     |
+|                     |   HMaster (Active)  |                     |
+|                     +----------+----------+                     |
+|                                | Coordinated via                |
+|                                v ZooKeeper                      |
+|                  +---------------------------+                  |
+|                  | ZooKeeper Cluster / ZNode |                  |
+|                  +-------------+-------------+                  |
+|                                |                                |
+|         +----------------------+----------------------+         |
+|         v                                             v         |
+| +---------------+                             +---------------+ |
+| | RegionServer 1|                             | RegionServer 2| |
+| | +-----------+ |                             | +-----------+ | |
+| | | Region A  | |                             | | Region C  | | |
+| | +-----------+ |                             | +-----------+ | |
+| | | Region B  | |                             | | Region D  | | |
+| | +-----------+ |                             | +-----------+ | |
+| +-------+-------+                             +-------+-------+ |
+|         |                                             |         |
++---------|---------------------------------------------|---------+
+          v                                             v
++-----------------------------------------------------------------+
+|               HDFS Storage Layer (DataNodes)                    |
++-----------------------------------------------------------------+</code></pre>
+<ol>
+  <li><strong>HMaster:</strong> Manages DDL operations (<code>create</code>, <code>disable</code> tables), monitors RegionServers, and performs region assignment. The HMaster handles initial client metadata requests. To avoid becoming a performance bottleneck, client read/write data operations bypass HMaster and communicate directly with RegionServers.</li>
+  <li><strong>RegionServer:</strong> Manages and serves horizontal shards of table data called <strong>Regions</strong>. Each RegionServer handles data reads, writes, and local compaction operations across multiple regions.</li>
+  <li><strong>ZooKeeper Coordination:</strong> Coordinates HMaster election (active/standby), maintains region lookup locations (<code>meta</code> table), and tracks active RegionServer health via ephemeral ZNodes.</li>
+</ol>
+<div class="important-note">
+  <p><strong>How the pieces connect to earlier lectures:</strong> ZooKeeper is the coordinator that elects the HMaster (the active/passive pattern from section 8.4). HDFS at the bottom is the storage layer from the Hadoop lectures — HBase adds a real-time, random-access layer on top of HDFS's batch-oriented files. The RegionServer is where the data actually lives; the HMaster only manages metadata, which is why data paths bypass it.</p>
+</div>
+<h3 id="8.5.3-hbase-multi-dimensional-sparse-data-model">8.5.3 HBase Multi-Dimensional Sparse Data Model</h3>
+<p>HBase organizes data into a 4-dimensional sparse mapping sorted lexicographically by Row Key:</p>
+<p>\[ f(\text{RowKey}, \text{ColumnFamily}, \text{ColumnQualifier}, \text{Timestamp}) \rightarrow \text{CellValue} \]</p>
+<p>where \(f\) maps the four coordinates to the value stored in the cell at their intersection.</p>
+<pre><code>Row Key: "2019MC04000"
+  |-- Column Family: "user_info"
+  |     |-- Column Qualifier: "name"  --&gt; "Vignesh" (Timestamp: t1)
+  |     |-- Column Qualifier: "photo" --&gt; "http://site/pic.jpg" (Timestamp: t2)
+  |-- Column Family: "payment_info"
+        |-- Column Qualifier: "card"  --&gt; "4111xxxx" (Timestamp: t3)</code></pre>
+<ol>
+  <li><strong>Row Key:</strong> A unique byte array identifier for every row. Rows are sorted lexicographically by Row Key. All data retrieval queries <em>must</em> specify a Row Key.</li>
+  <li><strong>Column Family:</strong> A logical and physical grouping of related columns defined during table creation. Columns within the same Column Family are stored together on disk in dedicated storage files (HFiles).
+    <ul>
+      <li><em>Example:</em> An e-commerce user table might define three Column Families: <code>user_info</code> (name, age), <code>order_data</code> (items, totals), and <code>payment_info</code> (card details).</li>
+    </ul>
+  </li>
+  <li><strong>Column Qualifier (Dynamic Columns):</strong> Dynamic attribute labels defined on the fly during record insertion under a specific Column Family (formatted as <code>ColumnFamily:ColumnQualifier</code>).
+    <ul>
+      <li><em>Sparsity:</em> Rows do not need identical columns. If a row lacks a specific column, no storage space is consumed (unlike RDBMS null padding).</li>
+    </ul>
+  </li>
+  <li><strong>Timestamp / Multi-Version Concurrency Control (MVCC):</strong> Each cell maintains a configurable number of timestamped version histories. Inserting a new value into an existing cell creates a new version timestamped with system time.
+    <ul>
+      <li><em>Example:</em> Cell revision history enables tracking historical password changes or Google Web Crawler page indexing revisions (<code>com.cnn.com</code> crawling history).</li>
+    </ul>
+  </li>
+  <li><strong>Data Type (<code>ByteArray</code>):</strong> HBase has only one native data type: <code>byte[]</code> (<code>ByteArray</code>). Strings, integers, floats, and binary objects are all stored as raw byte arrays. Applications handle serialization and type casting upon retrieval.</li>
+</ol>
+<div class="example-box">
+  <p><strong>Worked example — Google Bigtable's web index.</strong> The 2006 Bigtable paper indexed crawled web pages using <em>reversed domain names</em> as Row Keys (such as <code>com.cnn.com</code> instead of <code>www.cnn.com</code>), so pages from the same site sort next to each other lexicographically. The table had two Column Families:</p>
+  <ul>
+    <li><strong><code>contents:</code></strong> — stores raw page HTML, versioned over time (each crawl adds a new timestamped version of the same row key).</li>
+    <li><strong><code>anchor:</code></strong> — stores external linking websites as <em>dynamic column qualifiers</em>; for example the qualifier <code>anchor:cnnsi.com</code> holds the anchor text of the link from <code>cnnsi.com</code> to <code>cnn.com</code>. New backlinks become new qualifiers on the fly.</li>
+  </ul>
+  <p>The table's 4-dimensional coordinates in action: \(f(\text{com.cnn.com}, \text{contents}, \langle\text{empty}\rangle, t_1) \rightarrow \text{HTML}_1\), and \(f(\text{com.cnn.com}, \text{anchor}, \text{cnnsi.com}, t_2) \rightarrow \text{anchor text}\). Sense-check: the reversed key groups one site's pages together for the crawler, and the sparse qualifier design lets any number of backlinks appear without pre-declaring columns.</p>
+</div>
+<h3 id="8.5.4-ddl-and-dml-data-operations-cli-and-api">8.5.4 DDL and DML Data Operations (CLI and API)</h3>
+<p>HBase operations are executed through the HBase Shell (Ruby-based CLI), Java Client API, REST web gateway, Thrift (Facebook), or Avro.</p>
+<p><strong>Table Creation (DDL).</strong></p>
+<p>Creating an HBase table requires specifying <em>only</em> the table name and the Column Family names. Column qualifiers and data types are not defined at creation:</p>
+<pre><code>create 'user_table', 'user_info', 'payment_info'</code></pre>
+<p><strong>Data Insertion (<code>put</code> - DML).</strong></p>
+<p>The <code>put</code> command requires the table name, target Row Key, target <code>ColumnFamily:ColumnQualifier</code>, and cell value:</p>
+<pre><code>put 'user_table', '2019MC04000', 'user_info:name', 'Vignesh'
+put 'user_table', '2019MC04000', 'user_info:picture', 'http://store.com/vignesh.jpg'
+put 'user_table', '2019MC04000', 'payment_info:card', '4111222233334444'</code></pre>
+<p><strong>Data Retrieval (<code>get</code> - DML).</strong></p>
+<p>The <code>get</code> command retrieves data for a specific Row Key, with optional parameters specifying Column Families, dynamic qualifiers, or historical version counts:</p>
+<pre><code>get 'user_table', '2019MC04000'
+get 'user_table', '2019MC04000', {COLUMNS =&gt; ['user_info:name'], VERSIONS =&gt; 3}</code></pre>
+<div class="important-note">
+  <p><strong>Q:</strong> Why does HBase's <code>get</code> syntax require a Row Key, whereas SQL allows querying by any arbitrary column? <strong>A:</strong> HBase indexes data physically by Row Key across distributed HFiles. Querying by Row Key routes directly to the specific RegionServer hosting that key range. Searching by arbitrary non-key attributes would force HBase to scan every HFile across all RegionServers, destroying performance. Therefore, get operations require a Row Key.</p>
+</div>
+<div class="warning-box">
+  <p><strong>Pitfalls:</strong></p>
+  <ul>
+    <li><strong>No secondary indexes:</strong> HBase has no index on non-key columns (no equivalent of <code>CREATE INDEX ... ON age</code>). Every non-key lookup is a full scan.</li>
+    <li><strong>No multi-row ACID:</strong> A single row is atomic; operations spanning several rows are not — do not model banking-style transfers here.</li>
+    <li><strong>Bytes in, bytes out:</strong> Everything is a <code>byte[]</code>; the application must serialize and deserialize numbers and strings itself.</li>
+    <li><strong>Row key design matters:</strong> Keys are sorted lexicographically as byte arrays, so a badly chosen key (for example, embedding a timestamp that changes on every write) can hotspot one RegionServer.</li>
+  </ul>
+</div>
+<p>Real-world: Apache HBase powers real-time, high-concurrency low-latency applications including Facebook user profile lookups, Amazon shopping cart staging, Google search engine page-rank link indexing, and biometric authentication backends.</p>
+<div class="key-takeaway">
+  <p><strong>Recap + bridge:</strong> HBase trades SQL joins and ACID transactions for low-latency key-value access at petabyte scale. Data lives in a 4-dimensional sparse map \(f(\text{RowKey}, \text{ColumnFamily}, \text{ColumnQualifier}, \text{Timestamp}) \rightarrow \text{CellValue}\), sorted by Row Key, with dynamic qualifiers and versioned cells. ZooKeeper coordinates the master; HDFS stores the data. That completes the Hive → ZooKeeper → HBase arc of this lecture — next come the exam logistics.</p>
+</div>
+
+<h2 id="8.6-exam-guidance-summary">8.6 Exam Guidance Summary</h2>
+<h3 id="8.6.1-quiz-scope-and-assignment-deadlines">8.6.1 Quiz Scope and Assignment Deadlines</h3>
+<div class="key-takeaway">
+  <p><strong>Exam note — Quiz 1 scope:</strong> Quiz 1 includes all topics covered up through HDFS, MapReduce, and Apache Pig. Apache Hive, Apache ZooKeeper, and Apache HBase are <em>excluded</em> from Quiz 1 — so the material of this lecture (bucketing, joins, subqueries, ZooKeeper, HBase) will not appear on Quiz 1.</p>
+</div>
+<p>Quiz 2 covers Apache Hive, ZooKeeper, HBase, NoSQL data management, and Apache Spark (scheduled immediately after completing the Spark module). The Hive, ZooKeeper, and HBase content from this lecture is therefore Quiz 2 material — keep the bucketing formula, the quorum formula, and the HBase data model fresh until then.</p>
+<p>Assignment 1 will be released on Friday, September 10th, with a final submission deadline of <strong>October 15th</strong>. Students must implement a custom MapReduce join program in Java MapReduce and demonstrate identical query execution in Hive/Pig. The join mechanics from section 8.2 (mapper key emission, reducer cross-table matching) are exactly what this assignment asks you to build by hand.</p>
+<h3 id="8.6.2-course-logistics-and-class-scheduling">8.6.2 Course Logistics and Class Scheduling</h3>
+<div class="key-takeaway">
+  <p><strong>Exam note — scheduling:</strong> No class will take place on Sunday, September 12th. A makeup lecture is scheduled for <strong>Thursday, September 15th at 8:00 PM</strong>.</p>
+</div>
+<p>Mid-Semester regular exams occur on <strong>September 23rd, 24th, and 25th</strong>. Mid-Semester makeup exams occur on <strong>October 7th, 8th, and 9th</strong>. Plan the Assignment 1 submission (October 15th) against these dates — the assignment window overlaps the mid-semester exam period, so budget time accordingly.</p>
+
+<h2 id="8.7-key-industry-applications">8.7 Key Industry Applications</h2>
+<h3 id="8.7.1-enterprise-data-warehouse-query-acceleration">8.7.1 Enterprise Data Warehouse Query Acceleration</h3>
+<p>Real-world: Enterprise data warehouses use combined partitioning and bucketing over ORC/Parquet files to accelerate ad-hoc queries on petabyte-scale data lakes, skipping unneeded HDFS blocks during <code>WHERE</code> evaluation. The bucketing idea from section 8.1 — hash to a bucket, then read only the matching bucket file — is exactly the mechanism these warehouses exploit: coarse partitioning narrows the search to a directory, and bucketing narrows it further to a single file, so a <code>WHERE</code> on a high-cardinality key touches a tiny fraction of the data.</p>
+<h3 id="8.7.2-high-availability-coordination-and-real-time-nosql-storage">8.7.2 High-Availability Coordination and Real-Time NoSQL Storage</h3>
+<p>Real-world: Apache ZooKeeper enables high-availability active/passive NameNode failover in HDFS, ResourceManager recovery in YARN, and dynamic service registration across distributed enterprise clusters. Every place a cluster needs "one leader, no split-brain, and automatic failure detection," a ZooKeeper ensemble (or its modern successor) sits underneath — from Hadoop's own master nodes to Kafka's metadata management.</p>
+<p>Real-world: Apache HBase powers real-time, high-concurrency low-latency applications including Facebook user profile lookups, Amazon shopping cart staging, Google search engine page-rank link indexing, and biometric authentication backends. These are all workloads that match the HBase use-case column from section 8.5: single-row key lookups on billions of rows, where a millisecond read by user ID beats any SQL feature set.</p>
+    </main>
+
+    <!-- ============================================================
+    EXAM REVISION NOTES
+    Generated AFTER the main lecture-faithful content is complete. Each entry
+    distills one major concept into its most examinable elements.
+    Built FROM the core — never invented independently.
+
+    Each entry is a <div class="exam-revision-entry"> containing:
+      - .revision-topic (h3) — concept name
+      - .revision-mustknow — the single most examinable takeaway
+      - .revision-formula — central formula(s) in \[ ... \] MathJax
+      - .revision-pitfall — the #1 exam mistake
+      - .revision-check — one self-check question (no options)
+      - .revision-connections — linked concepts within this lecture
+    ============================================================ -->
+    <section class="exam-revision-section">
+      <h2>Exam Revision Notes</h2>
+      <p class="revision-intro">Below is the distilled, exam-ready core.
+      Every entry comes from the full explanation above. Use this section
+      for rapid review; return to the main notes when a point needs more context.</p>
+<div class="exam-revision-entry">
+  <h3 class="revision-topic">8.1 Hive Bucketing Data Types and Precision Resolution</h3>
+  <p class="revision-mustknow"><strong>Must-know:</strong> bucket_id = hash(column_value) mod N; INT keys bucket exactly (value mod N) while FLOAT keys hash the IEEE 754 bit pattern and scatter rows; converting weight FLOAT-&gt;INT fixes the distribution and lets WHERE on the bucket column read only the target bucket file.</p>
+  <p class="revision-formula">\[ \text{bucket\_id} = \text{hash}(\text{column\_value}) \pmod{N} \]</p>
+  <p class="revision-pitfall"><strong>⚠️ Top pitfall:</strong> Using FLOAT or DOUBLE as a bucketing key; expecting visible speedups on tiny datasets; creating so many tiny buckets that NameNode metadata overhead outweighs the query savings.</p>
+  <p class="revision-check"><strong>Self-check:</strong> With N=3 buckets, which bucket file holds weight 6, and why did it previously land in the wrong file under FLOAT bucketing?</p>
+  <p class="revision-connections"><strong>Connects to:</strong> 8.2, 8.7</p>
+</div>
+<div class="exam-revision-entry">
+  <h3 class="revision-topic">8.2 Relational Joins in Apache Hive</h3>
+  <p class="revision-mustknow"><strong>Must-know:</strong> Join = Cartesian cross product |T_A x T_B| = |T_A| x |T_B|, then filter by the equality predicate TableA.id == TableB.id; Hive supports only equijoins; HQL joins need fully qualified table.column names; the join runs as one MapReduce job (mappers tag by key, reducers match).</p>
+  <p class="revision-formula">\[ |T_A \times T_B| = |T_A| \times |T_B| \]</p>
+  <p class="revision-pitfall"><strong>⚠️ Top pitfall:</strong> Omitting table qualification for shared columns like shop_id; expecting Hive to support inequality joins; forgetting that inner joins drop unmatched rows.</p>
+  <p class="revision-check"><strong>Self-check:</strong> With a 3-row salary table and a 4-row names table, how many tuples does the cross product generate and how many survive the inner join?</p>
+  <p class="revision-connections"><strong>Connects to:</strong> 8.1, 8.3</p>
+</div>
+<div class="exam-revision-entry">
+  <h3 class="revision-topic">8.3 Hive Subqueries and Multi-Stage MapReduce Pipeline Execution</h3>
+  <p class="revision-mustknow"><strong>Must-know:</strong> A FROM subquery must be enclosed in parentheses AND given an explicit alias or the parser fails at the outer query's first function (e.g. 'sum'); join+aggregate subqueries run as two chained MapReduce jobs — Stage 1 joins on shop_id, Stage 2 groups by shop_name and computes SUM(weight).</p>
+  <p class="revision-pitfall"><strong>⚠️ Top pitfall:</strong> Omitting the derived-table alias; writing correlated subqueries (not supported by Hive); forgetting that every MapReduce stage writes intermediate output to HDFS (slow for many-stage pipelines).</p>
+  <p class="revision-check"><strong>Self-check:</strong> What two error-free requirements must every Hive FROM-clause subquery satisfy, and how many MapReduce jobs does a join-plus-aggregate subquery produce?</p>
+  <p class="revision-connections"><strong>Connects to:</strong> 8.2, 8.4</p>
+</div>
+<div class="exam-revision-entry">
+  <h3 class="revision-topic">8.4 Distributed Coordination with Apache ZooKeeper</h3>
+  <p class="revision-mustknow"><strong>Must-know:</strong> Quorum Q = floor(n/2) + 1: n=3 gives Q=2 (tolerates 1 failure), n=5 gives Q=3 (tolerates 2 failures); ensembles must be odd-sized; all writes go to the Leader and commit only after a quorum persists them (ZAB); ephemeral ZNodes auto-delete on session loss; Watches push one-time change notifications instead of polling.</p>
+  <p class="revision-formula">\[ Q = \left\lfloor \frac{n}{2} \right\rfloor + 1 \]</p>
+  <p class="revision-pitfall"><strong>⚠️ Top pitfall:</strong> Running an even-sized ensemble (no extra tolerance); assuming both masters can lead (split-brain); storing large payloads in ZNodes; thinking 6 nodes tolerate 3 failures.</p>
+  <p class="revision-check"><strong>Self-check:</strong> For a 5-node ensemble, what is the quorum size and how many simultaneous node failures can it tolerate?</p>
+  <p class="revision-connections"><strong>Connects to:</strong> 8.3, 8.5</p>
+</div>
+<div class="exam-revision-entry">
+  <h3 class="revision-topic">8.5 NoSQL Real-Time Distributed Storage with Apache HBase</h3>
+  <p class="revision-mustknow"><strong>Must-know:</strong> HBase data model is f(RowKey, ColumnFamily, ColumnQualifier, Timestamp) -&gt; CellValue, sorted by Row Key, with dynamic qualifiers, versioned cells and byte[] as the only type; HMaster handles DDL, RegionServers serve data, ZooKeeper coordinates; get requires a Row Key because HBase has no secondary indexes.</p>
+  <p class="revision-formula">\[ f(\text{RowKey}, \text{ColumnFamily}, \text{ColumnQualifier}, \text{Timestamp}) \rightarrow \text{CellValue} \]</p>
+  <p class="revision-pitfall"><strong>⚠️ Top pitfall:</strong> Using HBase for multi-row transactions, column aggregations, or non-key WHERE filters ('sleepless nights'); forgetting there is only the byte[] type; designing a row key that hotspots one RegionServer.</p>
+  <p class="revision-check"><strong>Self-check:</strong> Why must every HBase get operation specify a Row Key, and what are the four coordinates of the HBase data model?</p>
+  <p class="revision-connections"><strong>Connects to:</strong> 8.4, 8.6</p>
+</div>
+<div class="exam-revision-entry">
+  <h3 class="revision-topic">8.6 Exam Guidance Summary</h3>
+  <p class="revision-mustknow"><strong>Must-know:</strong> Quiz 1 stops at Pig (no Hive/ZooKeeper/HBase); this lecture is Quiz 2 material alongside NoSQL and Spark. Assignment 1 (Java MapReduce join + identical Hive/Pig query) due October 15th. No class Sep 12; makeup lecture Sep 15 8 PM; mid-semester exams Sep 23-25, makeups Oct 7-9.</p>
+  <p class="revision-pitfall"><strong>⚠️ Top pitfall:</strong> Assuming this lecture's Hive/ZooKeeper/HBase content is on Quiz 1 — it is excluded and appears on Quiz 2 instead.</p>
+  <p class="revision-check"><strong>Self-check:</strong> Which quiz covers Hive, ZooKeeper, and HBase, and what is the Assignment 1 deadline?</p>
+  <p class="revision-connections"><strong>Connects to:</strong> 8.1, 8.2, 8.3, 8.4, 8.5</p>
+</div>
+<div class="exam-revision-entry">
+  <h3 class="revision-topic">8.7 Key Industry Applications</h3>
+  <p class="revision-mustknow"><strong>Must-know:</strong> Bucketing accelerates warehouse queries over ORC/Parquet data lakes; ZooKeeper underpins HDFS HA failover, YARN RM recovery and service registration; HBase serves single-row-key real-time lookups (Facebook profiles, Amazon cart, Google link indexing, biometric auth).</p>
+  <p class="revision-pitfall"><strong>⚠️ Top pitfall:</strong> Picking HBase for workloads that need joins or aggregation (anti-patterns) instead of the single-row-key real-time workloads it is built for.</p>
+  <p class="revision-check"><strong>Self-check:</strong> Name one real-world application for each of bucketing, ZooKeeper, and HBase.</p>
+  <p class="revision-connections"><strong>Connects to:</strong> 8.1, 8.4, 8.5</p>
+</div>
+    </section>
+  </div>
+</body>
+</html>

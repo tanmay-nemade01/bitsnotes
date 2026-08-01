@@ -124,6 +124,10 @@ class Report:
 # HTML extraction
 # ---------------------------------------------------------------------------
 
+VOID_TAGS = {"meta", "link", "img", "br", "hr", "input", "source", "area", "base", "col", "embed", "param", "track", "wbr"}
+CALLOUT_CLASSES = {"key-concept", "important-note", "example-box", "warning-box", "key-takeaway"}
+
+
 class DocParser(HTMLParser):
     def __init__(self):
         super().__init__(convert_charrefs=True)
@@ -139,7 +143,10 @@ class DocParser(HTMLParser):
         self.has_chapter_title = False
         self.has_metadata_script = False
         self.metadata_json = None
+        self.tag_stack = []
+        self.html_errors = []
         # SEO tracking
+
         self.has_og_title = False
         self.has_og_description = False
         self.has_og_type = False
@@ -236,6 +243,20 @@ class DocParser(HTMLParser):
         if tag in NON_PROSE_TAGS:
             self._suppress_depth += 1
 
+        if tag not in VOID_TAGS:
+            callout_class = None
+            if tag == "div":
+                cls_list = (attrd.get("class") or "").split()
+                callout_class = next((c for c in cls_list if c in CALLOUT_CLASSES), None)
+                if callout_class:
+                    parent_callout = next((item["callout"] for item in reversed(self.tag_stack) if item.get("callout")), None)
+                    if parent_callout:
+                        line_num = self.getpos()[0]
+                        self.html_errors.append(
+                            f"Line {line_num}: Nested callout box detected: '{callout_class}' is inside '{parent_callout}'"
+                        )
+            self.tag_stack.append({"tag": tag, "callout": callout_class, "line": self.getpos()[0]})
+
     BLOCK_TAGS = {
         "p", "h1", "h2", "h3", "h4", "h5", "h6", "li", "td", "th",
         "figcaption", "button", "label", "a", "div", "section", "blockquote",
@@ -243,11 +264,45 @@ class DocParser(HTMLParser):
 
     def handle_endtag(self, tag):
         tag = tag.lower()
+        if tag not in VOID_TAGS:
+            if not self.tag_stack:
+                line_num = self.getpos()[0]
+                self.html_errors.append(f"Line {line_num}: Orphan closing tag </{tag}> with no matching opening tag")
+            else:
+                top = self.tag_stack[-1]
+                if top["tag"] == tag:
+                    self.tag_stack.pop()
+                else:
+                    match_idx = None
+                    for idx in range(len(self.tag_stack) - 1, -1, -1):
+                        if self.tag_stack[idx]["tag"] == tag:
+                            match_idx = idx
+                            break
+                    if match_idx is not None:
+                        unclosed = self.tag_stack[match_idx + 1:]
+                        line_num = self.getpos()[0]
+                        for item in unclosed:
+                            self.html_errors.append(
+                                f"Line {line_num}: Unclosed tag <{item['tag']}> (opened on line {item['line']}) before </{tag}>"
+                            )
+                        self.tag_stack = self.tag_stack[:match_idx]
+                    else:
+                        line_num = self.getpos()[0]
+                        self.html_errors.append(f"Line {line_num}: Orphan closing tag </{tag}> with no matching opening tag")
+
         if tag in NON_PROSE_TAGS and self._suppress_depth > 0:
             self._suppress_depth -= 1
         if tag in self.BLOCK_TAGS and self._prose_chunks \
                 and self._prose_chunks[-1] != "\n":
             self._prose_chunks.append("\n")
+
+    def close(self):
+        super().close()
+        for item in self.tag_stack:
+            self.html_errors.append(
+                f"Unclosed tag <{item['tag']}> (opened on line {item['line']}) at end of file"
+            )
+        self.tag_stack.clear()
 
     def handle_data(self, data):
         if self._suppress_depth == 0:
@@ -258,6 +313,7 @@ class DocParser(HTMLParser):
     @property
     def prose(self):
         return " ".join(self._prose_chunks)
+
 
 
 # ---------------------------------------------------------------------------
@@ -1156,6 +1212,14 @@ def check_html_formatting(raw, report):
         report.passed("HTML formatting consistency", "HTML is pretty-printed with appropriate line breaks and nesting.")
 
 
+def check_html_structure(parser, report):
+    """Verify that HTML tags are properly balanced and callout boxes are not nested."""
+    if parser.html_errors:
+        report.failed("HTML tag balance and callout structure", "\n".join(parser.html_errors))
+    else:
+        report.passed("HTML tag balance and callout structure", "No unclosed tags, nested callouts, or tag imbalances found.")
+
+
 # ---------------------------------------------------------------------------
 # Driver
 # ---------------------------------------------------------------------------
@@ -1172,7 +1236,9 @@ def lint_file(path):
         print(f"[WARN] HTML parser raised {exc!r}; continuing with partial data.")
 
     report = Report()
+    check_html_structure(parser, report)
     check_template_hygiene(raw, report)
+
     check_viewport(parser, report)
     check_metadata(raw, parser, report)
     check_seo(parser, report)

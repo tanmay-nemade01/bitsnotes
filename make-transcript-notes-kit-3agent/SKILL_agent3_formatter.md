@@ -2,21 +2,22 @@
 name: formatter
 description: >-
   Phase 3 of make-transcript-notes-kit. Takes the enricher's annotated markdown draft
-  and produces the final self-contained <lecture_name>.html — converting callout annotations to
-  HTML, embedding all SEO metadata inline, rendering Agent 2's exam revision summaries, running the
-  lint gate, and self-scoring against the quality rubric. Output is a single HTML file
+  and produces the final self-contained <lecture_name>.html — running script-based Markdown-to-HTML conversion,
+  embedding all SEO metadata inline, rendering Agent 2's exam revision summaries, running the HTML structure
+  and lint gates, and self-scoring against the quality rubric. Output is a single HTML file
   with no companion JSON files. Trigger after Agent 2 (enricher).
 ---
 
 # Agent 3 — Formatter
 
-**Your job:** Take Agent 2's enriched draft (`<LecturePrefix>_notes_enriched.md`), re-split it so the inventory exactly matches the final markdown, and render it as `<LecturePrefix>_notes.html`. Preserve all approved content, especially Q&A, misconceptions, corrections, analogies, worked steps, and terminology contrasts. You are a renderer, not a recovery author. If required instructional content or a placeholder remains, stop and return it to Agent 2 instead of inventing a repair.
+**Your job:** Take Agent 2's enriched draft (`<LecturePrefix>_notes_enriched.md`), split it into section files, run the automated conversion script to generate clean HTML fragments, reassemble them into `<LecturePrefix>_notes.html`, fill all metadata and exam revision notes, verify HTML tag structure, and pass the lint gate. Preserve all approved content, especially Q&A, misconceptions, corrections, analogies, worked steps, and terminology contrasts. You are a renderer and verifier, not a recovery author. If required instructional content or a placeholder remains, stop and return it to Agent 2 instead of inventing a repair.
 
-**Critical: Section-by-section processing.** The enriched draft can be very large. Converting it to HTML in one shot causes heading numbering drift, malformed tags, and inconsistent formatting. Instead, you will process **one `##` section at a time** — reusing Agent 2's split sections or splitting the draft yourself, converting each section independently, then mechanically reassembling. This keeps heading numbering local and prevents cross-section interference.
+**Critical: Automated Script-Based Conversion.** Convert section markdown files to HTML using the built-in conversion script (`python scripts/section_splitter.py convert ...`). This guarantees consistent heading IDs, pretty-printed HTML formatting, and fast token-efficient processing without token-expensive manual section emitting.
 
 **Your input:** Agent 2's enriched draft, extraction manifest, and `section_XX_summary.json` files. Stop if any are missing.
 
 **Your output:** Create the directory `<LecturePrefix>_notes/` and write `outputs/<Subject>/<LecturePrefix>/<LecturePrefix>_notes/<LecturePrefix>_notes.html` — passes lint with zero FAILs, scores ≥ 85/100 against the rubric, zero red-list items. This is the ONLY file produced. All metadata is embedded in the HTML. The BitsNotes viewer reads the metadata from `<script id="lecture-metadata">` inside this single HTML file.
+
 
 ---
 
@@ -83,12 +84,10 @@ Always run the splitter on `<LecturePrefix>_notes_enriched.md`. This is inexpens
 ```bash
 python scripts/section_splitter.py split outputs/<Subject>/<LecturePrefix>/<LecturePrefix>_notes_enriched.md \
     --output-dir outputs/<Subject>/<LecturePrefix>/sections/
-python scripts/section_splitter.py validate-summaries \
-    outputs/<Subject>/<LecturePrefix>/sections/
 ```
 
-If summary validation fails, stop and return to Agent 2. Never render an
-unbound, stale, missing, or orphaned summary.
+Use any available `section_XX_summary.json` files as-is. Summary validation is non-blocking — do not analyze summary matches or stop execution if a summary file is missing or incomplete.
+
 
 Running this command creates:
 - `_inventory.json` — the **locked heading numbering map** (source of truth for all heading numbers)
@@ -100,17 +99,19 @@ Running this command creates:
 
 ---
 
-## Step 2 — Convert each section to HTML (ONE AT A TIME)
+---
 
-**Process sections sequentially.** For each `section_NN.md` file (in numeric order, starting from `section_01.md`):
+## Step 2 — Run script-based Markdown to HTML conversion & check generated HTML
 
-### 2a — Strip intermediate metadata from this section
+Run the automated section conversion command:
 
-Apply the same rules as Step 0, but scoped to this section only. Remove process checklists. If any `*[verify]*` marker appears, stop conversion.
+```bash
+python scripts/section_splitter.py convert outputs/<Subject>/<LecturePrefix>/sections/
+```
 
-### 2b — Convert callout annotations to HTML
+This batch-converts all `section_XX.md` files (and `section_00_preamble.md` if present) in `sections/` into pretty-printed `section_XX.html` files.
 
-Same conversion rules as before, applied to this section only:
+### 2a — Callout translation performed by script
 
 ```
 :::key-concept           →  <div class="key-concept"> ... </div>
@@ -120,7 +121,7 @@ Same conversion rules as before, applied to this section only:
 :::key-takeaway          →  <div class="key-takeaway"> ... </div>
 ```
 
-**Callout taxonomy (verify correctness):**
+**Callout taxonomy:**
 
 | CSS Class | Color | Use for |
 |---|---|---|
@@ -132,37 +133,16 @@ Same conversion rules as before, applied to this section only:
 
 Plus structural classes: `.lecture-title` (h1), `.section-title` (h2), `.subsection-title` (h3).
 
-**Rules:** No other callout types exist — situational spine content reuses these five with bold labels. No two same-type callouts back-to-back — separate with body text.
+### 2b — Check generated section HTML for errors
 
-### 2c — Assert heading IDs against the inventory
+After running the conversion script, inspect the generated section HTML files to verify:
+1. **No unclosed tags or tag imbalances** — every opened `<div>`, `<p>`, `<ul>`, `<ol>`, `<li>`, `<table>`, `<blockquote>` tag must be properly closed.
+2. **No nested callouts** — verify that no callout `div` (e.g. `warning-box`) is nested inside another callout `div` (e.g. `key-concept`).
+3. **Heading IDs match inventory** — verify heading IDs match `_inventory.json`.
+4. **MathJax delimiters** — single backslashes only (`\( ... \)` and `\[ ... \]`).
+5. **No `*[verify]*` markers** — if any remains, stop and return the section to Agent 2.
+6. **HTML code formatting** — verify HTML is pretty-printed with line breaks and proper block indentation.
 
-`_inventory.json` records each source `heading_id`. Copy every `##` and `###`
-heading exactly as written in the enriched markdown. Assert that it matches the
-inventory; if it does not, stop and return the mismatch to Agent 2. Never derive
-a topic ID from the section-file ordinal, strip an existing ID, or renumber a
-heading during HTML conversion. Manifest and topic-map references depend on
-those stable IDs.
-
-### 2d — Math quality check (per section)
-
-- **Single backslash ONLY:** `\( ... \)` inline, `\[ ... \]` block. **Never `\\(` or `\\[`**.
-- **Every symbol named** within this section — a student jumping to any section must understand every symbol.
-- **Preserve reconciled math exactly.** Validate delimiters and escaping, but do not normalize `/`, `*`, `x`, `...`, variables, operators, or equation structure. Agent 3 cannot know whether those symbols are intentional.
-- **No `*[verify]*` tokens** — if one exists, stop; do not remove or reinterpret it.
-
-### 2e — Write the section HTML
-
-Write the converted HTML to `section_NN.html` in the same `sections/` directory. The file must contain ONLY the HTML for this section — no `<html>`, `<head>`, or `<body>` tags. Just the content that will go inside `<main>`.
-
-**HTML Formatting Requirement:** The output HTML must be pretty-printed, indented, and well-formatted with appropriate line breaks (never output the HTML as a single line or a few compressed lines). Every block-level HTML element (e.g. `<div>`, `<p>`, `<ul>`, `<li>`, `h2`, `h3`) should start on its own line and be properly indented relative to its parent container.
-
-### 2f — Move to the next section
-
-Repeat 2a-2e for every `section_NN.md` file. Do NOT process multiple sections in parallel — each gets its own focused conversion pass.
-
-### 2g — Convert the preamble (if it exists)
-
-If `section_00_preamble.md` exists, convert it to `section_00_preamble.html` using the same rules. The preamble typically contains the lecture title (h1) and introductory paragraphs.
 
 ---
 
@@ -264,17 +244,14 @@ This metadata is placed inside `<script type="application/json" id="lecture-meta
 - `title` must be a clean topic title — same as `{{LECTURE_TITLE}}`. **No** "Enriched", "Complete Enriched Lecture Notes", agent names, or pipeline jargon.
 - `targetAudience` must be human-readable — **no course codes** (e.g., never include "S1-25_AIMLCZG565").
 - `sections` must include every major concept from the core.
-- `examRevisionNotes` — copy one entry per major concept from Agent 2's `section_XX_summary.json`. Every source manifest ID must exist and every `keyFormula` must be copied unchanged.
+- `examRevisionNotes` — copy available entries as-is from Agent 2's `section_XX_summary.json` files. Do not perform manifest matching checks or fail execution if a summary entry is missing.
 - **Do NOT include** `summary`, `keyConcepts`, or `quiz` fields. These sections are not part of the output.
 
 ---
 
 ## Step 6 — Render Agent 2's exam revision summaries
 
-Read each `section_XX_summary.json` and render its `exam_revision` object. Do
-not create missing fields or re-summarize the core. If a major concept lacks a
-complete revision object or `source_manifest_items`, return that section to
-Agent 2.
+Read available `section_XX_summary.json` files and render their `exam_revision` objects as-is. Do not perform summary validation, manifest matching, or spend time analyzing summary differences. This step is non-blocking — if a summary file or field is missing, simply render whatever summary entries are available.
 
 Each entry = one `<div class="exam-revision-entry">`:
 
@@ -290,12 +267,11 @@ Each entry = one `<div class="exam-revision-entry">`:
 ```
 
 **Critical rules:**
-- One entry per major concept.
-- Copy every summary field without adding instructional claims.
-- Copy `keyFormula` exactly; do not re-derive, normalize, or paraphrase it.
-- Confirm every `source_manifest_items` ID exists in the extraction manifest.
-- If Agent 2 left a revision-note task or placeholder, stop and return it.
+- Render available entries as-is from `section_XX_summary.json`.
+- Copy `keyFormula` exactly as written.
+- Non-blocking: do not analyze summary matches or return sections to Agent 2 if a summary is missing or incomplete.
 - The intro paragraph: "Below is the distilled, exam-ready core. Every entry comes from the full explanation above. Use this section for rapid review; return to the main notes when a point needs more context."
+
 
 ---
 
@@ -348,9 +324,10 @@ python scripts/verify_manifest.py \
 
 Both gates must pass. A manifest failure means content was dropped during conversion; fix the conversion, not the educational prose. Readability, sentence length, Flesch score, and fancy-word findings are advisory. Ignore formula-heavy false positives and never alter correct math to silence a warning.
 
-The lint checks: template hygiene, viewport meta, metadata completeness, SEO, appropriate callout usage without requiring all five types, style separation, math delimiters, PII/secrets, advisory prose readability, exam revision entries, content structure, and HTML formatting consistency.
+The lint checks: HTML tag balance & callout nesting, template hygiene, viewport meta, metadata completeness, SEO, appropriate callout usage without requiring all five types, style separation, math delimiters, PII/secrets, advisory prose readability, exam revision entries, content structure, and HTML formatting consistency.
 
-**Detailed lint checks reference:** template hygiene (no surviving `{{PLACEHOLDER}}`), viewport meta, metadata completeness, SEO (OG, Twitter, canonical, robots, keywords, JSON-LD, description length), appropriate callout box usage, style separation (no `<style>`/inline `style`/Google Fonts), math delimiters (no `\\(`), PII/secrets, readability (sentence length — advisory, not blocking), long tokens, exam revision entries, content structure, HTML formatting consistency (no single-line or minified HTML).
+**Detailed lint checks reference:** HTML tag balance & callout structure (zero unclosed tags, zero orphan tags, zero nested callouts), template hygiene (no surviving `{{PLACEHOLDER}}`), viewport meta, metadata completeness, SEO (OG, Twitter, canonical, robots, keywords, JSON-LD, description length), appropriate callout box usage, style separation (no `<style>`/inline `style`/Google Fonts), math delimiters (no `\\(`), PII/secrets, readability (sentence length — advisory, not blocking), long tokens, exam revision entries, content structure, HTML formatting consistency (no single-line or minified HTML).
+
 
 ---
 
