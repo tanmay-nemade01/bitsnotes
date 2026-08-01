@@ -86,10 +86,11 @@ python clean_vtt.py
 1. Open a **new chat window**.
 2. Pass the Agent 2 output: `<LecturePrefix>_notes_enriched.md`.
 3. Attach the Agent 3 prompt: `SKILL_agent3_formatter.md`.
-4. Run the agent. It will automatically run `lint.py` and fix issues.
+4. Run the agent. It will automatically run script-based Markdown-to-HTML section conversion (`python scripts/section_splitter.py convert ...`), inspect HTML for structural errors (unclosed tags, nested callouts), fill metadata & exam revision notes, and run `lint.py`.
 
 **Input:** Enriched markdown.
 **Output:** `<LecturePrefix>_notes.html` — final HTML file (800+ lines).
+
 
 > **Note:** The HTML file has no styling and appears as plain text. This is intentional — the agent tends to over-focus on styling at the expense of content quality. If the agent gets stuck on sentence length or lint issues, stop it manually.
 

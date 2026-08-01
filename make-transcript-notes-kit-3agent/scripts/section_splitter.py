@@ -31,6 +31,8 @@ import os
 import re
 import sys
 
+from convert_md_to_html import convert_section_files
+
 # Force UTF-8 on Windows
 if sys.platform.startswith("win"):
     import io
@@ -366,6 +368,10 @@ def main():
         help="Delete existing summaries before Agent 2 regenerates them.",
     )
 
+    # convert
+    cp = sub.add_parser("convert", help="Convert markdown section files to HTML")
+    cp.add_argument("section_dir", help="Directory containing section files")
+
     # assemble
     ap = sub.add_parser("assemble", help="Reassemble per-section files into a single output file")
     ap.add_argument("section_dir", help="Directory containing section files")
@@ -394,6 +400,8 @@ def main():
             args.output_dir,
             invalidate_summaries=args.invalidate_summaries,
         )
+    elif args.command == "convert":
+        convert_section_files(args.section_dir)
     elif args.command == "assemble":
         try:
             assemble_files(
@@ -419,6 +427,7 @@ def main():
         except (FileNotFoundError, ValueError, json.JSONDecodeError) as exc:
             print(f"ERROR: {exc}", file=sys.stderr)
             sys.exit(1)
+
 
 
 if __name__ == "__main__":

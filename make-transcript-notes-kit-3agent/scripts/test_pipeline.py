@@ -471,6 +471,42 @@ The reward error question appears later.
         html_lint.check_math("<p>\\[y_{&lt;t}\\]</p>", report5)
         self.assertFalse(report5.has_fail)
 
+    def test_convert_md_to_html_formatting(self):
+        from convert_md_to_html import convert_markdown_to_html
+        md = ":::key-concept\n## 5.1 Concept Title\nMath: \\( y = x \\)\n- item 1\n:::\n"
+        html = convert_markdown_to_html(md)
+        self.assertIn('<div class="key-concept">', html)
+        self.assertIn('<h2 id="5.1-concept-title">5.1 Concept Title</h2>', html)
+        self.assertIn('<p>Math: \\( y = x \\)</p>', html)
+        self.assertIn('<ul>', html)
+        self.assertIn('<li>item 1</li>', html)
+
+    def test_html_structure_lint_checks(self):
+        # Nested callout box test
+        p1 = html_lint.DocParser()
+        p1.feed('<div class="key-concept"><div class="warning-box">Nested</div></div>')
+        p1.close()
+        report1 = html_lint.Report()
+        html_lint.check_html_structure(p1, report1)
+        self.assertTrue(report1.has_fail)
+
+        # Unclosed tag test
+        p2 = html_lint.DocParser()
+        p2.feed('<div class="key-concept"><p>Text</div>')
+        p2.close()
+        report2 = html_lint.Report()
+        html_lint.check_html_structure(p2, report2)
+        self.assertTrue(report2.has_fail)
+
+        # Balanced HTML test
+        p3 = html_lint.DocParser()
+        p3.feed('<div class="key-concept"><p>Text</p></div>')
+        p3.close()
+        report3 = html_lint.Report()
+        html_lint.check_html_structure(p3, report3)
+        self.assertFalse(report3.has_fail)
+
 
 if __name__ == "__main__":
     unittest.main()
+
