@@ -1,0 +1,776 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+  <!-- Primary SEO -->
+  <title>Storage on the Cloud: S3, EFS, EBS, and the Dynamo Legacy | Big Data Systems | BitsNotes</title>
+  <meta name="description" content="Big Data Systems notes on cloud storage: the block, file, and object interfaces, Amazon S3, EFS, EBS, the Dynamo paper, and DynamoDB.">
+  <meta name="keywords" content="Big Data Systems, cloud storage, block storage, file storage, object storage, Amazon S3, Amazon EFS, Amazon EBS, Dynamo paper, DynamoDB, consistent hashing, eventual consistency, CAP theorem">
+  <meta name="author" content="BitsNotes">
+  <meta name="robots" content="index, follow">
+  <link rel="canonical" href="https://bitsnotes.com/view/big-data-systems/storage-on-the-cloud-s3-efs-ebs-and-the-dynamo-legacy">
+
+  <!-- Open Graph / Facebook -->
+  <meta property="og:type" content="article">
+  <meta property="og:title" content="Storage on the Cloud: S3, EFS, EBS, and the Dynamo Legacy | Big Data Systems">
+  <meta property="og:description" content="Big Data Systems notes on cloud storage: the block, file, and object interfaces, Amazon S3, EFS, EBS, the Dynamo paper, and DynamoDB.">
+  <meta property="og:url" content="https://bitsnotes.com/view/big-data-systems/storage-on-the-cloud-s3-efs-ebs-and-the-dynamo-legacy">
+  <meta property="og:image" content="https://bitsnotes.com/og-default.png">
+  <meta property="og:image:width" content="1200">
+  <meta property="og:image:height" content="630">
+  <meta property="og:site_name" content="BitsNotes">
+
+  <!-- Twitter Card -->
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="Storage on the Cloud: S3, EFS, EBS, and the Dynamo Legacy | Big Data Systems">
+  <meta name="twitter:description" content="Big Data Systems notes on cloud storage: the block, file, and object interfaces, Amazon S3, EFS, EBS, the Dynamo paper, and DynamoDB.">
+  <meta name="twitter:image" content="https://bitsnotes.com/og-default.png">
+  <meta name="twitter:site" content="@BitsNotes">
+
+  <!-- Stylesheet -->
+  <link rel="stylesheet" href="/lecture-notes.css">
+
+  <!-- Structured Data: JSON-LD -->
+  <script type="application/ld+json">
+{"@context":"https://schema.org","@type":"Article","headline":"Storage on the Cloud: S3, EFS, EBS, and the Dynamo Legacy","description":"Big Data Systems notes on cloud storage: the block, file, and object interfaces, Amazon S3, EFS, EBS, the Dynamo paper, and DynamoDB.","datePublished":"2026-08-03","inLanguage":"en","about":["Block storage","File storage","Object storage","Amazon S3","Amazon EFS","Amazon EBS","Dynamo paper","Consistent hashing","DynamoDB"],"publisher":{"@type":"Organization","name":"BitsNotes"}}
+</script>
+
+  <!-- Lecture Metadata (for the BitsNotes platform viewer) -->
+  <!-- IMPORTANT: This is the ONLY metadata source. No companion .json file
+       is created. The viewer reads everything from this embedded script.
+       Required fields: title, subject, gradeLevel, datePublished,
+       targetAudience, sections (array), examRevisionNotes (array).
+       Optional fields: prerequisites (array of {subject, lecture, topics}).
+       NOT included (removed): summary, keyConcepts, quiz. -->
+  <script type="application/json" id="lecture-metadata">
+{"title":"Storage on the Cloud: S3, EFS, EBS, and the Dynamo Legacy","subject":"Big Data Systems","gradeLevel":"postgraduate","datePublished":"2026-08-03","targetAudience":"Postgraduate students in Big Data Systems","sections":[{"title":"6.1 Storage on the Cloud: The Three Interfaces","description":"The three storage interfaces (block, file, object), the AWS service map, and what each storage kind means."},{"title":"6.2 Amazon S3: Object Storage","description":"Objects and buckets, keys and URLs, S3 as an AP design, eventual consistency in action, architecture and durability, storage tiering, Object Lambda, and use cases."},{"title":"6.3 Amazon EFS: File Storage","description":"The NFS file model, storage classes and lifecycle policies, and mount-target architecture across availability zones."},{"title":"6.4 Amazon EBS: Block Storage","description":"The volume model, single-instance access, snapshots, and the EBS-versus-EFS design comparison."},{"title":"6.5 The Dynamo Paper: What Large-Scale Storage Was Designed For","description":"The application study, key findings, design considerations, and the problem-to-technique mapping of the 2007 Dynamo paper."},{"title":"6.6 Consistent Hashing: Partitioning and Replication","description":"The circular address space, placement and replication rules, incremental scalability, linear lookup, and finger tables."},{"title":"6.7 Versioning, Failure Handling, and Replication Tuning","description":"Vector clocks, hinted handoff and sloppy quorum, Merkle trees, the N/R/W quorum knobs, and the 99.9th percentile SLA problem."},{"title":"6.8 Amazon DynamoDB","description":"Tables, items, and attributes; primary keys and secondary indexes; streams and Lambda triggers; consistency levels; and capacity modes and billing."},{"title":"Exam Guidance Summary","description":"The exam-relevant core: finger tables returning next session, CAP classification, N/R/W tuning, and likely question families."},{"title":"Key Industry Applications","description":"How S3, Glacier, Object Lambda, EFS, EBS, DynamoDB, and consistent hashing are used in industry."}],"examRevisionNotes":[{"topic":"Storage on the Cloud: The Three Interfaces","mustKnow":"The three storage interfaces — block (unique blocks), file (hierarchical tree), object (key + metadata) — and which AWS service implements each: EBS (block), EFS (file), S3/Glacier (object).","keyFormula":"","commonPitfall":"Confusing the interface with the service, or assuming object storage is hierarchical: the namespace is flat even when folder-looking prefixes exist.","quickCheck":"A photo stored as one self-contained unit with metadata — which interface is this?","connections":["6.2","6.3","6.4"]},{"topic":"Amazon S3: Object Storage","mustKnow":"S3 is an AP design (availability first, consistency sacrificed): partition tolerance is a must, so CAP forces choosing between C and A, and S3 chooses A. Default replication factor is three; reduced redundancy lowers cost at the price of some availability.","keyFormula":"\\[\\texttt{bucketname.s3.amazonaws.com/objectname}\\ \\text{or}\\ \\texttt{s3.\\langle \\text{region} \\rangle.amazonaws.com/bucketname/objectname}\\]","commonPitfall":"Treating eventual-consistency symptoms (invisible, stale, or resurrected objects) as bugs; they are the price of the availability-first design.","quickCheck":"A reader receives 'object does not exist' right after a write. Which design choice causes this, and how does it resolve?","connections":["6.1","6.5","6.7"]},{"topic":"Amazon EFS: File Storage","mustKnow":"EFS is file storage over NFS, attachable to a VPC with little application change. Standard class replicates across 3+ AZs; One Zone replicates within one AZ at lower cost; each class has a Standard and an Infrequent Access variant, and lifecycle policies move data by age.","keyFormula":"","commonPitfall":"Reading EFS data from an instance in another availability zone: extra latency plus paid cross-AZ data transfer.","quickCheck":"Which EFS class replicates within a single availability zone, and what does it save?","connections":["6.1","6.4"]},{"topic":"Amazon EBS: Block Storage","mustKnow":"EBS = block storage: fastest interface, one instance at a time, durable within an AZ, moved across AZs only via snapshots; the right choice for I/O-intensive single-machine workloads (relational databases, OLTP).","keyFormula":"","commonPitfall":"Attempting to share one EBS volume across instances — it is single-owner by design; shared access needs EFS (file) or S3 (object).","quickCheck":"A database server needs sub-millisecond predictable disk for one EC2 instance. Which storage interface and service?","connections":["6.1","6.3"]},{"topic":"The Dynamo Paper: What Large-Scale Storage Was Designed For","mustKnow":"The Dynamo design: AP systems (partition tolerance is a must, availability kept), key-based retrievals, 99.9th percentile latency SLA, and the problem-to-technique mapping (consistent hashing, vector clocks, sloppy quorum + hinted handoff, Merkle trees, gossip membership).","keyFormula":"","commonPitfall":"Reading the 99.9th percentile as an average: the percentile budgets the tail — at most 0.1% of requests may exceed the SLA bound.","quickCheck":"A product added to a cart is missing after refresh, then appears. Which design choice explains this, and which CAP letters?","connections":["6.6","6.7","6.8"]},{"topic":"Consistent Hashing: Partitioning and Replication","mustKnow":"Placement rule: first node clockwise from the hash; replicas on the next two clockwise nodes; ring wraps. Finger table: node n keeps entries n+2^i for i=0..m-1 (7 entries for 7 bits); lookup jumps to the farthest finger before the target and wraps modulo 2^m.","keyFormula":"\\[n + 2^0,\\ n + 2^1,\\ \\dots,\\ n + 2^{m-1};\\quad (99+32) \\bmod 128 = 3\\]","commonPitfall":"Choosing the visually closest node instead of the first node clockwise; treating K14 as a node; forgetting the modulo wrap when finger values exceed 2^m - 1.","quickCheck":"On the 32-ring with nodes at N5, N10, N17, N20, N25: hash value 6 stores where, and hash 7?","connections":["6.5","6.7"]},{"topic":"Versioning, Failure Handling, and Replication Tuning","mustKnow":"N/R/W knobs: W=1 fast but weak, W=N durable; R=1 fast, R=N consistent; overlap condition R + W > N guarantees reads see acknowledged writes; N=3 default is read two, write two (majority). Temporary failure = hinted handoff + sloppy quorum; permanent failure = Merkle trees; writes are ordered by vector clocks, not wall time.","keyFormula":"\\[R + W > N;\\quad N=3 \\Rightarrow R=2, W=2\\]","commonPitfall":"Trusting machine timestamps to order writes (vector clocks exist because wall clocks drift); confusing hinted handoff's stand-in node with the true owner; ignoring that vector clocks grow over time.","quickCheck":"With N = 3, why does read-two / write-two guarantee a read sees the latest acknowledged write?","connections":["6.5","6.8","6.6"]},{"topic":"Amazon DynamoDB","mustKnow":"DynamoDB unit economics: 1 RCU = one strong 4 KB read = two eventual 4 KB reads; 1 WCU = 1 KB write; transactional operations double the units. Components: tables/items/attributes, nesting up to 32 levels, composite primary keys, secondary indexes maintained automatically, streams + Lambda triggers, eventual (~1 s) vs strong consistency, on-demand vs provisioned capacity.","keyFormula":"\\[1\\ \\text{RCU} = 1\\ \\text{strong 4 KB read} = 2\\ \\text{eventual 4 KB reads};\\quad 1\\ \\text{WCU} = 1\\ \\text{KB write}\\]","commonPitfall":"Forgetting that strong reads cost double read units, or that tables in different regions are separate tables; treating the composite key as non-unique.","quickCheck":"A 4 KB item read eventually consumes how much of a read request unit, and why?","connections":["6.5","6.7"]},{"topic":"Exam Guidance Summary","mustKnow":"Finger tables return with a full worked example next session: node n keeps entries n + 2^i for i = 0..m-1 and searches skip nodes; CAP classification is assumed knowledge.","keyFormula":"\\[n + 2^i,\\ i = 0 \\ldots m-1;\\quad R + W > N\\]","commonPitfall":"Answering CAP questions without naming the sacrificed letter and the observable symptom (e.g., stale reads).","quickCheck":"Which two CAP properties does S3 choose, and what does it sacrifice?","connections":["6.6","6.2","6.7","6.8"]},{"topic":"Key Industry Applications","mustKnow":"Match the storage service to the industry job: S3 = buckets/data lakes/tiering; Glacier = archival; EFS = shared file tree; EBS = database disk; DynamoDB = managed key-value with streams; consistent hashing = partitioning at scale.","keyFormula":"","commonPitfall":"Assigning the wrong interface to the wrong job — e.g., sharing one EBS volume across machines, or storing rarely-read files on the fastest tier.","quickCheck":"A compliance team needs decade-old statements kept cheaply with minutes-to-hours retrieval. Which service and tier?","connections":["6.2","6.3","6.4","6.6","6.8"]}]}
+</script>
+</head>
+<body>
+  <div class="container">
+    <!-- ============================================================
+    HERO HEADER
+    ============================================================ -->
+    <header class="hero-header">
+      <span class="subject-badge">Big Data Systems</span>
+      <h1 class="lecture-title">Storage on the Cloud: S3, EFS, EBS, and the Dynamo Legacy</h1>
+      <div class="meta-info">
+        <div class="meta-item"><strong>Published:</strong> 2026-08-03</div>
+        <div class="meta-item"><strong>Level:</strong> postgraduate</div>
+        <div class="meta-item"><strong>Audience:</strong> Postgraduate students in Big Data Systems</div>
+      </div>
+    </header>
+
+    <!-- ============================================================
+    PREREQUISITE KNOWLEDGE
+    Optional section listing concepts from previous lectures that this
+    lecture builds on. Populated by Agent 3 from topic_mappings/*.yaml.
+    If no prerequisites exist, this section is omitted entirely.
+    ============================================================ -->
+      <section class="prerequisite-section">
+    <h2>Prerequisite Knowledge</h2>
+    <p class="prerequisite-intro">This lecture builds on the following
+    concepts from earlier lectures. If any feel unfamiliar, review the
+    linked notes before proceeding.</p>
+
+    <div class="prerequisite-entry">
+      <h3>Previously Covered in This Subject</h3>
+      <ul>
+        <li><strong>The 3-4-5 rule of cloud computing</strong> &mdash; covered in Lecture 5 (The 3-4-5 Rule of Cloud Computing)</li>
+        <li><strong>The CAP theorem</strong> &mdash; covered in Lecture 1 (The CAP Theorem)</li>
+        <li><strong>Eventual consistency and the BASE model</strong> &mdash; covered in Lecture 2 (The BASE Model)</li>
+        <li><strong>Read and write concerns in MongoDB</strong> &mdash; covered in Lecture 2 (MongoDB: Configuring Consistency)</li>
+        <li><strong>AWS regions and availability zones</strong> &mdash; covered in Lecture 5 (AWS Regions and Availability Zones)</li>
+        <li><strong>Compute, storage, and networking building blocks</strong> &mdash; covered in Lecture 5 (Compute, Storage, and Networking Building Blocks)</li>
+        <li><strong>Function as a Service and triggers</strong> &mdash; covered in Lecture 5 (Serverless Computing and Function as a Service)</li>
+        <li><strong>Partitioners: hashing data across nodes</strong> &mdash; covered in Lecture 4 (Cassandra: The Column-Oriented, High-Availability Database)</li>
+      </ul>
+    </div>
+  </section>
+
+    <!-- ============================================================
+    MAIN LECTURE-FAITHFUL CONTENT
+    Page title = one h1.lecture-title
+    Each section = one h2.section-title
+    Each subsection = one h3.subsection-title
+    Callout boxes: .key-concept (blue), .important-note (violet),
+      .example-box (green), .warning-box (red), .key-takeaway (amber)
+    Display math: auto-scrolls via mjx-container CSS; .eqbox wrapper optional
+    ============================================================ -->
+    <main>
+  <h2 id="6.1-storage-on-the-cloud-the-three-interfaces">6.1 Storage on the Cloud: The Three Interfaces</h2>
+  <div class="important-note">
+    <p><strong>Hook:</strong> You can rent a computer on the cloud and rent a network on the cloud — but where does the actual data live? Every byte of big data has to sit somewhere, and that "somewhere" is what this session is about. The answer turns out to be three different kinds of storage, separated not by the hardware but by the <em>interface</em> they present to you.</p>
+  </div>
+  <h3 id="6.1.1-recap-cloud-foundations">6.1.1 Recap: Cloud Foundations</h3>
+  <p>The previous module built the foundation for this one. We looked at what the cloud is — starting with the "three-four-five" model of cloud computing. The phrase is shorthand for the standard cloud picture: <strong>three service models</strong> (infrastructure as a service, platform as a service, and software as a service), <strong>four deployment models</strong> (public, private, hybrid, and community), and <strong>five essential characteristics</strong> (on-demand self-service, broad network access, resource pooling, rapid elasticity, and measured service — the five properties that define a true cloud offering). We asked why organizations and businesses are moving towards the cloud, and we saw the four different kinds of cloud: public, private, hybrid, and community. We went through the benefits of using the cloud, and we covered the first three kinds of services that are offered: infrastructure as a service, platform as a service, and software as a service.</p>
+  <p>We then talked about what kind of infrastructure you can rent: <strong>compute resources</strong> (virtual machines that do the work), a <strong>network</strong> (important because a lot of data transfer happens in cloud systems), and <strong>storage</strong> (where the data rests). The storage part is where we stopped — we were about to discuss it but ran out of time, so we continue with storage on the cloud today.</p>
+  <div class="warning-box">
+    <p><strong>Scope:</strong> The three-four-five model describes a <em>cloud platform</em>, not a specific vendor's product. The same service-model names appear in AWS, Azure, and Google Cloud, but each vendor's concrete offering (for example, what exactly counts as "platform as a service") differs. What stays fixed across vendors is the vocabulary: if you understand the three interfaces of storage, you can read any vendor's storage page.</p>
+  </div>
+  <p>This matters because storage is where the big data actually lives. The compute pieces, the network pieces, and now the storage pieces together form the rentable infrastructure of the cloud. A cloud application is really a loop: compute pulls data over the network, processes it, and writes results back to storage — so storage quality and storage choice sit at the heart of every big data system.</p>
+  <h3 id="6.1.2-block-file-and-object-the-three-storage-interfaces">6.1.2 Block, File, and Object: The Three Storage Interfaces</h3>
+  <p>AWS offers three different kinds of storage, and the natural way to separate them is by the <em>interface</em> they present. The storage could be a <strong>block interface</strong>, a <strong>file interface</strong>, or an <strong>object interface</strong>. An object interface is an interface along with the metadata — the object carries descriptive data about itself, not just the raw content. In other words, the three interfaces answer the question "how do I ask for my data back?" differently: by raw disk address, by file path, or by key with attached description.</p>
+  <p>On the AWS map, each interface maps to real services:</p>
+  <ul>
+    <li>Under <strong>block</strong>: Amazon Elastic Block Store (EBS) and Amazon EC2 instance storage.</li>
+    <li>Under <strong>file</strong>: Amazon Elastic File System (EFS).</li>
+    <li>Under <strong>object</strong>: S3 buckets and Amazon Glacier.</li>
+  </ul>
+  <p>Under the covers there are also certain <em>data transfer</em> technologies that move data in and out of these storage systems. The transfer can happen from the cloud service providers themselves (Amazon / AWS) or from third-party connections. Named examples offered: <strong>AWS Storage Gateway</strong> (bridges on-premises storage with AWS), <strong>AWS Direct Connect</strong> (a dedicated private network link), and a third service whose name was garbled in the source — almost certainly <strong>AWS DataSync</strong> or <strong>AWS File Gateway</strong>, both members of the same data-transfer family. These exist to do fast, reliable data transfer between storages, because pushing petabytes over a general internet connection is neither fast nor dependable.</p>
+  <p>We are not going to cover each and everything on that map — the diagram simply shows what storage on the cloud is. The agenda for this session is: <strong>object storage</strong> (Amazon S3, the Simple Storage Service), then <strong>file storage</strong> (Elastic File System), then <strong>block storage</strong> (Elastic Block Store), and finally <strong>DynamoDB</strong>. In between, before the DynamoDB model, we will also look briefly at the <strong>Dynamo paper</strong>, a paper in the public domain that describes how these storage technologies emerged. The session referred to it as "written by Google," but the paper — <em>Dynamo: Amazon's Highly Available Key-value Store</em>, by DeCandia and colleagues at <strong>Amazon</strong>, published in 2007 — was written by Amazon's engineers; the two tech giants both built similar ideas at the same time, and it is easy to mix them up. The paper is available to read; we will cover the data mentioned in it in brief, not in very detail. It is considered to be the underlying paper for the storage technologies that Amazon developed.</p>
+  <h3 id="6.1.3-what-each-storage-kind-means">6.1.3 What Each Storage Kind Means</h3>
+  <p>Three quick definitions that anchor everything that follows:</p>
+  <ul>
+    <li><strong>Object storage</strong> is a system that divides the data into separate self-contained units, and stores those units in a flat environment — there is no kind of hierarchy among the objects. Think of a flat namespace where every object is addressable directly, rather than living in a folder tree. Each object bundles the content together with its own metadata, so it carries its own description everywhere it goes.</li>
+    <li><strong>File storage</strong> organizes data into single files and follows a hierarchical structure: folders, files, directory structures. It is the model you know from ordinary file systems, but offered as a network service — a directory tree you can mount from many machines.</li>
+    <li><strong>Block storage</strong> splits the data into fixed blocks and stores those blocks separately, each with unique identifiers. The blocks are addressable uniquely. It is a good option when you want to do backup and recovery of your data, because you deal with the raw blocks directly.</li>
+  </ul>
+  <div class="key-concept">
+    <p><strong>The mental model:</strong> Block storage is like renting a bare plot of land divided into fixed-size plots — you get addresses, and you build whatever you want on them. File storage is like a library with shelves, folders, and labeled documents — you navigate a tree of names. Object storage is like a warehouse of sealed boxes, each with a label describing what is inside — you do not open the box to know what it contains, and you do not care where on the shelf it sits, because you find it by its label.</p>
+  </div>
+  <div class="example-box">
+    <p><strong>Worked mini-example — one photo, three interfaces.</strong> A single photograph, "selfie.jpg," can be stored all three ways. As a <strong>block</strong> store: the photo's bytes are chopped into fixed 4 KB chunks; chunk 0, chunk 1, chunk 2, ... are written to fixed positions, and a file system keeps a map of which chunk belongs to which file. As a <strong>file</strong> store: the photo lives at a path such as <code>/home/alice/photos/selfie.jpg</code>, inside the familiar folder tree. As an <strong>object</strong> store: the photo is one object addressed by a key such as <code>photos/selfie.jpg</code>, and it travels with metadata — capture date, camera model, size, owner, access permissions. Same photo, three different answers to "how do I retrieve it?" <strong>Final answer:</strong> block answers with addresses, file answers with a path, object answers with a key plus description.</p>
+  </div>
+  <div class="warning-box">
+    <p><strong>Pitfalls:</strong></p>
+    <ul>
+      <li>Confusing the interface with the service. "Object storage" is the idea; S3 is one company's implementation of it. The exam tests the idea, and the services illustrate it.</li>
+      <li>Assuming object storage has no organization at all. S3 does allow folders <em>inside</em> a bucket for human convenience — the flat namespace is the addressing model, not a ban on folder-looking prefixes.</li>
+      <li>Assuming "fastest" storage is always best. Block storage is fastest to the machine that owns it, but it is single-owner and hard to share; shared access and sharing flexibility are where file and object storage win.</li>
+    </ul>
+  </div>
+  <p><strong>Real-world:</strong> These three interfaces are the vocabulary of every cloud provider, not just AWS — when you hear about "object storage" or "block storage" from any vendor, these are the same ideas. Object storage powers backup archives, media repositories, and data lakes; file storage powers shared application content; block storage powers the disks behind virtual machines and databases. Choosing storage is the first architectural decision of nearly every cloud application, because it decides how your data can be reached, shared, and charged for.</p>
+  <div class="key-takeaway">
+    <p><strong>Recap + bridge:</strong> Cloud storage comes in exactly three interfaces — block (addresses), file (paths), object (keys + metadata) — and every cloud vendor's storage menu is a variation on these three. With the vocabulary in place, the session now turns to the most famous object store of all: Amazon S3.</p>
+  </div>
+
+  <h2 id="6.2-amazon-s3-object-storage">6.2 Amazon S3: Object Storage</h2>
+  <div class="important-note">
+    <p><strong>Hook:</strong> What would happen to the internet if every photo you uploaded had to be stored inside a single machine's folder tree? The biggest object store in the world answers with a flat namespace and a very simple idea: you give each item a key, and the system takes care of where the bytes actually rest. That service is S3.</p>
+  </div>
+  <h3 id="6.2.1-objects-and-buckets">6.2.1 Objects and Buckets</h3>
+  <p>S3 is object storage, which means it stores <em>objects</em> — files with a lot of metadata associated. <em>Metadata</em> is data about the file: information useful for reading or processing the data that is stored in the file. That is the defining difference from raw file storage — the object is shipped together with its description. Metadata covers things like the object's size, its creation date, its content type, its owner, and the permissions on it. A plain file system also keeps a little of this information, but object storage treats the description as a first-class part of the stored unit.</p>
+  <p>The core organizing unit is the <strong>bucket</strong>. A bucket is nothing but a container for certain objects. If you are familiar with AWS, you know that typing "S3" in the services search bar takes you there: you create S3 buckets, and inside those buckets you store your objects. The scale is worth noting: an S3 account can have hundreds of buckets, and a bucket can have hundreds of objects. Inside a bucket you can also create folders to organize your objects — so S3 gives you a light hierarchy (folders) even though the object layer itself is flat.</p>
+  <p>Objects come in any size. You can store a very small object that occupies one byte of storage, and you can also store an object that occupies 5 TB of storage — for example a very large video file, a movie, a very high-definition movie that occupies a lot of storage. Both extremes live in the same bucket model. One byte and 5,000,000,000,000 bytes sit side by side, addressed by the same mechanism.</p>
+  <div class="key-concept">
+    <p><strong>The S3 model, formalized:</strong></p>
+    <ul>
+      <li><em>Object</em> — the stored unit: content bytes plus metadata (size, dates, type, owner, permissions).</li>
+      <li><em>Bucket</em> — a container of objects; the top level of the S3 namespace; bucket names are globally unique across all accounts.</li>
+      <li><em>Key</em> — the developer-defined name of an object inside a bucket (for example <code>photos/wedding/2026.jpg</code>).</li>
+      <li><em>URL</em> — the web address built from the bucket name plus the key, through which the object is accessed.</li>
+      <li><em>Versioning</em> — S3 keeps old versions of an object when overwritten, so a mistaken overwrite can be rolled back.</li>
+      <li><em>Access control</em> — permissions decide who may read or write; access can be granted inside or outside AWS.</li>
+    </ul>
+  </div>
+  <p>Objects are <strong>uniquely addressable</strong>: they are uniquely identified by a developer-defined <em>key</em> and a <em>URL</em>. A developer can identify an object by associating a key and a URL with it. S3 also has an access control system, so anybody — even from within AWS or outside of AWS — can access these objects, subject to the permissions configured. Further, S3 supports <strong>versioning</strong>, and it offers <strong>eventual consistency</strong> across multiple reads and writes.</p>
+  <p>Eventual consistency is a term we discussed earlier. It does not force strict consistency: strict consistency would require updating all the replicas at the same time when a write happens. With eventual consistency we let the write happen, and then the data may not be available everywhere for a while — we may be reading stale data for a certain time — but eventually the system will be consistent, and we will have the consistent data after some time. That caveat aside, this is a deliberate design choice: S3 data, like all distributed-systems data, is partitioned and replicated — partitioning and replication are simply a part of dealing with distributed systems.</p>
+  <h3 id="6.2.2-addressing-keys-and-urls">6.2.2 Addressing: Keys and URLs</h3>
+  <p>Every bucket gets a URL for access. The first form given is:</p>
+  <p>\[ \texttt{bucketname.s3.amazonaws.com/objectname} \]</p>
+  <p>Here the bucket name appears first, then the S3 domain, then the object key — this is the classic (global) endpoint style. The second form, garbled in the source, is the regional endpoint style, which routes through the bucket's home region:</p>
+  <p>\[ \texttt{s3.}\langle \text{region} \rangle\texttt{.amazonaws.com/bucketname/objectname} \]</p>
+  <p>For example, with a bucket in the <code>us-east-1</code> region, the address becomes <code>s3.us-east-1.amazonaws.com/yourbucket/yourfile.txt</code>. The two forms are different spellings of the same idea: a <em>bucket name</em> (unique) plus an <em>object key</em> (unique within the bucket) produces an address that is unique in the whole world.</p>
+  <p>Bucket names are unique across everything: whenever you create a bucket, AWS asks for a unique bucket name — no two accounts can hold the same bucket name. Within the bucket, the objects are the things you address: you access the bucket, then the object inside it.</p>
+  <h3 id="6.2.3-s3-s-consistency-model-an-ap-design">6.2.3 S3's Consistency Model: An AP Design</h3>
+  <p>To place S3 in the right spot of the CAP picture, recall the CAP theorem from before the mid-semester discussion: C stands for consistency, A for availability, and P for partition tolerance. When we deal with distributed systems that are geographically apart, <strong>partition tolerance is a must</strong> — partitions are bound to happen, so we design for them. Out of the remaining two we can choose one, because CAP says we cannot achieve all three in a distributed system; we achieve two, not all three.</p>
+  <p>S3 follows an <strong>AP design</strong>: the system is highly available, meaning it will sacrifice consistency. It offers availability and compromises consistency. Concretely: when a user uploads an object into an S3 bucket, the object is replicated, but readers may access an inconsistent replica, because the system wants availability. The write has happened at one place; it may not yet have been replicated to all the replicas. If we read from a replica where the write has not reached, we may read a stale copy of the data. The replicas will become consistent eventually.</p>
+  <p>There are also various <strong>cost options</strong> that S3 provides. By default, S3 follows a replication factor of three — three copies — for the purposes of fault tolerance and durability. But you always have an option for <strong>reduced redundancy at a lower cost</strong>: you can configure "I do not want to maintain many copies; I want to reduce this redundancy as long as it is saving my cost." The trade is honest: if you reduce cost by sacrificing redundancy, you also probably sacrifice a little of the availability as well. That reduced-redundancy storage option is available with S3 buckets.</p>
+  <div class="key-takeaway">
+    <p><strong>Exam note:</strong> CAP reasoning is assumed knowledge from the earlier modules. The exam may ask you to classify a service: partition tolerance is non-negotiable in a geographically distributed system, and S3's availability-first behavior (accepting stale reads) is exactly the AP choice. Know the triangle — C, A, P — and be ready to justify "why not all three."</p>
+  </div>
+  <h3 id="6.2.4-eventual-consistency-in-action">6.2.4 Eventual Consistency in Action</h3>
+  <p>Because S3 is eventually consistent, certain behaviors can show up for a small period of time. These are the four behaviors listed:</p>
+  <ol>
+    <li><strong>An uploaded object may be invisible to a reader.</strong> A write has happened, but it may not have been replicated to the replica we are reading from; at that moment the reader can get "the object does not exist". After some time, once the system becomes eventually consistent, the copy appears.</li>
+    <li><strong>An object may not appear in the listing of a bucket immediately.</strong> The bucket listing itself can lag the write.</li>
+    <li><strong>Old data may be returned</strong> if a write has not propagated to the replica being read.</li>
+    <li><strong>A deleted object may be seen in the listing for some time.</strong> The deletion has not yet synced everywhere.</li>
+  </ol>
+  <p>All of these resolve once the systems sync the data. If an operation has happened on certain nodes, this kind of lag can occur; after the sync you will not observe it anymore. The point to internalize: these are features of the availability-first design, not bugs — you get immediate, always-working writes and reads, and you accept brief windows of staleness.</p>
+  <div class="warning-box">
+    <p><strong>The four symptoms as a feature, not a bug:</strong> in a small window after any operation, a reader may see <em>stale</em> (old) data, find an object <em>missing</em> (just-uploaded objects invisible), or see <em>resurrected</em> objects (deleted ones still listed). All three vanish once replication catches up. If your application cannot tolerate even a second of this, you must read with stronger consistency settings — but then you pay with latency or availability. That is the trade the AP design buys.</p>
+  </div>
+  <h3 id="6.2.5-s3-architecture-and-durability">6.2.5 S3 Architecture and Durability</h3>
+  <p>The high-level architecture of S3 is built around regions and availability zones. The cloud has several regions, and within a region there are availability zones (AZs). The numbers given: 20+ regions, 60+ availability zones, and each availability zone can have up to 8 data centers. Data can be stored in <strong>at least three physically separated availability zones within a region</strong>, and those availability zones are connected by private network connections for low latency. That is the durability story: three physical copies, each in a separate failure-isolated location — a single data center, or even a whole availability zone, can fail without destroying the data.</p>
+  <p>Inside the system there is a <strong>metadata storage</strong> — remember, object storage has a lot of metadata — and the <strong>blob objects</strong> themselves. Organizations often do not expose what the underlying architecture is; at a broad level, the flow works like this: the end user comes through the internet, hits an application load balancer, then goes to the API servers, and the servers access the blob storage as well as the metadata required for processing the request. How the data is mapped to the S3 cluster and all of that is sometimes not exposed — this is the high-level picture of how things happen. The important separation is that metadata (where things are, what they are) and blobs (the raw bytes) are managed by different internal components, which is why object storage scales the way it does.</p>
+  <h3 id="6.2.6-storage-tiering">6.2.6 Storage Tiering</h3>
+  <p>S3 does not give you one single bucket type. There are <strong>different tiers of storage</strong>, and based on how the application is going to interact with the data — how frequently it will access it — you can choose your S3 storage. The reason is cost: different tiers carry different costs. The three offerings:</p>
+  <ul>
+    <li><strong>S3 Standard</strong> — used when we have very active data and we want synchronous access with millisecond retrieval.</li>
+    <li><strong>S3 Standard Infrequent Access</strong> — we do not access the data very frequently, but when we do, we still want synchronous access. The cost is lower because the data is accessed infrequently.</li>
+    <li><strong>Amazon Glacier</strong> — as the name indicates, this is for huge archival data. Historical data — say two-year, three-year, five-year, ten-year-old data — can be placed here. Retrieval takes minutes to hours, and the cost of storage in Amazon Glacier is minimal.</li>
+  </ul>
+  <p>Based on your requirement — how much SLA you want — you choose that storage class. In between, you can use three tiers: frequently accessed data in the active tier, less frequently accessed data in the infrequent tier, and historical data in Glacier. Suppose there is now a requirement for some analysis on the historical data: you can bring that data to a more active state — there is syncing happening between the three tiers — and run certain analytics on top of it. That is the power of having storage classes.</p>
+  <div class="example-box">
+    <p><strong>Worked example — a bank's statement archive.</strong> A bank stores 10 years of monthly statements in S3. This month's statements are read constantly by customers, so they sit in <strong>S3 Standard</strong> with millisecond retrieval. Statements from 3–12 months ago are rarely opened, so they move to <strong>S3 Standard Infrequent Access</strong> — same synchronous access, lower price. Statements older than a year are legally kept but almost never read, so they move to <strong>Amazon Glacier</strong>, where storage is cheapest but retrieval takes minutes to hours. Now a fraud investigation needs five years of old statements: the bank requests them from Glacier, the data moves back to the more active tier, and the analysis runs on top of it. <strong>Final answer:</strong> same bucket, three cost tiers, and data can flow between tiers as demand changes.</p>
+  </div>
+  <h3 id="6.2.7-object-lambda">6.2.7 Object Lambda</h3>
+  <p>S3 also offers an <strong>Object Lambda</strong> service. We saw function as a service in a previous module — the new, serverless kind of thing — and Object Lambda lets you attach a function to the storage itself. When we try to read the data, it is possible that we want to invoke a function. The scenario: data is stored in an S3 bucket; one application needs the data in a certain way, another application needs it in a different way. Say we want to filter the data before it goes to an application — we can write a function that filters the data, or applies a certain transformation, before presenting it to the end user.</p>
+  <p>The mechanics: create and configure an <strong>S3 object lambda access point</strong>, and create an AWS Lambda function associated with the S3 object. Whenever a data request comes from a client, we check if there is a Lambda function associated that needs to be invoked: along with the GET request that fetches the data, that function is automatically invoked. The object lambda processes and transforms the object to meet the specific needs of the application — such as masking, filtering, or augmentation — and presents the result on the fly to the end user. The transformation happens per request, per client, without duplicating the stored data.</p>
+  <div class="key-concept">
+    <p><strong>Why Object Lambda matters:</strong> one stored object, many views. A compliance team may need credit card numbers <strong>masked</strong>; a marketing team may need records <strong>filtered</strong> to a subset; an analytics team may need fields <strong>augmented</strong> with derived values. Without Object Lambda you would store one copy per view. With it, you store one object, and each reader's request triggers a function that builds that reader's view on the fly — the transformation rides along with the GET, and nothing is duplicated.</p>
+  </div>
+  <h3 id="6.2.8-use-cases">6.2.8 Use Cases</h3>
+  <p>The S3 use cases given:</p>
+  <ul>
+    <li><strong>Backup storage</strong> — for the cloud as well as for on-premises data you want to move and store in S3 buckets.</li>
+    <li><strong>Disaster recovery</strong> — with cross-region application data archival.</li>
+    <li><strong>Cloud-based applications with scalable storage</strong> — if you want to design a cloud-based application that wants scalable storage, accessible from anywhere, S3 buckets serve it.</li>
+    <li><strong>Data lakes for data analytics</strong> — you can dump any kind of data into one place, and that becomes a data lake; S3 buckets hold every kind of thing you can dump under the bucket you create. The data lake concept is not part of this course, but if you want to read about it there is ample material available.</li>
+  </ul>
+  <p><strong>Real-world:</strong> S3 is the storage backbone of a large share of the internet. Backup products write to it, media platforms serve videos from it, analytics teams land raw data in it as a data lake before loading it into warehouses, and AWS's own e-commerce systems lean on it. When a company says "our data lake lives in S3," they mean exactly this: every kind of file — logs, images, JSON, CSVs, Parquet — dumped into buckets, tiered by age, and read back by any tool that can issue an HTTP GET.</p>
+  <div class="key-takeaway">
+    <p><strong>Recap + bridge:</strong> A quick recap of where we are: we are talking about storage on the cloud, and we have looked at three kinds of storage — block storage, file storage, object storage. Out of that we have looked into S3 buckets, which offer object storage, the various features S3 buckets offer, and the use cases of S3 buckets — where we will use it. Next we leave the flat namespace behind and meet the second interface: file storage, with Amazon EFS.</p>
+  </div>
+
+  <h2 id="6.3-amazon-efs-file-storage">6.3 Amazon EFS: File Storage</h2>
+  <div class="important-note">
+    <p><strong>Hook:</strong> Every office has a shared drive — a folder on a server that everyone on the network can open. What if that shared drive were elastic, spreading across a whole cloud region, growing and shrinking on its own? That is exactly what Amazon EFS is: the familiar file system model, offered as a managed network service.</p>
+  </div>
+  <h3 id="6.3.1-how-file-storage-works">6.3.1 How File Storage Works</h3>
+  <p>In a file storage, we store one particular data together in a single file, and we maintain the data in a hierarchical structure making use of folders, files, and all the rest — the familiar directory model. Where object storage throws everything into one flat namespace, file storage keeps the tree: a path such as <code>/projects/reports/q3.pdf</code> names the file, the folder, and the whole ancestry of folders above it. The file systems are typically built using SSD storage, and they can be accessed from multiple cloud instances or even from customer premises hosts as well.</p>
+  <p>Amazon EFS supports the <strong>NFS protocol</strong> — the network file system protocol — and an application can simply attach the file system to its virtual private cloud (VPC), so there is not much change needed to get the elastic scalability and the input/output operations efficiency. NFS is the same protocol that network-attached storage (NAS) devices have spoken for decades: your operating system treats the remote folder like a local folder, so existing applications keep working almost unchanged.</p>
+  <div class="key-concept">
+    <p><strong>What "network file system" really means:</strong> NFS is a client–server protocol in which a client machine <em>mounts</em> a directory exported by a server, and then reads and writes files in that directory with ordinary file operations — <code>open</code>, <code>read</code>, <code>write</code>, <code>close</code>. The application does not know or care that the bytes live on a different machine, possibly in a different building. EFS takes that decades-old idea and makes the server elastic: the storage grows as you store more, and the throughput grows as you access it more, with no manual disk adding.</p>
+  </div>
+  <p>The performance figures cited: around <strong>10 GB per second</strong> of throughput and <strong>500k input output operations</strong> per second (500,000 IOPS) — these are the service's peak burst figures, the top end the file system can deliver when there is sustained demand, not a guaranteed minimum at all times. Multiple NFS clients can attach to the file storage, and there are multiple storage classes within EFS as well.</p>
+  <h3 id="6.3.2-storage-classes-and-lifecycle-policies">6.3.2 Storage Classes and Lifecycle Policies</h3>
+  <p>Just as S3 has storage tiers, EFS has multiple storage classes. There is <strong>EFS Standard</strong>, which comes with replication to three-plus availability zones; and there is <strong>EFS One Zone</strong>, where the application lives within one single zone and replication happens within that one zone, at a lower cost — the storage cost is lower because you are replicating within a single zone. Within each of these classes there are two options: <strong>Standard</strong> and <strong>Infrequent Access</strong>. So the full set is: EFS Standard, EFS Standard Infrequent Access, EFS One Zone, and EFS One Zone Infrequent Access.</p>
+  <p>With the term "infrequent" we are simply telling the cloud: "I can tolerate some delay, or compromise my specifications, as long as I pay less." That trade-off depends on the application needs. Most applications fall into the one-zone replication category; if something is very, very critical, we may go for the Standard class. It is also possible to choose both for different datasets. And we can set up <strong>lifecycle policies</strong> to move the data based on its age to the infrequent access class — data that is less frequently accessed can be moved down to reduce storage cost — and eventually move historical data to something like Amazon Glacier, as we saw with S3.</p>
+  <div class="example-box">
+    <p><strong>Worked example — a research group's file server.</strong> A lab keeps its experiment outputs in one EFS file system. Last week's runs are read by every member daily, so they stay in <strong>EFS Standard</strong> (multi-AZ, fastest). Runs older than 30 days are only reopened for audits; a lifecycle policy automatically moves them to <strong>EFS Infrequent Access</strong>, cutting the storage bill. A second file system for scratch data, where a lost disk would be annoying but not fatal, runs <strong>EFS One Zone</strong> — replication inside a single availability zone, cheapest of all. <strong>Final answer:</strong> the group gets one managed file tree, and age-based rules quietly push cold data to cheaper classes.</p>
+  </div>
+  <h3 id="6.3.3-architecture-mount-targets-across-availability-zones">6.3.3 Architecture: Mount Targets Across Availability Zones</h3>
+  <p>The standard storage-class architecture picture: we have a virtual private cloud with three availability zones. Each availability zone has a <strong>mount target</strong> — which is, in effect, an IP address that is exposed — and under the mount target the NFS protocol works. You connect to the mount and then access the files. The three mount targets are connected, and together they form the elastic file system, which offers high scalability to address high traffic. It is also possible to mount the target in one of the subnets within a single availability zone — the one-zone setup: an instance in that zone reaches the file system fast; the file system is replicated within that zone rather than across zones.</p>
+  <p><em>Visual intuition:</em> picture three buildings (availability zones) on one campus (the VPC region), each with its own door (the mount target) marked with an address (IP). The buildings are connected by private corridors. An instance inside building 1 walks out of its own door and is home in moments; an instance in building 2 must first cross to building 1's door — or to its own local door, whichever the mount point offers — and every byte it moves across the campus incurs a cost.</p>
+  <p>There is a cost and latency lesson hidden in the standard setup: if there is an instance in another availability zone that wants to access the file system, it has to connect to the mount first — which incurs latency — and for any data transfer from one AZ to another, the cloud service providers charge. So an instance in another availability zone pays a data-access cost. AWS documentation has plenty of material on this if you want to deep-dive.</p>
+  <div class="warning-box">
+    <p><strong>Pitfalls and scope:</strong></p>
+    <ul>
+      <li><strong>One-zone is cheaper but fragile.</strong> If the single zone fails, an EFS One Zone file system is unavailable — the "standard" multi-AZ class exists precisely to survive zone failures.</li>
+      <li><strong>Cross-zone access costs money and time.</strong> Reading a file from another availability zone means crossing a paid, latency-adding network boundary; colocate your instances with your mount target when speed matters.</li>
+      <li><strong>Burst figures are not guarantees.</strong> The 10 GB/s and 500k IOPS figures describe peak burst performance; sustained throughput depends on the storage class and the mount setup.</li>
+      <li><strong>EFS is a file interface, not a database.</strong> It shares files, not semantics like locking and transactions; a relational database wants block storage (next section), not a shared file tree.</li>
+    </ul>
+  </div>
+  <p><strong>Real-world:</strong> EFS is the "shared drive in the cloud" — the same NFS mental model that network-attached storage has used for decades, now elastic and managed. Web farms use it to share uploaded content across many web servers; content teams use it as a shared workspace; container platforms mount it into running containers; analytics pipelines use it when multiple processing instances need to read and write a common file tree. Whenever the requirement is "many machines, one familiar folder tree, low change effort," file storage — EFS — is the answer.</p>
+  <div class="key-takeaway">
+    <p><strong>Recap + bridge:</strong> File storage keeps the hierarchical tree you grew up with, speaks the trusted NFS protocol, scales elastically, and comes in four cost classes (Standard/One Zone × Standard/Infrequent Access) with lifecycle policies to move cold data down. The trade-off is that sharing files across zones costs latency and money. The third interface is the fastest and the most private: block storage with Amazon EBS.</p>
+  </div>
+
+  <h2 id="6.4-amazon-ebs-block-storage">6.4 Amazon EBS: Block Storage</h2>
+  <div class="important-note">
+    <p><strong>Hook:</strong> A database server is the most demanding storage customer in a data center: it wants raw disk, attached directly to one machine, with predictable low latency. Object and file storage cannot give it that. The answer is the third interface — block storage — where you rent the disk itself, not the file tree on top of it.</p>
+  </div>
+  <h3 id="6.4.1-what-block-storage-is">6.4.1 What Block Storage Is</h3>
+  <p>Block storage is the fastest of the three kinds, because we have access to the blocks directly — the block is the lowest-level access you can get. You can rent a block storage and attach it to your virtual machine, like an EC2 instance. The good part: in case your EC2 machine dies, your storage still stays — your data still exists on the disk — and because the storage is separate, it can be attached and detached at any time. Storage and compute are independent rentals: kill the virtual machine, keep the disk; replace the machine, reattach the same disk.</p>
+  <div class="key-concept">
+    <p><strong>The volume model:</strong> EBS provides a <em>volume</em> as a collection of network-attached blocks that are exposed as disks — so a client connects over the network and sees ordinary disks. To the operating system, the volume looks like a normal hard drive: it gets formatted, partitioned, and mounted at a directory like any local disk. The file system on top of it is yours; EBS only guarantees the raw blocks underneath. Depending on performance and cost, you choose whether you want <strong>SSD</strong> (solid state drives, faster) or the mechanical, traditional <strong>HDD</strong> drives. These volumes are durable and replicated within the availability zone. You cannot move a volume from one availability zone to another — for that you take a <strong>snapshot</strong>, a kind of image file, and work from it.</p>
+  </div>
+  <p>One defining constraint of EBS: it can only be accessed by <strong>one instance at a time</strong>. If an EC2 instance is accessing an EBS volume, no other EC2 instance can access it at the same time. That gives predictable performance for a single-instance use case. The performance parameters cited: on the order of <strong>4 Gbps</strong> of throughput, up to <strong>24 terabytes</strong> of volume size, up to <strong>60k IOPS</strong>, and <strong>sub-millisecond latency</strong> per volume — the figures describe the top-end provisioned-performance volume family, and the exact numbers in the session were garbled, but the order of magnitude is what matters: this is the fastest, lowest-latency storage interface of the three. Because of that profile, EBS is typically used for I/O-intensive applications such as relational databases, OLTP engines, and transactional databases — workloads where every query waits on a disk read, and a predictable, low-latency block device is the difference between a snappy and a sluggish application.</p>
+  <div class="example-box">
+    <p><strong>Worked example — a bank's transaction database.</strong> A bank runs its OLTP engine on an EC2 instance backed by an SSD EBS volume. Every withdrawal is a write to the volume, so the transaction's latency is the volume's latency — sub-millisecond, delivered consistently because exactly one instance owns the volume. At month end, the DBA takes a <strong>snapshot</strong> of the volume (a point-in-time image), ships it to a second region, and spins up a reporting instance from the snapshot — the only supported way to move EBS data across availability zones. <strong>Final answer:</strong> one owner, raw disk speed, snapshots for portability.</p>
+  </div>
+  <h3 id="6.4.2-ebs-versus-efs">6.4.2 EBS versus EFS</h3>
+  <p>The comparison is a design decision:</p>
+  <ul>
+    <li><strong>EBS</strong> is a single-instance, predictable-performance block volume — choose it when one machine needs raw, low-latency disk, e.g., a database server.</li>
+    <li><strong>EFS</strong> is a distributed multi-user network file system — choose it when you want to build scalable distributed services across many users with decent performance, and the file-level sharing model fits.</li>
+  </ul>
+  <table>
+    <thead>
+      <tr>
+        <th>Dimension</th>
+        <th>EBS (block)</th>
+        <th>EFS (file)</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>Unit you address</td>
+        <td>fixed-size raw blocks in a volume</td>
+        <td>files in a folder tree</td>
+      </tr>
+      <tr>
+        <td>Access model</td>
+        <td>one EC2 instance at a time</td>
+        <td>many NFS clients at once</td>
+      </tr>
+      <tr>
+        <td>Latency</td>
+        <td>sub-millisecond, predictable</td>
+        <td>network file latency, zone-dependent</td>
+      </tr>
+      <tr>
+        <td>Typical use</td>
+        <td>databases, OLTP, transactional engines</td>
+        <td>shared content, many instances, web farms</td>
+      </tr>
+      <tr>
+        <td>Portability</td>
+        <td>snapshots are needed to move across AZs</td>
+        <td>mount targets per zone; cross-zone access costs extra</td>
+      </tr>
+    </tbody>
+  </table>
+  <p>There is a lot available on all of these Amazon services under the AWS documentation, but that is the essence of the four kinds of storage we have talked about: object, then file, then block.</p>
+  <div class="warning-box">
+    <p><strong>Pitfalls:</strong></p>
+    <ul>
+      <li><strong>Trying to share an EBS volume.</strong> One instance at a time is a hard rule; if two instances must read the same data, use EFS (file) or S3 (object) — or a database that manages its own replication.</li>
+      <li><strong>Storing state only on the instance.</strong> Instance storage dies with the machine; EBS survives because it is a separate rental. Persistent data belongs on the volume, not on the ephemeral instance disk.</li>
+      <li><strong>Forgetting snapshots for cross-zone moves.</strong> A volume is bound to its availability zone; without a snapshot there is no clean way to move it.</li>
+      <li><strong>Buying block speed where it is wasted.</strong> Block storage is not automatically "better" — its low latency is wasted on rarely-read files that S3 tiers would store for less.</li>
+    </ul>
+  </div>
+  <p><strong>Real-world:</strong> Block storage is the silent engine of the cloud's databases: every managed relational database, every OLTP workload, every transactional engine that a company rents on AWS sits on EBS volumes. When a business says "our core banking database runs in the cloud," the storage layer underneath is almost certainly block storage — the raw, single-owner, low-latency disk that databases demand.</p>
+  <div class="key-takeaway">
+    <p><strong>Recap + bridge:</strong> Block storage gives you the raw disk — fastest of the three interfaces, one instance at a time, portable only via snapshots, and the right home for databases and OLTP. That completes the trio of interfaces: object, file, block. With the vocabulary and the services in hand, the lecture steps back to ask a deeper question: what were these systems actually <em>designed</em> to do? That is the story of the Dynamo paper.</p>
+  </div>
+
+  <h2 id="6.5-the-dynamo-paper-what-large-scale-storage-was-designed-for">6.5 The Dynamo Paper: What Large-Scale Storage Was Designed For</h2>
+  <div class="important-note">
+    <p><strong>Hook:</strong> Why does your shopping cart survive a network blip? Why can you add an item to the cart and still, sometimes, not see it until you refresh? The answers come from a 2007 research paper that took one hard look at real e-commerce traffic and decided the old database rules had to change. That paper's ideas quietly run under a large share of the internet today.</p>
+  </div>
+  <h3 id="6.5.1-the-application-study">6.5.1 The Application Study</h3>
+  <p>Before we look at DynamoDB, we step back to the paper that motivated these technologies. The study behind it started from concrete applications: the authors looked at different applications and their requirements, and then came up with this kind of technology. The setting: you build a large-scale distributed application, specifically one you want to be on the cloud — for example, an <strong>e-commerce application</strong>. The requirements they listed: figuring out the <strong>bestseller list</strong>, looking into all the <strong>shopping carts</strong>, <strong>customer preferences</strong>, <strong>session management</strong>, <strong>sales / product sales rank</strong>, and the <strong>product catalog</strong>. They looked at these various requirements, and also at what kind of queries the end users were firing.</p>
+  <p>The common thread across all six workloads: each one is a small read or write keyed by something concrete — "give me the cart of user 4412," "update the rank of product X," "store this session for user 8821." None of them is a giant join across tables. That observation, written down honestly from production traffic, is the seed of the whole design.</p>
+  <h3 id="6.5.2-the-key-findings">6.5.2 The Key Findings</h3>
+  <p>The observations from that study:</p>
+  <ul>
+    <li><strong>No relational queries</strong> are being fired on the systems by end users. Largely, the queries are simply <strong>key-based object retrievals</strong> — "give me the object with this key." The object size is within the size of 1 MB as mentioned in the paper: the vast majority of stored objects are small — on the order of kilobytes to at most a few megabytes — so a single object's data can travel cheaply and quickly.</li>
+    <li><strong>Earlier storage systems followed ACID semantics</strong>, because storage was used for transaction purposes. The realization: there is <strong>no requirement of strict consistency in many of the use cases</strong>, so they wanted to come up with systems that should not strictly adhere to ACID semantics. And strict consistency may be the <strong>performance bottleneck</strong> in the earlier systems — making every write wait for every replica, everywhere, is exactly what makes a system slow at scale.</li>
+    <li><strong>Efficiency and scale</strong>: the system should be scalable — as the users of an application increase, the system should scale up — and for that they made use of <strong>commodity hardware</strong>. Ordinary, cheap machines instead of expensive special-purpose servers: the design must tolerate machines failing and still scale out.</li>
+    <li><strong>Strict low latency at the 99.9th percentile time.</strong> It is a connected system now, and latency must be bounded because if the latency is high, the end-user experience is not good and you lose business. The target: if you take samples of data transfer, <strong>99.9 percent of the transfers should be within the SLA</strong> — a low latency. This is actually a very, very hard problem to achieve. The <em>percentile</em> term: 99.9 percentile means 99.9 percent of the samples fall in a certain range; the remaining 0.1 percent may fall outside.</li>
+  </ul>
+  <div class="key-concept">
+    <p><strong>Why "key-based retrieval" changes everything:</strong> a relational database answers arbitrary questions ("join orders with customers where…") and pays for that power with planning, locking, and transaction machinery. The Dynamo workloads never asked those questions — they asked "get object by key" and "put object by key." A key-value store can answer those in a handful of microseconds per hop on commodity hardware, and it can split the keys across thousands of machines. The design insight is not "key-value is better than relational"; it is "these specific workloads do not need relational power, so do not pay its price."</p>
+  </div>
+  <div class="example-box">
+    <p><strong>Worked example — the 99.9th percentile, with numbers.</strong> Suppose the SLA says reads must complete within 200 ms at the 99.9th percentile. The system serves 1,000 read requests in a minute. The 99.9th percentile means: at most 1 request in 1,000 may miss the bound — so at least 999 of the 1,000 requests must finish inside 200 ms, and 1 slow request is still inside the contract. Scale that to a million requests: at most 1,000 may exceed 200 ms. <strong>Final answer:</strong> the percentile is a budget on the tail — it tells you how many stragglers you can afford, not what the average request should feel like.</p>
+  </div>
+  <p>On the right side of that slide there is a high-level diagram: client requests coming in, <strong>page rendering components</strong>, <strong>request routing</strong>, <strong>aggregator services</strong>, then services mapping to the Dynamo instances or other data stores within — a multi-tier design. Requests do not hit the data store directly; they flow through routing and aggregation layers that fan out to the storage tier and assemble the final page.</p>
+  <h3 id="6.5.3-design-considerations">6.5.3 Design Considerations</h3>
+  <p>From the application requirements, they derived design considerations:</p>
+  <ol>
+    <li><strong>The system should be highly available for writes.</strong> When you are updating your shopping cart, even if there is a network partition — considering CAP — the write should still go through. What are we going to sacrifice? Consistency: per CAP, a distributed system achieves only two of the three; partition tolerance is a must, so out of C and A we keep availability. These are <strong>AP systems</strong>: highly available systems. At times you find that a product added to the cart is not there when you look at the cart, or you click a like button and the like is not updated until you refresh — once the systems become eventually consistent, you find it is fine. That is the accepted trade.</li>
+    <li><strong>Complexity of conflict resolution.</strong> Now the system is highly available for writes; writes happen at multiple places. When we try to read, which copy should we read — the copy available within that node, or the copy on another node? There could be multiple options, so the question is who resolves the conflicts on reads. Two options: <strong>last write wins</strong>, or <strong>leave it up to the application developer</strong> — show the developer the sequence of writes that happened, and the developer chooses which one fits the application.</li>
+    <li><strong>Incremental scalability.</strong> As the customer base grows, we should be able to incrementally add nodes, and all nodes should have a <strong>symmetric role</strong> — there is no kind of master-slave thing happening; it is all peer-to-peer, all are the same. No node is special, so no node is a single point of failure, and growing the cluster means adding more identical peers.</li>
+    <li><strong>Heterogeneous nodes.</strong> We could also allow nodes with different capabilities in the system — one may have higher capability, others lower. Then the job of the <strong>load balancer</strong> becomes a little tough: we have to allocate the work proportional to the capability. If there is heterogeneity, the load-balancing logic becomes a little complex, or maybe challenging.</li>
+  </ol>
+  <p>So the design picture: highly available systems for writes, reads decide what data to read (latest copy, or developer chooses), incremental scaling should be possible, and with heterogeneous nodes we need a good load-balancing logic that allocates work proportional to capability.</p>
+  <div class="warning-box">
+    <p><strong>Pitfalls and scope:</strong></p>
+    <ul>
+      <li><strong>Reaching for ACID by reflex.</strong> ACID semantics were designed for transactional correctness; the study's workloads did not need them, and enforcing them made the earlier systems the bottleneck. The lesson is to match the consistency contract to the workload — not to abandon correctness everywhere.</li>
+      <li><strong>Misreading "eventually consistent" as "wrong."</strong> A briefly stale shopping cart is the accepted price of a write that always succeeds; the design states this trade openly and the application must tolerate it.</li>
+      <li><strong>Misusing the percentile.</strong> "99.9th percentile" is not the average and not the worst case: it is the boundary below which 99.9% of samples must fall. An average-latency report hides exactly the tail that breaks the SLA.</li>
+    </ul>
+  </div>
+  <h3 id="6.5.4-techniques-at-a-glance">6.5.4 Techniques at a Glance</h3>
+  <p>For each problem, the paper picked a technique:</p>
+  <ul>
+    <li><strong>Partitioning the data</strong> → <strong>consistent hashing</strong>. We will discuss this next — not in too much detail, but the idea.</li>
+    <li><strong>High availability for writes</strong> → <strong>vector clocks with reconciliation</strong> during reads. A <em>vector clock</em> is a kind of logical clock maintained to preserve the ordering of events in a distributed system. It is altogether a different topic — typically covered in a distributed computing course — but that is the one-line idea: we have to maintain vector clocks to keep writes highly available and reconcile on reads.</li>
+    <li><strong>Handling temporary failures</strong> → <strong>sloppy quorum and hinted handoff</strong>. The advantages it gives: <strong>high availability and durability guarantees</strong> even when some of the replicas are not available.</li>
+    <li><strong>Recovering from permanent failures</strong> → first detect whether there is a permanent failure, then use <strong>Merkle trees</strong> — hash trees that help detect failure and synchronize divergent replicas in the background. The idea: whatever data is on the node, we make hash functions out of the data and keep those hash values. If the replicas are not in sync, the hash values will change; if they differ for a longer period of time, we conclude there is a permanent failure.</li>
+    <li><strong>Membership and failure detection</strong> → <strong>gossip-based membership protocols</strong>. In a large distributed system we need to track who the members are, and track failures; gossip-based protocols do that.</li>
+  </ul>
+  <table>
+    <thead>
+      <tr>
+        <th>Problem the paper faced</th>
+        <th>Technique chosen</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>Where to put data as the cluster grows</td>
+        <td>Consistent hashing (ring partitioning)</td>
+      </tr>
+      <tr>
+        <td>Keep writes available and reconcile later</td>
+        <td>Vector clocks with read-time reconciliation</td>
+      </tr>
+      <tr>
+        <td>A replica holder is temporarily down</td>
+        <td>Sloppy quorum + hinted handoff</td>
+      </tr>
+      <tr>
+        <td>A replica holder has permanently died</td>
+        <td>Merkle (hash) trees to detect and resync</td>
+      </tr>
+      <tr>
+        <td>Who is alive in a large cluster</td>
+        <td>Gossip-based membership and failure detection</td>
+      </tr>
+    </tbody>
+  </table>
+  <p>The problems are very hard — vector clocks, Merkle trees, and the rest are all comprehensive topics on their own — but this gives the shape of how the systems work. If you know a little bit about hashing from a data structures course — basic hash functions — you already have the seed for the next topic.</p>
+  <p><strong>Real-world:</strong> the Dynamo paper's lineage is everywhere. Amazon turned the design into the DynamoDB service we see next; Apache Cassandra openly describes itself as a Dynamo-inspired system (peer-to-peer nodes, consistent hashing ring, tunable consistency, hinted handoff); Riak and Voldemort follow the same family. When a NoSQL product advertises "Dynamo-style," it means exactly the design considerations listed here: AP, symmetric peers, incremental scaling, and reconciliation on reads.</p>
+  <div class="key-takeaway">
+    <p><strong>Recap + bridge:</strong> The Dynamo paper studied real e-commerce traffic and found: key-based retrievals, small objects, no need for strict ACID, commodity hardware, and a hard 99.9th-percentile latency target. That drove an AP design — always-available writes, conflicts resolved on read — with five named techniques, of which the first is the one we now explore in detail: consistent hashing on a ring.</p>
+  </div>
+
+  <h2 id="6.6-consistent-hashing-partitioning-and-replication">6.6 Consistent Hashing: Partitioning and Replication</h2>
+  <div class="important-note">
+    <p><strong>Hook:</strong> Suppose a phone book were re-printed every time a new phone line was added, with every number reassigned a new page. That is how naive partitioning behaves: add one server and all your data must move. Consistent hashing is the trick that lets a cluster grow while only a tiny slice of data ever moves — and it is the first technique the Dynamo paper leaned on.</p>
+  </div>
+  <h3 id="6.6.1-the-circular-address-space">6.6.1 The Circular Address Space</h3>
+  <p>Partitioning and replication was the first problem the paper visualized. The nodes are arranged in a kind of circular setup — a ring — and the challenge is how to partition the data across the nodes. It is not simple like dividing the data into \(n\) number of partitions and allocating them to \(n\) number of nodes; that is not straightforward. Instead they use consistent partitioning — <strong>consistent hashing</strong> — which offers <strong>incremental scalability</strong>.</p>
+  <p>The picture: nodes placed on a circle. Some hash function is applied on the <em>key</em> of the data, and it generates a certain number — a value in the address space. The size of the address space is set by the number of bits: if we use a five-bit address, we can address \(2^5 = 32\) numbers, 0 to 31; two bits address \(2^2 = 4\), zero to three; three bits address \(2^3 = 8\), zero to seven; four bits address 16, zero to fifteen; five bits address 32, zero to thirty-one. The examples in the session use small spaces, but the principle scales.</p>
+  <p>\[ \text{address space size} = 2^m \quad \text{(the values } 0, 1, 2, \dots, 2^m - 1\text{)} \]</p>
+  <div class="key-concept">
+    <p><strong>The key insight of consistent hashing:</strong> we may have <strong>more address space than nodes</strong>. In a ring of 32 addressable positions, only 7 nodes might be present. When a hash value falls on an empty position, we still have a deterministic rule for where the data goes: walk clockwise and stop at the first node you meet. And the spare positions are the reason the ring can grow without rehashing everything — you can add nodes later, whenever required, and only the ranges those new nodes take over ever move.</p>
+  </div>
+  <h3 id="6.6.2-placement-and-replication-worked-examples">6.6.2 Placement and Replication: Worked Examples</h3>
+  <p>The placement rule is stated with a small ring of seven nodes labeled A, B, C, D, E, F, G in a clockwise circle. We want to store some data: apply the hash function; it indicates a particular node. Then the <strong>replicas are stored at the next two nodes following in the clockwise direction</strong>:</p>
+  <ul>
+    <li>If the hash says store in A, the replicas go to the two following nodes — <strong>B and C</strong> (the source's "P and C" is a transcription garble; clockwise order after A is B, then C).</li>
+    <li>If the hash says store in D, the two following nodes hold replicas — <strong>E and F</strong> (the transcribed "A and F" is inconsistent with the clockwise order A→B→C→D→E→F→G; the deterministic rule gives the next two clockwise from D, which are E and F).</li>
+    <li>If it says store in G, the replicas go to A and B — wrapping around the end of the circle back to the start.</li>
+  </ul>
+  <p>The wrap-around behavior is the point: the ring is a circle, so "next clockwise" eventually wraps to the beginning.</p>
+  <p>Now the numeric example, on a 32-position ring (values 0 to 31) where the <em>positions</em> hold seven nodes — in the diagram, nodes at N5, N10, N17, N20, and N25 are the ones named.</p>
+  <div class="example-box">
+    <p><strong>Worked example — a file hashes to 14.</strong> We want to store a file; hashing the name of the file gives the number 14. There is no node at position 14, so we follow the clockwise principle: the data is stored in the next node clockwise, <strong>N17</strong>. The replicas are stored in the next two nodes clockwise from there: <strong>N20 and N25</strong>. The rule is deterministic even though 14 is empty — the same file always lands on the same nodes, so every client computes the same answer.</p>
+  </div>
+  <p>Two student questions test the rule against its tempting mistakes.</p>
+  <div class="important-note">
+    <p><strong>Q:</strong> If the hash value of a data item is 6, which node stores it? <strong>A:</strong> A student first answered node five (N5) — the visually closest node in the diagram. That is a tempting guess, but the placement rule is not "nearest node": we always move in the clockwise direction, and we never look backward (anticlockwise), even when a node looks closer. There is no node at position 6, so the next healthy node in the clockwise direction is N10, and the data is stored there. <strong>Correction:</strong> "visually closest" is wrong — the rule is "first node clockwise," and anticlockwise is never allowed.</p>
+  </div>
+  <p>A follow-up question pushes the same rule one step further, and adds a trap in the diagram itself.</p>
+  <div class="important-note">
+    <p><strong>Q:</strong> If the hash value is 7, where is the data stored, and where are the copies? <strong>A:</strong> Again there is no node between 7 and 10, so the data goes to N10 — the same node as for hash value 6. The two copies are stored at the next two available nodes in the clockwise direction: N17 and N20. Do not count the item labeled K14 as a node: K14 is just a data key whose hash value landed on 14 — it looks like a node in the diagram, but it is not a node; only the N-labeled positions are nodes.</p>
+  </div>
+  <p>Three further questions sharpen the edges of the model.</p>
+  <div class="important-note">
+    <p><strong>Q:</strong> How do we decide, by which factor, which node is the next suitable healthy node? <strong>A:</strong> That is a different problem — detecting whether a node has failed. The design has separate algorithms and protocols for failure handling: temporary failures and permanent failures are handled differently, and we will discuss those. For now, all the nodes in the circle are assumed healthy.</p>
+  </div>
+  <p>The next question checks that the same mental model covers the copies as well as the original.</p>
+  <div class="important-note">
+    <p><strong>Q:</strong> Will replication work in the same fashion? <strong>A:</strong> Yes. The application stores a data item: apply the hash function, get a number, which tells you on which node the data must be stored. The replicas then go to the next two nodes in the clockwise direction.</p>
+  </div>
+  <p>One more question asks where the node positions themselves come from.</p>
+  <div class="important-note">
+    <p><strong>Q:</strong> Is there any specific strategy for naming or numbering these nodes? <strong>A:</strong> The numbers are based on how many spaces are addressable — the size of the address space determines the range of numbers. To place a node at a particular place, we hash the node's IP address so that the hash yields the number where we want to place that node. Similarly, file names are hashed to place the files. Hashing the IP address to place nodes, hashing the name of the file to place the data — these are the strategies; other strategies could be used as well.</p>
+  </div>
+  <h3 id="6.6.3-incremental-scalability-adding-a-node">6.6.3 Incremental Scalability: Adding a Node</h3>
+  <p>Why do we want the nodes placed at chosen positions with spare space between them? Because of incremental scaling. Suppose a node is getting loaded — we detect that it is going to be heavy — so we introduce a new node just before it. Concretely: introduce a new node N15 between N10 and N17. What happens to the data?</p>
+  <div class="example-box">
+    <p><strong>Worked example — adding N15 between N10 and N17.</strong> Before N15 exists, hash values 11 to 14 (and anything in the empty stretch after N10) route clockwise to <strong>N17</strong>. We add <strong>N15</strong> at position 15. Whatever data had hash values ending after 10, which used to go to N17, now goes to <strong>N15</strong> instead: hash values from 11 to 14 now go to N15. The data that N17 was holding gets reorganized — N15 takes over the range 11–14 and N17 becomes the <em>backup</em> holder for it: N17 and N20 now store the backups of that range. <strong>Final answer:</strong> one new node, and only the data whose hashes fall in 11–14 changes home.</p>
+  </div>
+  <div class="key-concept">
+    <p><strong>Why this is "incremental" scalability:</strong> we need to detect load, introduce a new node, and the introduction of the new node results in the reorganization of the data. The reorganization is local — only the range owned by the new node and its neighbors changes — which is exactly why consistent hashing gives incremental scalability. With naive partitioning, adding the \(n+1\)-th node would mean rehashing and moving data across every partition; with a ring, a node addition touches only one range. (The session notes that real systems probably do not expose much about exactly how the thing works; this is one way to partition.)</p>
+  </div>
+  <h3 id="6.6.4-lookup-linear-search">6.6.4 Lookup: Linear Search</h3>
+  <p>After the data is organized, we must search it. The naive approach, which the paper considered too costly: <strong>linear search through successor links</strong>. Given a key, apply the hash function; it says "go to this node." If that node does not have the data, we keep following the <em>successor</em> link of the nodes — each node knows its next neighbor clockwise — and check each one until the object is found.</p>
+  <div class="example-box">
+    <p><strong>Worked example — linear search for key k8.</strong> On the 128-position ring with nodes N28, N63, N73, N99, and N18: to look up key k8, the hash function routes us to N28. N28 does not have the data. Follow the successor: N63 — does not have it. N73 — does not have it. N99 — does not have it. Finally the query reaches N18, which checks and says "yes, I do have the data." <strong>Final answer:</strong> five visits, one per node, until the owner is found.</p>
+  </div>
+  <div class="important-note">
+    <p><strong>The professor's internet analogy:</strong> we have an internet connection and want to access a particular site, but we do not know its IP address. We simply forward the request to our ISP; the ISP may not have it directly, so it moves it forward further; that may pass it further; finally we get the IP back and access the site. The same hop-by-hop thing is happening here, with a little delay in finding the required data. It is not necessary that you find the data exactly at the node where the function hashed to — you follow the successors.</p>
+  </div>
+  <p>In the worst case, the data was present somewhere but the search had to go across all the hops to find it. Searching this way is a little costly — the lookup can degenerate to a full walk of the ring: with \(n\) nodes, a lookup may visit all \(n\) of them, one hop at a time. That is \(O(n)\) per lookup — fine for a toy ring, painful for a cluster of thousands.</p>
+  <h3 id="6.6.5-efficient-search-finger-tables">6.6.5 Efficient Search: Finger Tables</h3>
+  <p>Can we do better? The improvement from the paper: every node maintains a <strong>routing table</strong>, called a <strong>finger table</strong>, with a logarithmic number of entries — we skip nodes instead of visiting every one.</p>
+  <p>For an \(m\)-bit address space there are \(2^m\) key positions (for 7 bits, 128 positions: 0 to 127). Each node \(n\) maintains entries at</p>
+  <p>\[ n + 2^0,\ n + 2^1,\ n + 2^2,\ n + 2^3,\ \dots,\ n + 2^{m-1} \]</p>
+  <p>i.e., for node N28 in a 7-bit space: 28+1, 28+2, 28+4, 28+8, 28+16, 28+32, and 28+64 — seven entries, each pointing at the successor node of that value (the first node clockwise from it). We do not maintain each and every entry; the powers of two keep the number of entries small. For a 7-bit address space, seven entries per node. As the finger values grow, the targets grow too — the larger entries of N28 point onward to the bigger nodes in the ring: in the example diagram, once the finger values pass N73, the target becomes N99 (the exact successor targets depend on where the nodes sit in the diagram, but the pattern is always "point to the first node clockwise from the finger value").</p>
+  <div class="example-box">
+    <p><strong>Worked example — the jump.</strong> For key k8, the query comes to N28; instead of walking to N63 then N73, N28 consults its finger table and redirects to the farthest finger that is still before the target — here, to N99, <strong>skipping N63 and N73</strong> in a single hop. From N99, the routing continues: the 32-entry gives \(99 + 32 = 131\), which exceeds 127, so we wrap around:</p>
+    <p>\[ (99 + 32) \bmod 128 = 131 \bmod 128 = 3 \]</p>
+    <p>The next node clockwise from position 3 is <strong>N5</strong>, so the query hops to N5, skipping the interior nodes in between. <strong>Final answer:</strong> two hops (N28 → N99 → N5) instead of a five-node walk — this is how the circular wrap is handled, because the address space holds 128 values, any value beyond 127 wraps modulo 128.</p>
+  </div>
+  <p>An implementation-strategy alternative was mentioned: before forwarding in the clockwise direction, look one step backward — check whether going backward first saves hops. The finger tables help us navigate to the next hop without looking into each and every node.</p>
+  <h3 id="6.6.6-finger-table-questions-and-the-promise-of-a-full-worked-example">6.6.6 Finger Table Questions and the Promise of a Full Worked Example</h3>
+  <p>One question settles why the table has exactly the entries it has.</p>
+  <div class="important-note">
+    <p><strong>Q:</strong> How is it possible that the table has entries like 28 plus 1, 28 plus 2, 28 plus 3? <strong>A:</strong> 28 is the node number; the plus values are not arbitrary. We maintain seven entries, the reason being it is a 7-bit address space. The entries are 28+1, then 2, then 4, then 8, then 16, then 32, and then 64 — the powers of two. The study found that maintaining these entries is good enough, rather than maintaining a larger number of entries: with \(m = 7\), seven entries per node — a logarithmic number — shrink a walk of up to \(2^m\) positions into a handful of hops.</p>
+  </div>
+  <p>The session ends this topic with a promise: the full lookup walk — how the routing tables end up routing a search to a particular node, and how the routing table is built — was cut short, and the topic will be revisited in the next session with a proper worked example, because it is worth doing properly.</p>
+  <div class="key-takeaway">
+    <p><strong>Exam note:</strong> treat finger-table lookup and routing-table construction as a topic that will return — expect it again, with a full worked example. Know the mechanism cold: a node at \(n\) keeps entries \(n + 2^i\) for \(i = 0\) to \(m-1\), each entry points at the first node clockwise from that value, lookups jump to the farthest finger before the target, and values beyond \(2^m - 1\) wrap modulo \(2^m\).</p>
+  </div>
+
+  <h2 id="6.7-versioning-failure-handling-and-replication-tuning">6.7 Versioning, Failure Handling, and Replication Tuning</h2>
+  <p>This session closes the Dynamo story with three supporting systems: logical clocks that order writes, failure handling that keeps the ring alive, and N/R/W knobs that tune consistency, durability, and availability.</p>
+  <h3 id="6.7.1-versioning-and-vector-clocks">6.7.1 Versioning and Vector Clocks</h3>
+  <p>The consistency-using-versioning diagram: as soon as a write is made to a particular data item, it creates a data version, D1. Another write happens — D2 is created. Two writes happen in parallel — D3 and D4 are created. After reconciliation, we may end up with a data version D5.</p>
+  <div class="key-concept">
+    <p><strong>Versioning in one line:</strong> every write to an item produces a new version of that item, and the system keeps the versions around until the reads reconcile them. A single chronological sequence — D1, then D2 — needs no bookkeeping: the newest version wins. Parallel writes — D3 and D4 created at the same time from two different places — create a <em>fork</em>: now two versions are both "latest" depending on which node you ask, and the system must reconcile them into D5.</p>
+  </div>
+  <p><strong>Vector clocks</strong> are associated with every write; every read operation can understand the causal order and reconcile the multiple versions. In the diagram the reconciliation happens at a point whose context values were transcribed as "x = 3, y = 1" — the garbled annotation almost certainly reads as a vector-clock context of the form "node x has seen 3 writes, node y has seen 1": each entry of the clock counts the writes one node has witnessed, and comparing two such vectors tells you whether one write happened before the other (its vector is smaller in every entry) or whether they happened in parallel (each vector has entries the other lacks). Two properties were flagged: <strong>vector clocks can grow over time</strong> — each new node that writes adds an entry, so the clocks keep growing as the cluster changes — and the system maintains the time span when the item was last updated.</p>
+  <p>Recall the context: we want high availability for writes. Writes keep happening; when we read, which particular value should we take — the latest update, or something in between? Two options, as in the paper: <strong>last write wins</strong>, or <strong>leave it up to the developer</strong> — expose all these writes to the developer and let the application decide which one to pick. <em>Vector clock</em>, one more time: a logical clock maintained to preserve the ordering of events in a distributed system — a comprehensive topic that normally lives in a distributed computing course. Logical clocks exist because wall-clock time on different machines is not trustworthy: two machines' clocks drift, so "2:01 on node A" and "2:01 on node B" cannot be compared. A vector clock replaces wall time with a count of events each node has observed, and "causal order" is the partial order that results — write X precedes write Y only when every node has seen X before Y.</p>
+  <h3 id="6.7.2-temporary-failures-hinted-handoff-and-sloppy-quorum">6.7.2 Temporary Failures: Hinted Handoff and Sloppy Quorum</h3>
+  <p>The nodes are connected in a circular fashion and the data is stored on certain nodes. What happens if a node fails — not permanently, but temporarily? Suppose node A was supposed to receive a replica, along with B and C — the data and two replicas. But A is down. What do we do?</p>
+  <div class="example-box">
+    <p><strong>Worked example — A is down, the write must still land.</strong> The data item's copies were planned for A, B, and C. A is unreachable. We find the next healthy node in the system in the clockwise direction — D. B and C still receive their copies, and <strong>temporarily we keep the data at D</strong> instead. D maintains the data for A, and records a <em>hint</em>: "this copy belongs to A." Once A is up and running, D sends the replica to A and removes itself from that data item. <strong>Final answer:</strong> the write succeeds on B, C, and D; the cluster never blocks, and A catches up when it returns.</p>
+  </div>
+  <div class="key-concept">
+    <p><strong>The two names for this mechanism:</strong> this is the <strong>hinted handoff</strong> strategy — the copy is <em>handed off</em> to a stand-in node that holds it until the true owner returns, guided by a stored <em>hint</em> of who really owns it. The <em>sloppy quorum</em> terminology goes with it: the "quorum" of nodes that acknowledged the write was not the exact planned set (A, B, C) but a sloppy stand-in set (B, C, D) — the write still got its required number of confirmations, just from nodes that were willing. The advantage is exactly the one listed in the paper: <strong>high availability and durability guarantees</strong> even when some of the replicas are unavailable — the system never blocks a write because one copy holder is down.</p>
+  </div>
+  <h3 id="6.7.3-permanent-failures-merkle-trees">6.7.3 Permanent Failures: Merkle Trees</h3>
+  <p>For permanent failures the first step is <strong>detection</strong>: we have to detect the permanent failure. The tool is <strong>Merkle trees</strong> — hash trees — used to tag down the subtrees where the replicas have gone out of sync. Instead of comparing data item by data item (which takes much longer), each replica holds a hash value of its data.</p>
+  <div class="example-box">
+    <p><strong>Worked example — finding the dead node without scanning everything.</strong> Say the data is replicated on A, B, and C. Each node hashes its local copy of every item, then builds a tree: leaves are item hashes, and each internal node is the hash of its children's hashes. If the hash value at C differs from the hash values at A and B, and it stays different for a longer period of time, we conclude C has permanently died. Then an action plan is needed: choose another node to hold the replica that was on C, so the replication factor stays intact — the garbled source phrase "application factor will melting" resolves to this: the <em>replication factor</em> is restored on the affected neighbors. <strong>Final answer:</strong> the top-level hash comparison says "someone is wrong," and the tree structure says exactly which subtree — without scanning all the data item by item.</p>
+  </div>
+  <p>The Merkle tree structure is what makes this efficient: the tree pins down <em>which subtree</em> is out of sync, so we do not scan all the data. Compare a Merkle-tree check with the brute-force alternative: checking whether two replicas agree by reading every item costs time proportional to the whole dataset; checking the tree's root hash answers "do they differ at all?" in one comparison, and descending the tree locates the divergent range in steps proportional to the depth of the tree.</p>
+  <div class="warning-box">
+    <p><strong>Pitfalls:</strong></p>
+    <ul>
+      <li><strong>Reading wall-clock time as truth.</strong> Timestamps from different machines cannot order distributed writes; that is why vector clocks count events instead. "Which write is newer?" is not a clock question, it is a causal-order question.</li>
+      <li><strong>Forgetting that vector clocks grow.</strong> Every node that writes adds an entry; long-lived clusters must either bound the clocks or accept the growth — the paper flags this explicitly.</li>
+      <li><strong>Confusing hinted handoff with losing data.</strong> The copy on the stand-in node is not lost; it is parked with a hint and forwarded when the owner returns. Deleting the hint early, or treating the stand-in as the true owner, breaks the design.</li>
+      <li><strong>Scanning everything to find divergence.</strong> Full-item comparison defeats the purpose of Merkle trees — the tree exists to localize the out-of-sync subtree cheaply.</li>
+    </ul>
+  </div>
+  <h3 id="6.7.4-tuning-durability-consistency-and-availability-n-r-w">6.7.4 Tuning Durability, Consistency, and Availability: N, R, W</h3>
+  <p>The system exposes knobs that tweak durability, consistency, and availability. Three numbers:</p>
+  <ul>
+    <li>\(N\) — the total number of replicas for a data item (the total number of nodes holding copies).</li>
+    <li>\(R\) — the number of replicas that must respond before we return a read request.</li>
+    <li>\(W\) — the number of replicas that must be written before we return a write success.</li>
+  </ul>
+  <p>These are the read- and write-concern style knobs — the same consistency configuration we did in the MongoDB material. The extremes:</p>
+  <ul>
+    <li><strong>\(W = 1\)</strong>: any single node can ack the write. Write performance is high.</li>
+    <li><strong>\(W = N\)</strong>: highly durable writes — the write is not considered complete unless it has been completed on all the replicas. Highly consistent on the write side.</li>
+    <li><strong>\(R = 1\)</strong>: high-performance reads — read a single node and return that data.</li>
+    <li><strong>\(R = N\)</strong>: highly consistent reads — read all the nodes, and only when all the nodes are in sync and have the same copy of the data do we return.</li>
+  </ul>
+  <div class="key-concept">
+    <p><strong>Why the numbers overlap matters.</strong> A read and a write both gather quorums: the write waits for \(W\) confirmations, the read waits for \(R\) responses. If the read set and the write set always share at least one node, then a read is guaranteed to see the latest acknowledged write — because that shared node has it. That overlap condition is:</p>
+    <p>\[ R + W > N \]</p>
+    <p>The sum of the two quorums must exceed the total number of replicas. With \(N = 3\), that means \(R + W \geq 4\), which is exactly why the designers' default is the <strong>majority</strong> pairing: read <strong>two</strong>, write <strong>two</strong> — \(2 + 2 = 4 > 3\). (The paper's options of \(W = N\) or \(R = N\) are the extreme end of the same knob: every read set overlaps every write set, so consistency is total and availability shrinks.)</p>
+  </div>
+  <p>The number of copies that the distributed-systems designers have come up with as a good default is <strong>three</strong>. With three replicas, we can use the <strong>majority</strong> idea: if we have three replicas, read <strong>two</strong> — if two have the same data, return the read request; and write <strong>two</strong> — if two nodes are successfully written out of the three, return the write success.</p>
+  <div class="example-box">
+    <p><strong>Worked example — three flavors of the same read.</strong> With \(N = 3\), set \(R = 1\), \(W = 1\): reads and writes each touch one node — fastest, but a read can hit a stale node (eventual consistency). Set \(R = 2\), \(W = 2\): reads and writes each touch a majority — any two quorums overlap, so reads see the latest acknowledged write, and one node can be down without blocking (this is the recommended default). Set \(R = 3\), \(W = 3\): everything touches every node — strongest, but any single unreachable node blocks both reads and writes. <strong>Final answer:</strong> same three replicas, three different guarantees, chosen per request.</p>
+  </div>
+  <h3 id="6.7.5-the-99.9th-percentile-sla-problem">6.7.5 The 99.9th Percentile SLA Problem</h3>
+  <p>The closing note of the paper discussion: a very important and hard challenging problem is to provide a <strong>99.9th percentile SLA on latency</strong> — and to accommodate the <em>slowest</em> replicas for the chosen R and W values. Even if 99.9% of requests meet the latency bound, the slow replicas determine the tail; the tail is what breaks the SLA. That is why this remains a hard problem.</p>
+  <p>The reason is arithmetic: a read with \(R = 2\) waits for the <em>slower</em> of two replicas, and a write with \(W = 2\) waits for the <em>slower</em> of two confirmations. The few machines that are momentarily slow, busy, or unlucky become the pacing item of every request they serve — so the average node may be fast while the tail — the slowest few percent of nodes — drags the 99.9th percentile past the SLA. Fixing the tail is not the same as speeding up the average, which is why the paper treats the 99.9th-percentile target as a genuinely hard design problem.</p>
+  <p><strong>Real-world:</strong> the N, R, W vocabulary is the shared language of real systems. Amazon DynamoDB's read and write settings are exactly these knobs; Apache Cassandra's consistency levels (ONE, QUORUM, ALL, and their local variants) are the same idea named differently — ONE ≈ \(R = 1\) or \(W = 1\), QUORUM ≈ majority, ALL ≈ \(R = N\) or \(W = N\) — and the majority default \(N = 3\), read two, write two, is the same design choice this lecture derives from the paper.</p>
+  <div class="key-takeaway">
+    <p><strong>Recap + bridge:</strong> versioning with vector clocks orders writes when machines cannot trust each other's clocks; hinted handoff and sloppy quorum keep writes alive through temporary node loss; Merkle trees locate permanent divergence cheaply; and N, R, W turn consistency into a dial — with \(R + W > N\) as the rule that separates "strong enough" from "eventual," and three replicas with read two / write two as the standard setting. The last stop is the product that packages all of this as a managed service: DynamoDB.</p>
+  </div>
+
+  <h2 id="6.8-amazon-dynamodb">6.8 Amazon DynamoDB</h2>
+  <div class="important-note">
+    <p><strong>Hook:</strong> The Dynamo paper described how to build a highly available key-value store from scratch. DynamoDB is what happens when Amazon takes that design, runs it as a service, and tells customers: you never touch the machinery — you just create tables and call APIs. Every idea from the previous three sections is hidden inside one product.</p>
+  </div>
+  <h3 id="6.8.1-what-dynamodb-is">6.8.1 What DynamoDB Is</h3>
+  <p>DynamoDB is a service offered by Amazon as an AWS service: a <strong>fully managed NoSQL database service</strong>. Fully managed means the user is relieved of the administrative burdens of operating and scaling a distributed database — no hardware provisioning, no setup, no configuration, no worries about application scalability. It is a complete service you simply use from AWS. Compare this with running a database yourself: installing it, tuning it, patching it, adding servers when traffic grows, babysitting it at 3 a.m. when a node fails — DynamoDB removes that entire job and exposes only the parts that matter to the application: tables, items, and queries.</p>
+  <div class="key-concept">
+    <p><strong>What "fully managed" buys you:</strong> a managed service hides exactly the systems this lecture has been studying. The ring partitioning (consistent hashing), the failure handling (hinted handoff, Merkle trees), the quorum tuning (N, R, W) — all of it is operated by AWS behind the API. You do not configure vector clocks or replicas; you configure tables and read/write capacity, and the service translates your settings into its own internal N, R, W choices. Managed does not mean "no distributed systems involved" — it means someone else runs them.</p>
+  </div>
+  <p>Its headline features: <strong>fast performance and seamless scalability</strong>. You can store any amount of data in DynamoDB tables, and it can serve any level of request traffic. You can scale up or down without considerable downtime or performance degradation. It also offers <strong>backup</strong> — in case of, say, an accidental write or delete operation, you can create backups.</p>
+  <h3 id="6.8.2-tables-items-and-attributes">6.8.2 Tables, Items, and Attributes</h3>
+  <p>The core components mirror what we have seen in databases before: <strong>tables</strong>, <strong>items</strong>, and <strong>attributes</strong>.</p>
+  <ul>
+    <li>A <strong>table</strong> is very similar to a table in an RDBMS.</li>
+    <li>An <strong>item</strong> is similar to a record: a collection of attributes forms one record. We term it an item.</li>
+    <li>Each item is a collection of <strong>attributes</strong>, and an attribute is a key-value pair.</li>
+  </ul>
+  <div class="example-box">
+    <p><strong>Worked example — the "people" table, two items.</strong> One item has the attributes person id, last name, first name, phone number:</p>
+    <ul>
+      <li>Item 1: <code>person id = 1001, last name = Rao, first name = Anil, phone = 555-0101</code></li>
+      <li>Item 2: <code>person id = 1002, last name = Chen, first name = Mei, address = {street: "1 Main St", city: "Austin", state: "TX", zip: 73301}</code></li>
+    </ul>
+    <p><strong>Final answer:</strong> both items live in the same table, yet item 1 carries a phone attribute and item 2 carries a nested address attribute instead — no column in the schema demands either. In an RDBMS, both rows would have to fill the same columns (or the schema would carry two columns, one of them empty in every row).</p>
+  </div>
+  <p>Two differences from an RDBMS are the point:</p>
+  <ol>
+    <li><strong>Each record may have a different set of attributes</strong> — there is no fixed schema forcing every item to carry the same columns. Item one has phone; item two has address instead.</li>
+    <li><strong>Nesting of attributes is allowed.</strong> In the second item, address is nested: address further has street, city, state, zip. Nesting can go up to <strong>32 levels deep</strong> — that is the stated property.</li>
+  </ol>
+  <p>So we can create tables, add items to them, and each item is a group of key-value pairs (attributes). The practical effect of nesting: a whole JSON document — a customer profile with contact, address, order history — can be stored as one item, which is why DynamoDB is a natural fit for document-shaped data.</p>
+  <h3 id="6.8.3-primary-keys-and-secondary-indexes">6.8.3 Primary Keys and Secondary Indexes</h3>
+  <p>DynamoDB has the primary key feature we know from RDBMS. For the people table, while creating the table we can specify that <strong>person id</strong> is the primary key: it has to be unique, and it distinguishes one person from the others. A primary key can be a <strong>single attribute</strong>, or it can be a <strong>multi-attribute</strong> key — in that case we call it a <strong>composite primary key</strong>.</p>
+  <div class="example-box">
+    <p><strong>Worked example — a composite key for the music table.</strong> A music table has items with attributes artist, song title, album title, price, genre, and year. We combine two attributes — the source names neither, and for a music table the natural composite key is <strong>artist + song title</strong> — and form a particular key that will be unique across the table. "Beyoncé + Halo" names one item; "Queen + Bohemian Rhapsody" names another. Neither attribute alone is unique across the table — artists release many songs, and song titles repeat — but the pair is. <strong>Final answer:</strong> a composite primary key is two attributes combined into one unique identifier.</p>
+  </div>
+  <p>DynamoDB also supports <strong>secondary indexing</strong>. Every index is built on a base table: from a base table we can create a secondary index, specifying the attributes we want to index — for example, on genre and album title. That secondary index fastens the queries that require genre and album type, and some primary key attributes are also copied into the index. Indexes are <strong>maintained automatically</strong>: once you have created an index and you modify the base table (add, update, delete), the index is modified accordingly. It is a deeper topic — the AWS documentation on DynamoDB indexing covers it.</p>
+  <div class="key-concept">
+    <p><strong>Why secondary indexes exist:</strong> a primary key answers "give me the item with this key" — exactly the key-based retrieval the Dynamo paper found in production traffic. But an application also asks "give me all songs of genre jazz from 2020." Without an index, that is a full scan of every item; with an index on (genre, year), the query reads only the matching entries. The price is paid at write time — the index is updated with every table change — which is why the service maintains it automatically and why not every attribute deserves an index.</p>
+  </div>
+  <h3 id="6.8.4-dynamodb-streams-and-lambda-triggers">6.8.4 DynamoDB Streams and Lambda Triggers</h3>
+  <p>An optional but important feature: <strong>DynamoDB Streams</strong>, which captures modification events on a table. It is optional — it is not available by default with every table; we need to enable it. An <em>event</em> is something that happens to the data: a new item is added, an item is updated, an item is deleted. When any such event happens, DynamoDB captures it with the help of <strong>stream records</strong>:</p>
+  <ul>
+    <li>If a new item is added, the stream captures the image of the entire item, including all the attributes.</li>
+    <li>If an item is updated, it maintains <strong>before and after images</strong>.</li>
+    <li>If an item is deleted, it maintains the before image — the image of the item before it was deleted.</li>
+  </ul>
+  <p>The classic combination: <strong>DynamoDB Streams + AWS Lambda = triggers</strong>. We saw Lambda as function-as-a-service; we can attach functions to this storage. The trigger runs automatically when any event of interest happens: you specify in the Lambda function what should happen, attach it to the DynamoDB Streams; when the event happens in the table, DynamoDB captures it and automatically triggers the function.</p>
+  <div class="example-box">
+    <p><strong>Worked example — the welcome email.</strong> A customers table stores customer id, last name, first name, and an email address attribute. The rule: when new customer details are added, and the record has an email attribute, a <strong>welcome email</strong> should be sent to the new customer. Configure an email service — <strong>Amazon Simple Email Service</strong> — with an AWS Lambda function. Whenever a new record is inserted, the Lambda function invokes Amazon Simple Email Service, which sends the welcome email — provided the email attribute is there.</p>
+    <p>Look at three sample records: the first two have email; the third has no email. Record 1 is inserted → a stream record enters the stream → the Lambda trigger fires → a welcome email goes out. Record 2: same path. Record 3: the stream record is still entered in DynamoDB Streams for what happened, but because the third record has no email association, no welcome email is sent to that customer. <strong>Final answer:</strong> the trigger fires on every insert, but the function's own rule — "only send if the email attribute exists" — decides the outcome.</p>
+  </div>
+  <h3 id="6.8.5-consistency-levels">6.8.5 Consistency Levels</h3>
+  <p>Consistency matters for distributed databases spread across availability zones, and DynamoDB is available in multiple availability zones. Each region is physically independent and isolated from the other AWS regions: a table in one region and a table in another region are physically separate — they are considered <strong>two separate tables</strong> in DynamoDB. Within a region, every AWS region consists of multiple distinct locations called availability zones, and each AZ is isolated from failures in the other AZs of the same region. The AZs within the same region are connected via private networks for low latency, and <strong>replication of data happens among the AZs within a region</strong> for fault tolerance.</p>
+  <p>DynamoDB offers <strong>two levels of consistency</strong>:</p>
+  <ul>
+    <li><strong>Eventual consistency</strong>: the response may be very fast, but you may not get the results of a recently completed write operation — a <strong>stale copy</strong> of the data may be returned. If you repeat the request after a short period of time, the response should return the latest data. The rule of thumb: typically consistent within about <strong>one second</strong>; for the timings in between you may have stale data. This is for faster reads.</li>
+    <li><strong>Strong consistency</strong>: reads return the latest write. The downsides: reads may be <strong>unavailable on outages</strong> — if there is a partition, and the read must read from all the replicas and only return once they are in sync, then with one node unreachable the read request cannot be served; that is low availability. It also means <strong>higher latency</strong> — reading from multiple nodes and waiting for sync — and it <strong>uses more throughput capacity</strong> for the read cycle.</li>
+  </ul>
+  <div class="key-concept">
+    <p><strong>Same CAP math as the paper.</strong> Eventual reads touch the fewest replicas (low R), so they are fast and always available, and they pay for it with possible staleness — an AP-flavored choice. Strong reads demand the replicas be in sync before answering (high R), which guarantees fresh data and sacrifices availability and latency under partition — the CP-flavored choice. This is the N, R, W dial of section 6.7 turned into a per-request setting: same knobs, productized.</p>
+  </div>
+  <p>So eventual consistency is much faster, but at times we have to compromise with consistency, and strong consistency buys correctness at the price of availability, latency, and throughput.</p>
+  <h3 id="6.8.6-capacity-modes-and-billing">6.8.6 Capacity Modes and Billing</h3>
+  <p>The last slide: <strong>capacity modes</strong>. DynamoDB has two read/write capacity modes, and billing depends on which mode is set — it decides how much you will pay:</p>
+  <ul>
+    <li><strong>On-demand</strong>: no capacity planning at all. Set on-demand and auto scaling happens within certain limits, probably within minimal time: if your application scales up, the database adheres to that; if it scales down and not many users are there, the database adheres to that too. It also adheres to a <strong>single-digit millisecond SLA</strong> on reads and writes — a service level agreement, very important from the business point of view. On-demand is good for <strong>unpredictable workloads</strong>.</li>
+    <li><strong>Provisioned</strong>: you do some planning and <strong>reserve the capacity</strong> for the read and write throughput you need. There is <strong>cost predictability</strong> in that, and there is also some level of auto scaling in provisioned mode. Provisioned is good where you have some prediction — "this much we can stay within."</li>
+  </ul>
+  <p>Charging works in terms of <strong>read request units</strong> and <strong>write request units</strong> consumed:</p>
+  <p>\[ 1\ \text{read request unit} = 1 \text{ strongly consistent read of } 4\ \text{KB} \]</p>
+  <p>\[ 1\ \text{read request unit} = 2 \text{ eventually consistent reads of } 4\ \text{KB} \]</p>
+  <p>\[ 1\ \text{write request unit} = 1\ \text{KB written} \]</p>
+  <div class="key-concept">
+    <p><strong>Reading the unit definitions:</strong> a 4 KB item read with a strongly consistent read consumes one read request unit; an eventually consistent read costs half a unit, because two eventually consistent reads of 4 KB consume one read request unit. On the write side, a 1 KB write consumes one write request unit. The pattern is linear: a 12 KB item read strongly consumes 3 units; a 2.5 KB write consumes 3 write units (rounded up to the next KB). <strong>Transactional</strong> operations are billed higher: the source's phrasing was garbled ("0.5 transactional 1 KB…"), and AWS documentation charges a 1 KB transactional write <strong>2 write request units</strong> — double the standard rate — and transactional reads double units as well, which is the price of atomic, all-or-nothing multi-item operations.</p>
+  </div>
+  <div class="example-box">
+    <p><strong>Worked example — a month of reads and writes.</strong> An app reads its 4 KB customer profile strongly 10,000 times a month and writes 1 KB updates 5,000 times a month. Strong read: 1 unit each → 10,000 read units. Eventual read of the same data would have cost half: 2 reads per unit → 5,000 units. Writes: 1 unit per 1 KB → 5,000 write units. Total: 15,000 read units + 5,000 write units against the account, and the bill follows whatever capacity mode is set. <strong>Final answer:</strong> unit math is plain multiplication — the knobs that change the bill are consistency (halves or doubles read units) and capacity mode (on-demand vs provisioned pricing).</p>
+  </div>
+  <div class="warning-box">
+    <p><strong>Pitfalls:</strong></p>
+    <ul>
+      <li><strong>Assuming "fully managed" means "no consistency choices."</strong> The service still makes you pick eventual vs strong per read, because the trade-off is fundamental, not an implementation detail.</li>
+      <li><strong>Paying for strong consistency where eventual would do.</strong> Strong reads double the unit cost; dashboards and caches rarely need them.</li>
+      <li><strong>Forgetting that regions are separate tables.</strong> A table in <code>us-east-1</code> and a table in <code>eu-west-1</code> are two different tables; replication across regions is not automatic just because both live in AWS.</li>
+      <li><strong>Using a composite key that is not unique.</strong> The pair must be unique across the table; combining two non-unique-but-stable attributes is the point, combining two changing attributes destroys the key.</li>
+    </ul>
+  </div>
+  <p>Based on how many read request units and write request units are consumed, you pay. The CRUD operations — create, read, update, delete — are simple; any documentation on DynamoDB covers them. And since we have already covered Neo4j and MongoDB, this should be simpler for you now.</p>
+  <p><strong>Real-world:</strong> DynamoDB is the workhorse behind AWS's own e-commerce workloads — the very shopping-cart, bestseller-list, session-management patterns that motivated the Dynamo paper. Outside AWS, the same design runs companies' game leaderboards, IoT device state, ad-tech counters, and any workload that says "give me the object with this key" at web scale. When a startup says "our database just scales," the storage behind that claim is often a key-value service like this one.</p>
+  <div class="key-takeaway">
+    <p><strong>Recap + bridge:</strong> DynamoDB packages the whole paper into a service: tables of schema-free, nestable items; single or composite primary keys with automatic secondary indexes; streams that turn every data change into an event; Lambda triggers that react; two consistency levels that map straight onto the N, R, W dial; and two capacity modes that decide the bill. That closes the storage story: object, file, and block interfaces on the front end, and the Dynamo design — consistent hashing, vector clocks, hinted handoff, Merkle trees — running underneath.</p>
+  </div>
+
+  <h2 id="exam-guidance-summary">Exam Guidance Summary</h2>
+  <p>This session covered storage on the cloud end to end: the three interfaces, three AWS services that implement them, the research paper that shaped them, and the managed database that productized the design. The list below is the exam-relevant core of the session.</p>
+  <ul>
+    <li><strong>Finger-table lookup and routing-table construction were cut short and are explicitly promised to return</strong> — the plan is a full worked example in the next session. Expect this topic again and know the mechanism: node at \(n\) keeps entries \(n + 2^i\) for \(i = 0\) to \(m-1\), and searches skip nodes rather than walking the ring linearly. Practise one full lookup on a small ring before the next session. (Section 6.6.)</li>
+    <li><strong>CAP reasoning is assumed knowledge</strong> (it appeared "before the mid-semester" discussion): partition tolerance is a must in distributed systems, and each service picks one of C or A — S3 and DynamoDB eventual reads are AP-style choices. Be ready to justify a service's consistency behavior with CAP vocabulary: name the two chosen letters, name the sacrifice, and name the observable symptom (stale reads). (Section 6.2.)</li>
+    <li><strong>The N, R, W tuning model echoes the MongoDB consistency configuration</strong> done earlier in the course — the same knobs (how many replicas must ack a read/write) come back here; the majority case with \(N = 3\) is read two / write two, and the overlap condition \(R + W > N\) explains why that pairing sees the latest write. (Section 6.7.)</li>
+    <li><strong>No mark distribution was given in this session.</strong> The material covered spans: the three storage interfaces, S3 features (tiering, Object Lambda) and use cases, EFS, EBS, the Dynamo paper's requirements/design considerations/techniques, consistent hashing placement and lookup, failure handling, and DynamoDB core components. These are the likely exam topics — the storage-interfaces vocabulary and the problem-to-technique mapping of the paper are the two most likely question families.</li>
+    <li><strong>DynamoDB CRUD is easier after Neo4j and MongoDB</strong> — if CRUD appears, the pattern from those systems carries over; the AWS documentation is the reference. Consistency-level questions, request-unit arithmetic, and capacity modes are the parts specific to this session.</li>
+  </ul>
+
+  <h2 id="key-industry-applications">Key Industry Applications</h2>
+  <ul>
+    <li><strong>Amazon S3</strong> — backup storage (cloud and on-premises), disaster recovery with cross-region archival, scalable cloud applications, and <strong>data lakes</strong> for analytics; objects from 1 byte to 5 TB, three AZ copies by default, tiered into Standard / Standard-IA / Glacier. In industry this is the landing zone for raw data in most analytics pipelines: logs, exports, and archives all land in buckets first.</li>
+    <li><strong>Amazon Glacier</strong> — archival and historical data at minimal cost with minutes-to-hours retrieval; the home for compliance records that must be kept for years but rarely read — the "coldest" tier of the storage lifecycle.</li>
+    <li><strong>S3 Object Lambda</strong> — per-request transformation of stored objects (masking, filtering, augmentation) without duplicating data; the pattern used to serve the same stored object to different consumers with different views (compliance-masked, filtered, or transformed) from one bucket.</li>
+    <li><strong>Amazon EFS</strong> — shared, NFS-based file storage across many instances and VPCs, with one-zone (cheap) and multi-AZ (highly available) classes plus lifecycle policies; the "shared drive in the cloud" for web farms, content teams, and container platforms that need many machines on one folder tree.</li>
+    <li><strong>Amazon EBS</strong> — low-latency block storage for I/O-intensive workloads: relational and transactional databases, OLTP engines; the raw, single-owner disk that database servers sit on, portable across zones only through snapshots.</li>
+    <li><strong>Amazon DynamoDB</strong> — fully managed NoSQL for e-commerce (shopping carts, bestseller lists, session management), any-scale traffic, on-demand scaling, streams + Lambda for event-driven flows (e.g., welcome emails via Amazon Simple Email Service); the managed face of the Dynamo design for web-scale key-value workloads.</li>
+    <li><strong>Consistent hashing and finger tables</strong> — the partitioning and routing ideas behind the Dynamo paper; the ISP hop-by-hop lookup analogy shows why hop efficiency matters at internet scale — the same ring idea appears in Cassandra's partitioner, in distributed caches, and in content delivery networks.</li>
+  </ul>
+    </main>
+
+    <!-- ============================================================
+    EXAM REVISION NOTES
+    Generated AFTER the main lecture-faithful content is complete. Each entry
+    distills one major concept into its most examinable elements.
+    Built FROM the core — never invented independently.
+
+    Each entry is a <div class="exam-revision-entry"> containing:
+      - .revision-topic (h3) — concept name
+      - .revision-mustknow — the single most examinable takeaway
+      - .revision-formula — central formula(s) in \[ ... \] MathJax
+      - .revision-pitfall — the #1 exam mistake
+      - .revision-check — one self-check question (no options)
+      - .revision-connections — linked concepts within this lecture
+    ============================================================ -->
+    <section class="exam-revision-section">
+      <h2>Exam Revision Notes</h2>
+      <p class="revision-intro">Below is the distilled, exam-ready core.
+      Every entry comes from the full explanation above. Use this section
+      for rapid review; return to the main notes when a point needs more context.</p>
+    <div class="exam-revision-entry">
+      <h3 class="revision-topic">Storage on the Cloud: The Three Interfaces</h3>
+      <p class="revision-mustknow"><strong>Must-know:</strong> The three storage interfaces — block (unique blocks), file (hierarchical tree), object (key + metadata) — and which AWS service implements each: EBS (block), EFS (file), S3/Glacier (object).</p>
+      <p class="revision-pitfall"><strong>Top pitfall:</strong> Confusing the interface with the service, or assuming object storage is hierarchical: the namespace is flat even when folder-looking prefixes exist.</p>
+      <p class="revision-check"><strong>Self-check:</strong> A photo stored as one self-contained unit with metadata — which interface is this?</p>
+      <p class="revision-connections"><strong>Connects to:</strong> 6.2 Amazon S3: Object Storage, 6.3 Amazon EFS: File Storage, 6.4 Amazon EBS: Block Storage</p>
+    </div>
+    <div class="exam-revision-entry">
+      <h3 class="revision-topic">Amazon S3: Object Storage</h3>
+      <p class="revision-mustknow"><strong>Must-know:</strong> S3 is an AP design (availability first, consistency sacrificed): partition tolerance is a must, so CAP forces choosing between C and A, and S3 chooses A. Default replication factor is three; reduced redundancy lowers cost at the price of some availability.</p>
+      <p class="revision-formula">\[\texttt{bucketname.s3.amazonaws.com/objectname}\ \text{or}\ \texttt{s3.\langle \text{region} \rangle.amazonaws.com/bucketname/objectname}\]</p>
+      <p class="revision-pitfall"><strong>Top pitfall:</strong> Treating eventual-consistency symptoms (invisible, stale, or resurrected objects) as bugs; they are the price of the availability-first design.</p>
+      <p class="revision-check"><strong>Self-check:</strong> A reader receives 'object does not exist' right after a write. Which design choice causes this, and how does it resolve?</p>
+      <p class="revision-connections"><strong>Connects to:</strong> 6.1 Storage on the Cloud: The Three Interfaces, 6.5 The Dynamo Paper: What Large-Scale Storage Was Designed For, 6.7 Versioning, Failure Handling, and Replication Tuning</p>
+    </div>
+    <div class="exam-revision-entry">
+      <h3 class="revision-topic">Amazon EFS: File Storage</h3>
+      <p class="revision-mustknow"><strong>Must-know:</strong> EFS is file storage over NFS, attachable to a VPC with little application change. Standard class replicates across 3+ AZs; One Zone replicates within one AZ at lower cost; each class has a Standard and an Infrequent Access variant, and lifecycle policies move data by age.</p>
+      <p class="revision-pitfall"><strong>Top pitfall:</strong> Reading EFS data from an instance in another availability zone: extra latency plus paid cross-AZ data transfer.</p>
+      <p class="revision-check"><strong>Self-check:</strong> Which EFS class replicates within a single availability zone, and what does it save?</p>
+      <p class="revision-connections"><strong>Connects to:</strong> 6.1 Storage on the Cloud: The Three Interfaces, 6.4 Amazon EBS: Block Storage</p>
+    </div>
+    <div class="exam-revision-entry">
+      <h3 class="revision-topic">Amazon EBS: Block Storage</h3>
+      <p class="revision-mustknow"><strong>Must-know:</strong> EBS = block storage: fastest interface, one instance at a time, durable within an AZ, moved across AZs only via snapshots; the right choice for I/O-intensive single-machine workloads (relational databases, OLTP).</p>
+      <p class="revision-pitfall"><strong>Top pitfall:</strong> Attempting to share one EBS volume across instances — it is single-owner by design; shared access needs EFS (file) or S3 (object).</p>
+      <p class="revision-check"><strong>Self-check:</strong> A database server needs sub-millisecond predictable disk for one EC2 instance. Which storage interface and service?</p>
+      <p class="revision-connections"><strong>Connects to:</strong> 6.1 Storage on the Cloud: The Three Interfaces, 6.3 Amazon EFS: File Storage</p>
+    </div>
+    <div class="exam-revision-entry">
+      <h3 class="revision-topic">The Dynamo Paper: What Large-Scale Storage Was Designed For</h3>
+      <p class="revision-mustknow"><strong>Must-know:</strong> The Dynamo design: AP systems (partition tolerance is a must, availability kept), key-based retrievals, 99.9th percentile latency SLA, and the problem-to-technique mapping (consistent hashing, vector clocks, sloppy quorum + hinted handoff, Merkle trees, gossip membership).</p>
+      <p class="revision-pitfall"><strong>Top pitfall:</strong> Reading the 99.9th percentile as an average: the percentile budgets the tail — at most 0.1% of requests may exceed the SLA bound.</p>
+      <p class="revision-check"><strong>Self-check:</strong> A product added to a cart is missing after refresh, then appears. Which design choice explains this, and which CAP letters?</p>
+      <p class="revision-connections"><strong>Connects to:</strong> 6.6 Consistent Hashing: Partitioning and Replication, 6.7 Versioning, Failure Handling, and Replication Tuning, 6.8 Amazon DynamoDB</p>
+    </div>
+    <div class="exam-revision-entry">
+      <h3 class="revision-topic">Consistent Hashing: Partitioning and Replication</h3>
+      <p class="revision-mustknow"><strong>Must-know:</strong> Placement rule: first node clockwise from the hash; replicas on the next two clockwise nodes; ring wraps. Finger table: node n keeps entries n+2^i for i=0..m-1 (7 entries for 7 bits); lookup jumps to the farthest finger before the target and wraps modulo 2^m.</p>
+      <p class="revision-formula">\[n + 2^0,\ n + 2^1,\ \dots,\ n + 2^{m-1};\quad (99+32) \bmod 128 = 3\]</p>
+      <p class="revision-pitfall"><strong>Top pitfall:</strong> Choosing the visually closest node instead of the first node clockwise; treating K14 as a node; forgetting the modulo wrap when finger values exceed 2^m - 1.</p>
+      <p class="revision-check"><strong>Self-check:</strong> On the 32-ring with nodes at N5, N10, N17, N20, N25: hash value 6 stores where, and hash 7?</p>
+      <p class="revision-connections"><strong>Connects to:</strong> 6.5 The Dynamo Paper: What Large-Scale Storage Was Designed For, 6.7 Versioning, Failure Handling, and Replication Tuning</p>
+    </div>
+    <div class="exam-revision-entry">
+      <h3 class="revision-topic">Versioning, Failure Handling, and Replication Tuning</h3>
+      <p class="revision-mustknow"><strong>Must-know:</strong> N/R/W knobs: W=1 fast but weak, W=N durable; R=1 fast, R=N consistent; overlap condition R + W > N guarantees reads see acknowledged writes; N=3 default is read two, write two (majority). Temporary failure = hinted handoff + sloppy quorum; permanent failure = Merkle trees; writes are ordered by vector clocks, not wall time.</p>
+      <p class="revision-formula">\[R + W > N;\quad N=3 \Rightarrow R=2, W=2\]</p>
+      <p class="revision-pitfall"><strong>Top pitfall:</strong> Trusting machine timestamps to order writes (vector clocks exist because wall clocks drift); confusing hinted handoff's stand-in node with the true owner; ignoring that vector clocks grow over time.</p>
+      <p class="revision-check"><strong>Self-check:</strong> With N = 3, why does read-two / write-two guarantee a read sees the latest acknowledged write?</p>
+      <p class="revision-connections"><strong>Connects to:</strong> 6.5 The Dynamo Paper: What Large-Scale Storage Was Designed For, 6.8 Amazon DynamoDB, 6.6 Consistent Hashing: Partitioning and Replication</p>
+    </div>
+    <div class="exam-revision-entry">
+      <h3 class="revision-topic">Amazon DynamoDB</h3>
+      <p class="revision-mustknow"><strong>Must-know:</strong> DynamoDB unit economics: 1 RCU = one strong 4 KB read = two eventual 4 KB reads; 1 WCU = 1 KB write; transactional operations double the units. Components: tables/items/attributes, nesting up to 32 levels, composite primary keys, secondary indexes maintained automatically, streams + Lambda triggers, eventual (~1 s) vs strong consistency, on-demand vs provisioned capacity.</p>
+      <p class="revision-formula">\[1\ \text{RCU} = 1\ \text{strong 4 KB read} = 2\ \text{eventual 4 KB reads};\quad 1\ \text{WCU} = 1\ \text{KB write}\]</p>
+      <p class="revision-pitfall"><strong>Top pitfall:</strong> Forgetting that strong reads cost double read units, or that tables in different regions are separate tables; treating the composite key as non-unique.</p>
+      <p class="revision-check"><strong>Self-check:</strong> A 4 KB item read eventually consumes how much of a read request unit, and why?</p>
+      <p class="revision-connections"><strong>Connects to:</strong> 6.5 The Dynamo Paper: What Large-Scale Storage Was Designed For, 6.7 Versioning, Failure Handling, and Replication Tuning</p>
+    </div>
+    <div class="exam-revision-entry">
+      <h3 class="revision-topic">Exam Guidance Summary</h3>
+      <p class="revision-mustknow"><strong>Must-know:</strong> Finger tables return with a full worked example next session: node n keeps entries n + 2^i for i = 0..m-1 and searches skip nodes; CAP classification is assumed knowledge.</p>
+      <p class="revision-formula">\[n + 2^i,\ i = 0 \ldots m-1;\quad R + W > N\]</p>
+      <p class="revision-pitfall"><strong>Top pitfall:</strong> Answering CAP questions without naming the sacrificed letter and the observable symptom (e.g., stale reads).</p>
+      <p class="revision-check"><strong>Self-check:</strong> Which two CAP properties does S3 choose, and what does it sacrifice?</p>
+      <p class="revision-connections"><strong>Connects to:</strong> 6.6 Consistent Hashing: Partitioning and Replication, 6.2 Amazon S3: Object Storage, 6.7 Versioning, Failure Handling, and Replication Tuning, 6.8 Amazon DynamoDB</p>
+    </div>
+    <div class="exam-revision-entry">
+      <h3 class="revision-topic">Key Industry Applications</h3>
+      <p class="revision-mustknow"><strong>Must-know:</strong> Match the storage service to the industry job: S3 = buckets/data lakes/tiering; Glacier = archival; EFS = shared file tree; EBS = database disk; DynamoDB = managed key-value with streams; consistent hashing = partitioning at scale.</p>
+      <p class="revision-pitfall"><strong>Top pitfall:</strong> Assigning the wrong interface to the wrong job — e.g., sharing one EBS volume across machines, or storing rarely-read files on the fastest tier.</p>
+      <p class="revision-check"><strong>Self-check:</strong> A compliance team needs decade-old statements kept cheaply with minutes-to-hours retrieval. Which service and tier?</p>
+      <p class="revision-connections"><strong>Connects to:</strong> 6.2 Amazon S3: Object Storage, 6.3 Amazon EFS: File Storage, 6.4 Amazon EBS: Block Storage, 6.6 Consistent Hashing: Partitioning and Replication, 6.8 Amazon DynamoDB</p>
+    </div>
+    </section>
+  </div>
+</body>
+</html>
