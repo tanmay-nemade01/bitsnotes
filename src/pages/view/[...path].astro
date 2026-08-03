@@ -101,10 +101,45 @@ const { topics } = splitLectureTopics(bodyContent);
 const isResource = metadata.scope === 'subject' || (metadata.resourceKind && metadata.resourceKind !== 'lecture');
 const showRightSidebar = !(topics.length === 1 && topics[0].id === 'full' && isResource);
 const resourceKindLabel = isResource ? getResourceKindLabel(metadata.resourceKind ?? 'lecture') : 'Lecture';
-// Real title for non-lectures comes from topicTitle (no lecture-number prefix).
+// Derive raw topic title from metadata or matched catalog lecture entry
+const rawTopicTitle = (
+  metadata.topicTitle ||
+  metadata.title ||
+  matchedLecture?.topicTitle ||
+  ''
+).trim();
+
+// Fallback topic title from keyConcepts if topicTitle is missing
+const conceptTitle = rawTopicTitle
+  ? rawTopicTitle
+  : (metadata.keyConcepts && metadata.keyConcepts.length > 0
+      ? metadata.keyConcepts.slice(0, 2).join(', ')
+      : '');
+
+// Clean lecture name (e.g. "DRL Lecture 6 Notes")
+const cleanLectureName = lectureName.replace(/\s+/g, ' ').trim();
+
+let pageSeoTitle = '';
+
+if (isResource) {
+  const resourceTitle = conceptTitle || cleanLectureName;
+  pageSeoTitle = `${resourceTitle} | ${subjectName} ${resourceKindLabel} | BitsNotes`;
+} else if (conceptTitle) {
+  const lowerConcept = conceptTitle.toLowerCase();
+  const lowerLecture = cleanLectureName.toLowerCase();
+  if (lowerConcept.includes(lowerLecture) || lowerConcept.includes('lecture')) {
+    pageSeoTitle = `${conceptTitle} | ${subjectName} | BitsNotes`;
+  } else {
+    pageSeoTitle = `${conceptTitle} — ${cleanLectureName} | ${subjectName} | BitsNotes`;
+  }
+} else {
+  pageSeoTitle = `${cleanLectureName} | ${subjectName} | BitsNotes`;
+}
+
+// Display title for UI & JSON-LD schema
 const displayResourceTitle = isResource
-  ? (metadata.topicTitle || metadata.title || lectureName)
-  : lectureName;
+  ? (conceptTitle || cleanLectureName)
+  : (conceptTitle ? `${cleanLectureName} · ${conceptTitle}` : cleanLectureName);
 
 const showRevisionTab = hasRevisionSection || !!(metadata.examRevisionNotes && metadata.examRevisionNotes.length > 0);
 const showQuizTab = hasQuizSection || !!(metadata.quiz && metadata.quiz.length > 0);
@@ -149,10 +184,12 @@ if (currentLectureIndex !== -1 && currentSubjectIndex !== -1) {
 
 const seoDescription = metadata.summary
   ? (metadata.summary.length > 155 ? metadata.summary.slice(0, 152) + "..." : metadata.summary)
-  : `Access study notes and resources for ${lectureName} in ${subjectName} on BitsNotes.`;
+  : (conceptTitle
+      ? `Study notes and learning guide on ${conceptTitle} (${cleanLectureName}) for ${subjectName} on BitsNotes.`
+      : `Access study notes and resources for ${cleanLectureName} in ${subjectName} on BitsNotes.`);
 
 const seoKeywords = [
-  metadata.title, subjectName, lectureName,
+  conceptTitle, metadata.title, subjectName, cleanLectureName,
   "lecture notes", "study guide", "practice quiz",
   ...(metadata.keyConcepts || []).map((k: string) => k.split(' ').slice(0, 3).join(' ').replace(/[^\w\s]/g, '')),
 ].filter(Boolean).join(", ");
@@ -160,12 +197,12 @@ const seoKeywords = [
 const learningResourceSchema = {
   "@context": "https://schema.org",
   "@type": "LearningResource",
-  "name": `${displayResourceTitle} | ${subjectName} ${resourceKindLabel}`,
-  "description": metadata.summary,
+  "name": conceptTitle ? `${conceptTitle} (${cleanLectureName})` : cleanLectureName,
+  "description": metadata.summary || seoDescription,
   "learningResourceType": isResource ? resourceKindLabel : "Lecture Notes",
-  "educationalLevel": metadata.gradeLevel,
-  "teaches": metadata.keyConcepts?.join(", ") || "",
-  "audience": { "@type": "Audience", "audienceType": metadata.targetAudience },
+  "educationalLevel": metadata.gradeLevel || "higher education",
+  "teaches": metadata.keyConcepts?.join(", ") || conceptTitle || "",
+  "audience": { "@type": "Audience", "audienceType": metadata.targetAudience || "Students" },
   "datePublished": metadata.datePublished,
   "inLanguage": "en",
   "author": { "@type": "Organization", "name": "BitsNotes" },
@@ -175,9 +212,9 @@ const learningResourceSchema = {
 const quizSchema = metadata.quiz && metadata.quiz.length > 0 ? {
   "@context": "https://schema.org",
   "@type": "Quiz",
-  "name": `${lectureName} Practice Quiz`,
-  "description": `Interactive practice quiz covering ${lectureName} concepts.`,
-  "about": { "@type": "Thing", "name": lectureName },
+  "name": `${cleanLectureName} Practice Quiz`,
+  "description": `Interactive practice quiz covering ${cleanLectureName} concepts.`,
+  "about": { "@type": "Thing", "name": cleanLectureName },
   "hasPart": (metadata.quiz as QuizQuestion[]).map((q: QuizQuestion, idx: number) => ({
     "@type": "Question",
     "name": `Question ${idx + 1}`,
@@ -192,7 +229,7 @@ const quizJson = quizSchema ? JSON.stringify(quizSchema) : null;
 ---
 
 <BaseLayout
-  title={`${displayResourceTitle} | ${subjectName} | BitsNotes`}
+  title={pageSeoTitle}
   description={seoDescription}
   keywords={seoKeywords}
   ogType="article"
