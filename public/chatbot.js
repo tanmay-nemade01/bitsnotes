@@ -6,10 +6,38 @@
   'use strict';
 
   var STORAGE_KEY = 'bn_chatbot_config';
+  var HISTORY_STORAGE_KEY = 'bn_chatbot_history';
   var memoryConfig = null;
   var conversationHistory = [];
   var isSending = false;
   var topicMappingCache = {};
+
+  function loadConversationHistory() {
+    try {
+      var saved = sessionStorage.getItem(HISTORY_STORAGE_KEY);
+      if (saved) {
+        var parsed = JSON.parse(saved);
+        if (Array.isArray(parsed)) {
+          return parsed.filter(function (m) {
+            return m && (m.role === 'user' || m.role === 'assistant') && typeof m.content === 'string';
+          });
+        }
+      }
+    } catch (e) {
+      console.warn('[chatbot] Could not read conversation history', e);
+    }
+    return [];
+  }
+
+  function saveConversationHistory() {
+    try {
+      sessionStorage.setItem(HISTORY_STORAGE_KEY, JSON.stringify(conversationHistory));
+    } catch (e) {
+      console.warn('[chatbot] Failed to persist conversation history', e);
+    }
+  }
+
+  conversationHistory = loadConversationHistory();
 
   function getConfig() {
     if (memoryConfig) return memoryConfig;
@@ -574,6 +602,24 @@
     container.scrollTop = container.scrollHeight;
   }
 
+  function appendWelcomeMessage() {
+    var subject = getSubjectName();
+    appendMessage(
+      'assistant',
+      'Hello! 👋 I am your AI study assistant for **' +
+        escapeHtml(subject) +
+        '**.\n\nI have the full context of this lecture page. Ask me anything!'
+    );
+  }
+
+  function clearChat() {
+    var container = document.getElementById('bn-chatbot-messages');
+    if (container) container.innerHTML = '';
+    conversationHistory = [];
+    saveConversationHistory();
+    appendWelcomeMessage();
+  }
+
   function showTypingIndicator() {
     var container = document.getElementById('bn-chatbot-messages');
     if (!container) return null;
@@ -718,13 +764,14 @@
       showChatView();
       var container = document.getElementById('bn-chatbot-messages');
       if (container && container.children.length === 0) {
-        var subject = getSubjectName();
-        appendMessage(
-          'assistant',
-          'Hello! 👋 I am your AI study assistant for **' +
-            escapeHtml(subject) +
-            '**.\n\nI have the full context of this lecture page. Ask me anything!'
-        );
+        if (conversationHistory.length > 0) {
+          // Restore the persisted conversation after page navigation
+          conversationHistory.forEach(function (m) {
+            appendMessage(m.role, m.content);
+          });
+        } else {
+          appendWelcomeMessage();
+        }
       }
     }
   }
@@ -777,10 +824,13 @@
 
     appendMessage('user', userQuery);
     conversationHistory.push({ role: 'user', content: userQuery });
+    saveConversationHistory();
 
     isSending = true;
     var sendBtn = document.getElementById('bn-chatbot-send');
     if (sendBtn) sendBtn.disabled = true;
+    var clearBtn = document.getElementById('bn-chat-clear-btn');
+    if (clearBtn) clearBtn.disabled = true;
 
     showTypingIndicator();
 
@@ -861,6 +911,11 @@
           '⚠️ <strong>API Error (' + res.status + '):</strong> ' + escapeHtml(errBody) + '<br/>Please check your OpenAI-compatible API Key & Endpoint settings.',
           true
         );
+        // Roll back the unanswered user turn so the next request keeps a valid role alternation
+        if (conversationHistory.length > 0 && conversationHistory[conversationHistory.length - 1].role === 'user') {
+          conversationHistory.pop();
+        }
+        saveConversationHistory();
         isSending = false;
         if (sendBtn) sendBtn.disabled = false;
         return;
@@ -876,9 +931,15 @@
 
       appendMessage('assistant', reply);
       conversationHistory.push({ role: 'assistant', content: reply });
+      saveConversationHistory();
     } catch (err) {
       hideTypingIndicator();
       console.error('[chatbot] Error during fetch:', err);
+      // Roll back the unanswered user turn so the next request keeps a valid role alternation
+      if (conversationHistory.length > 0 && conversationHistory[conversationHistory.length - 1].role === 'user') {
+        conversationHistory.pop();
+      }
+      saveConversationHistory();
       appendMessage(
         'system',
         '⚠️ <strong>Connection Error:</strong> Could not connect to API endpoint.<br/>' +
@@ -888,6 +949,7 @@
     } finally {
       isSending = false;
       if (sendBtn) sendBtn.disabled = false;
+      if (clearBtn) clearBtn.disabled = false;
     }
   }
 
@@ -1086,6 +1148,13 @@
       clearConfig();
       showChatView();
       appendMessage('system', 'Key cleared. Click settings icon to set a new key.', true);
+      return;
+    }
+
+    var clearChatBtn = e.target.closest('#bn-chat-clear-btn');
+    if (clearChatBtn) {
+      e.preventDefault();
+      clearChat();
       return;
     }
 
