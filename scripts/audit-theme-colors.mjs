@@ -61,7 +61,7 @@ const POMODORO_BREAK_PATTERNS = [
 //    (dark code surface). Live in lecture-notes.css and Pomodoro.
 const CODE_COLOR_PATTERNS = [
   '#0b0f19', '#0B0F19', '#f1f5f9', '#F1F5F9', '#1e293b', '#1E293B',
-  '#0f172a', '#e2e8f0', '#22c55e', '#059669', '#D97706',
+  '#0f172a', '#e2e8f0', '#94a3b8', '#94A3B8', '#22c55e', '#059669', '#D97706',
   'rgba(34, 197, 94', 'rgba(16, 185, 129', '#34d399',
   '#5eead4', 'rgba(45, 212, 191', 'rgba(15, 118, 110',
   'rgba(99, 102, 241', '#6366f1',

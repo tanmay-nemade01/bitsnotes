@@ -293,9 +293,16 @@
       return key;
     }
 
-    // 1. Stash fenced code blocks
-    var processed = text.replace(/```([\s\S]*?)```/g, function (match, code) {
-      return saveToken('<pre><code>' + escapeHtml(code.trim()) + '</code></pre>');
+    // 1. Stash fenced code blocks (extracting optional language identifier)
+    var processed = text.replace(/```([a-zA-Z0-9_\-\+]*)\n?([\s\S]*?)```/g, function (match, lang, code) {
+      var cleanCode = code.replace(/^\n+|\n+$/g, '');
+      var langLabel = lang ? '<div class="bn-code-lang">' + escapeHtml(lang.toLowerCase()) + '</div>' : '';
+      return saveToken(
+        '<div class="bn-code-block">' +
+          langLabel +
+          '<pre><code>' + escapeHtml(cleanCode) + '</code></pre>' +
+        '</div>'
+      );
     });
 
     // 2. Stash inline code
@@ -305,40 +312,131 @@
 
     // 3. Stash Display Math: $$...$$ or \[...\]
     processed = processed.replace(/\$\$([\s\S]*?)\$\$/g, function (match, math) {
-      return saveToken('$$\n' + escapeHtml(math.trim()) + '\n$$');
+      var cleanMath = math.trim();
+      return saveToken('<div class="bn-math-display">\\[' + cleanMath + '\\]</div>');
     });
     processed = processed.replace(/\\\[([\s\S]*?)\\\]/g, function (match, math) {
-      return saveToken('\\[\n' + escapeHtml(math.trim()) + '\n\\]');
+      var cleanMath = math.trim();
+      return saveToken('<div class="bn-math-display">\\[' + cleanMath + '\\]</div>');
     });
 
     // 4. Stash Inline Math: \(...\) or $...$
     processed = processed.replace(/\\\(([\s\S]*?)\\\)/g, function (match, math) {
-      return saveToken('\\(' + escapeHtml(math) + '\\)');
+      return saveToken('\\(' + math.trim() + '\\)');
     });
     processed = processed.replace(/(^|[^\\])\$([^\$\n]+?)\$/g, function (match, prefix, math) {
-      return prefix + saveToken('$' + escapeHtml(math) + '$');
+      return prefix + saveToken('\\(' + math.trim() + '\\)');
     });
 
-    // 5. Escape rest of HTML
+    // 5. Escape rest of HTML text safely
     processed = escapeHtml(processed);
 
     // 6. Markdown formatting on non-math/code text
+    // Bold & Italics
     processed = processed.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
     processed = processed.replace(/\*([^*]+)\*/g, '<em>$1</em>');
+
+    // Headings
     processed = processed.replace(/^### (.*$)/gim, '<h4 class="font-bold text-sm mt-2 mb-1">$1</h4>');
     processed = processed.replace(/^## (.*$)/gim, '<h3 class="font-bold text-base mt-3 mb-1">$1</h3>');
-    processed = processed.replace(/^\s*[\-\*]\s+(.*$)/gim, '<li>$1</li>');
-    processed = processed.replace(/(<li>.*<\/li>)/gs, '<ul>$1</ul>');
+
+    // Lists (Unordered - / * and Ordered 1. / 2.) & Tables
+    var lines = processed.split('\n');
+    var inUl = false;
+    var inOl = false;
+    var inTable = false;
+    var tableRows = [];
+    var outLines = [];
+
+    function flushTable() {
+      if (tableRows.length === 0) return;
+      var html = '<div class="bn-table-wrapper"><table class="bn-markdown-table">';
+      var startIdx = 0;
+      // Header row
+      if (tableRows.length >= 2 && /^[\s\|\:\-\+]+$/.test(tableRows[1].raw)) {
+        html += '<thead><tr>';
+        tableRows[0].cells.forEach(function (cell) {
+          html += '<th>' + cell + '</th>';
+        });
+        html += '</tr></thead>';
+        startIdx = 2;
+      }
+      html += '<tbody>';
+      for (var r = startIdx; r < tableRows.length; r++) {
+        if (/^[\s\|\:\-\+]+$/.test(tableRows[r].raw)) continue;
+        html += '<tr>';
+        tableRows[r].cells.forEach(function (cell) {
+          html += '<td>' + cell + '</td>';
+        });
+        html += '</tr>';
+      }
+      html += '</tbody></table></div>';
+      outLines.push(html);
+      tableRows = [];
+      inTable = false;
+    }
+
+    for (var i = 0; i < lines.length; i++) {
+      var line = lines[i];
+      var trimmed = line.trim();
+
+      // Check for table row
+      var isTableRow = trimmed.length > 2 && trimmed.indexOf('|') !== -1 && (trimmed.startsWith('|') || trimmed.endsWith('|'));
+
+      if (isTableRow) {
+        if (inUl) { outLines.push('</ul>'); inUl = false; }
+        if (inOl) { outLines.push('</ol>'); inOl = false; }
+        inTable = true;
+        var cells = trimmed.split('|');
+        if (trimmed.startsWith('|')) cells.shift();
+        if (trimmed.endsWith('|')) cells.pop();
+        tableRows.push({
+          raw: trimmed,
+          cells: cells.map(function (c) { return c.trim(); })
+        });
+        continue;
+      } else if (inTable) {
+        flushTable();
+      }
+
+      var ulMatch = line.match(/^\s*[\-\*]\s+(.*)$/);
+      var olMatch = line.match(/^\s*(\d+)\.\s+(.*)$/);
+
+      if (ulMatch) {
+        if (inOl) { outLines.push('</ol>'); inOl = false; }
+        if (!inUl) { outLines.push('<ul>'); inUl = true; }
+        outLines.push('<li>' + ulMatch[1] + '</li>');
+      } else if (olMatch) {
+        if (inUl) { outLines.push('</ul>'); inUl = false; }
+        if (!inOl) { outLines.push('<ol>'); inOl = true; }
+        outLines.push('<li>' + olMatch[2] + '</li>');
+      } else {
+        if (inUl) { outLines.push('</ul>'); inUl = false; }
+        if (inOl) { outLines.push('</ol>'); inOl = false; }
+        outLines.push(line);
+      }
+    }
+    if (inUl) outLines.push('</ul>');
+    if (inOl) outLines.push('</ol>');
+    if (inTable) flushTable();
+
+    processed = outLines.join('\n');
+
+    // Paragraph breaks and line breaks
     processed = processed.replace(/\n\n+/g, '</p><p>');
     processed = processed.replace(/\n/g, '<br/>');
 
-    // 7. Restore stashed blocks
-    for (var i = 0; i < stash.length; i++) {
-      var key = '___BN_STASH_' + i + '___';
-      processed = processed.replace(key, stash[i]);
+    // Clean up empty <p></p> or invalid tags around block containers
+    processed = '<p>' + processed + '</p>';
+    processed = processed.replace(/<p>\s*<\/p>/g, '');
+
+    // 7. Restore stashed blocks in reverse order
+    for (var k = stash.length - 1; k >= 0; k--) {
+      var token = '___BN_STASH_' + k + '___';
+      processed = processed.replace(token, stash[k]);
     }
 
-    return '<p>' + processed + '</p>';
+    return processed;
   }
 
   function getSubjectName() {
