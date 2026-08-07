@@ -29,13 +29,14 @@ export function generateVisitorId(): string {
  * state if needed (the raw id is opaque and non-sensitive).
  */
 export function visitorCookieHeader(id: string): string {
+  // Intentionally omit HttpOnly so client JS can read the opaque id if needed.
+  // Do not write "HttpOnly=false" — some parsers treat any HttpOnly attribute as enabled.
   const parts = [
     `${VISITOR_COOKIE}=${id}`,
     'Path=/',
     'SameSite=Lax',
     'Secure',
     `Max-Age=${COOKIE_TTL_SECONDS}`,
-    'HttpOnly=false',
   ];
   return parts.join('; ');
 }

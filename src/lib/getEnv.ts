@@ -20,6 +20,9 @@ export interface AppEnv {
   API_SECRET_KEY?: string;
   COMMENT_RATE_LIMITER?: { limit: (opts: { key: string }) => Promise<{ success: boolean }> };
   FEEDBACK_RATE_LIMITER?: { limit: (opts: { key: string }) => Promise<{ success: boolean }> };
+  CONTACT_RATE_LIMITER?: { limit: (opts: { key: string }) => Promise<{ success: boolean }> };
+  VIEWS_RATE_LIMITER?: { limit: (opts: { key: string }) => Promise<{ success: boolean }> };
+  ZOHO_CAMPAIGNS_LIST_KEY?: string;
 }
 
 let _envCache: AppEnv | null = null;

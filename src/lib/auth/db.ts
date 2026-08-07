@@ -99,6 +99,42 @@ export async function verifyUserEmail(db: AuthDb, userId: string): Promise<void>
 }
 
 /**
+ * Soft-delete a user account (GDPR erasure).
+ * Anonymizes PII, revokes sessions, removes owned data, keeps public comment text.
+ */
+export async function deleteUserAccount(db: AuthDb, userId: string): Promise<void> {
+  const now = Date.now();
+  const tombstoneEmail = `deleted-${userId}@deleted.local`;
+
+  // Anonymize authored comments (keep public body; drop identity linkage).
+  await db.prepare(
+    `UPDATE comments SET author_user_id = NULL, author_email_hash = NULL, updated_at = ? WHERE author_user_id = ?`,
+  ).bind(now, userId).run();
+
+  // Revoke sessions
+  await db.prepare(
+    `UPDATE refresh_tokens SET revoked_at = ? WHERE user_id = ? AND revoked_at IS NULL`,
+  ).bind(now, userId).run();
+
+  // Delete owned rows (FKs cascade for some; explicit for clarity)
+  await db.prepare('DELETE FROM bookmarks WHERE user_id = ?').bind(userId).run();
+  await db.prepare('DELETE FROM collections WHERE user_id = ?').bind(userId).run();
+  await db.prepare('DELETE FROM reading_progress WHERE user_id = ?').bind(userId).run();
+  await db.prepare('DELETE FROM topic_progress WHERE user_id = ?').bind(userId).run();
+  await db.prepare('DELETE FROM blog_likes WHERE user_id = ?').bind(userId).run();
+  await db.prepare('DELETE FROM blog_follows WHERE user_id = ?').bind(userId).run();
+  await db.prepare('DELETE FROM admin_users WHERE user_id = ?').bind(userId).run();
+  await db.prepare('DELETE FROM identities WHERE user_id = ?').bind(userId).run();
+  await db.prepare('DELETE FROM entitlements WHERE user_id = ?').bind(userId).run();
+  await db.prepare('DELETE FROM verification_tokens WHERE user_id = ?').bind(userId).run();
+
+  // Soft-delete user row (unique email freed via tombstone)
+  await db.prepare(
+    `UPDATE users SET email = ?, display_name = NULL, avatar_url = NULL, status = 'deleted', updated_at = ? WHERE id = ?`,
+  ).bind(tombstoneEmail, now, userId).run();
+}
+
+/**
  * Get entitlement for a user.
  */
 export async function getEntitlement(db: AuthDb, userId: string): Promise<AuthEntitlement | null> {

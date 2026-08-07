@@ -58,6 +58,7 @@ beforeEach(() => {
   setTestEnv({
     DB: db,
     APP_BASE_URL: BASE,
+    SESSION_SIGNING_KEY: 'test-session-signing-key',
     // No TURNSTILE_SECRET_KEY => Turnstile skipped (local-dev path).
     COMMENT_RATE_LIMITER: undefined,
   });
@@ -178,6 +179,7 @@ describe('POST /api/comments', () => {
     setTestEnv({
       DB: db,
       APP_BASE_URL: BASE,
+      SESSION_SIGNING_KEY: 'test-session-signing-key',
       COMMENT_RATE_LIMITER: { limit: async () => ({ success: false }) },
     });
     const ctx = makeContext({

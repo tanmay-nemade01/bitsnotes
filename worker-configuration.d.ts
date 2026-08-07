@@ -8,10 +8,13 @@ interface __BaseEnv_Env {
 	SEND_EMAIL: SendEmail;
 	COMMENT_RATE_LIMITER: RateLimit;
 	FEEDBACK_RATE_LIMITER: RateLimit;
+	CONTACT_RATE_LIMITER: RateLimit;
+	VIEWS_RATE_LIMITER: RateLimit;
 	ASSETS: Fetcher;
 	ZEPTOMAIL_SENDER: "BitsNotes <newsletter@bitsnotes.com>";
 	ZEPTOMAIL_REGION: "in";
-	ZOHO_CAMPAIGNS_LIST_KEY: "3z3ce022f62a9346a787036bf07edb166378871a469c28100a9865719aecdd0b69";
+	/** Set via `wrangler secret put ZOHO_CAMPAIGNS_LIST_KEY` (not committed in vars). */
+	ZOHO_CAMPAIGNS_LIST_KEY: string;
 	ZOHO_REGION: "in";
 	SESSION_SIGNING_KEY: string;
 	GOOGLE_CLIENT_ID: string;

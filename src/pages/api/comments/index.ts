@@ -182,7 +182,8 @@ export const POST: APIRoute = async (context) => {
   let authorEmailHash: string | null = null;
   if (user && user.email) {
     authorUserId = user.id;
-    const secret = (env as any).SESSION_SIGNING_KEY || 'bitsnotes';
+    const secret = (env as any).SESSION_SIGNING_KEY;
+    if (!secret) return serverError('Server misconfigured');
     authorEmailHash = await sha256Hex(user.email.toLowerCase() + ':' + secret);
   }
 

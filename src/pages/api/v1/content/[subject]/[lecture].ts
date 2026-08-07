@@ -1,21 +1,15 @@
 import type { APIRoute } from 'astro';
 import { env } from 'cloudflare:workers';
 import { getLectureContent } from '../../../../../utils/notesLoader';
+import { v1CorsHeaders, v1OptionsResponse, checkApiKey } from '../../../../../lib/cors';
 
 export const prerender = false;
 
 export const GET: APIRoute = async ({ params, request }) => {
-  const corsHeaders = {
-    'Access-Control-Allow-Origin': '*',
-    'Access-Control-Allow-Headers': 'Content-Type, Authorization, x-api-key',
-    'Access-Control-Allow-Methods': 'GET, OPTIONS',
-    'Content-Type': 'application/json'
-  };
+  const baseUrl = (env as any).APP_BASE_URL || 'https://bitsnotes.com';
+  const corsHeaders = v1CorsHeaders(request, baseUrl);
 
-  const authHeader = request.headers.get('Authorization') || request.headers.get('x-api-key');
-  const expectedKey = (env as any).API_SECRET_KEY;
-
-  if (!expectedKey || !authHeader || (authHeader !== `Bearer ${expectedKey}` && authHeader !== expectedKey)) {
+  if (!checkApiKey(request, (env as any).API_SECRET_KEY)) {
     return new Response(
       JSON.stringify({ error: 'Unauthorized: Invalid or missing API key' }),
       { status: 401, headers: corsHeaders }
@@ -41,21 +35,15 @@ export const GET: APIRoute = async ({ params, request }) => {
       );
     }
     return new Response(JSON.stringify(content), { status: 200, headers: corsHeaders });
-  } catch (err: any) {
+  } catch {
     return new Response(
-      JSON.stringify({ error: err.message || 'Failed to retrieve lecture content' }),
+      JSON.stringify({ error: 'Failed to retrieve lecture content' }),
       { status: 500, headers: corsHeaders }
     );
   }
 };
 
-export const OPTIONS: APIRoute = async () => {
-  return new Response(null, {
-    status: 204,
-    headers: {
-      'Access-Control-Allow-Origin': '*',
-      'Access-Control-Allow-Headers': 'Content-Type, Authorization, x-api-key',
-      'Access-Control-Allow-Methods': 'GET, OPTIONS'
-    }
-  });
+export const OPTIONS: APIRoute = async ({ request }) => {
+  const baseUrl = (env as any).APP_BASE_URL || 'https://bitsnotes.com';
+  return v1OptionsResponse(request, baseUrl);
 };

@@ -11,20 +11,26 @@ import { logAuthEvent } from '../../lib/auth';
 export const prerender = false;
 
 const user = getUser(Astro);
-const env = await getEnv(Astro);
-const isAdminUser = user ? (await env.DB.prepare('SELECT user_id FROM admin_users WHERE user_id = ?').bind(user.id).first()) : null;
+if (!user) {
+  return Astro.redirect('/auth/signin?redirect=/admin');
+}
 
-if (isAdminUser && user) {
-  try {
-    await logAuthEvent(env.DB, {
-      userId: user.id,
-      event: 'admin_dashboard_view',
-      ip: Astro.request.headers.get('CF-Connecting-IP') || '',
-      ua: Astro.request.headers.get('User-Agent') || '',
-    });
-  } catch (e) {
-    // best-effort
-  }
+const env = await getEnv(Astro);
+const isAdminUser = await env.DB.prepare('SELECT user_id FROM admin_users WHERE user_id = ?').bind(user.id).first();
+
+if (!isAdminUser) {
+  return new Response(null, { status: 404, statusText: 'Not Found' });
+}
+
+try {
+  await logAuthEvent(env.DB, {
+    userId: user.id,
+    event: 'admin_dashboard_view',
+    ip: Astro.request.headers.get('CF-Connecting-IP') || '',
+    ua: Astro.request.headers.get('User-Agent') || '',
+  });
+} catch (e) {
+  // best-effort
 }
 ---
 
@@ -43,20 +49,7 @@ if (isAdminUser && user) {
       <p class="mt-2 text-sm text-[var(--text-muted)]">Consolidated views metrics and comments overview across all content.</p>
     </header>
 
-    {!user && (
-      <div class="border-l-3 border-[var(--callout-warning-border)] bg-[var(--callout-warning-bg)] rounded-r-[var(--r-sm)] p-4 text-sm text-[var(--callout-warning-text)]">
-        You must <a href="/auth/signin" class="font-bold underline">sign in</a> to access the dashboard.
-      </div>
-    )}
-
-    {user && !isAdminUser && (
-      <div class="border-l-3 border-[var(--callout-warning-border)] bg-[var(--callout-warning-bg)] rounded-r-[var(--r-sm)] p-4 text-sm text-[var(--callout-warning-text)]">
-        Your account does not have administration access.
-      </div>
-    )}
-
-    {user && isAdminUser && (
-      <div data-admin-dashboard>
+    <div data-admin-dashboard>
         <!-- Tab selector -->
         <div class="flex gap-4 border-b border-[var(--border)] mb-8 animate-fade-in" role="tablist" aria-label="Dashboard sections">
           <button
@@ -139,7 +132,6 @@ if (isAdminUser && user) {
           </div>
         </div>
       </div>
-    )}
   </div>
 </BaseLayout>
 

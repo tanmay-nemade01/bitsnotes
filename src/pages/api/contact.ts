@@ -1,11 +1,25 @@
 import type { APIRoute } from 'astro';
 import { env } from 'cloudflare:workers';
 import { EmailMessage } from 'cloudflare:email';
+import { getEnv, getClientIp, tooMany, serverError } from '../../lib/apiHelpers';
+import { validateOrigin, csrfForbidden } from '../../lib/auth/csrf';
 
 export const prerender = false;
 
 export const POST: APIRoute = async ({ request }) => {
   try {
+    const appEnv = await getEnv();
+
+    if (!validateOrigin(request, appEnv.APP_BASE_URL || 'https://bitsnotes.com')) {
+      return csrfForbidden();
+    }
+
+    if (appEnv.CONTACT_RATE_LIMITER) {
+      const ip = getClientIp(request);
+      const { success } = await appEnv.CONTACT_RATE_LIMITER.limit({ key: `contact:${ip}` });
+      if (!success) return tooMany('Too many requests. Please try again later.');
+    }
+
     const body = await request.json() as Record<string, unknown>;
     const name = body.name as string | undefined;
     const email = body.email as string | undefined;
@@ -87,20 +101,13 @@ export const POST: APIRoute = async ({ request }) => {
     const emailBinding = (env as any).SEND_EMAIL;
 
     if (!emailBinding) {
-      console.log('--- [DEMO MODE] EMAIL TRANSMISSION SIMULATION ---');
-      console.log(`From: ${sender}`);
-      console.log(`To: ${recipient}`);
-      console.log(`Reply-To: ${safeName} <${safeEmail}>`);
-      console.log(`Subject: [Contact Form] ${safeSubject}`);
-      console.log('Body:');
-      console.log(safeMessage);
-      console.log('-------------------------------------------------');
-
+      // Demo/local: acknowledge without echoing PII to logs
+      console.log('[Contact API] SEND_EMAIL binding inactive — simulated accept');
       return new Response(
         JSON.stringify({
           success: true,
           simulated: true,
-          message: 'Demo Mode: Message logged to server console since SEND_EMAIL binding is not active.'
+          message: 'Demo Mode: Message accepted (email binding not active).'
         }),
         { status: 200, headers: { 'Content-Type': 'application/json' } }
       );
@@ -114,11 +121,8 @@ export const POST: APIRoute = async ({ request }) => {
       JSON.stringify({ success: true }),
       { status: 200, headers: { 'Content-Type': 'application/json' } }
     );
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error('[Contact API] Internal server error:', error);
-    return new Response(
-      JSON.stringify({ error: `Server failed to process your request: ${error.message || error}` }),
-      { status: 500, headers: { 'Content-Type': 'application/json' } }
-    );
+    return serverError('Server failed to process your request. Please try again later.');
   }
 };
