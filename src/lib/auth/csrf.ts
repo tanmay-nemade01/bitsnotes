@@ -1,19 +1,36 @@
 /**
  * CSRF protection helpers.
- * Validates Origin/Referer headers against expected base URL.
+ * Validates Origin/Referer headers against expected base URL (apex + www).
  */
+
+/** Origins accepted for APP_BASE_URL (includes www/apex twin). */
+export function allowedOrigins(baseUrl: string): Set<string> {
+  const origins = new Set<string>();
+  try {
+    const base = new URL(baseUrl);
+    origins.add(base.origin);
+    if (base.hostname.startsWith('www.')) {
+      origins.add(`${base.protocol}//${base.hostname.slice(4)}`);
+    } else if (base.hostname.includes('.')) {
+      origins.add(`${base.protocol}//www.${base.hostname}`);
+    }
+  } catch {
+    // Invalid base — empty set fails closed
+  }
+  return origins;
+}
 
 /**
  * Validate that a request is same-origin by checking Origin or Referer header.
- * Returns true if valid (or if header is missing — for GET requests / cookie-only CSRF).
+ * Accepts both apex and www variants of the configured base URL.
  */
 export function validateOrigin(request: Request, baseUrl: string): boolean {
+  const allowed = allowedOrigins(baseUrl);
+
   const origin = request.headers.get('Origin');
   if (origin) {
     try {
-      const originUrl = new URL(origin);
-      const base = new URL(baseUrl);
-      return originUrl.origin === base.origin;
+      return allowed.has(new URL(origin).origin);
     } catch {
       return false;
     }
@@ -22,16 +39,13 @@ export function validateOrigin(request: Request, baseUrl: string): boolean {
   const referer = request.headers.get('Referer');
   if (referer) {
     try {
-      const refererUrl = new URL(referer);
-      const base = new URL(baseUrl);
-      return refererUrl.origin === base.origin;
+      return allowed.has(new URL(referer).origin);
     } catch {
       return false;
     }
   }
 
-  // No Origin or Referer — could be a direct navigation (GET) or a non-browser client.
-  // For POST endpoints, this should be rejected. Caller decides.
+  // No Origin or Referer — reject for POST (caller decides).
   return false;
 }
 

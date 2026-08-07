@@ -26,7 +26,8 @@ const cspReportOnly = [
 
 const cspEnforcing = [
   "default-src 'self'",
-  "script-src 'self' 'unsafe-inline' 'unsafe-eval' https://challenges.cloudflare.com",
+  // No 'unsafe-eval' on auth/admin — Turnstile + Astro inline scripts use 'unsafe-inline' only.
+  "script-src 'self' 'unsafe-inline' https://challenges.cloudflare.com",
   "style-src 'self' 'unsafe-inline'",
   "img-src 'self' data: https://avatars.githubusercontent.com https://lh3.googleusercontent.com",
   "font-src 'self'",

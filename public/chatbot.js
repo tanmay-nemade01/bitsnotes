@@ -53,6 +53,8 @@
   }
 
   function setConfig(config, remember) {
+    // Never persist API keys unless the user explicitly opts in ("Remember key").
+    // Even then, sessionStorage (tab-scoped) is used — never localStorage.
     if (remember) {
       try {
         sessionStorage.setItem(STORAGE_KEY, JSON.stringify(config));

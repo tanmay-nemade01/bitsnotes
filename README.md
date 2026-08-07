@@ -292,18 +292,25 @@ The `@astrojs/cloudflare` adapter serves static assets from the Workers `ASSETS`
 ## Security
 
 - Do **not** commit real credentials to tracked files. Use Cloudflare Worker secrets or `.env` (git-ignored).
-- Contact form sanitizes header fields and uses a honeypot for bot detection.
+- Contact form sanitizes header fields, validates same-origin CSRF, rate-limits, and uses a honeypot for bot detection.
 - Security headers (CSP, HSTS, X-Frame-Options, etc.) applied via middleware.
 - Auth endpoints protected with CSRF validation, Turnstile, and rate limiting.
 - Comment content filtered through profanity detection, spam scoring, and blocked-term lists.
 - Session tokens use HMAC signing; verification tokens are SHA-256 hashed at rest.
+- `ZOHO_CAMPAIGNS_LIST_KEY` must be a Worker secret (not a public `vars` entry).
 
 ---
 
 ## Environment & Configuration
 
-**Cloudflare bindings** (configured in `wrangler.jsonc`): `DB` (D1), `NOTES_BUCKET` (R2), `NEWSLETTER_KV` (KV), `SEND_EMAIL` (Email Service), `COMMENT_RATE_LIMITER`, `FEEDBACK_RATE_LIMITER`, `ASSETS`.
+**Cloudflare bindings** (configured in `wrangler.jsonc`): `DB` (D1), `NOTES_BUCKET` (R2), `NEWSLETTER_KV` (KV), `SEND_EMAIL` (Email Service), `COMMENT_RATE_LIMITER`, `FEEDBACK_RATE_LIMITER`, `CONTACT_RATE_LIMITER`, `VIEWS_RATE_LIMITER`, `ASSETS`.
 
-**Secrets** (set via `wrangler secret put`): session signing key, Google/GitHub OAuth credentials, Turnstile keys, Zoho/ZeptoMail credentials, API secret key.
+**Secrets** (set via `wrangler secret put`): `SESSION_SIGNING_KEY`, Google/GitHub OAuth credentials, Turnstile keys, Zoho/ZeptoMail credentials (including `ZOHO_CAMPAIGNS_LIST_KEY`), API secret key.
 
 **Local dev:** Copy secrets to `.dev.vars` (git-ignored). Dev server uses Vite glob imports for content (no R2 needed).
+
+After rotating the Zoho list key out of git history, set production with:
+```bash
+wrangler secret put ZOHO_CAMPAIGNS_LIST_KEY
+```
+and add the same key to `.dev.vars` for local newsletter tests.

@@ -107,6 +107,40 @@ export async function seedOffsetForKey(key: string): Promise<number> {
  * Increment the view count for a page by 1, creating the row (with its seed
  * offset) if it does not yet exist. Returns the new total view count.
  */
+export async function isValidViewKey(key: string): Promise<boolean> {
+  if (!key || typeof key !== 'string' || key.length > 200) return false;
+  if (key === 'home') return true;
+
+  if (key.startsWith('blog:')) {
+    const slug = key.slice(5);
+    if (!slug || slug.includes('/') || slug.includes('..')) return false;
+    return !!getPostBySlug(slug);
+  }
+
+  if (key.startsWith('lecture:')) {
+    const match = key.match(/^lecture:([^:]+):(.+)$/);
+    if (!match) return false;
+    const subjectName = match[1];
+    const lectureFolderName = match[2];
+    if (!subjectName || !lectureFolderName || lectureFolderName.includes('..')) return false;
+    try {
+      const manifest = await getManifest();
+      const subject = manifest.subjects.find(
+        (s) => s.name === subjectName || slugify(s.name) === slugify(subjectName),
+      );
+      return !!subject?.lectures.find((l) => l.folderName === lectureFolderName);
+    } catch {
+      return false;
+    }
+  }
+
+  return false;
+}
+
+/**
+ * Increment the view count for a page by 1, creating the row (with its seed
+ * offset) if it does not yet exist. Returns the new total view count.
+ */
 export async function incrementViews(db: AuthDb, key: string): Promise<number> {
   const offset = await seedOffsetForKey(key);
 

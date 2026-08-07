@@ -7,7 +7,7 @@ import type { APIRoute } from 'astro';
 import { getEnv, badRequest, getClientIp } from '../../../lib/apiHelpers';
 import { verifyTurnstile, generateCodeVerifier, generateCodeChallenge, hmacSign } from '../../../lib/auth';
 import { isSecure } from '../../../lib/auth/session';
-import { validateOrigin, csrfForbidden } from '../../../lib/auth/csrf';
+import { validateOrigin, csrfForbidden, allowedOrigins } from '../../../lib/auth/csrf';
 
 export const prerender = false;
 
@@ -43,12 +43,15 @@ export const POST: APIRoute = async (context) => {
     return badRequest('Invalid request body');
   }
 
-  // Validate redirect URL (must be same-origin)
+  // Validate redirect URL (must be same-origin apex or www)
   if (redirectUrl) {
     try {
       const parsed = new URL(redirectUrl, env.APP_BASE_URL);
-      if (parsed.origin !== env.APP_BASE_URL) {
+      if (!allowedOrigins(env.APP_BASE_URL).has(parsed.origin)) {
         redirectUrl = undefined;
+      } else {
+        // Store path+search only to avoid open-redirect edge cases
+        redirectUrl = parsed.pathname + parsed.search + parsed.hash;
       }
     } catch {
       redirectUrl = undefined;

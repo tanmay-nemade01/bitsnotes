@@ -15,8 +15,6 @@ import { getUser } from '../../../../lib/apiHelpers';
 
 export const prerender = false;
 
-const COOKIE_SECRET_FALLBACK = 'bitsnotes-report-v1';
-
 export const POST: APIRoute = async (context) => {
   const env = await getEnv(context);
 
@@ -52,8 +50,9 @@ export const POST: APIRoute = async (context) => {
   if (user) {
     voterHash = `u:${user.id}`;
   } else {
+    const secret = (env as any).SESSION_SIGNING_KEY;
+    if (!secret) return serverError('Server misconfigured');
     const visitorId = getVisitorId(context.request);
-    const secret = (env as any).SESSION_SIGNING_KEY || COOKIE_SECRET_FALLBACK;
     voterHash = visitorId
       ? 'v:' + (await hashVisitor(visitorId, secret))
       : `anon:${getClientIp(context.request)}`;

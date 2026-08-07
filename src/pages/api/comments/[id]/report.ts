@@ -11,8 +11,6 @@ import { getVisitorId, hashVisitor } from '../../../../lib/visitor';
 
 export const prerender = false;
 
-const COOKIE_SECRET_FALLBACK = 'bitsnotes-report-v1';
-
 export const POST: APIRoute = async (context) => {
   const env = await getEnv(context);
 
@@ -43,8 +41,9 @@ export const POST: APIRoute = async (context) => {
   }
 
   // Build reporter hash from visitor cookie so duplicates are caught.
+  const secret = (env as any).SESSION_SIGNING_KEY;
+  if (!secret) return json({ error: 'Server misconfigured' }, 500);
   const visitorId = getVisitorId(context.request);
-  const secret = (env as any).SESSION_SIGNING_KEY || COOKIE_SECRET_FALLBACK;
   const reporterHash = visitorId
     ? await hashVisitor(visitorId, secret)
     : `anon:${getClientIp(context.request)}`;

@@ -28,7 +28,8 @@ export type AuthEvent =
   | 'admin_comment_publish'
   | 'admin_comment_hide'
   | 'admin_comment_delete'
-  | 'admin_comment_restore';
+  | 'admin_comment_restore'
+  | 'account_delete';
 
 export interface AuditContext {
   userId?: string;

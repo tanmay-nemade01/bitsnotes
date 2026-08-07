@@ -33,7 +33,6 @@ export const prerender = false;
 
 const MAX_JSON_BYTES = 4 * 1024; // 4KB cap before parse
 const MAX_REASON = 300;
-const COOKIE_SECRET_FALLBACK = 'bitsnotes-feedback-v1';
 
 export const GET: APIRoute = async (context) => {
   const env = await getEnv(context);
@@ -52,8 +51,9 @@ export const GET: APIRoute = async (context) => {
 
   try {
     const visitorId = getVisitorId(context.request);
-    const secret = (env as any).SESSION_SIGNING_KEY || COOKIE_SECRET_FALLBACK;
-    const visitorHash = visitorId ? await hashVisitor(visitorId, secret) : null;
+    const secret = (env as any).SESSION_SIGNING_KEY;
+    // Without a signing key we cannot attribute myVote — still return aggregates.
+    const visitorHash = visitorId && secret ? await hashVisitor(visitorId, secret) : null;
 
     const agg = await getFeedbackAggregate(env.DB, {
       pageType,
@@ -157,7 +157,8 @@ export const POST: APIRoute = async (context) => {
   }
 
   // Resolve / issue the functional visitor cookie.
-  const secret = (env as any).SESSION_SIGNING_KEY || COOKIE_SECRET_FALLBACK;
+  const secret = (env as any).SESSION_SIGNING_KEY;
+  if (!secret) return serverError('Server misconfigured');
   let visitorId = getVisitorId(context.request);
   let setCookie: string | null = null;
   if (!visitorId) {

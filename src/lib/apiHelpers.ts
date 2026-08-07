@@ -22,6 +22,8 @@ export interface EnvBindings {
   SEND_EMAIL: any;
   COMMENT_RATE_LIMITER?: { limit: (opts: { key: string }) => Promise<{ success: boolean }> };
   FEEDBACK_RATE_LIMITER?: { limit: (opts: { key: string }) => Promise<{ success: boolean }> };
+  CONTACT_RATE_LIMITER?: { limit: (opts: { key: string }) => Promise<{ success: boolean }> };
+  VIEWS_RATE_LIMITER?: { limit: (opts: { key: string }) => Promise<{ success: boolean }> };
 }
 
 export async function getEnv(_context?: APIContext): Promise<EnvBindings> {
