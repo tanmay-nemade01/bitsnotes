@@ -1,0 +1,787 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+  <!-- Primary SEO -->
+  <title>Streaming Algorithms: Decaying Window and Membership | Stream Processing and Analytics | BitsNotes</title>
+  <meta name="description" content="Stream Processing and Analytics: reservoir sampling, the hot list problem, the decaying window, and probabilistic membership in streaming algorithms.">
+  <meta name="keywords" content="Stream Processing and Analytics, streaming algorithms, reservoir sampling, hot list problem, top-K frequent items, count dictionary, decaying window algorithm, trend analysis, weighted sum, membership, frequency, probabilistic algorithms, sampling, window, bloom filter">
+  <meta name="author" content="BitsNotes">
+  <meta name="robots" content="index, follow">
+  <link rel="canonical" href="https://bitsnotes.com/view/stream-processing-and-analytics/spa-lecture-13">
+
+  <!-- Open Graph / Facebook -->
+  <meta property="og:type" content="article">
+  <meta property="og:title" content="Streaming Algorithms: Decaying Window and Membership | Stream Processing and Analytics">
+  <meta property="og:description" content="Stream Processing and Analytics: reservoir sampling, the hot list problem, the decaying window, and probabilistic membership in streaming algorithms.">
+  <meta property="og:url" content="https://bitsnotes.com/view/stream-processing-and-analytics/spa-lecture-13">
+  <meta property="og:image" content="https://bitsnotes.com/og-default.png">
+  <meta property="og:image:width" content="1200">
+  <meta property="og:image:height" content="630">
+  <meta property="og:site_name" content="BitsNotes">
+
+  <!-- Twitter Card -->
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="Streaming Algorithms: Decaying Window and Membership | Stream Processing and Analytics">
+  <meta name="twitter:description" content="Stream Processing and Analytics: reservoir sampling, the hot list problem, the decaying window, and probabilistic membership in streaming algorithms.">
+  <meta name="twitter:image" content="https://bitsnotes.com/og-default.png">
+  <meta name="twitter:site" content="@BitsNotes">
+
+  <!-- Stylesheet -->
+  <link rel="stylesheet" href="/lecture-notes.css">
+
+  <!-- Structured Data: JSON-LD -->
+  <script type="application/ld+json">
+{"@context": "https://schema.org", "@type": "Article", "headline": "Streaming Algorithms: Decaying Window and Membership | Stream Processing and Analytics", "description": "Stream Processing and Analytics: reservoir sampling, the hot list problem, the decaying window, and probabilistic membership in streaming algorithms.", "datePublished": "2026-08-07", "inLanguage": "en", "author": {"@type": "Organization", "name": "BitsNotes"}, "publisher": {"@type": "Organization", "name": "BitsNotes"}, "about": ["reservoir sampling", "hot list problem", "count dictionary", "decaying window", "trend analysis", "membership", "probabilistic sampling", "bloom filter"]}
+</script>
+
+  <!-- Lecture Metadata (for the BitsNotes platform viewer) -->
+  <!-- IMPORTANT: This is the ONLY metadata source. No companion .json file
+       is created. The viewer reads everything from this embedded script.
+       Required fields: title, subject, gradeLevel, datePublished,
+       targetAudience, sections (array), examRevisionNotes (array).
+       Optional fields: prerequisites (array of {subject, lecture, topics}).
+       NOT included (removed): summary, keyConcepts, quiz. -->
+  <script type="application/json" id="lecture-metadata">
+{
+  "title": "Streaming Algorithms: Decaying Window and Membership",
+  "subject": "Stream Processing and Analytics",
+  "gradeLevel": "postgraduate",
+  "datePublished": "2026-08-07",
+  "targetAudience": "Postgraduate students in Stream Processing and Analytics",
+  "sections": [
+    {
+      "title": "13.1 Reservoir Sampling (Recap)",
+      "description": "Recap of the reservoir: fill k seats, then element n enters with probability k/n, keeping a uniform random sample of the whole stream in O(k) memory."
+    },
+    {
+      "title": "13.2 The Hot List Problem: Top-K Frequent Items",
+      "description": "Continuously ranking the most frequent item types with a count dictionary that increments on a match and decrements every entry on a miss."
+    },
+    {
+      "title": "13.3 Decaying Window Algorithm",
+      "description": "Trend analysis by recency weighting: S_t = (1-C)*S_{t-1} + w_t, with the full FIFA-versus-IPL worked example where recency beats equal counts."
+    },
+    {
+      "title": "13.4 Membership and Frequency",
+      "description": "Membership as a deterministic scan over a finite list, and the probabilistic sampling answer for streams with P(event enters the window) = 1/M."
+    },
+    {
+      "title": "13.5 Bloom Filter (Preview)",
+      "description": "Preview of the bloom filter, the canonical low-memory probabilistic membership structure whose detailed analysis continues in the next class."
+    },
+    {
+      "title": "Exam Guidance Summary",
+      "description": "The professor's final-exam intel: 40 marks, algorithms and streaming heavy, open book with printed materials only, and numericals on the decaying window and 1/M."
+    },
+    {
+      "title": "Key Industry Applications",
+      "description": "Real-world anchors: retail top-seller hot lists, hashtag trend detection, Databricks assignment work, membership operators, and bloom filters in practice."
+    }
+  ],
+  "examRevisionNotes": [
+    {
+      "topic": "Reservoir Sampling (Recap)",
+      "mustKnow": "The reservoir holds the first k elements; element n later enters with probability k/n and replaces a uniformly random slot, keeping every past element equally likely to be in the sample. Choosing the reservoir size relative to an unknown stream length is an open question.",
+      "keyFormula": "P(\\text{element } n \\text{ enters}) = \\frac{k}{n}",
+      "commonPitfall": "Using a fixed coin flip instead of the shrinking probability k/n breaks the sample's uniformity over the whole stream.",
+      "quickCheck": "With a 3-element reservoir and the 7th element arriving, what is the acceptance probability? (Answer: 3/7.)",
+      "connections": [
+        "13.2",
+        "13.3"
+      ]
+    },
+    {
+      "topic": "The Hot List Problem: Top-K Frequent Items",
+      "mustKnow": "The count dictionary rule: event already present → increment its count; event not present → decrement all counts by one. Counts are relative, so zero does not mean never inserted; the mechanism is not popular in practice because many distinct types make it inefficient.",
+      "keyFormula": "",
+      "commonPitfall": "Reading a zero count as proof the event was never seen — the decrement step can push a real event to zero.",
+      "quickCheck": "In the dictionary rule, what happens to every entry when an unseen event arrives? (Answer: each count is decremented by one.)",
+      "connections": [
+        "13.1",
+        "13.3"
+      ]
+    },
+    {
+      "topic": "Decaying Window Algorithm",
+      "mustKnow": "The decaying window scores each tag with S_t = (1 - C) * S_{t-1} + w_t; the most recent event's weight is 1 (or 0), never 1 - C, and equal counts lose to better recency. In the worked example with C = 0.1, IPL beats FIFA (2.4661 vs 2.160441) on recency alone.",
+      "keyFormula": "S_t = (1 - C) \\cdot S_{t-1} + w_t \\qquad S_t = w_t + w_{t-1}(1 - C) + \\dots + w_1(1 - C)^{t-1}",
+      "commonPitfall": "Penalizing the newest event (applying 1 - C to the current match) or deciding the winner by total count instead of the weighted sum.",
+      "quickCheck": "In the FIFA/IPL example with C = 0.1, what is the row-2 value of the FIFA track after row 1 = 0.9 and an IPL arrival? (Answer: 0.9 x 0.9 + 0 = 0.81.)",
+      "connections": [
+        "13.2",
+        "13.4"
+      ]
+    },
+    {
+      "topic": "Membership and Frequency",
+      "mustKnow": "Membership scans the whole list deterministically only when the list is complete and finite; in streaming, sampling into windows makes membership probabilistic with P(event enters the window) = 1/M (M = stream length at that instant, no replacement). The 1/K guess is wrong: the choice is over the M events, not the K slots.",
+      "keyFormula": "P(\\text{event enters the window}) = \\frac{1}{M}",
+      "commonPitfall": "Assuming the first slot fills with probability 1/K (window capacity) instead of 1/M, or confusing M (stream length) with the window size.",
+      "quickCheck": "A stream holds 50 events at an instant; an event enters the window. What is the probability of the first slot? (Answer: 1/50, since selection is without replacement.)",
+      "connections": [
+        "13.3",
+        "13.5"
+      ]
+    },
+    {
+      "topic": "Bloom Filter (Preview)",
+      "mustKnow": "The bloom filter is important in general and from the examination standpoint; it is a probabilistic membership structure that needs far less memory than storing the items, and its detailed analysis in the next class is exam-relevant material.",
+      "keyFormula": "",
+      "commonPitfall": "",
+      "quickCheck": "Why can membership questions in streaming not be answered exactly? (Answer: exact answers need the whole never-ending history, so sampling/probabilistic structures are used.)",
+      "connections": [
+        "13.4"
+      ]
+    },
+    {
+      "topic": "Exam Guidance Summary",
+      "mustKnow": "Final exam: 40 marks, class content only, more algorithms and streaming than theory; open book with printed materials only; course weightage is assignments 20 (5+5+10), EC1 30, mid-sem 30, final 40.",
+      "keyFormula": "",
+      "commonPitfall": "Assuming the final exam is 35 marks or closed book like mid-sem — it is 40 marks and open book.",
+      "quickCheck": "What is the total weightage split across assignments, EC1, mid-sem, and the final? (Answer: 20 + 30 + 30 + 40.)",
+      "connections": [
+        "13.3",
+        "13.4",
+        "13.5"
+      ]
+    },
+    {
+      "topic": "Key Industry Applications",
+      "mustKnow": "Each lecture algorithm maps to a real system: hot list to retail top sellers, decaying window to hashtag trend analysis, membership to 'is this item in my sample?', and bloom filters to low-memory membership in search engines, databases, and network stacks.",
+      "keyFormula": "",
+      "commonPitfall": "",
+      "quickCheck": "Which real-world setting maps to the hot list problem? (Answer: retail — a continuously updated list of top sellers from the sales stream.)",
+      "connections": [
+        "13.2",
+        "13.3",
+        "13.4",
+        "13.5"
+      ]
+    }
+  ]
+}
+</script>
+</head>
+<body>
+  <div class="container">
+    <!-- ============================================================
+    HERO HEADER
+    ============================================================ -->
+    <header class="hero-header">
+      <span class="subject-badge">Stream Processing and Analytics</span>
+      <h1 class="lecture-title">Streaming Algorithms: Decaying Window and Membership</h1>
+      <div class="meta-info">
+        <div class="meta-item"><strong>Published:</strong> 2026-08-07</div>
+        <div class="meta-item"><strong>Level:</strong> postgraduate</div>
+        <div class="meta-item"><strong>Audience:</strong> Postgraduate students in Stream Processing and Analytics</div>
+      </div>
+    </header>
+
+    <!-- ============================================================
+    PREREQUISITE KNOWLEDGE
+    Optional section listing concepts from previous lectures that this
+    lecture builds on. Populated by Agent 3 from topic_mappings/*.yaml.
+    If no prerequisites exist, this section is omitted entirely.
+    ============================================================ -->
+    <section class="prerequisite-section">
+  <h2>Prerequisite Knowledge</h2>
+  <p class="prerequisite-intro">This lecture builds on the following
+  concepts from earlier lectures. If any feel unfamiliar, review the
+  linked notes before proceeding.</p>
+
+  <div class="prerequisite-entry">
+    <h3>Previously Covered in This Subject</h3>
+    <ul>
+      <li><strong>Reservoir sampling</strong> — covered in Lecture 12</li>
+      <li><strong>Random sampling and uniform selection</strong> — covered in Lecture 12</li>
+      <li><strong>Tumbling and sliding windows</strong> — covered in Lecture 12</li>
+    </ul>
+  </div>
+</section>
+
+    <!-- ============================================================
+    MAIN LECTURE-FAITHFUL CONTENT
+    Page title = one h1.lecture-title
+    Each section = one h2.section-title
+    Each subsection = one h3.subsection-title
+    Callout boxes: .key-concept (blue), .important-note (violet),
+      .example-box (green), .warning-box (red), .key-takeaway (amber)
+    Display math: auto-scrolls via mjx-container CSS; .eqbox wrapper optional
+    ============================================================ -->
+    <main>
+<h2 id="13.1-reservoir-sampling-recap">13.1 Reservoir Sampling (Recap)</h2>
+<h3 id="13.1.1-why-the-reservoir-exists">13.1.1 Why the Reservoir Exists</h3>
+<div class="important-note">
+  <p><strong>Hook:</strong> A live data stream is huge and never-ending. How do you keep a small, fair, random sample of everything you have seen so far — without storing the stream?</p>
+</div>
+<p>The answer is <em>reservoir sampling</em>: an algorithm that keeps a fixed-size random sample of the stream so far, using memory that depends only on the sample size, not on the stream. A <em>reservoir</em> (the sample container), written \(R\), is an array that can hold \(k\) elements. The algorithm has one task: no matter how many elements have streamed past, every element that passed must have the same chance of sitting in the reservoir right now.</p>
+<p>The rule has two phases:</p>
+<ol>
+  <li><strong>Fill the reservoir.</strong> The first \(k\) elements of the stream simply go in, in order. There is no randomness yet — the reservoir has empty seats, so the first \(k\) arrivals take them.</li>
+  <li><strong>Probabilistic replacement.</strong> For every later element (the \(n\)-th element, with \(n > k\)), pick a random index \(i\) from \(1\) to \(n\). If the random index falls inside the reservoir's range (\(i \le k\)), replace the element at position \(i\) with the new element. If \(i > k\), the new element is ignored.</li>
+</ol>
+<p>In short: the first \(k\) elements go in, and after that each new element may or may not kick out an existing one, decided purely by a random index.</p>
+<div class="key-concept">
+  <p><strong>Why the \(k/n\) rule keeps the sample fair:</strong> the acceptance probability for the \(n\)-th element is \(k/n\). This probability is chosen so that the sample stays uniform. Reference treatments walk through the 16th element with a 15-element reservoir: the chance the 16th element enters is \(15/16\); if it enters, one of the 15 existing elements is displaced at random, so every one of the 16 elements has ended up with the same \(1/16\) chance of remaining. The same argument repeats at every step — the chance of being present decays exactly as the population grows, keeping every past element equally likely to be in the reservoir.</p>
+</div>
+<div class="example-box">
+  <p><strong>Trace with a tiny reservoir.</strong> Reservoir size \(k = 3\). Stream: \(4, 7, 9, 2, 5, 8, 1\).</p>
+  <table>
+    <thead>
+      <tr>
+        <th>Step</th>
+        <th>Element</th>
+        <th>Action</th>
+        <th>Reservoir</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>1</td>
+        <td>4</td>
+        <td>fill seat 1</td>
+        <td>[4, –, –]</td>
+      </tr>
+      <tr>
+        <td>2</td>
+        <td>7</td>
+        <td>fill seat 2</td>
+        <td>[4, 7, –]</td>
+      </tr>
+      <tr>
+        <td>3</td>
+        <td>9</td>
+        <td>fill seat 3</td>
+        <td>[4, 7, 9]</td>
+      </tr>
+      <tr>
+        <td>4</td>
+        <td>2</td>
+        <td>random index \(i\) in 1..4; suppose \(i = 2 \le 3\) → replace</td>
+        <td>[4, 2, 9]</td>
+      </tr>
+      <tr>
+        <td>5</td>
+        <td>5</td>
+        <td>random index \(i\) in 1..5; suppose \(i = 5 > 3\) → ignore</td>
+        <td>[4, 2, 9]</td>
+      </tr>
+      <tr>
+        <td>6</td>
+        <td>8</td>
+        <td>random index \(i\) in 1..6; suppose \(i = 1 \le 3\) → replace</td>
+        <td>[8, 2, 9]</td>
+      </tr>
+      <tr>
+        <td>7</td>
+        <td>1</td>
+        <td>random index \(i\) in 1..7; suppose \(i = 4 > 3\) → ignore</td>
+        <td>[8, 2, 9]</td>
+      </tr>
+    </tbody>
+  </table>
+  <p>The reservoir never grows past size 3, and at every step each element seen so far has had an equal chance of being inside. Sense-check: after 7 elements, the probability the first element (4) survives is \(1/7\) — it had to survive every replacement opportunity, exactly the same \(1/7\) as the newest element (1).</p>
+</div>
+<h3 id="13.1.2-the-known-limitation">13.1.2 The Known Limitation</h3>
+<p>The algorithm has a real gap: there is no clear guidance on the size of the reservoir relative to the size of the stream. Ideally, what should the reservoir size be with respect to the stream length? That question is left open.</p>
+<div class="warning-box">
+  <p><strong>Scope:</strong> reservoir sampling answers "give me a uniform random sample" but does not answer "how large must the sample be?" The right size depends on the downstream use — the confidence needed, the answer's precision — and the stream's expected length, which in a never-ending stream is unknown by definition. The same memory-pressure question (how much state is enough?) returns in every algorithm in this lecture, and it is the reason later techniques reach for hashing and probabilistic data structures instead of raw storage.</p>
+</div>
+<p>One direction mentioned for dealing with such problems is using different hashing techniques to accommodate some of these issues. Hash-based methods replace "store the element and compare it" with "store a compact image of the element," which is how the later topics (count dictionaries, decaying windows, and the bloom filter preview at the end of this lecture) survive on bounded memory.</p>
+<div class="warning-box">
+  <p><strong>Pitfalls:</strong></p>
+  <ul>
+    <li>Forgetting the acceptance probability is \(k/n\), not a fixed coin flip. A constant \(1/2\) over-weights early elements: the reservoir would drift toward the stream's head and stop being a fair sample of the whole stream.</li>
+    <li>Keeping the first \(k\) elements without any replacement. That is a prefix, not a sample — early elements would dominate forever.</li>
+    <li>Confusing the reservoir size \(k\) with the stream length. The algorithm's memory is \(O(k)\); its fairness guarantee holds for any stream length \(n\).</li>
+  </ul>
+</div>
+<div class="key-takeaway">
+  <p><strong>Recap:</strong> reservoir sampling keeps a fixed-size, uniformly random sample of an unbounded stream by filling \(k\) seats first, then letting each new element replace a random seat with probability \(k/n\). The open question — how to choose \(k\) for a stream of unknown length — is the memory-pressure problem that motivates every algorithm in this lecture, starting with the hot list next.</p>
+</div>
+<p>The most natural setting for a sample is answering "what is popular?" — which is exactly the question of the next section, where a fixed reservoir gives way to a tracked dictionary of counts.</p>
+
+<h2 id="13.2-the-hot-list-problem-top-k-frequent-items">13.2 The Hot List Problem: Top-K Frequent Items</h2>
+<h3 id="13.2.1-the-problem-popular-items-in-a-stream">13.2.1 The Problem: Popular Items in a Stream</h3>
+<div class="important-note">
+  <p><strong>Hook:</strong> A retail chain's checkout streams millions of sales. Which items belong on the "top sellers" board right now — and how do you keep that board current without storing every sale ever made?</p>
+</div>
+<p>The hot list problem is about keeping track of the frequent items in a stream. The goal: continuously maintain a list of the top \(K\) most frequent items taken from the streaming data, and after that rank those items based on popularity. A natural setting for this is retail — you want to find out which items are popular so you can maintain a continuously updated list of top sellers.</p>
+<p>The core constraint is the same as always: we want the top \(K\) most frequent elements, but we do not have enough memory to accommodate the entire stream. So we use some mechanism instead of storing everything.</p>
+<h3 id="13.2.2-the-count-dictionary-mechanism">13.2.2 The Count Dictionary Mechanism</h3>
+<div class="key-concept">
+  <p><strong>Purpose:</strong> maintain the ranking of the top \(K\) item types using memory that grows with the number of distinct types, not with the stream length.</p>
+  <p><strong>Inputs & outputs:</strong> input — a stream of events, where each event is an item type (for example a product ID at a checkout); output — the current dictionary of item types with their relative counts, from which the top \(K\) ranking is read off.</p>
+  <p><strong>Steps (the mechanism):</strong></p>
+  <ol>
+    <li>Keep an auxiliary array — a dictionary-like storage — that maps every key element (the event type) to its frequency.</li>
+    <li>When an event \(E\) arrives, check whether \(E\) is <em>monitored</em>, meaning whether it was encountered earlier in the stream. The check works because the dictionary maps every key element to its frequency.</li>
+    <li>If the event is already present, increment that event's count.</li>
+    <li>If the event is not present, decrement the counts of all elements — subtract one from each entry of the count dictionary.</li>
+  </ol>
+</div>
+<p>Why decrement everything for an unseen event? Because you only care about <em>relative</em> counts. A count of zero does not only mean "never inserted": a count can also drop to zero because of the decrement step. If the event is not seen, it is not among the most frequent, so its non-appearance lowers everyone's standing by one.</p>
+<div class="example-box">
+  <p><strong>Walking through the rule.</strong> Stream of item types: A, A, B, A, C. Convention for the walk-through: the first sighting of a type registers it in the dictionary with count 1; from then on the rule applies — a later sighting of that type increments it, a sighting of any other type decrements every entry.</p>
+  <table>
+    <thead>
+      <tr>
+        <th>Arrival</th>
+        <th>Action</th>
+        <th>Dictionary</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>A (first)</td>
+        <td>register A</td>
+        <td>{A: 1}</td>
+      </tr>
+      <tr>
+        <td>A</td>
+        <td>already present → increment</td>
+        <td>{A: 2}</td>
+      </tr>
+      <tr>
+        <td>B (first)</td>
+        <td>register B, decrement all</td>
+        <td>{A: 1, B: 0}</td>
+      </tr>
+      <tr>
+        <td>A</td>
+        <td>already present → increment</td>
+        <td>{A: 2, B: 0}</td>
+      </tr>
+      <tr>
+        <td>C (first)</td>
+        <td>register C, decrement all</td>
+        <td>{A: 1, B: 0, C: 0}</td>
+      </tr>
+    </tbody>
+  </table>
+  <p>The final dictionary says A is the clear top seller. Note the point the class stressed: B and C sit at zero, yet both were seen — a zero count means "not currently in the running," not "never appeared." Sense-check: only relative standing matters, so repeated decrements push out-of-contention types to zero without ever needing to look at the stream again.</p>
+</div>
+<div class="warning-box">
+  <p><strong>The weak point:</strong> if the stream has very many distinct elements, figuring out an appropriate dictionary mechanism may not be very efficient. Every unseen event forces a pass over the whole dictionary, so the cost grows with the number of distinct types. That is why this exact scheme is not very popular in practice — but it is worth studying because it builds the intuition for the algorithms that follow. Standard reference treatments of the frequent-items problem keep the same idea (counters that increment on a match and decay on a miss — the Misra-Gries family of algorithms and the count-min sketch), but replace the one big dictionary with bounded counters so that memory no longer scales with the number of distinct types. The ranking intuition is identical; the memory story is different.</p>
+</div>
+<h3 id="13.2.3-student-questions-and-answers">13.2.3 Student Questions and Answers</h3>
+<div class="important-note">
+  <p><strong>Q:</strong> When we say an event is already seen earlier, do we check by the event type — some kind of string match on an attribute or property of the event?</p>
+  <p><strong>A:</strong> No. We are using a dictionary, so the event itself is the key. At that key's location we check whether the count is zero. If the count is zero, that means it was not seen earlier — either it was never inserted, or the decrement step brought it down to zero. Then you increment the count (or decrement all counts for a new event). The lookup is a dictionary access on the event, not a string comparison on some attribute.</p>
+</div>
+<p>The takeaway that matters: "not monitored" is decided by the dictionary and its counts, and a zero is not proof of absence — the decrement step can manufacture zeros for types that genuinely appeared.</p>
+<div class="key-takeaway">
+  <p><strong>Recap:</strong> the hot list problem asks for a continuously updated top-\(K\) ranking from a stream. The count dictionary answers it with relative counts: increment on a match, decrement everything on a miss, and read the ranking from the surviving counts. The scheme is memory-hungry when distinct types are many, which is exactly the pressure that the decaying window algorithm of the next section attacks with a different idea: weighted, recency-sensitive counting.</p>
+</div>
+
+<h2 id="13.3-decaying-window-algorithm">13.3 Decaying Window Algorithm</h2>
+<h3 id="13.3.1-the-intuition-recency-wins">13.3.1 The Intuition: Recency Wins</h3>
+<div class="important-note">
+  <p><strong>Hook:</strong> A news site and a sports site both appear constantly in a hashtag stream. Which one is <em>trending</em> — the one people talked about most overall, or the one people are talking about right now?</p>
+</div>
+<p>The decaying window algorithm finds the most frequent or most popular element in a stream, and it is normally used for <em>trend analysis</em>. Suppose you want to identify which hashtag is more trending — that is the item most people are interested in right now. Whether it is a news channel or a sports channel, you monitor these events as they stream in, and this is very, very important for that job.</p>
+<p>The key idea: if an event is old, you reduce its importance; if an event is most recent or new, you increase its importance. You raise or lower importance by attaching a <em>weight factor</em> to each event. You first attach weights to the elements in the window: recent, more popular elements receive higher weight than older events. The weight attached to old events gets <em>decayed</em> — reduced as a polynomial function of a fractional number. As an event becomes older and older, its weight factor becomes smaller and smaller.</p>
+<div class="important-note">
+  <p><strong>Analogy — the "recent first" library shelf:</strong> imagine a display shelf that fits one headline. Every time a new story arrives, all the stories already on the shelf get pushed one step further back, and the new story sits in front. A story's visibility shrinks the further back it slides. The decaying window does the same with numbers: every new event multiplies everything already counted by a fraction less than 1, so recent events carry nearly full weight while old events fade toward nothing. Where the analogy stops: the shelf must physically discard stories, while the decaying window keeps everything — no event is ever dropped, it only shrinks in importance.</p>
+</div>
+<h3 id="13.3.2-mathematical-formulation">13.3.2 Mathematical Formulation</h3>
+<p>Assume a stream of events \(E_1, E_2, E_3, \dots\). For each event we attach a weight, which is nothing but \(1 - C\), where \(C\) is any fractional number between 0 and 1. Since \(C \in (0,1)\), \(1 - C\) is also a fractional number between 0 and 1. Because it is a fractional number, the older the event becomes, the more times you multiply by that number — and the more you multiply a fraction by itself, the smaller the weight gets.</p>
+<p>The professor described the update as: you calculate the previous sum multiplied by \(1 - C\), plus the current weight. In symbols:</p>
+<p>\[ S_t = (1 - C) \cdot S_{t-1} + w_t \]</p>
+<p>where \(S_t\) is the weighted sum for a tracked tag at time \(t\), \(w_t\) is the current event's weight — 1 if the current event matches the tag we are tracking, 0 otherwise — and \(C\) is the decay constant, a fractional number between 0 and 1 (the example uses \(C = 0.1\), so \(1 - C = 0.9\)).</p>
+<p>To start, the previous sum is either 0 or 1: it is 0 when the current tag is different from the tag we are tracking (looking for FIFA but encountering something else maps to 0), and it is 1 when the current event matches the tag we are looking for. The class's table computed the first row as \(1 \times (1 - C) = 0.9\): the first match already receives one decay step. From row 2 onward the recurrence \(S_t = (1 - C) \cdot S_{t-1} + w_t\) applies unchanged. In the standard form found in the references (the exponentially weighted moving average, EWMA), the running sum starts at \(S_0 = 0\), which makes the first row \(w_1\) with no discount; the difference between the two conventions is exactly one global factor of \((1 - C)\), and it does not change which tag wins — multiplying every tag's score by the same positive factor preserves the ranking.</p>
+<div class="key-concept">
+  <p><strong>Why the recurrence decays:</strong> the update \(S_t = (1 - C) \cdot S_{t-1} + w_t\) is a way of saying "the past is worth \((1 - C)\) times what it was one step ago." Every new event pushes the multiplication deeper: the value from two steps back has been multiplied twice, from three steps back three times, and so on. Because \(1 - C < 1\), each extra multiplication shrinks that contribution, so the older an event is, the smaller its weight. The symbol names: \(S_t\) (read "S sub t") — the weighted sum for the tracked tag after the \(t\)-th event; \(S_{t-1}\) — the same sum one step earlier; \(w_t\) — the current event's weight, 1 for a match and 0 for a non-match; \(C\) — the decay constant, any fractional number strictly between 0 and 1.</p>
+</div>
+<h3 id="13.3.3-expanding-the-recurrence-into-a-polynomial">13.3.3 Expanding the Recurrence into a Polynomial</h3>
+<p>If you expand the equation, it becomes a function of time. The last term is \(t - 1\), because the index runs up to \(t - 1\), and the most recent element ends up with \(1 - C\) raised to the power 0 — you are not penalizing the most recent event. As an event becomes older and older, it gets multiplied by a fractional value again and again, and the power of \(1 - C\) keeps increasing.</p>
+<p>The professor spelled this out during the Q&A: in the next iteration you multiply whatever value came out by \(1 - C\) again and add the current weight, which gives a polynomial:</p>
+<p>\[ S_t = w_t + w_{t-1}(1 - C) + w_{t-2}(1 - C)^2 + \dots + w_1(1 - C)^{t-1} \]</p>
+<p>So you are getting \(1 - C\), then \((1 - C)^2\), then \((1 - C)^3\) — the power grows with every iteration because each step multiplies the running value by the fraction once more. Under this closed form, the most recent event \(w_t\) carries the factor \((1 - C)^0 = 1\): the newest event is never penalized. Under the class's first-row convention (row 1 computed as \(1 \times (1 - C)\)), every term of this polynomial carries one extra power of \((1 - C)\), so \(w_1\) ends up with \((1 - C)^t\) instead of \((1 - C)^{t-1}\); the two forms differ by a single global factor of \((1 - C)\) and so produce the same ranking. Either way, the mechanics the class showed are the ones to use in numerics: each row multiplies the previous row's value by \(1 - C\) and adds the current weight.</p>
+<div class="warning-box">
+  <p><strong>Scope — when the model fits and when it does not:</strong></p>
+  <ul>
+    <li>\(C\) must stay strictly between 0 and 1. At \(C = 0\) there is no decay (\(1 - C = 1\)) and the sum becomes a plain running count where every event, however old, counts as much as the newest — no trend sensitivity at all. At \(C = 1\) every contribution collapses to 0.</li>
+    <li>The decay is exponential in age, not linear: the weight of an event \(a\) steps old is \((1 - C)^a\). For \(C = 0.1\) and \(a = 10\), the weight is \(0.9^{10} \approx 0.35\) — a decade-old event keeps about a third of its value; for \(a = 50\), it is \(0.9^{50} \approx 0.005\).</li>
+    <li>The choice of \(C\) sets the "memory": small \(C\) (slow decay) tracks long-term popularity; large \(C\) (fast decay) reacts to what is hot right now. The right \(C\) depends on the window of relevance the application needs.</li>
+  </ul>
+</div>
+<div class="important-note">
+  <p><strong>Visual intuition:</strong> plot age (how many steps back in the stream, on the horizontal axis) against weight \((1 - C)^a\) (on the vertical axis). The curve starts at height 1 for age 0 — the newest event — and falls exponentially toward 0: a smooth, always-decreasing shape that drops fastest near the origin and flattens out as it ages. One landmark: after about \(1/C\) steps the weight has shrunk to roughly \(e^{-1} \approx 0.37\) of its original value, which is why \(C = 0.1\) leaves very little weight beyond about 10–20 steps. The one-sentence takeaway: the picture of "recency wins" is a curve that forgives the present and forgets the past.</p>
+</div>
+<h3 id="13.3.4-worked-example-fifa-versus-ipl">13.3.4 Worked Example: FIFA versus IPL</h3>
+<p>The example is worth writing down in your notes, and it matters for the exam too. We have a stream of events of two types, FIFA and IPL, and we want to find which one is more popular. The decay constant is \(C = 0.1\), so \(1 - C = 0.9\). We track the tag FIFA: when we encounter FIFA, the indicator (current weight) is 1; when we encounter anything else — an IPL event — it is 0. Row 1: the event matches FIFA. The computation is \(1\) times \(1 - C\), which is \(1 \times 0.9 = 0.9\). The weighted sum is 0.9.</p>
+<div class="example-box">
+  <p><strong>Full worked computation.</strong> Stream: FIFA, IPL, FIFA, IPL, FIFA, IPL — three appearances each. Track each tag separately with the row rule: new value = previous value \(\times 0.9\) + current weight (1 for a match, 0 for a non-match), starting the first row at the first indicator times \(0.9\).</p>
+  <p><strong>Tracking FIFA</strong> (weights 1, 0, 1, 0, 1, 0):</p>
+  <table>
+    <thead>
+      <tr>
+        <th>Row</th>
+        <th>Event</th>
+        <th>Weight \(w_t\)</th>
+        <th>Update</th>
+        <th>\(S_t\)</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>1</td>
+        <td>FIFA</td>
+        <td>1</td>
+        <td>\(1 \times 0.9\)</td>
+        <td>0.9</td>
+      </tr>
+      <tr>
+        <td>2</td>
+        <td>IPL</td>
+        <td>0</td>
+        <td>\(0.9 \times 0.9 + 0\)</td>
+        <td>0.81</td>
+      </tr>
+      <tr>
+        <td>3</td>
+        <td>FIFA</td>
+        <td>1</td>
+        <td>\(0.81 \times 0.9 + 1\)</td>
+        <td>1.729</td>
+      </tr>
+      <tr>
+        <td>4</td>
+        <td>IPL</td>
+        <td>0</td>
+        <td>\(1.729 \times 0.9 + 0\)</td>
+        <td>1.5561</td>
+      </tr>
+      <tr>
+        <td>5</td>
+        <td>FIFA</td>
+        <td>1</td>
+        <td>\(1.5561 \times 0.9 + 1\)</td>
+        <td>2.40049</td>
+      </tr>
+      <tr>
+        <td>6</td>
+        <td>IPL</td>
+        <td>0</td>
+        <td>\(2.40049 \times 0.9 + 0\)</td>
+        <td><strong>2.160441</strong></td>
+      </tr>
+    </tbody>
+  </table>
+  <p><strong>Tracking IPL</strong> (weights 0, 1, 0, 1, 0, 1):</p>
+  <table>
+    <thead>
+      <tr>
+        <th>Row</th>
+        <th>Event</th>
+        <th>Weight \(w_t\)</th>
+        <th>Update</th>
+        <th>\(S_t\)</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>1</td>
+        <td>IPL</td>
+        <td>0</td>
+        <td>\(0 \times 0.9\)</td>
+        <td>0</td>
+      </tr>
+      <tr>
+        <td>2</td>
+        <td>FIFA</td>
+        <td>1</td>
+        <td>\(0 \times 0.9 + 1\)</td>
+        <td>1</td>
+      </tr>
+      <tr>
+        <td>3</td>
+        <td>IPL</td>
+        <td>0</td>
+        <td>\(1 \times 0.9 + 0\)</td>
+        <td>0.9</td>
+      </tr>
+      <tr>
+        <td>4</td>
+        <td>FIFA</td>
+        <td>1</td>
+        <td>\(0.9 \times 0.9 + 1\)</td>
+        <td>1.81</td>
+      </tr>
+      <tr>
+        <td>5</td>
+        <td>IPL</td>
+        <td>0</td>
+        <td>\(1.81 \times 0.9 + 0\)</td>
+        <td>1.629</td>
+      </tr>
+      <tr>
+        <td>6</td>
+        <td>FIFA</td>
+        <td>1</td>
+        <td>\(1.629 \times 0.9 + 1\)</td>
+        <td><strong>2.4661</strong></td>
+      </tr>
+    </tbody>
+  </table>
+  <p><strong>Final comparison: FIFA 2.160441 vs IPL 2.4661 → IPL is more trending</strong>, even though FIFA and IPL appeared the same number of times (3 each). Sense-check: the last event was IPL, so IPL's newest weight entered unpenalized while FIFA's newest weight was 0 — the recency advantage carried the day. Under the alternative initialization (\(S_0 = 0\), first row undiscounted) the numbers shift by one factor of 0.9 but IPL still wins (FIFA 2.21949 vs IPL 2.4661), because a global factor changes values, not rankings.</p>
+</div>
+<p>The point: even if events appear the same number of times, it depends on how frequent and how recent they are. You are not penalizing the most recent event, because the weight you put for the most recent event is 1 (or 0 if it does not match), not \(1 - C\) — \(1 - C\) is what you use to decrease the weight of older events. That is how this algorithm works, and it is very important from the examination point of view. The class paused here so you could work the FIFA computation yourself by looking at the screen — the pattern of why some rows are 0 and why some rows are 1 is exactly what appears in the exam.</p>
+<div class="warning-box">
+  <p><strong>Pitfalls:</strong></p>
+  <ul>
+    <li>Penalizing the newest event: forgetting that the current weight enters as 1 (or 0), not as \(1 - C\). Only <em>older</em> events get multiplied.</li>
+    <li>Mixing up the two tracks: an IPL event gives weight 1 to the IPL track and simultaneously weight 0 to the FIFA track — each tag keeps its own running sum, updated by the same stream.</li>
+    <li>Deciding the winner by total count: equal counts can still produce a clear winner, because recency, not count, is what the weighted sum measures.</li>
+    <li>Using \(C\) outside \((0, 1)\), which turns the decay into growth or total collapse.</li>
+  </ul>
+</div>
+<h3 id="13.3.5-student-questions-and-answers">13.3.5 Student Questions and Answers</h3>
+<div class="important-note">
+  <p><strong>Q:</strong> You said the previous sum is 0 or 1, but the current weight is 0 — how does that fit together?</p>
+  <p><strong>A:</strong> The previous sum is initially 0 or 1. It is 0 when the tags differ — when I am looking for FIFA and I encounter something other than FIFA, that corresponds to 0. Since I am encountering FIFA and looking for FIFA, the value is 1, so \(1 \times (1 - C) = 1 \times 0.9 = 0.9\). In the next iteration the tag coming up is a different tag, so the current weight becomes 0. The "0 or 1" describes the row being computed — the match indicator — while "current weight" describes the next row's indicator; they are two different positions in the same stream, which is why the two statements do not collide.</p>
+</div>
+<div class="important-note">
+  <p><strong>Q:</strong> At \(t = 1\) there is no power on the \(1 - C\) term — why?</p>
+  <p><strong>A:</strong> It is just the summation. The power comes from repeatedly multiplying: at each iteration you multiply the running value by \(1 - C\) again, so you get \(0.9(1 - C) + w\), then \(0.9(1 - C)^2 + w(1 - C) + w\). The power is increasing because the multiplication is repeated — that is where the power comes from. The newest term has no multiplier because it has not aged even one step yet.</p>
+</div>
+<p>Several students then asked about the exam itself, and the answers form a compact set of exam facts. The first exchange covers the paper's shape; the second covers the logistics of carrying notes.</p>
+<div class="important-note">
+  <p><strong>Q:</strong> How many numericals will there be in the exam — similar to mid-sem or different?</p>
+  <p><strong>A:</strong> This exam is more about algorithms and streaming. In streaming there may be some numericals; the theory will be very less — that much I can tell you. The exam is 40 marks (not 35), and it will be based on whatever is taught in class. The overall weightage: the assignments total 20 marks (both assignments together, split 5 + 5 + 10), EC1 is 30 marks, mid-sem is 30 marks, and this exam is 40 marks.</p>
+  <p><strong>Q:</strong> Will it be open book? Can we carry notes? How does the onsite mode work?</p>
+  <p><strong>A:</strong> Mid-sem was closed book; this one will be open book, meaning you can take your notes and other things. But from what students who took earlier exams report, handwritten notes as such are not allowed — only printed materials are accepted, so you have to carry a Xerox copy of your handwritten notes. That part is not fully confirmed; the ops team can be checked. The class notes that are shared can probably also be taken that way.</p>
+</div>
+<div class="key-takeaway">
+  <p><strong>Exam note:</strong> the decaying window is a likely source of numericals. Write the FIFA-versus-IPL computation in your notes and work through the FIFA track yourself, including why some rows are 0 and some are 1 — that pattern is exactly what appears in the exam. The two facts that anchor every such numerical: the current event's weight is 1 (or 0 if it does not match), never \(1 - C\), and the older rows keep being multiplied by \(1 - C\).</p>
+</div>
+<div class="key-takeaway">
+  <p><strong>Recap:</strong> the decaying window scores each tracked tag with \(S_t = (1 - C) \cdot S_{t-1} + w_t\), so the newest match weighs 1 and every older event shrinks by repeated multiplication with \(1 - C\) — equal counts lose to better recency, and that is the trend signal. This weighted-sum idea is a counting scheme with memory; the next section moves from "how popular" to "have I seen this before?" — the membership question, where sampling and probability replace the scan.</p>
+</div>
+<p>The real-world anchor of this section is trend detection: hashtag monitors decide which topic is trending right now, and streaming dashboards use the same exponentially decaying weights to keep rolling percentiles fresh. References treat the general idea as "forward decay," a monotone time-decay model for streaming systems.</p>
+
+<h2 id="13.4-membership-and-frequency">13.4 Membership and Frequency</h2>
+<h3 id="13.4.1-the-membership-operation">13.4.1 The Membership Operation</h3>
+<div class="important-note">
+  <p><strong>Hook:</strong> You are checking a guest list. Is this person on the list? The streaming version of that question — "have I seen this item before?" — is the <em>membership</em> problem, and it is everywhere in streaming systems.</p>
+</div>
+<p>Suppose we have a list of items — a sequence: Item1, Item2, Item1, Item3, Item2, Item4, Item3. The <em>membership</em> of an event \(E\) in the sequence is the answer to the question "is \(E\) a member of this list?": it returns true if \(E\) is a member, and false otherwise. For example, calling membership on I6 returns false, because I6 does not belong to the sequence. The frequency side is the companion question — how often does \(E\) appear.</p>
+<p>The straightforward check scans the list: for each item \(X\) in the sequence, if \(E\) is equal to \(X\), simply return true. If we reach the end without a match, return false.</p>
+<div class="example-box">
+  <p><strong>Membership on the example sequence.</strong> Sequence: Item1, Item2, Item1, Item3, Item2, Item4, Item3. Check \(E = \) I6:</p>
+  <table>
+    <thead>
+      <tr>
+        <th>Step</th>
+        <th>Compare \(X\)</th>
+        <th>Match?</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>1</td>
+        <td>Item1 vs I6</td>
+        <td>no</td>
+      </tr>
+      <tr>
+        <td>2</td>
+        <td>Item2 vs I6</td>
+        <td>no</td>
+      </tr>
+      <tr>
+        <td>3</td>
+        <td>Item1 vs I6</td>
+        <td>no</td>
+      </tr>
+      <tr>
+        <td>4</td>
+        <td>Item3 vs I6</td>
+        <td>no</td>
+      </tr>
+      <tr>
+        <td>5</td>
+        <td>Item2 vs I6</td>
+        <td>no</td>
+      </tr>
+      <tr>
+        <td>6</td>
+        <td>Item4 vs I6</td>
+        <td>no</td>
+      </tr>
+      <tr>
+        <td>7</td>
+        <td>Item3 vs I6</td>
+        <td>no</td>
+      </tr>
+    </tbody>
+  </table>
+  <p>End of list reached with no equal item → <strong>membership(I6) = false</strong>. Sense-check: I6 is not among the seven listed items, and the scan only ever returns true on an exact equal item, so false is the only correct answer. Checking \(E = \) Item1 would have stopped at step 1 with true.</p>
+</div>
+<h3 id="13.4.2-deterministic-in-the-traditional-setting">13.4.2 Deterministic in the Traditional Setting</h3>
+<p>In the traditional setting this algorithm is deterministic: you scan through the entire list and you are guaranteed a correct answer. The list is complete and given to you in advance — the way a data structures course gives you a list of elements and you run a for loop over it.</p>
+<div class="warning-box">
+  <p><strong>Scope — why the deterministic scan breaks in streaming:</strong> the scan's guarantee rests on two assumptions that only hold for a complete, finite list: the whole list is available, and the list has an end. Streaming breaks both assumptions: scanning the entire list is not possible, because the stream is a never-ending sequence and we do not have an infinite-length window. So the deterministic, scan-everything approach stops working the moment the "list" is a live stream — there is no final Item number to stop at, and no memory that can hold everything seen so far.</p>
+</div>
+<h3 id="13.4.3-streaming-sampling-and-probabilistic-algorithms">13.4.3 Streaming: Sampling and Probabilistic Algorithms</h3>
+<p>What do we do in streaming applications? We rely on sampling. You construct a sample — either window-based (a tumbling window or a sliding window, the window concepts from the earlier class) — meaning you only select a sample from the continuously moving data. If an event is in the window, it is a completely random thing: each event is equally likely to be part of the window, because you do not apply any special criteria for selection. You randomly select events into the window.</p>
+<p>Since every event in the stream is equally likely to be part of the window, these algorithms are called <em>probabilistic</em> algorithms. All the streaming algorithms we look at with respect to membership and frequency operations are probabilistic, because they are based on some kind of sampling.</p>
+<p>This is where probability theory enters: the selection of an event as part of the window is something like \(1/M\), because any item can be equally probable — equally likely — to be part of the window. This is the fundamental theorem of probability applied to the sample. In symbols:</p>
+<p>\[ P(\text{event enters the window}) = \frac{1}{M} \]</p>
+<p>where \(M\) is the number of events in the stream — the class confirmed in the Q&A that when the calculation runs, \(M\) is the total number of events in the stream at that instant, and the window size is a separate quantity. The full derivation that ties \(M\) to the window's representation was promised for the next class, so the formula above stands as the class's stated form: one event picked from \(M\) equally likely events has probability \(1/M\).</p>
+<div class="important-note">
+  <p><strong>Analogy — the raffle draw:</strong> picture a raffle with \(M\) tickets, one per event in the stream, and one winning ticket drawn at random. Every ticket has the same chance of winning: \(1/M\). The window selection works the same way — no event gets special treatment, so each event's chance of being the one drawn into the window is exactly \(1/M\). Where the analogy stops: the window may later hold several events, so one draw becomes several draws, and the chance that a specific event appears anywhere in the window grows with the number of slots — precisely the relationship the class deferred to the next class's derivation.</p>
+</div>
+<div class="key-concept">
+  <p><strong>Why probabilistic is the only option here:</strong> membership over a stream asks a question whose exact answer needs the whole history (every item ever seen). The stream has no end, so the exact answer is unaffordable. Sampling trades certainty for memory: instead of "definitely seen" and "definitely not seen," the answers become "likely seen" and "likely not seen," with the error tuned by the sample. Every streaming membership and frequency algorithm in this course is probabilistic for exactly this reason — it is based on some kind of sampling.</p>
+</div>
+<h3 id="13.4.4-student-questions-and-answers">13.4.4 Student Questions and Answers</h3>
+<div class="important-note">
+  <p><strong>Q:</strong> In this example, when we say we have a sequence, do we already define it? What is the criteria behind deciding what is in the sequence?</p>
+  <p><strong>A:</strong> We don't know — that is the point. We are using some window strategy, so whatever comes into the window through that random selection is the list; there is no special selection of items. That is what makes it random. In the traditional case the complete data is given to you and you store it; in streaming you store events in a window, and the window concept is based on heuristics — how you configure the window, e.g., event-based or time-based. In streaming, your window is your list.</p>
+</div>
+<div class="important-note">
+  <p><strong>Q:</strong> M represents the number of events in the particular window, right?</p>
+  <p><strong>A:</strong> Two different things: the window size and the stream length. Suppose a stream holds events and I randomly select some of them into a window; the next time, I randomly select again, and those events can be similar — it is not that all are distinct. Each event is equally likely to be part of this particular thing. The stream length is your M; the window size is separate. When we do the calculation, M is the total number of events in the stream at that instant.</p>
+</div>
+<div class="important-note">
+  <p><strong>Q:</strong> If the window can accommodate only K events and the stream has M events at any instant, isn't the probability of filling the first slot \(1/K\)?</p>
+  <p><strong>A:</strong> No. We are not talking about events with replacement — events are coming in and you are not putting the event back into the stream. So every event is equally likely, with probability \(1/M\). The \(1/K\) guess treats the slot as the choice, but the choice is made over the events themselves: the first slot is filled by one of the M events present, and with no replacement each event has the same \(1/M\) chance of being that one.</p>
+</div>
+<div class="important-note">
+  <p><strong>Q:</strong> I am still not clear about the relationship between M and the size of the window.</p>
+  <p><strong>A:</strong> That part will be explained in the next class — the full derivation will come along with the representation. The complete representation has not been given yet, so don't worry about it for now.</p>
+</div>
+<div class="key-takeaway">
+  <p><strong>Exam note:</strong> streaming topics can carry numericals, and theory will be very less. The probability of an event entering the window, \(1/M\), is the key formula to carry: \(M\) is the stream's event count at that instant, the selection is without replacement, and the full representation tying \(M\) to the window size arrives next class. In a numerical, the moment you see "event equally likely to enter the window," the answer to work with is \(1/M\), never \(1/K\).</p>
+</div>
+<div class="key-takeaway">
+  <p><strong>Recap:</strong> membership asks "is this event in my current list?" — deterministic when the list is complete and finite, probabilistic when the list is a stream window drawn by sampling, with \(P(\text{event enters the window}) = 1/M\). The next section previews the canonical structure that makes membership affordable in practice: the bloom filter.</p>
+</div>
+
+<h2 id="13.5-bloom-filter-preview">13.5 Bloom Filter (Preview)</h2>
+<h3 id="13.5.1-why-it-matters">13.5.1 Why It Matters</h3>
+<div class="important-note">
+  <p><strong>Hook:</strong> Membership questions forced the last section into sampling and probabilities. Is there a way to answer "have I seen this before?" with far less memory than storing the items — and still be usefully right?</p>
+</div>
+<p>Among the remaining streaming techniques is the <em>bloom filter</em> — another important algorithm in general, and also important from the examination standpoint. It belongs to the same family of "couple of other algorithms like cardinality test and membership operator" that streaming systems use when exact answers are too expensive. This lecture set the stage by establishing why membership and frequency questions force us into probabilistic, sampling-based answers — and the bloom filter is the canonical probabilistic data structure that answers membership questions with far less memory than storing the items themselves.</p>
+<div class="important-note">
+  <p><strong>Preview intuition:</strong> the bloom filter keeps a compact bit array — a row of 0/1 slots — as its only state, so its memory does not grow with the number of items seen. A small set of hash functions maps each item onto a few positions in the array, and those positions are marked. Checking membership means checking whether all of an item's positions are marked. The standard property (as treated in the course references): the filter can be wrong in one direction only — it may report "seen" for an item never inserted (a false positive), but it never reports "not seen" for an item that was inserted (no false negatives). That one-sided error is the price of the tiny memory, and the detailed analysis of it is exactly what comes next class.</p>
+</div>
+<h3 id="13.5.2-what-comes-next">13.5.2 What Comes Next</h3>
+<p>The detailed analysis of the bloom filter was scheduled for the next class (Tuesday), where the analysis continues. The course itself is almost at its close: two more classes are planned — one on Tuesday evening and one on Friday or Wednesday evening — and the final session (next Sunday) will be a revision session with sample questions, as requested at the start of this class.</p>
+<div class="key-takeaway">
+  <p><strong>Exam note:</strong> the bloom filter was flagged as important in general, but also from the examination standpoint. The detailed analysis in the next class — how the bit array, the hash functions, and the false-positive rate fit together — is exam-relevant material; treat the preview here as the introduction to that analysis.</p>
+</div>
+
+<h2 id="exam-guidance-summary">Exam Guidance Summary</h2>
+<p>The class closed the lecture with concrete intel about the final exam. Everything below is exactly what was stated.</p>
+<div class="key-takeaway">
+  <p><strong>Exam note — the numbers:</strong> the final exam is 40 marks (not 35), based only on what is taught in class. The overall course weightage: assignments 20 marks (both assignments together, 5 + 5 + 10), EC1 30 marks, mid-sem 30 marks, final 40 marks.</p>
+</div>
+<div class="key-takeaway">
+  <p><strong>Exam note — content balance:</strong> the exam is more about algorithms and streaming. Expect numericals in the streaming part; theory will be very less.</p>
+</div>
+<div class="key-takeaway">
+  <p><strong>Exam note — open book rules:</strong> unlike mid-sem (closed book), this exam is open book — notes are allowed. But only printed materials are accepted at the venue: handwritten notes must be Xeroxed, and shared class notes can probably be carried the same way. Confirm the exact rule with the ops team.</p>
+</div>
+<div class="key-takeaway">
+  <p><strong>Exam note — decaying window (13.3):</strong> likely source of numericals. The FIFA versus IPL example should be written in your notes; work through the FIFA computation yourself — knowing why some rows are 0 and some are 1 is exam-relevant. Remember the core fact: the most recent event's weight is 1, not \(1 - C\).</p>
+</div>
+<div class="key-takeaway">
+  <p><strong>Exam note — membership and frequency (13.4):</strong> streaming topics can carry numericals. The probability of an event entering the window, \(1/M\), is the key formula; the full derivation and the representation tying \(M\) to the window size will come in the next class.</p>
+</div>
+<div class="key-takeaway">
+  <p><strong>Exam note — bloom filter (13.5):</strong> flagged as important in general, but also from the examination standpoint — the detailed analysis in the next class is exam-relevant material.</p>
+</div>
+<div class="key-takeaway">
+  <p><strong>Study plan:</strong> a revision session with sample questions closes the course (next Sunday); use the two remaining classes before that to resolve any doubts, including the deferred \(M\)-versus-window-size derivation.</p>
+</div>
+
+<h2 id="key-industry-applications">Key Industry Applications</h2>
+<p>Every algorithm in this lecture answers a question that real streaming systems ask every day:</p>
+<ul>
+  <li>Real-world: <strong>retail</strong> — the hot list problem is the "popular items" tracker of a retail business, continuously maintaining a ranked list of top sellers from the sales stream.</li>
+  <li>Real-world: <strong>social media trend analysis</strong> — the decaying window algorithm identifies trending hashtags; monitoring streams for "is this news topic or sports topic trending" uses exactly this recency-weighted scoring.</li>
+  <li>Real-world: <strong>Databricks</strong> — students' assignment work on real-time machine learning with Python on Databricks was discussed as a practical experience of these streaming problems (and their group submissions formed the basis for assignment marks).</li>
+  <li>Real-world: <strong>membership/frequency operators</strong> — streaming systems routinely answer "is this item in my current sample?" questions, which is precisely the probabilistic membership operation covered here.</li>
+  <li>Real-world: <strong>bloom filters</strong> — the canonical low-memory membership structure used broadly in practice (search engines, databases, network stacks); its detailed analysis continues next class.</li>
+</ul>
+    </main>
+
+    <!-- ============================================================
+    EXAM REVISION NOTES
+    Generated AFTER the main lecture-faithful content is complete. Each entry
+    distills one major concept into its most examinable elements.
+    Built FROM the core — never invented independently.
+
+    Each entry is a <div class="exam-revision-entry"> containing:
+      - .revision-topic (h3) — concept name
+      - .revision-mustknow — the single most examinable takeaway
+      - .revision-formula — central formula(s) in \[ ... \] MathJax
+      - .revision-pitfall — the #1 exam mistake
+      - .revision-check — one self-check question (no options)
+      - .revision-connections — linked concepts within this lecture
+    ============================================================ -->
+    <section class="exam-revision-section">
+      <h2>Exam Revision Notes</h2>
+      <p class="revision-intro">Below is the distilled, exam-ready core.
+      Every entry comes from the full explanation above. Use this section
+      for rapid review; return to the main notes when a point needs more context.</p>
+  <div class="exam-revision-entry">
+    <h3 class="revision-topic">Reservoir Sampling (Recap)</h3>
+    <p class="revision-mustknow"><strong>Must-know:</strong> The reservoir holds the first k elements; element n later enters with probability k/n and replaces a uniformly random slot, keeping every past element equally likely to be in the sample. Choosing the reservoir size relative to an unknown stream length is an open question.</p>
+    <p class="revision-formula">\[P(\text{element } n \text{ enters}) = \frac{k}{n}\]</p>
+    <p class="revision-pitfall"><strong>⚠️ Top pitfall:</strong> Using a fixed coin flip instead of the shrinking probability k/n breaks the sample's uniformity over the whole stream.</p>
+    <p class="revision-check"><strong>Self-check:</strong> With a 3-element reservoir and the 7th element arriving, what is the acceptance probability? (Answer: 3/7.)</p>
+    <p class="revision-connections"><strong>Connects to:</strong> 13.2, 13.3</p>
+  </div>
+  <div class="exam-revision-entry">
+    <h3 class="revision-topic">The Hot List Problem: Top-K Frequent Items</h3>
+    <p class="revision-mustknow"><strong>Must-know:</strong> The count dictionary rule: event already present → increment its count; event not present → decrement all counts by one. Counts are relative, so zero does not mean never inserted; the mechanism is not popular in practice because many distinct types make it inefficient.</p>
+    <p class="revision-pitfall"><strong>⚠️ Top pitfall:</strong> Reading a zero count as proof the event was never seen — the decrement step can push a real event to zero.</p>
+    <p class="revision-check"><strong>Self-check:</strong> In the dictionary rule, what happens to every entry when an unseen event arrives? (Answer: each count is decremented by one.)</p>
+    <p class="revision-connections"><strong>Connects to:</strong> 13.1, 13.3</p>
+  </div>
+  <div class="exam-revision-entry">
+    <h3 class="revision-topic">Decaying Window Algorithm</h3>
+    <p class="revision-mustknow"><strong>Must-know:</strong> The decaying window scores each tag with S_t = (1 - C) × S_{t-1} + w_t; the most recent event's weight is 1 (or 0), never 1 - C, and equal counts lose to better recency. In the worked example with C = 0.1, IPL beats FIFA (2.4661 vs 2.160441) on recency alone.</p>
+    <p class="revision-formula">\[S_t = (1 - C) \cdot S_{t-1} + w_t \qquad S_t = w_t + w_{t-1}(1 - C) + \dots + w_1(1 - C)^{t-1}\]</p>
+    <p class="revision-pitfall"><strong>⚠️ Top pitfall:</strong> Penalizing the newest event (applying 1 - C to the current match) or deciding the winner by total count instead of the weighted sum.</p>
+    <p class="revision-check"><strong>Self-check:</strong> In the FIFA/IPL example with C = 0.1, what is the row-2 value of the FIFA track after row 1 = 0.9 and an IPL arrival? (Answer: 0.9 x 0.9 + 0 = 0.81.)</p>
+    <p class="revision-connections"><strong>Connects to:</strong> 13.2, 13.4</p>
+  </div>
+  <div class="exam-revision-entry">
+    <h3 class="revision-topic">Membership and Frequency</h3>
+    <p class="revision-mustknow"><strong>Must-know:</strong> Membership scans the whole list deterministically only when the list is complete and finite; in streaming, sampling into windows makes membership probabilistic with P(event enters the window) = 1/M (M = stream length at that instant, no replacement). The 1/K guess is wrong: the choice is over the M events, not the K slots.</p>
+    <p class="revision-formula">\[P(\text{event enters the window}) = \frac{1}{M}\]</p>
+    <p class="revision-pitfall"><strong>⚠️ Top pitfall:</strong> Assuming the first slot fills with probability 1/K (window capacity) instead of 1/M, or confusing M (stream length) with the window size.</p>
+    <p class="revision-check"><strong>Self-check:</strong> A stream holds 50 events at an instant; an event enters the window. What is the probability of the first slot? (Answer: 1/50, since selection is without replacement.)</p>
+    <p class="revision-connections"><strong>Connects to:</strong> 13.3, 13.5</p>
+  </div>
+  <div class="exam-revision-entry">
+    <h3 class="revision-topic">Bloom Filter (Preview)</h3>
+    <p class="revision-mustknow"><strong>Must-know:</strong> The bloom filter is important in general and from the examination standpoint; it is a probabilistic membership structure that needs far less memory than storing the items, and its detailed analysis in the next class is exam-relevant material.</p>
+    <p class="revision-check"><strong>Self-check:</strong> Why can membership questions in streaming not be answered exactly? (Answer: exact answers need the whole never-ending history, so sampling/probabilistic structures are used.)</p>
+    <p class="revision-connections"><strong>Connects to:</strong> 13.4</p>
+  </div>
+  <div class="exam-revision-entry">
+    <h3 class="revision-topic">Exam Guidance Summary</h3>
+    <p class="revision-mustknow"><strong>Must-know:</strong> Final exam: 40 marks, class content only, more algorithms and streaming than theory; open book with printed materials only; course weightage is assignments 20 (5+5+10), EC1 30, mid-sem 30, final 40.</p>
+    <p class="revision-pitfall"><strong>⚠️ Top pitfall:</strong> Assuming the final exam is 35 marks or closed book like mid-sem — it is 40 marks and open book.</p>
+    <p class="revision-check"><strong>Self-check:</strong> What is the total weightage split across assignments, EC1, mid-sem, and the final? (Answer: 20 + 30 + 30 + 40.)</p>
+    <p class="revision-connections"><strong>Connects to:</strong> 13.3, 13.4, 13.5</p>
+  </div>
+  <div class="exam-revision-entry">
+    <h3 class="revision-topic">Key Industry Applications</h3>
+    <p class="revision-mustknow"><strong>Must-know:</strong> Each lecture algorithm maps to a real system: hot list to retail top sellers, decaying window to hashtag trend analysis, membership to 'is this item in my sample?', and bloom filters to low-memory membership in search engines, databases, and network stacks.</p>
+    <p class="revision-check"><strong>Self-check:</strong> Which real-world setting maps to the hot list problem? (Answer: retail — a continuously updated list of top sellers from the sales stream.)</p>
+    <p class="revision-connections"><strong>Connects to:</strong> 13.2, 13.3, 13.4, 13.5</p>
+  </div>
+    </section>
+  </div>
+</body>
+</html>
