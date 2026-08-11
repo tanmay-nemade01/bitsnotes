@@ -1,316 +1,175 @@
 # BitsNotes
 
-Free, open-source AI/ML study notes — **120+ lectures** across 9 subjects with interactive quizzes, exam revision cards, study guides, threaded comments, bookmarks, and reading progress tracking. Built with **Astro + Tailwind**, deployed on **Cloudflare Workers**.
+Free, open-source AI/ML study notes — lectures across multiple subjects with interactive quizzes, exam revision cards, study guides, comments, bookmarks, and reading progress. Built with **Astro + Tailwind**, deployed on **Cloudflare Workers**.
 
-**Site:** [bitsnotes.com](https://bitsnotes.com)
+**Live site:** [bitsnotes.com](https://bitsnotes.com)
 
 ---
 
-## Tech Stack
+## Stack
 
 | Layer | Technology |
-|-------|-----------|
-| Framework | [Astro](https://astro.build) ^7.0 (static + SSR hybrid) |
-| Styling | [Tailwind CSS](https://tailwindcss.com) ^4.3 + custom design tokens |
-| Deployment | [Cloudflare Workers](https://workers.cloudflare.com) via `@astrojs/cloudflare` |
-| Database | [Cloudflare D1](https://developers.cloudflare.com/d1/) (SQLite-compatible) |
-| Object Storage | [Cloudflare R2](https://developers.cloudflare.com/r2/) (notes content) |
-| Cache | [Cloudflare KV](https://developers.cloudflare.com/kv/) (newsletter tokens) |
-| Email | [Cloudflare Email Service](https://developers.cloudflare.com/email-routing/) + ZeptoMail |
-| Auth | OAuth 2.0 (Google, GitHub) + email magic links, JWT sessions |
-| Testing | [Vitest](https://vitest.dev) (unit) + [Playwright](https://playwright.dev) (E2E) |
-| Languages | TypeScript ^6.0, HTML, CSS |
+|-------|------------|
+| Framework | [Astro](https://astro.build) (static + SSR hybrid) |
+| Styling | [Tailwind CSS](https://tailwindcss.com) + design tokens in `src/styles/tokens.css` |
+| Runtime | [Cloudflare Workers](https://workers.cloudflare.com) via `@astrojs/cloudflare` |
+| Database | [Cloudflare D1](https://developers.cloudflare.com/d1/) |
+| Content storage | [Cloudflare R2](https://developers.cloudflare.com/r2/) (production); Vite glob imports in local dev |
+| Cache / email | KV (newsletter tokens), Cloudflare Email Service + ZeptoMail |
+| Auth | Google / GitHub OAuth, email verification, JWT sessions |
+| Tests | Vitest (unit) + Playwright (E2E) |
 
 ---
 
 ## Features
 
-### Content
-- **Four-tab lecture viewer** — Notes, Study Guide (summary/objectives), Exam Revision (cards), Quiz (interactive MCQs)
-- **9 subjects** — ACI, DMML, DNN, DRL, ISM, ML, MFML, NLP, SEML
-- **Cross-lecture resources** — Race cards, one-sheets, concept maps, solved papers, question banks, worksheets
-- **Universal search** — Ctrl+K search across all subjects, lectures, and concepts
-- **Blog** — Posts with tags, RSS feed, likes, and author following
-
-### User Features
-- **Authentication** — Google OAuth, GitHub OAuth, or email + verification
-- **Bookmarks & Collections** — Save lectures to named collections (e.g., "To Review")
-- **Reading Progress** — Automatic scroll-based progress per lecture and per topic
-- **Threaded comments** — Reddit-style with up/down voting, reporting, admin moderation
-- **Usefulness feedback** — "Was this useful?" voting on every page
-- **Dashboard** — Recently saved bookmarks and progress bars (when signed in)
-- **Newsletter** — Subscribe with your account (Zoho Campaigns + ZeptoMail); unsubscribe via email link
-- **Pomodoro timer** — Built-in study timer
-
-### Site
-- **Dark/Light mode** — Theme toggle with system preference detection, no FOUC
-- **SEO** — JSON-LD structured data (`LearningResource`, `Quiz`, `CollectionPage`, `WebSite`), dynamic sitemap, `robots.txt`
-- **Edge caching** — Public page shells cached at Cloudflare edge with Cookie-based Vary
-- **Security headers** — CSP (enforcing for auth routes, report-only for public), HSTS, X-Frame-Options
-- **Analytics** — GA4 + Cloudflare beacon (deferred to first interaction)
-- **Responsive** — Mobile-first layout with accessible components (ARIA, keyboard nav, screen reader support)
+- **Lecture viewer** — Notes, Study Guide, Exam Revision, and Quiz tabs
+- **Subjects** — ACI, DMML, DNN, DRL, ISM, ML, MFML, NLP, SEML, plus additional lecture sets (e.g. Big Data, Data Warehousing)
+- **Cross-lecture resources** — Race cards, one-sheets, concept maps, question banks, worksheets, solved papers
+- **Search** — Ctrl+K across subjects, lectures, and concepts
+- **Accounts** — OAuth or email sign-in; bookmarks/collections, reading progress, threaded comments
+- **Study tools** — Pomodoro timer; client-side “Ask AI Doubts” chatbot (bring-your-own API key)
+- **Blog** — Posts, tags, RSS, likes, author follows
+- **Site polish** — Dark/light theme, SEO (JSON-LD, sitemap), edge caching, security headers
 
 ---
 
-## Pages & Routes
+## Quick start
 
-| Route | Type | Description |
-|-------|------|-------------|
-| `/` | Static | Homepage — subject grid, browse-all accordions, blog preview, dashboard |
-| `/subject/[subject]` | Static | Subject detail — lecture list, progress, resource cards |
-| `/view/[...path]` | SSR | Lecture viewer (Notes / Study Guide / Exam Revision / Quiz tabs) |
-| `/view/[id]` | SSR | Legacy URL redirect |
-| `/about`, `/contact`, `/privacy`, `/terms`, `/disclaimer` | Static | Info pages |
-| `/support` | Static | Buy Me a Coffee / support page |
-| `/bookmarks` | Static | Saved lectures (requires auth) |
-| `/blog` | Static | Blog index |
-| `/blog/[slug]` | Static | Blog post |
-| `/blog/rss.xml` | Static | RSS feed |
-| `/blog/tag/[tag]` | Static | Posts by tag |
-| `/auth/signin`, `/auth/signup`, `/auth/verify-email` | SSR | Auth pages |
-| `/admin/comments` | SSR | Comment moderation dashboard |
-| `/subscribed`, `/unsubscribed` | Static | Newsletter success pages |
-| `/search-index.json` | Static | Full-text search index |
-| `/sitemap.xml` | Static | XML sitemap |
-| `/404`, `/500` | Static | Error pages |
-
----
-
-## Architecture
-
-### Content Pipeline
-
-Notes are authored as **HTML + JSON pairs** committed to git under `src/content/notes/`:
-
-```
-src/content/notes/<Subject>/<Lecture>/
-├── notes.html          # Lecture content (body + optional <style>)
-└── notes.json          # Metadata: summary, quiz, keyConcepts, examRevisionNotes, etc.
+```bash
+npm install
+npm run dev          # http://localhost:4321
 ```
 
-At build time, `notesLoader.ts` uses Vite glob imports (`import.meta.glob`) to discover all notes. In production, notes are uploaded to **Cloudflare R2** and fetched on demand. A `notes-manifest.json` is generated for efficient catalog queries.
+Optional local setup:
 
-The Astro Cloudflare adapter generates a Worker that serves static pages (pre-rendered) alongside server-rendered endpoints (contact API, auth callbacks, comments API).
+1. Copy secrets into `.dev.vars` (git-ignored) — see [Environment](#environment)
+2. Apply the D1 schema locally: `npm run db:migrate:local`
 
-### Data Flow
-
-```
-User Request → Cloudflare Edge → Astro Worker → Static Page (from ASSETS binding)
-                                                → API Route (D1 queries)
-                                                → Content (R2 GET)
-```
-
-- **Static pages** are pre-rendered and served from the `ASSETS` binding
-- **SSR pages** (lecture viewer, auth, API) run on the Worker
-- **User data** (auth, bookmarks, comments, progress) lives in **D1**
-- **Notes content** is served from **R2** (production) or Vite glob imports (dev)
-
----
-
-## Database (Cloudflare D1)
-
-**Binding name:** `DB` | **Database name:** `bitsnotes_auth`
-
-```sql
-users            -- User accounts (id, email, display_name, status)
-identities       -- OAuth provider links (Google, GitHub)
-entitlements     -- Tier/plan management
-verification_tokens -- Email verification (SHA-256 hashed)
-refresh_tokens   -- JWT session refresh tokens
-auth_events      -- Security audit log
-admin_users      -- Admin allowlist
-collections      -- Named bookmark collections
-bookmarks        -- Saved lectures (collection_id, subject, lecture)
-reading_progress -- Per-lecture scroll progress
-topic_progress   -- Per-topic scroll progress
-comments         -- Threaded comments (parent_id, depth, score, status)
-comment_votes    -- Up/down votes per comment
-comment_reports  -- Reported comments
-page_feedback    -- Usefulness feedback votes
-blog_likes       -- Blog post likes
-blog_follows     -- Author follows
-page_views       -- Global view counts
-```
-
-Schema: `src/db/schema.sql` | Migrations: `src/db/migrations/`
+| Command | Purpose |
+|---------|---------|
+| `npm run build` | Type-check, build to `./dist/`, theme-color audit |
+| `npm run preview` | Preview the production build |
+| `npm test` | Unit tests |
+| `npm run test:e2e` | Playwright E2E |
+| `npm run deploy` | Guard checks + build + Workers deploy |
+| `npm run upload-notes` | Sync note HTML/JSON to R2 |
+| `npm run db:migrate:remote` | Apply D1 schema in production |
+| `npm run blog:new` | Scaffold a blog post |
+| `npm run audit:theme` | Ensure content CSS uses design tokens |
 
 ---
 
-## Authentication
-
-- **Sign-in options:** Google OAuth, GitHub OAuth, email + magic link
-- **Sessions:** JWT access token (short-lived) + refresh token (long-lived, revocable)
-- **Security:** CSRF via Origin/Referer validation, Cloudflare Turnstile, rate limiting
-- **Audit log:** All auth events logged to `auth_events` table
-- **Email verification:** Sent via Cloudflare Email Service binding
-
-Auth modules: `src/lib/auth/` — index, audit, crypto, csrf, db, email, oauth, session, turnstile
-
----
-
-## API Endpoints
-
-| Endpoint | Method | Purpose |
-|----------|--------|---------|
-| `/api/contact` | POST | Contact form → email |
-| `/api/subscribe` | POST | Newsletter subscribe (auth required) |
-| `/api/unsubscribe` | GET/POST | Newsletter unsubscribe |
-| `/api/auth/signin` | POST | Sign-in (email or OAuth redirect) |
-| `/api/auth/signout` | POST | Revoke tokens |
-| `/api/auth/me` | GET | Current user |
-| `/api/auth/verify-email` | GET | Email verification |
-| `/api/auth/callback/[provider]` | GET | OAuth callback |
-| `/api/bookmarks/*` | CRUD | Save/move/remove bookmarks |
-| `/api/collections/*` | CRUD | Create/rename/delete collections |
-| `/api/comments/*` | CRUD | List, create, vote, report, delete comments |
-| `/api/feedback` | GET/POST | Usefulness feedback |
-| `/api/progress/*` | GET/POST | Reading progress |
-| `/api/views` | POST | Page view counter |
-| `/api/admin/comments/*` | CRUD | Admin comment moderation |
-| `/api/blog/like` / `/api/blog/follow` | POST | Blog interactions |
-| `/api/v1/*` | GET | Mobile app API (subjects, lectures, content) |
-
----
-
-## Project Structure
+## Project layout
 
 ```
 src/
-├── components/     # Astro components (Navbar, Footer, SearchModal, Comments, etc.)
+├── components/     # UI (nav, search, comments, chatbot, pomodoro, …)
 ├── content/
-│   ├── notes/      # Lecture notes by subject (HTML + JSON)
+│   ├── notes/      # Lectures & resources (HTML + JSON per folder)
 │   └── blog/       # Blog posts
-├── data/           # Site config (subjects catalog, support channels)
+├── data/           # Subject catalog, site config
 ├── db/             # D1 schema + migrations
-├── layouts/        # BaseLayout, BlogPostLayout
-├── lib/            # Server logic (auth, comments, bookmarks, moderation, etc.)
-├── pages/          # Astro routes (pages + API endpoints)
-├── styles/         # global.css, tokens.css, lecture-notes.css, prose.css
-├── utils/          # notesLoader, blogLoader, htmlParser, metadata, etc.
-├── middleware.ts   # Session, security headers, CSP, caching
-└── env.d.ts        # Type declarations
+├── layouts/
+├── lib/            # Auth, comments, bookmarks, moderation, …
+├── pages/          # Routes + API endpoints
+├── styles/         # tokens, global, lecture, prose, chatbot
+├── utils/          # notesLoader, blogLoader, parsers, …
+└── middleware.ts   # Sessions, CSP, caching
 
-scripts/            # Build utilities (audit, deploy guard, blog scaffolding)
-test/               # Vitest unit tests (20 files)
-e2e/                # Playwright E2E tests (3 spec files)
-public/             # Static assets (fonts, favicons, lecture-notes.css)
+scripts/            # Deploy guard, R2 upload, theme audit, blog scaffold
+test/               # Vitest
+e2e/                # Playwright
+make-transcript-notes-kit-3agent/   # Optional transcript → notes pipeline
 ```
 
 ---
 
-## Commands
-
-| Command | Action |
-|---------|--------|
-| `npm install` | Install dependencies |
-| `npm run dev` | Start dev server at `localhost:4321` |
-| `npm run build` | Type-check + build production site to `./dist/` |
-| `npm run preview` | Preview production build locally |
-| `npm test` | Run unit tests (Vitest) |
-| `npm run test:e2e` | Run Playwright E2E tests |
-| `npm run test:watch` | Unit tests in watch mode |
-| `npm run deploy` | Build + deploy to Cloudflare Workers |
-| `npm run upload-notes` | Upload notes HTML/JSON to R2 |
-| `npm run audit:theme` | Audit CSS colors against design token allowlist |
-| `npm run blog:new` | Scaffold a new blog post |
-| `npm run generate-types` | Generate Workers types from `wrangler.jsonc` |
-| `npm run db:migrate:local` | Run D1 migrations locally |
-| `npm run db:migrate:remote` | Run D1 migrations on production DB |
-
----
-
-## Content Authoring
+## Content
 
 ### Lectures
 
 ```
 src/content/notes/<Subject>/<LectureFolder>/
-├── notes.html          # required: lecture content
-└── notes.json          # optional: metadata (summary, quiz, etc.)
+├── notes.html    # required — body content (+ optional <style>)
+└── notes.json    # optional — summary, quiz, keyConcepts, examRevisionNotes, …
 ```
 
-- `notes.html` should contain a `<body>` with the lecture content and can include `<style>` blocks (scoped to `.lecture-notes-wrapper` at parse time).
-- `notes.json` can include `summary`, `keyConcepts`, `sections`, `quiz`, `examRevisionNotes`, etc. See existing notes for examples.
-- If no `notes.json` is provided, a fallback study guide is generated from the folder name.
+Styles in lecture HTML are scoped to `.lecture-notes-wrapper` at parse time. Without `notes.json`, a basic study guide is derived from the folder name. Add subject metadata in `src/data/subjects.ts` when introducing a new subject folder.
 
-### Cross-lecture Resources
+### Cross-lecture resources
 
-Named resources that span a whole subject (rather than a single lecture) reuse the same pipeline — no second publishing system. Place each resource in its own subfolder:
+Same pipeline as lectures — use a dedicated folder with:
 
 ```
 src/content/notes/<Subject>/<ResourceFolder>/
-├── resource.html       # required: the resource content
-└── resource.json       # required: metadata
+├── resource.html
+└── resource.json   # resourceKind, scope, topicTitle, sortOrder, availableModes, …
 ```
 
-`resource.json` fields:
+`resourceKind` values: `race-card` | `one-sheet` | `concept-map` | `worksheet` | `question-bank` | `solved-paper`. After editing content CSS, run `npm run audit:theme`.
 
-| Field | Value |
-|-------|-------|
-| `resourceKind` | `race-card` \| `one-sheet` \| `concept-map` \| `worksheet` \| `question-bank` \| `solved-paper` |
-| `scope` | `"subject"` |
-| `topicTitle` | Human title, e.g. `"MDP → DP → MC → TD"` |
-| `sortOrder` | `1000` (sorts after lectures) |
-| `availableModes` | e.g. `["notes", "exam-revision"]` |
-| `shortDescription` | Card / list blurb |
+### Blog
 
-HTML conventions: race cards reuse `.algorithm-trace` / `.trace-step` classes, concept maps use `.concept-map` / `.cm-*` classes, one-sheets use `.one-sheet-flow` / `.os-*` classes. All colors must be design tokens — run `npm run audit:theme` after editing content CSS.
+Posts live under `src/content/blog/<slug>/` as `index.html` + `index.json`. Use `npm run blog:new` to scaffold.
+
+### Transcript → notes kit
+
+For turning lecture transcripts into HTML notes, see [`make-transcript-notes-kit-3agent/`](make-transcript-notes-kit-3agent/).
 
 ---
 
-## Design System
+## Architecture
 
-Centralized in `src/styles/tokens.css` — warm paper/ink color palette with a "study green-teal" accent. Consumed by:
-- **Tailwind** via `src/styles/global.css`
-- **Lecture content** via `src/styles/lecture-notes.css`
-
-All content CSS colors must use design tokens (CSS custom properties). Run `npm run audit:theme` to verify.
-
----
-
-## Deployment
-
-Deploys to **bitsnotes.com** / **www.bitsnotes.com** via Cloudflare Workers.
-
-1. Set required secrets: `SESSION_SIGNING_KEY`, OAuth client IDs, Turnstile keys, Zoho/ZeptoMail credentials
-2. `npm run deploy` — runs guard checks, builds, and deploys
-3. `npm run upload-notes` — syncs note content to R2
-4. `npm run db:migrate:remote` — applies D1 schema to production
-
-The `@astrojs/cloudflare` adapter serves static assets from the Workers `ASSETS` binding, with server-rendered endpoints for auth, comments, contact form, and legacy redirects.
-
----
-
-## Testing
-
-- **Unit tests** (Vitest): `src/test/` — 20 test files covering auth, comments, feedback, progress, crypto, moderation, HTML parsing, middleware, and more.
-- **E2E tests** (Playwright): `e2e/` — 3 spec files covering browse + support flow, comments + feedback, and theme + navigation. Runs 3 browser projects (Chrome desktop, Chrome mobile, Firefox).
-- **Visual checklist:** `src/test/visual-matrix.md` — manual regression checklist for visual verification.
-
----
-
-## Security
-
-- Do **not** commit real credentials to tracked files. Use Cloudflare Worker secrets or `.env` (git-ignored).
-- Contact form sanitizes header fields, validates same-origin CSRF, rate-limits, and uses a honeypot for bot detection.
-- Security headers (CSP, HSTS, X-Frame-Options, etc.) applied via middleware.
-- Auth endpoints protected with CSRF validation, Turnstile, and rate limiting.
-- Comment content filtered through profanity detection, spam scoring, and blocked-term lists.
-- Session tokens use HMAC signing; verification tokens are SHA-256 hashed at rest.
-- `ZOHO_CAMPAIGNS_LIST_KEY` must be a Worker secret (not a public `vars` entry).
-
----
-
-## Environment & Configuration
-
-**Cloudflare bindings** (configured in `wrangler.jsonc`): `DB` (D1), `NOTES_BUCKET` (R2), `NEWSLETTER_KV` (KV), `SEND_EMAIL` (Email Service), `COMMENT_RATE_LIMITER`, `FEEDBACK_RATE_LIMITER`, `CONTACT_RATE_LIMITER`, `VIEWS_RATE_LIMITER`, `ASSETS`.
-
-**Secrets** (set via `wrangler secret put`): `SESSION_SIGNING_KEY`, Google/GitHub OAuth credentials, Turnstile keys, Zoho/ZeptoMail credentials (including `ZOHO_CAMPAIGNS_LIST_KEY`), API secret key.
-
-**Local dev:** Copy secrets to `.dev.vars` (git-ignored). Dev server uses Vite glob imports for content (no R2 needed).
-
-After rotating the Zoho list key out of git history, set production with:
-```bash
-wrangler secret put ZOHO_CAMPAIGNS_LIST_KEY
 ```
-and add the same key to `.dev.vars` for local newsletter tests.
+Request → Cloudflare Edge → Astro Worker
+                              ├─ Static pages (ASSETS)
+                              ├─ SSR / API (D1)
+                              └─ Lecture content (R2 in prod)
+```
+
+Notes are authored in git under `src/content/notes/`. At build time, `notesLoader.ts` discovers them via Vite glob imports. In production, HTML/JSON are also uploaded to R2 and fetched on demand; a manifest supports catalog queries.
+
+User data (auth, bookmarks, comments, progress) lives in D1. Schema: [`src/db/schema.sql`](src/db/schema.sql). Auth code: `src/lib/auth/`. API routes: `src/pages/api/`.
+
+---
+
+## Environment
+
+Bindings are declared in [`wrangler.jsonc`](wrangler.jsonc): `DB`, `NOTES_BUCKET`, `NEWSLETTER_KV`, `SEND_EMAIL`, rate limiters, `ASSETS`.
+
+Set secrets with `wrangler secret put` (and mirror them in `.dev.vars` for local work), including:
+
+- `SESSION_SIGNING_KEY`
+- Google / GitHub OAuth client secrets
+- Turnstile secret
+- ZeptoMail / Zoho Campaigns credentials (including list key)
+- Any API keys required by your deploy
+
+Never commit credentials. Prefer Worker secrets over tracked config.
+
+---
+
+## Deploy
+
+1. Ensure secrets and bindings are configured
+2. `npm run deploy`
+3. `npm run upload-notes` when content changed
+4. `npm run db:migrate:remote` when the schema changed
+
+Target domains: `bitsnotes.com` / `www.bitsnotes.com`.
+
+---
+
+## Security notes
+
+- Contact and auth endpoints use CSRF checks, rate limits, and (where configured) Turnstile
+- Middleware sets CSP, HSTS, and related headers
+- Comment input goes through profanity / spam checks
+- Session and verification tokens are hashed or HMAC-signed as appropriate
+
+---
+
+## License / contributing
+
+Open source — contributions via pull request are welcome. Keep lecture CSS on design tokens (`npm run audit:theme`), and avoid committing secrets or generated caches (`.dev.vars`, `.notes-upload-cache.json`, etc.).
