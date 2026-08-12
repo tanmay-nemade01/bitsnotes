@@ -93,6 +93,31 @@ async function resolveGlobEntry<T = string>(entry: any): Promise<T | null> {
   return entry as T;
 }
 
+/** Vite glob keys preserve on-disk casing; Windows/git can disagree with the manifest. */
+function findGlobKey(
+  files: Record<string, any>,
+  exactKey: string,
+  folderPrefix: string,
+  suffix: string
+): string | undefined {
+  if (files[exactKey]) return exactKey;
+  const lowerExact = exactKey.toLowerCase();
+  const lowerPrefix = folderPrefix.toLowerCase();
+  const lowerSuffix = suffix.toLowerCase();
+  const keys = Object.keys(files);
+  return (
+    keys.find((k) => k.toLowerCase() === lowerExact) ||
+    keys.find((k) => k.toLowerCase().startsWith(lowerPrefix) && k.toLowerCase().endsWith(lowerSuffix))
+  );
+}
+
+function findLectureEntry(subject: SubjectEntry, lectureFolderName: string) {
+  return (
+    subject.lectures.find((l) => l.folderName === lectureFolderName) ||
+    subject.lectures.find((l) => l.folderName.toLowerCase() === lectureFolderName.toLowerCase())
+  );
+}
+
 
 
 // ─── Shared Helpers ──────────────────────────────────────────────────────────
@@ -389,7 +414,7 @@ export async function getLectureContent(subjectName: string, lectureFolderName: 
   const subject = manifest.subjects.find(s => s.name === subjectName);
   if (!subject) return null;
 
-  const lecture = subject.lectures.find(l => l.folderName === lectureFolderName);
+  const lecture = findLectureEntry(subject, lectureFolderName);
   if (!lecture) return null;
 
   let htmlContent = '';
@@ -399,22 +424,17 @@ export async function getLectureContent(subjectName: string, lectureFolderName: 
   if (import.meta.env.DEV) {
     // Development: load using Vite glob import
     try {
-      const key = `/src/content/notes/${subjectName}/${lectureFolderName}/${lecture.fileName}.html`;
-      if (htmlFiles[key]) {
-        htmlContent = (await resolveGlobEntry<string>(htmlFiles[key])) || '';
+      const folderPrefix = `/src/content/notes/${subjectName}/${lecture.folderName}/`;
+      const key = `${folderPrefix}${lecture.fileName}.html`;
+      const htmlKey = findGlobKey(htmlFiles, key, folderPrefix, '.html');
+      if (htmlKey) {
+        htmlContent = (await resolveGlobEntry<string>(htmlFiles[htmlKey])) || '';
       } else {
-        const folderPrefix = `/src/content/notes/${subjectName}/${lectureFolderName}/`;
-        const altKey = Object.keys(htmlFiles).find(k => k.startsWith(folderPrefix) && k.endsWith('.html'));
-        if (altKey) {
-          htmlContent = (await resolveGlobEntry<string>(htmlFiles[altKey])) || '';
-        } else {
-          console.error(`[notesLoader] Local file not found in glob: ${key}`);
-          return null;
-        }
+        console.error(`[notesLoader] Local file not found in glob: ${key}`);
+        return null;
       }
 
       // Load companion CSS if present
-      const folderPrefix = `/src/content/notes/${subjectName}/${lectureFolderName}/`;
       const cssKeys = Object.keys(cssFiles).filter(k => k.toLowerCase().startsWith(folderPrefix.toLowerCase()) && k.endsWith('.css'));
       for (const cssKey of cssKeys) {
         try {
@@ -450,9 +470,25 @@ export async function getLectureContent(subjectName: string, lectureFolderName: 
       return null;
     }
 
-    const key = `notes/${subjectName}/${lectureFolderName}/${lecture.fileName}.html`;
+    const folderPrefixKey = `notes/${subjectName}/${lectureFolderName}/`;
+    const key = `${folderPrefixKey}${lecture.fileName}.html`;
     try {
-      const obj = await bucket.get(key);
+      let obj = await bucket.get(key);
+      if (!obj) {
+        // R2 keys are case-sensitive; Windows/git folder casing often drifts
+        // from the manifest (`_notes` vs `_Notes`). Fall back to a subject list.
+        const subjectPrefix = `notes/${subjectName}/`;
+        try {
+          const listRes = await bucket.list({ prefix: subjectPrefix });
+          const lowerKey = key.toLowerCase();
+          const lowerFolder = folderPrefixKey.toLowerCase();
+          const match = listRes?.objects?.find((item: { key: string }) => item.key.toLowerCase() === lowerKey)
+            || listRes?.objects?.find((item: { key: string }) =>
+              item.key.toLowerCase().startsWith(lowerFolder) && item.key.toLowerCase().endsWith('.html')
+            );
+          if (match) obj = await bucket.get(match.key);
+        } catch { /* list is best-effort */ }
+      }
       if (!obj) {
         console.warn(`[notesLoader] R2 Object not found: ${key}`);
         return null;
@@ -466,11 +502,12 @@ export async function getLectureContent(subjectName: string, lectureFolderName: 
       htmlContent = renderMathInHtml(htmlContent);
 
       // Fetch optional companion CSS and JS from R2
-      const folderPrefixKey = `notes/${subjectName}/${lectureFolderName}/`;
       try {
-        const listRes = await bucket.list({ prefix: folderPrefixKey });
+        const listRes = await bucket.list({ prefix: `notes/${subjectName}/` });
+        const lowerFolder = folderPrefixKey.toLowerCase();
         if (listRes && listRes.objects) {
           for (const item of listRes.objects) {
+            if (!item.key.toLowerCase().startsWith(lowerFolder)) continue;
             if (item.key.endsWith('.css')) {
               const cObj = await bucket.get(item.key);
               if (cObj) cssContent += '\n' + (await cObj.text());
