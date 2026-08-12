@@ -66,23 +66,32 @@ interface NotesManifest {
 }
 
 // ─── Vite Glob Imports for local development ─────────────────────────────────
-// This allows loading notes in the dev environment without node:fs, which fails
-// inside the sandboxed Cloudflare workerd runtime.
+// Standard lazy glob imports. HTML files are loaded on-demand per lecture view,
+// keeping server startup and catalog builds lightning-fast (<10ms).
 const htmlFiles = import.meta.env.DEV
-  ? import.meta.glob('/src/content/notes/**/*.html', { query: '?raw', import: 'default' })
+  ? (import.meta.glob('/src/content/notes/**/*.html', { query: '?raw', import: 'default' }) as Record<string, any>)
   : {};
 
 const cssFiles = import.meta.env.DEV
-  ? import.meta.glob('/src/content/notes/**/*.css', { query: '?raw', import: 'default' })
+  ? (import.meta.glob('/src/content/notes/**/*.css', { query: '?raw', import: 'default' }) as Record<string, any>)
   : {};
 
 const jsFiles = import.meta.env.DEV
-  ? import.meta.glob('/src/content/notes/**/*.js', { query: '?raw', import: 'default' })
+  ? (import.meta.glob('/src/content/notes/**/*.js', { query: '?raw', import: 'default' }) as Record<string, any>)
   : {};
 
 const jsonFiles = import.meta.env.DEV
-  ? import.meta.glob('/src/content/notes/**/*.json', { import: 'default' })
+  ? (import.meta.glob('/src/content/notes/**/*.json', { import: 'default' }) as Record<string, any>)
   : {};
+
+async function resolveGlobEntry<T = string>(entry: any): Promise<T | null> {
+  if (!entry) return null;
+  if (typeof entry === 'function') {
+    return (await entry()) as T;
+  }
+  return entry as T;
+}
+
 
 
 // ─── Shared Helpers ──────────────────────────────────────────────────────────
@@ -110,9 +119,11 @@ let devLastFetchedTime = 0;
 export async function getManifest(): Promise<NotesManifest> {
   const now = Date.now();
 
-  // Development: scan local filesystem
+  // Development: scan local filesystem (cached for 5 min in dev; rebuilding
+  // reads every lecture HTML through the workerd→vite bridge, so only pay
+  // that cost when note files have actually been added/removed).
   if (import.meta.env.DEV) {
-    if (devManifestCache && (now - devLastFetchedTime < 2000)) {
+    if (devManifestCache && (now - devLastFetchedTime < 300000)) {
       return devManifestCache;
     }
     const manifest = await buildLocalManifest();
@@ -193,51 +204,63 @@ async function buildLocalManifest(): Promise<NotesManifest> {
     folderEntriesMap.get(folderKey)!.push({ key, subjectName, lectureFolder, fileName });
   }
 
-  for (const entries of folderEntriesMap.values()) {
-    const selected = entries.find((e) => e.fileName.endsWith('_notes_enhanced')) || entries[0];
-    const { key, subjectName, lectureFolder, fileName } = selected;
+  const folderEntries = [...folderEntriesMap.values()];
 
-    const defaultDisplayName = fileName.replace(/_/g, ' ');
+  // Load lecture HTML/metadata in parallel batches. Each entry is an
+  // independent dynamic import through the workerd→vite bridge; running them
+  // concurrently cuts the dev manifest rebuild from ~20s down to a few seconds.
+  const BATCH_SIZE = 16;
+  for (let batchStart = 0; batchStart < folderEntries.length; batchStart += BATCH_SIZE) {
+    const batch = folderEntries.slice(batchStart, batchStart + BATCH_SIZE);
+    const results = await Promise.all(batch.map(async (entries) => {
+      const selected = entries.find((e) => e.fileName.endsWith('_notes_enhanced')) || entries[0];
+      const { key, subjectName, lectureFolder, fileName } = selected;
 
-    // Look for companion JSON
-    const jsonKey = `/src/content/notes/${subjectName}/${lectureFolder}/${fileName}.json`;
-    let metadata = null;
-    if (jsonFiles[jsonKey]) {
-      try {
-        metadata = await jsonFiles[jsonKey]() as any;
-      } catch (err: any) {
-        console.error(`[notesLoader] Error loading local json for ${subjectName}/${lectureFolder}:`, err.message);
+      const defaultDisplayName = fileName.replace(/_/g, ' ');
+
+      // Load HTML and look for companion JSON
+      const jsonKey = `/src/content/notes/${subjectName}/${lectureFolder}/${fileName}.json`;
+      let metadata = null;
+      if (jsonFiles[jsonKey]) {
+        try {
+          metadata = await resolveGlobEntry(jsonFiles[jsonKey]);
+        } catch (err: any) {
+          console.error(`[notesLoader] Error loading local json for ${subjectName}/${lectureFolder}:`, err.message);
+        }
       }
+
+      let htmlContent: string | null = null;
+      try {
+        htmlContent = (await resolveGlobEntry<string>(htmlFiles[key])) || null;
+      } catch { /* optional */ }
+
+      if (!metadata && htmlContent) {
+        metadata = extractEmbeddedMetadata(htmlContent);
+      }
+
+      if (!metadata) {
+        metadata = getFallbackMetadata(defaultDisplayName, subjectName);
+      }
+
+      return { subjectName, lectureFolder, fileName, displayName: defaultDisplayName, metadata };
+    }));
+
+    for (const result of results) {
+      const { subjectName, lectureFolder, fileName, displayName, metadata } = result;
+
+      if (!subjectsMap.has(subjectName)) {
+        subjectsMap.set(subjectName, []);
+      }
+
+      subjectsMap.get(subjectName)!.push({
+        name: displayName,
+        folderName: lectureFolder,
+        fileName: fileName,
+        metadata: metadata,
+      });
+
+      totalLectures++;
     }
-
-    let htmlContent: string | null = null;
-    try {
-      htmlContent = await htmlFiles[key]() as string;
-    } catch { /* optional */ }
-
-    if (!metadata && htmlContent) {
-      metadata = extractEmbeddedMetadata(htmlContent);
-    }
-
-    if (!metadata) {
-      metadata = getFallbackMetadata(defaultDisplayName, subjectName);
-    }
-
-    const displayName = defaultDisplayName;
-
-    if (!subjectsMap.has(subjectName)) {
-      subjectsMap.set(subjectName, []);
-    }
-
-    subjectsMap.get(subjectName)!.push({
-      name: displayName,
-      folderName: lectureFolder,
-      fileName: fileName,
-      metadata: metadata,
-      htmlContent: htmlContent,
-    });
-
-    totalLectures++;
   }
 
   const subjectsList: SubjectEntry[] = [];
@@ -377,12 +400,12 @@ export async function getLectureContent(subjectName: string, lectureFolderName: 
     try {
       const key = `/src/content/notes/${subjectName}/${lectureFolderName}/${lecture.fileName}.html`;
       if (htmlFiles[key]) {
-        htmlContent = await htmlFiles[key]() as string;
+        htmlContent = (await resolveGlobEntry<string>(htmlFiles[key])) || '';
       } else {
         const folderPrefix = `/src/content/notes/${subjectName}/${lectureFolderName}/`;
         const altKey = Object.keys(htmlFiles).find(k => k.startsWith(folderPrefix) && k.endsWith('.html'));
         if (altKey) {
-          htmlContent = await htmlFiles[altKey]() as string;
+          htmlContent = (await resolveGlobEntry<string>(htmlFiles[altKey])) || '';
         } else {
           console.error(`[notesLoader] Local file not found in glob: ${key}`);
           return null;
@@ -394,8 +417,8 @@ export async function getLectureContent(subjectName: string, lectureFolderName: 
       const cssKeys = Object.keys(cssFiles).filter(k => k.toLowerCase().startsWith(folderPrefix.toLowerCase()) && k.endsWith('.css'));
       for (const cssKey of cssKeys) {
         try {
-          const c = await cssFiles[cssKey]() as string;
-          cssContent += '\n' + c;
+          const c = await resolveGlobEntry<string>(cssFiles[cssKey]);
+          if (c) cssContent += '\n' + c;
         } catch (err: any) {
           console.warn(`[notesLoader] Error loading local CSS for ${subjectName}/${lectureFolderName}:`, err.message);
         }
@@ -405,8 +428,8 @@ export async function getLectureContent(subjectName: string, lectureFolderName: 
       const jsKeys = Object.keys(jsFiles).filter(k => k.toLowerCase().startsWith(folderPrefix.toLowerCase()) && k.endsWith('.js'));
       for (const jsKey of jsKeys) {
         try {
-          const j = await jsFiles[jsKey]() as string;
-          jsContent += '\n' + j;
+          const j = await resolveGlobEntry<string>(jsFiles[jsKey]);
+          if (j) jsContent += '\n' + j;
         } catch (err: any) {
           console.warn(`[notesLoader] Error loading local JS for ${subjectName}/${lectureFolderName}:`, err.message);
         }

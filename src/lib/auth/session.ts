@@ -174,7 +174,7 @@ export function setRefreshCookie(headers: Headers, token: string, request?: Requ
   const sec = request ? cookieSecure(request) : ' Secure;';
   headers.append(
     'Set-Cookie',
-    `${REFRESH_COOKIE}=${token}; Path=/api/auth; HttpOnly;${sec} SameSite=Strict; Max-Age=${REFRESH_TOKEN_TTL}`,
+    `${REFRESH_COOKIE}=${token}; Path=/; HttpOnly;${sec} SameSite=Strict; Max-Age=${REFRESH_TOKEN_TTL}`,
   );
 }
 
@@ -185,7 +185,7 @@ export function clearSessionCookie(headers: Headers, request?: Request): void {
 
 export function clearRefreshCookie(headers: Headers, request?: Request): void {
   const sec = request ? cookieSecure(request) : ' Secure;';
-  headers.append('Set-Cookie', `${REFRESH_COOKIE}=; Path=/api/auth; HttpOnly;${sec} SameSite=Strict; Max-Age=0`);
+  headers.append('Set-Cookie', `${REFRESH_COOKIE}=; Path=/; HttpOnly;${sec} SameSite=Strict; Max-Age=0`);
 }
 
 export function getSessionTokenFromCookie(cookieHeader: string | null): string | null {
