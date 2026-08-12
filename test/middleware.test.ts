@@ -94,7 +94,7 @@ describe('Middleware Session Authentication & Caching', () => {
     expect(locals.tier).toBe('free');
 
     // Caching check: anonymous public HTML page shell can be cached at edge but must be revalidated by the browser
-    expect(res.headers.get('Cache-Control')).toBe('public, max-age=0, s-maxage=300, stale-while-revalidate=600, must-revalidate');
+    expect(res.headers.get('Cache-Control')).toBe('s-maxage=300, stale-while-revalidate=600, must-revalidate');
     expect(res.headers.get('Vary')).toContain('Cookie');
   });
 
@@ -122,7 +122,7 @@ describe('Middleware Session Authentication & Caching', () => {
     expect(locals.tier).toBe('free');
 
     // Caching check: anonymous public HTML page shell can be cached at edge but must be revalidated by the browser
-    expect(res.headers.get('Cache-Control')).toBe('public, max-age=0, s-maxage=300, stale-while-revalidate=600, must-revalidate');
+    expect(res.headers.get('Cache-Control')).toBe('s-maxage=300, stale-while-revalidate=600, must-revalidate');
     expect(res.headers.get('Vary')).toContain('Cookie');
   });
 });

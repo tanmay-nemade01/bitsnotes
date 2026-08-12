@@ -1,12 +1,14 @@
 ---
 import BaseLayout from '../../layouts/BaseLayout.astro';
 import '../../styles/lecture-notes.css';
+import 'katex/dist/katex.min.css';
 import { getFallbackMetadata } from '../../utils/metadata';
 import type { QuizQuestion } from '../../utils/metadata';
 import { listSubjects, listLectures, getLectureContent, getSubjectByNameOrSlug } from '../../utils/notesLoader';
 import { parseLectureHtml } from '../../utils/htmlParser';
 import { splitLectureTopics } from '../../utils/topicSplitter';
 import { getResourceKindLabel, slugify } from '../../utils/lectureDisplay';
+import { renderMathInline } from '../../utils/mathRender';
 import CommentsSection from '../../components/CommentsSection.astro';
 import UsefulnessFeedback from '../../components/UsefulnessFeedback.astro';
 import ViewCounter from '../../components/ViewCounter.astro';
@@ -92,6 +94,40 @@ if (hasHtmlContent) {
 const hasMermaid = bodyContent.includes('class="mermaid"') || bodyContent.includes('data-type="concept-map"');
 
 const metadata = customMetadata || getFallbackMetadata(lectureFolderName, subjectName);
+
+// Pre-render LaTeX in metadata-driven panels (revision formulas, quiz
+// questions/options/explanations, summary) — math in the notes body itself
+// was already rendered by the notes loader.
+{
+  const fmt = (s: string | undefined | null): string => (s ? renderMathInline(s) : '');
+  const fmtFormula = (s: string | undefined | null): string => {
+    if (!s) return '';
+    const hasDelimiter = /\\\(|\\\[|\$\$|\$[^$]/.test(s);
+    return renderMathInline(hasDelimiter ? s : `\\[ ${s} \\]`);
+  };
+  if (metadata) {
+    if (metadata.summary) metadata.summary = fmt(metadata.summary);
+    if (Array.isArray(metadata.keyConcepts)) {
+      metadata.keyConcepts = metadata.keyConcepts.map((k: string) => fmt(k));
+    }
+    if (Array.isArray(metadata.examRevisionNotes)) {
+      metadata.examRevisionNotes.forEach((item: any) => {
+        if (item.mustKnow) item.mustKnow = fmt(item.mustKnow);
+        if (item.keyFormula) item.keyFormula = fmtFormula(item.keyFormula);
+        if (item.commonPitfall) item.commonPitfall = fmt(item.commonPitfall);
+        if (item.quickCheck) item.quickCheck = fmt(item.quickCheck);
+      });
+    }
+    if (Array.isArray(metadata.quiz)) {
+      metadata.quiz.forEach((q: any) => {
+        if (q.question) q.question = fmt(q.question);
+        if (Array.isArray(q.options)) q.options = q.options.map((o: string) => fmt(o));
+        if (q.explanation) q.explanation = fmt(q.explanation);
+      });
+    }
+  }
+}
+
 const lectureName = (lectureContent?.fileName || lectureFolderName).replace(/_/g, ' ');
 
 const { topics } = splitLectureTopics(bodyContent);
@@ -483,7 +519,7 @@ const quizJson = quizSchema ? JSON.stringify(quizSchema) : null;
                             {item.keyFormula && (
                               <div class="revision-formula">
                                 <strong class="text-[0.7rem] font-bold text-[var(--accent)] uppercase tracking-wider block mb-2">Key Formula</strong>
-                                <div>{(item.keyFormula.startsWith('\\[') || item.keyFormula.startsWith('$$') || item.keyFormula.startsWith('\\(')) ? item.keyFormula : `\\[ ${item.keyFormula} \\]`}</div>
+                                <div set:html={item.keyFormula}></div>
                               </div>
                             )}
                             {item.commonPitfall && (
@@ -666,32 +702,7 @@ const quizJson = quizSchema ? JSON.stringify(quizSchema) : null;
 
 <script is:inline data-astro-rerun>
   // ===================== TAB SWITCHING (delegated + page-load safe) =====================
-  var mathjaxLoaded = false;
-
-  function loadMathJax(cb) {
-    if (window.MathJax && window.MathJax.typesetPromise) { if (cb) cb(); return; }
-    if (document.getElementById('MathJax-script')) {
-      var id = setInterval(function() {
-        if (window.MathJax && window.MathJax.typesetPromise) { clearInterval(id); if (cb) cb(); }
-      }, 100);
-      return;
-    }
-    window.MathJax = {
-      tex: {
-        inlineMath: [['$', '$'], ['\\(', '\\)']],
-        displayMath: [['$$', '$$'], ['\\[', '\\]']],
-      },
-      startup: {
-        typeset: false
-      }
-    };
-    var s = document.createElement('script');
-    s.id = 'MathJax-script';
-    s.async = true;
-    s.src = 'https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-svg.js';
-    if (cb) s.onload = cb;
-    document.head.appendChild(s);
-  }
+  // Math is pre-rendered server-side (KaTeX) — no client-side typesetting.
 
   function initTabs() {
     var tabNav = document.querySelector('[role="tablist"]');
@@ -722,47 +733,8 @@ const quizJson = quizSchema ? JSON.stringify(quizSchema) : null;
       var panel = document.getElementById('panel-' + tabId);
       if (panel) {
         panel.classList.add('active');
-        typesetNotes(panel);
       }
     });
-
-    // Auto-load MathJax if Notes tab is already active on page load
-    var notesPanel = document.getElementById('panel-notes');
-    if (notesPanel && notesPanel.classList.contains('active')) {
-      typesetNotes(notesPanel);
-    }
-  }
-
-  // Detect whether a panel actually contains math that needs typesetting.
-  function panelHasMath(panel) {
-    if (!panel) return false;
-    if (panel.querySelector('.mjx-container')) return true;
-    return /\\\(|\\\[|\$\$|\$[^$]+\$/.test(panel.textContent || '');
-  }
-
-  function typesetNotes(panel) {
-    var targets = [panel];
-    var sidebar = document.getElementById('topic-sidebar');
-    if (sidebar) {
-      targets.push(sidebar);
-    }
-
-    var targetsToTypeset = targets.filter(function(el) {
-      return panelHasMath(el);
-    });
-
-    if (targetsToTypeset.length === 0) return;
-
-    if (!mathjaxLoaded) {
-      mathjaxLoaded = true;
-      loadMathJax(function() {
-        if (window.MathJax && window.MathJax.typesetPromise) {
-          window.MathJax.typesetPromise(targetsToTypeset).catch(function() {});
-        }
-      });
-    } else if (window.MathJax && window.MathJax.typesetPromise) {
-      window.MathJax.typesetPromise(targetsToTypeset).catch(function() {});
-    }
   }
 
   // ===================== SCROLL-SPY TOC =====================
