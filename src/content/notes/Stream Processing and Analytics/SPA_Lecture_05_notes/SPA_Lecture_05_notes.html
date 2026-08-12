@@ -1,0 +1,850 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+  <!-- Primary SEO -->
+  <title>ZooKeeper: Configuration and Coordination in the Streaming Pipeline | Stream Processing and Analytics | BitsNotes</title>
+  <meta name="description" content="Stream Processing and Analytics notes on ZooKeeper: leader election, Z node types, sessions, watches, atomic broadcast, and the five guarantees.">
+  <meta name="keywords" content="Stream Processing and Analytics, ZooKeeper, configuration, coordination, metadata, state, leader election, modified Paxos, ensemble, Z nodes, persistent nodes, ephemeral nodes, sequential nodes, sessions, heartbeats, watches, atomic broadcast, fault tolerance, delivery semantics, guarantees, Kafka, Spark">
+  <meta name="author" content="BitsNotes">
+  <meta name="robots" content="index, follow">
+  <link rel="canonical" href="https://bitsnotes.com/view/stream-processing-and-analytics/spa-lecture-05">
+
+  <!-- Open Graph / Facebook -->
+  <meta property="og:type" content="article">
+  <meta property="og:title" content="ZooKeeper: Configuration and Coordination in the Streaming Pipeline | Stream Processing and Analytics">
+  <meta property="og:description" content="Stream Processing and Analytics notes on ZooKeeper: leader election, Z node types, sessions, watches, atomic broadcast, and the five guarantees.">
+  <meta property="og:url" content="https://bitsnotes.com/view/stream-processing-and-analytics/spa-lecture-05">
+  <meta property="og:image" content="https://bitsnotes.com/og-default.png">
+  <meta property="og:image:width" content="1200">
+  <meta property="og:image:height" content="630">
+  <meta property="og:site_name" content="BitsNotes">
+
+  <!-- Twitter Card -->
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="ZooKeeper: Configuration and Coordination in the Streaming Pipeline | Stream Processing and Analytics">
+  <meta name="twitter:description" content="Stream Processing and Analytics notes on ZooKeeper: leader election, Z node types, sessions, watches, atomic broadcast, and the five guarantees.">
+  <meta name="twitter:image" content="https://bitsnotes.com/og-default.png">
+  <meta name="twitter:site" content="@BitsNotes">
+
+  <!-- Stylesheet -->
+  <link rel="stylesheet" href="/lecture-notes.css">
+
+  <!-- Structured Data: JSON-LD -->
+  <script type="application/ld+json">
+{"@context":"https://schema.org","@type":"Article","headline":"ZooKeeper: Configuration and Coordination in the Streaming Pipeline","description":"Stream Processing and Analytics notes on ZooKeeper: leader election, Z node types, sessions, watches, atomic broadcast, and the five guarantees.","datePublished":"2026-08-07","inLanguage":"en","about":["Apache ZooKeeper","Configuration and coordination system","Leader election (modified Paxos)","Z node types","Sessions and heartbeats","Watches","Atomic broadcast","Delivery semantics","ZooKeeper guarantees","Split brain and replication"],"author":{"@type":"Organization","name":"BitsNotes"},"publisher":{"@type":"Organization","name":"BitsNotes"}}
+</script>
+
+  <!-- Lecture Metadata (for the BitsNotes platform viewer) -->
+  <!-- IMPORTANT: This is the ONLY metadata source. No companion .json file
+       is created. The viewer reads everything from this embedded script.
+       Required fields: title, subject, gradeLevel, datePublished,
+       targetAudience, sections (array), examRevisionNotes (array).
+       Optional fields: prerequisites (array of {subject, lecture, topics}).
+       NOT included (removed): summary, keyConcepts, quiz. -->
+  <script type="application/json" id="lecture-metadata">
+{"title":"ZooKeeper: Configuration and Coordination in the Streaming Pipeline","subject":"Stream Processing and Analytics","gradeLevel":"postgraduate","datePublished":"2026-08-07","targetAudience":"Postgraduate students in stream processing and analytics","sections":[{"title":"Why Streaming Needs a Configuration and Coordination System","description":"A streaming pipeline carries events (the data) and metadata (data about the data, captured by the coordination system). The centralized store of processed state, 'data central', is what lets a distributed cluster run; without it, processing is delayed or missed."},{"title":"Nodes, Clients, and the Data Flow Layer","description":"Nodes are the machines where computation happens (group-by-vendor mean over credit card events); clients are downstream consumers of processed data; the data flow layer (the Kafka broker) decides which event goes to which node and client."},{"title":"Failure Modes the Coordinator Must Handle","description":"The coordinator exists to track failures across tiers: unreliable networks between tiers (delays, missed processing), unsynchronized clocks (skew breaks on-time delivery, can yield negative durations), and the split brain problem (state becomes inaccessible), handled by replication with an odd-count quorum."},{"title":"Leader Election: The Modified Paxos Algorithm","description":"ZooKeeper elects its leader with a modified version of Paxos: workers ping candidates, the node with the maximum ping responses becomes leader, the rest become executors, and a failed leader triggers a new election. The ensemble (leader plus followers with non-overlapping tasks) is the failure-surviving unit."},{"title":"ZooKeeper Fundamentals and Services","description":"ZooKeeper was designed at Yahoo! as a generic coordination service exposing a set of APIs, embeddable in platforms such as Hadoop and HBase; it provides a naming service, configuration management, and cluster management (with load factor management)."},{"title":"Z Nodes: Names, Paths, and the 1 MB Limit","description":"Every node in the ZooKeeper hierarchy is a Z node with a name and a path built by concatenating ancestor names from the root (e.g. /first node/f1/d1). Each Z node holds at most 1 MB because events are a few bytes and ZooKeeper is a coordination store, not a data store."},{"title":"The Three Types of Z Nodes","description":"ZooKeeper classifies Z nodes by real lifetime into three types: persistent (alive even after the client disconnects; the node is created with ZooKeeper, not by the client), ephemeral (deleted automatically when its client disconnects; lifetime equals the client's), and sequential (persistent or ephemeral, with a monotonic sequence number appended to the path)."},{"title":"Sessions and Heartbeats","description":"A session is the client's identity on the server, and its requests execute FIFO. Heartbeats are periodic liveness signals, and the configurable threshold time decides when ZooKeeper declares a client dead. ZooKeeper itself cannot die as a whole: it is an ensemble, and a failed leader is replaced by re-election."},{"title":"Watches: Change Notification","description":"A watch is the notification mechanism for changes in the cluster of Z nodes; like exception handling, it captures the context of what changed (node health, up/down, slow/fast) and makes ZooKeeper event-driven instead of polled."},{"title":"Read and Write Operations","description":"Reads go directly to a server; writes are forwarded to the leader, which re-issues them to all followers — success only when the responses come back successfully. The CLI and API mechanics are good-to-know background, not exam material."},{"title":"The Server Cluster, Atomic Broadcast, and Fault Tolerance","description":"The ensemble is a replicated set of servers with no direct client-to-leader edge; writes travel as atomic broadcast (small, indivisible transactions delivered to every node in a consistent order, implemented by Zab). Fault tolerance comes from replication, and the availability rule is: as long as the majority of servers are available, the service is available."},{"title":"Performance: More Servers Does Not Mean More Throughput","description":"Increasing the number of servers does not guarantee performance: the curve is not linear, because more nodes raise the probability of failure and make coordination harder. Ensembles are sized for fault tolerance (3 or 5 nodes), not raw throughput."},{"title":"Features of Streaming Data","description":"Streaming data has four features: high availability, low latency, fault tolerance, and horizontal scalability — each delivered by the coordination mechanisms of this session (replication, election, lightweight events, node addition)."},{"title":"Leader Responsibilities and Handling a Failed Node","description":"The leader is the health coordinator: it monitors which nodes are active and engaged, alerts on failure, brings replicated duplicates into the active phase, and facilitates reconnecting clients to another node. Events sent into a failed node can be lost; delivery semantics, threshold response time, node capacity, and client-side retry decide how much loss a pipeline tolerates."},{"title":"The Guarantees of ZooKeeper","description":"ZooKeeper's contract is five guarantees: sequential consistency, atomicity, single system image, reliability, and timeliness — each engineered from FIFO sessions, atomic broadcast, replication, persistence, and the threshold configuration."},{"title":"The End-to-End Pipeline and What Comes Next","description":"The pipeline runs collection → Kafka → Spark with ZooKeeper coordinating the ensemble underneath; Kafka itself relies on ZooKeeper for its metadata. The next class starts the data flow layer with Kafka streaming; the quiz is not this week."},{"title":"Exam Guidance Summary","description":"Node types are the explicitly examinable theory (persistent, ephemeral, sequential, with lifetime properties); CLI and API mechanics are good-to-know but not asked from the exam perspective; no quiz this week; know the system-level concepts that explain how ZooKeeper works."},{"title":"Key Industry Applications","description":"Apache ZooKeeper coordinates production distributed platforms (Hadoop, HBase, Kafka, Storm, Samza): naming, configuration and cluster management services; split brain handled by replication; leader election via modified Paxos; delivery semantics tuning; 3-or-5-node ensembles; the Kafka → Spark production stack."}],"examRevisionNotes":[{"topic":"Why Streaming Needs a Configuration and Coordination System","mustKnow":"Events are the data; metadata is data about the data, captured separately through the configuration and coordination system. Processed metadata is called state, held centrally ('data central'). Without a coordinator, processing suffers delays or is missed.","keyFormula":"","commonPitfall":"Confusing the event stream with metadata: events travel through the pipeline as data; state information (nodes, partitions, clients, requests) lives in the coordination system, not in the events.","quickCheck":"What are the two kinds of information a streaming pipeline carries, and which one is captured through the coordination system?","connections":["nodes, clients, and the data flow layer","failure modes"]},{"topic":"Nodes, Clients, and the Data Flow Layer","mustKnow":"Nodes are machines where the actual computation happens (not message queues, not ZooKeeper); clients are downstream consumers that register for consumption; the data flow layer (Kafka broker) decides which event goes to which node and which client.","keyFormula":"\\[\\bar{a}_v = \\frac{1}{|E_v|} \\sum_{e \\in E_v} a_e\\]","commonPitfall":"The mean of means is not the global mean: with a vendor's events split across nodes, combine sums and counts (sum of local sums / sum of local counts), never average per-node means.","quickCheck":"A card swipe event has a timestamp, card number, amount, and vendor. Three swipes at one vendor are 4.50, 5.00, 8.00 — what is the mean amount per swipe?","connections":["configuration and coordination basics","Z nodes and paths","leader responsibilities and failed nodes"]},{"topic":"Failure Modes the Coordinator Must Handle","mustKnow":"Failure modes the coordinator must handle: (1) unreliable networks between collection tier, data flow layer, and processing layer; (2) clock synchronization — clock skew breaks on-time delivery and can produce negative durations; (3) split brain — state becomes inaccessible, handled by replication plus a quorum rule.","keyFormula":"","commonPitfall":"Treating clocks as reliable: without synchronization, one server can observe an event as happening after the current time (negative duration), so NTP-level consistency is a prerequisite, not polish.","quickCheck":"Why does an odd-sized ensemble matter for split brain?","connections":["configuration and coordination basics","atomic broadcast and fault tolerance"]},{"topic":"Leader Election: The Modified Paxos Algorithm","mustKnow":"Leader election uses a modified Paxos algorithm: each worker pings, the node with the maximum number of successful ping responses is elected leader, the rest become executors; if the leader fails, the election runs again. The ensemble (collection of server nodes, no overlapping tasks) is the unit that survives failures.","keyFormula":"","commonPitfall":"Thinking ZooKeeper uses stock Paxos: it uses a modified version (the reference implementation is Zab, which orders state changes and uses an epoch counter); the professor's 'maximum ping responses' is the plain-language form of vote counting.","quickCheck":"What happens when the leader node of a ZooKeeper ensemble fails?","connections":["Z node types","sessions and heartbeats","atomic broadcast and fault tolerance"]},{"topic":"ZooKeeper Fundamentals and Services","mustKnow":"ZooKeeper is a generic platform: designed at Yahoo!, it exposes a set of APIs for interaction and is embedded in Hadoop, HBase, and other distributed platforms. Its services: naming service (node names, physically and logically), configuration management (coherent config updates), and cluster management (add/delete nodes, load factor management).","keyFormula":"","commonPitfall":"Treating ZooKeeper as an application-specific component: the API is low-level and generic, and higher-level patterns (recipes such as leader election, distributed queues) are built on top of it by libraries like Curator.","quickCheck":"Name the three services ZooKeeper provides.","connections":["configuration and coordination basics","Z nodes and paths"]},{"topic":"Z Nodes: Names, Paths, and the 1 MB Limit","mustKnow":"Every Z node has a name and a path; the path is the concatenation of ancestor names from the root (the session's correction: /first node/f1/d1, and f2 is /first node/f2). A Z node stores up to 1 MB: events are only a few bytes, and the priorities are synchronization and fault tolerance, not storage.","keyFormula":"","commonPitfall":"Diagrams that drop path components: addressing must apply the concatenation rule uniformly, or it breeds inconsistency (the slide showed /f1/d1 instead of /first node/f1/d1).","quickCheck":"In the tree root → first node → f1 → d1, what is d1's full path?","connections":["nodes, clients, and the data flow layer","Z node types"]},{"topic":"The Three Types of Z Nodes","mustKnow":"Three Z node types by lifetime: persistent — alive even after the client that created it disconnects (node exists without an accessible client; the client does NOT create the node, it is created with ZooKeeper); ephemeral — deleted automatically when its client disconnects, lifetime equals the client's; sequential — persistent or ephemeral plus a sequence number appended to the path, providing synchronization and parallelism.","keyFormula":"","commonPitfall":"The vocabulary correction: 'the client which created the Z node' is improper wording — no client creates a Z node; the passive 'which was created' correctly describes the node's origin. Also, ephemeral nodes cannot have children.","quickCheck":"Which node type survives its client's disconnection, and which is deleted automatically when the client disconnects?","connections":["leader election (modified Paxos)","Z nodes and paths","sessions and heartbeats"]},{"topic":"Sessions and Heartbeats","mustKnow":"Clients request a session, requests within it are executed FIFO, and a session ID is assigned to the client. Heartbeats are the periodic liveness signal; the threshold time you configure decides when ZooKeeper checks whether a client is alive. ZooKeeper is not a single entity — it is an ensemble, and when the leader dies the modified-Paxos election runs again.","keyFormula":"","commonPitfall":"Assuming one ZooKeeper process is the whole system: even on a local development machine, an idle ZooKeeper eventually shows leader change behavior; the ensemble re-elects automatically.","quickCheck":"What happens to the session when heartbeats cease for longer than the threshold time?","connections":["leader election (modified Paxos)","Z node types","leader responsibilities and failed nodes"]},{"topic":"Watches: Change Notification","mustKnow":"A watch is the mechanism for notification about changes on ZooKeeper: the client registers what it wants to be notified about, and ZooKeeper tells it the moment something relevant changes. The analogy: like exception handling, a watch captures the context of the Z nodes — whether there is a change and the health of the nodes (slow or fast, up or down).","keyFormula":"","commonPitfall":"A watch fires once: after the notification, the client must re-register to keep watching the path; setting a watch also reads the node's data so notifications can be coalesced.","quickCheck":"How is ZooKeeper's notification different from polling?","connections":["Z node types","read and write operations"]},{"topic":"Read and Write Operations","mustKnow":"Write path: client sends a write request (path + data) to a server → the server forwards it to the leader → the leader re-issues the write to all followers → success only if the responses come back successfully. Reads go directly to a server. CLI and API mechanics are 'good to know' but not asked from the exam perspective.","keyFormula":"","commonPitfall":"Thinking a write is done when the receiving server answers: no write is acknowledged until the leader has propagated it across the ensemble.","quickCheck":"Trace the write operation sequence from client to followers.","connections":["atomic broadcast and fault tolerance","ZooKeeper guarantees"]},{"topic":"The Server Cluster, Atomic Broadcast, and Fault Tolerance","mustKnow":"ZooKeeper is a cluster of servers with a server leader; there is no direct client-to-leader edge. ZooKeeper is replicated for fault tolerance and is ordered — server nodes apply transactions in a consistent order. Writes go through atomic broadcast: broadcasting atomic data (a small, simple transaction) to every node as one indivisible unit. Availability rule: as long as the majority of the servers are available, the service is available.","keyFormula":"","commonPitfall":"Confusing broadcast with atomic broadcast: the atomically broadcast unit must be small and simple (few-byte transactions), matching the 1 MB Z-node design.","quickCheck":"Why does the service stay available when a minority of servers dies?","connections":["leader election (modified Paxos)","read and write operations","ensemble performance"]},{"topic":"Performance: More Servers Does Not Mean More Throughput","mustKnow":"Adding servers does not guarantee throughput — performance is not proportional to the number of servers. Reasons: (1) more nodes raise the probability of failure; (2) more nodes make the responses and overall coordination difficult. Replication buys fault tolerance but costs coordination overhead; size an ensemble for reliability, not raw speed.","keyFormula":"","commonPitfall":"Assuming doubling the nodes doubles throughput: the percentage of requests does not increase significantly, and the performance curve is not linear.","quickCheck":"Why does adding more servers not raise ZooKeeper throughput?","connections":["atomic broadcast and fault tolerance","features of streaming data"]},{"topic":"Features of Streaming Data","mustKnow":"The four features of streaming data: high availability (service stays up despite failures — the majority rule), low latency (events processed quickly as they arrive), fault tolerance (failures survived via replication; state not lost), and horizontal scalability (scale by adding machines).","keyFormula":"","commonPitfall":"Expecting the coordination tier to scale linearly: horizontal scalability applies to the pipeline, while the coordination tier itself has a non-linear performance ceiling (Section 5.12).","quickCheck":"Name the four features of streaming data and the mechanism behind each.","connections":["configuration and coordination basics","atomic broadcast and fault tolerance","ensemble performance"]},{"topic":"Leader Responsibilities and Handling a Failed Node","mustKnow":"The leader checks the health of each server, alerts the system on failure, and brings a replicated duplicate node into the active phase — 'kind of health coordination'. The leader continuously monitors state information; when a node fails it facilitates connecting the client to another node, but events sent into the failed node in the meantime can be lost. Delivery semantics: at-most-once tolerates losing a couple of events; sensitive data needs threshold response time configuration, increased node capacity, and client-side retry.","keyFormula":"","commonPitfall":"There is no client-side load balancer: requests are never diverted to another node by the client — forwarding or load balancing happens only based on the threshold response time configured for the node.","quickCheck":"What does the leader do when it detects that a node has failed?","connections":["leader election (modified Paxos)","sessions and heartbeats","atomic broadcast and fault tolerance"]},{"topic":"The Guarantees of ZooKeeper","mustKnow":"The five guarantees of ZooKeeper: sequential consistency (updates from a client applied in the order sent), atomicity (an update either succeeds or fails, no partial result), single system image (client always sees a single system view), reliability (once applied, an update persists until overwritten), timeliness (response within a certain time bound, set by the thresholds).","keyFormula":"","commonPitfall":"Assuming all reads are linearizable: ZooKeeper gives linearizable writes, but reads may be stale by default (a client must request sync before a read to see its own latest write).","quickCheck":"Which guarantee is backed by the FIFO session discipline, and which by the threshold configuration?","connections":["sessions and heartbeats","read and write operations","atomic broadcast and fault tolerance"]},{"topic":"The End-to-End Pipeline and What Comes Next","mustKnow":"End-to-end: ZooKeeper coordinates with the collection layer, for example Kafka, which is a combination of collection plus the data flow layer; from Kafka the data goes to Spark. Next class starts the data flow layer, beginning with Kafka streaming. The quiz is not this week; it is planned after a couple of lectures per the schedule shown.","keyFormula":"","commonPitfall":"None specific; note the documentation link for the session lives inside the slide deck uploaded to the course folder.","quickCheck":"What does the next class start with, and when is the quiz?","connections":["configuration and coordination basics","nodes, clients, and the data flow layer"]},{"topic":"Exam Guidance Summary","mustKnow":"The quiz may ask a property pertaining to the three types of nodes: persistent (alive even after the client disconnects), ephemeral (deleted automatically when the client disconnects; lifetime equals the client's), sequential (persistent or ephemeral with a sequence number appended). CLI and API mechanics are not asked from the exam perspective. The quiz is not this week; it is planned after a couple of lectures.","keyFormula":"","commonPitfall":"Spending revision time on CLI and API mechanics: the professor explicitly said these are 'good to know' and not examinable.","quickCheck":"Which node type's property would the quiz most likely ask about, and what is it?","connections":["Z node types","read and write operations","end-to-end pipeline"]},{"topic":"Key Industry Applications","mustKnow":"Industry placement: ZooKeeper is the configuration and coordination system behind Hadoop, HBase, Kafka (metadata for servers and clients), Storm, and Samza; split brain is handled by replication (odd-count quorum trick); leader election uses a modified Paxos (Zab, with epoch numbers); production ensembles are sized 3 or 5; the stack runs collection (Kafka) → processing (Spark) with ZooKeeper coordinating.","keyFormula":"","commonPitfall":"Sizing an ensemble for throughput: more servers raise failure probability and coordination cost; ensemble size is chosen for fault tolerance (majority availability), not throughput.","quickCheck":"Which production systems rely on ZooKeeper, and what is the standard ensemble size?","connections":["leader election (modified Paxos)","atomic broadcast and fault tolerance","ensemble performance","leader responsibilities and failed nodes"]}]}
+</script>
+</head>
+<body>
+  <div class="container">
+    <!-- ============================================================
+    HERO HEADER
+    ============================================================ -->
+    <header class="hero-header">
+      <span class="subject-badge">Stream Processing and Analytics</span>
+      <h1 class="lecture-title">ZooKeeper: Configuration and Coordination in the Streaming Pipeline</h1>
+      <div class="meta-info">
+        <div class="meta-item"><strong>Published:</strong> 2026-08-07</div>
+        <div class="meta-item"><strong>Level:</strong> postgraduate</div>
+        <div class="meta-item"><strong>Audience:</strong> Postgraduate students in stream processing and analytics</div>
+      </div>
+    </header>
+
+    <!-- ============================================================
+    PREREQUISITE KNOWLEDGE
+    Optional section listing concepts from previous lectures that this
+    lecture builds on. Populated by Agent 3 from topic_mappings/*.yaml.
+    If no prerequisites exist, this section is omitted entirely.
+    ============================================================ -->
+    <section class="prerequisite-section">
+  <h2>Prerequisite Knowledge</h2>
+  <p class="prerequisite-intro">This lecture builds on the following
+  concepts from earlier lectures. If any feel unfamiliar, review the
+  linked notes before proceeding.</p>
+
+  <div class="prerequisite-entry">
+    <h3>Previously Covered in This Subject</h3>
+    <ul>
+      <li><strong>Events: the fundamental building block</strong> — the shape and role of streaming events (Lecture 2)</li>
+      <li><strong>The layered streaming architecture</strong> — collection tier, data flow tier, analysis tier (Lecture 4)</li>
+      <li><strong>The data flow layer</strong> — which events go to which node and which client (Lecture 4)</li>
+      <li><strong>Replication and fault tolerance</strong> — the safety net behind the ensemble (Lecture 4)</li>
+      <li><strong>Message delivery semantics</strong> — at-most-once, at-least-once, exactly-once (Lecture 4)</li>
+      <li><strong>Stream data properties</strong> — high availability, low latency, and scalability (Lecture 4)</li>
+      <li><strong>Processing frameworks</strong> — Storm, Spark, and Kafka in the streaming stack (Lecture 3)</li>
+    </ul>
+  </div>
+</section>
+
+    <!-- ============================================================
+    MAIN LECTURE-FAITHFUL CONTENT
+    Page title = one h1.lecture-title
+    Each section = one h2.section-title
+    Each subsection = one h3.subsection-title
+    Callout boxes: .key-concept (blue), .important-note (violet),
+      .example-box (green), .warning-box (red), .key-takeaway (amber)
+    Display math: auto-scrolls via mjx-container CSS; .eqbox wrapper optional
+    ============================================================ -->
+    <main>
+<h2 id="5.1-why-streaming-needs-a-configuration-and-coordination-system">5.1 Why Streaming Needs a Configuration and Coordination System</h2>
+<h3 id="5.1.1-metadata-and-state">5.1.1 Metadata and State</h3>
+<div class="important-note">
+  <p><strong>Hook:</strong> Your cluster processes thousands of events every second — credit card swipes, clicks, sensor readings. Now try to answer a simple question: how many nodes are working right now, which client is reading from which stream, and is the network between the collection tier and the processing tier still alive? Nobody in the pipeline is tracking this by itself. That gap is exactly what the configuration and coordination system fills.</p>
+</div>
+<p>A streaming platform is built in tiers. Events are collected in a <strong>collection tier</strong>, then flow through a <strong>data flow layer</strong>, and finally reach a <strong>processing tier</strong> where the actual computation happens. Between the collection tier and the processing tier, the system constantly carries two very different kinds of information — and it is easy to mix them up.</p>
+<p>The first kind is the actual data: the events themselves. A credit card swipe, a click, a reading from a sensor — these travel through the pipeline as events. The second kind is <strong>metadata</strong>, which literally means <em>data about the data</em>. Metadata is not captured through the events. It is captured through a separate mechanism: the <strong>configuration and coordination system</strong>. That system is the subject of this entire session.</p>
+<div class="key-concept">
+  <p><strong>Metadata vs state.</strong> Within the coordination system, two related concepts need to be kept straight:</p>
+  <ul>
+    <li><strong>State information</strong> — the operational picture of the cluster: the number of nodes, the number of partitions, how many partitions are filled, who the clients are, and how many requests are coming in.</li>
+    <li><strong>State</strong> — once that kind of operational detail is processed and maintained, those details are called state. In the words of the lecture: "if we do this processed information, those details are called state."</li>
+  </ul>
+  <p>So the metadata records the state of the system, and the coordination system exists to manage that state centrally. The professor's phrase for the centralized store is <strong>"data central"</strong> — the one place that holds the state of the whole distributed cluster. Without somebody managing this particular data, running a distributed cluster at all becomes very difficult.</p>
+</div>
+<p><strong>Analogy:</strong> think of a city's traffic control room. The cars on the road are the events — the real data. The control room's screens — how many signals are green, where the congestion is, which intersections are staffed — are the metadata. A screen is not a car; it is data <em>about</em> the cars. If the screens go dark, the city does not stop having traffic, but nobody can manage it: signals go stale, blocked streets stay blocked, and commuters are late. The coordination system is the control room for a streaming cluster — and the analogy breaks in one place: a control room is a single point of failure, while a coordinator must itself be distributed (Section 5.8.3).</p>
+<h3 id="5.1.2-what-happens-without-a-coordinator">5.1.2 What Happens Without a Coordinator</h3>
+<div class="warning-box">
+  <p>The lecture is explicit about the failure mode: if no configuration and coordination system is in place, the pipeline can suffer <strong>delays in processing</strong> — or worse, <strong>miss out on the processing completely</strong>. The reasons trace back to the physical reality of distributed systems: unreliable networks, unsynchronized clocks, and nodes that die silently, all of which are covered in Section 5.3. For batch systems a single failure is a minor annoyance that can be fixed by hand; for real-time systems it is a real problem, because recovery introduces exactly those delays or drops the work outright.</p>
+</div>
+<p>The name of the system that solves this problem is <strong>Apache ZooKeeper</strong> — the configuration and coordination system used in this architecture. Everything in this session is about what ZooKeeper does and how it works: why the cluster needs it, what services it provides, how it elects a leader, how it survives failures, and what guarantees it gives.</p>
+<div class="key-takeaway">
+  <p><strong>Recap:</strong> a streaming pipeline carries two kinds of information — events (the data) and metadata (data about the data, captured through the coordination system, not through the events). The centralized store of processed state — "data central" — is what lets a distributed cluster run at all. Without it, processing is delayed or missed entirely. ZooKeeper is the coordinator used in this architecture, and the rest of the session explains it in depth.</p>
+</div>
+
+<h2 id="5.2-nodes-clients-and-the-data-flow-layer">5.2 Nodes, Clients, and the Data Flow Layer</h2>
+<h3 id="5.2.1-computing-nodes-and-clients">5.2.1 Computing Nodes and Clients</h3>
+<div class="important-note">
+  <p><strong>Hook:</strong> The first slide of the session shows a picture of boxes and arrows — computing nodes at the top, clients at the bottom. The professor opens with a question to the class: what do these boxes represent, and are the nodes ZooKeeper? The short answer is no — in this picture there is no ZooKeeper yet. The long answer is what the session is about.</p>
+</div>
+<p>The <strong>nodes</strong> are the machines where the actual computation happens — "these nodes are nothing but machines." The <strong>clients</strong> are the entities that consume the processed data. A client is downstream of the processing: it registers for consumption and accesses the results once the calculation is done.</p>
+<p>The web store example makes this concrete. Imagine a web store. The store generates events like who purchased something and what the volume of transactions is. Those events must be processed, and the web store application is the actor that consumes the processed data. So the web store is the client. Whatever actor consumes the processed data can be one of these clients. That is the interaction you see in the diagram between nodes and clients.</p>
+<div class="important-note">
+  <p><strong>Q:</strong> I am unable to understand what the nodes and clients in that slide of yours represent. Are they representing ZooKeeper? I mean, are the nodes ZooKeeper? <strong>A:</strong> No, no. These are the computing nodes. There is no ZooKeeper so far. We are only talking about how the processing happens and why we need the configuration system. Only that we are discussing. The client is the one which is downstream. In a web store you have events like who purchased and what is the volume of transactions — events to be processed. Your web store will process that information. The consumption of the data is again your web store application. Whatever actor is consuming this processed data can potentially be these clients. That is why you see this interaction between the node and the client.</p>
+</div>
+<p>The correction to hold onto: the diagram is a picture of the <em>processing pipeline before coordination</em> — nodes doing computation, clients consuming results. ZooKeeper has not appeared yet; it is introduced in this session as the system that manages this whole arrangement.</p>
+<div class="important-note">
+  <p><strong>Q:</strong> Why is client B not interacting directly with node 1 or node 3? Why only node 2? <strong>A:</strong> No, no. Because the client application will have some limitation about whom it has to interact with. If you have a kind of application, it is not necessary that you should interact with every node.</p>
+</div>
+<p>A client application is not obligated to reach every node — it interacts with the nodes it is set up to interact with. The data flow layer (below) decides which events a client may consume, and the client talks to the nodes that hold those events.</p>
+<h3 id="5.2.2-worked-example-credit-card-events-and-mean-amount-per-vendor">5.2.2 Worked Example: Credit Card Events and Mean Amount per Vendor</h3>
+<p>A student question — "are these nodes message queues?" — triggers the richest worked example of the session. The answer is a firm <strong>no</strong>: nodes are not message queues. The professor then demonstrates what a node actually does with a streaming computation.</p>
+<p>Setup: take credit card events. Each event is generated when a card is swiped. An event looks like this:</p>
+<ul>
+  <li><strong>Timestamp</strong> — when the transaction happened</li>
+  <li><strong>Card number</strong> (or card ID) — which card was used</li>
+  <li><strong>Amount</strong> — the amount of the transaction</li>
+  <li><strong>Vendor</strong> — where the transaction happened</li>
+</ul>
+<p>One swipe is one event. The next swipe is another event with the same shape. These events enter the system continuously.</p>
+<p>The business question: suppose a credit card scheme has been launched and many people are using their cards. The business wants feedback — what are people spending, and where? The computation that answers this is: <strong>compute the mean amount based on vendor</strong> — in database terms, group by vendor and calculate the mean value.</p>
+<p>How the streaming platform runs this: the events are distributed across the individual nodes, and each node is a machine. Each machine will give a result — a mean value for the vendors whose events landed on it. The nodes do a group-by-vendor and calculate the mean. This is exactly what the slide's "nodes" represent: actual computation happens in the nodes.</p>
+<div class="key-concept">
+  <p><strong>Formalizing the group-by mean.</strong> The lecture's plain-language description is the audit trail for the math: <em>"Group by vendor. And then they calculate the mean value."</em> Reconstructed with symbols:</p>
+  <p>\[ \bar{a}_v = \frac{1}{|E_v|} \sum_{e \in E_v} a_e \]</p>
+  <p>Every symbol named:</p>
+  <ul>
+    <li>\(E_v\) — the set of events for vendor \(v\) (the group)</li>
+    <li>\(|E_v|\) — how many events that vendor has (the size of the group)</li>
+    <li>\(a_e\) — the amount of event \(e\)</li>
+    <li>\(\bar{a}_v\) — the mean amount for vendor \(v\)</li>
+  </ul>
+  <p>Two-step view of the same formula — first sum, then divide:</p>
+  <p>\[ \bar{a}_v = \frac{\sum_{e \in E_v} a_e}{|E_v|} = \frac{\text{total spent at } v}{\text{number of swipes at } v} \]</p>
+  <p>This is the standard mean-of-a-group formula; texts write it identically as \(\bar{x}_v = \frac{1}{n_v}\sum_{i=1}^{n_v} x_{i,v}\). Here we keep \(\bar{a}_v\) and \(a_e\) to match the lecture's "amount" wording. The reconstruction is confirmed: the lecture states only "group by vendor and then calculate the mean value," and the formula above is exactly the standard group-by average used by streaming aggregation engines.</p>
+</div>
+<div class="example-box">
+  <p><strong>Worked example: three swipes at one vendor.</strong> Suppose vendor \(v\) = "Coffee Cart". Three events land on the node:</p>
+  <ul>
+    <li>Event \(e_1\): timestamp 09:01, card 4111, amount \(a_{e_1} = 4.50\), vendor Coffee Cart</li>
+    <li>Event \(e_2\): timestamp 09:05, card 4111, amount \(a_{e_2} = 5.00\), vendor Coffee Cart</li>
+    <li>Event \(e_3\): timestamp 09:09, card 5555, amount \(a_{e_3} = 8.00\), vendor Coffee Cart</li>
+  </ul>
+  <p>So \(E_v = \{e_1, e_2, e_3\}\) and \(|E_v| = 3\). Step 1 — sum the amounts:</p>
+  <p>\[ \sum_{e \in E_v} a_e = 4.50 + 5.00 + 8.00 = 17.50 \]</p>
+  <p>Step 2 — divide by the count:</p>
+  <p>\[ \bar{a}_v = \frac{17.50}{3} \approx 5.83 \]</p>
+  <p><strong>Answer: the mean amount per Coffee Cart swipe is about 5.83.</strong></p>
+  <p>Sense-check: a mean must lie between the smallest amount (4.50) and the largest (8.00). 5.83 is inside that range, so the arithmetic is plausible.</p>
+</div>
+<p>Who decides which event goes to which node? That is the job of the <strong>data flow layer</strong>. In this course's stack, the data flow layer is <strong>Kafka</strong>: the Kafka broker decides which event goes to which node. The data flow layer also decides which event goes to which client — a client must register for consumership first. Once the calculation is done, the results go downstream and the clients access the data.</p>
+<div class="important-note">
+  <p><strong>Q:</strong> Are these nodes the message queues? I am a bit confused. <strong>A:</strong> No, these are not message queues. Suppose you perform some task, like finding the average on the streaming data. Take credit card events: transaction number, amount. When you swipe the card, an event is generated. The event has a timestamp, the card, the amount, the vendor. When these events enter the system, let us compute the mean amount based on vendor. Suppose as a credit card company I have launched a scheme because of which many people are using credit cards, and I want feedback. This data is processed by individual nodes. The nodes are nothing but machines. Each machine will give a result — the mean value. The machines do the group-by-vendor and calculate the mean. This is what the slide refers to: actual computation happens in the nodes. Who decides which event goes to which node? The data flow layer decides — in our case the Kafka broker, which is the data flow layer. It also decides which event goes to which client, because the client needs to register for consumership. After the calculation is done, the clients downstream access the data.</p>
+</div>
+<p><strong>Why the nodes are not message queues.</strong> A message queue stores messages and hands them to a consumer later; a node <em>computes</em> — it groups, averages, joins. Both sit between producers and consumers, which is why the confusion is natural, but the roles are different. In the same stack, Kafka plays the queue-like role (the data flow layer), while the nodes play the computing role (the processing layer).</p>
+<div class="warning-box">
+  <p><strong>Pitfalls:</strong></p>
+  <ul>
+    <li><strong>Nodes are not queues.</strong> A queue stores and forwards; a node transforms. The node's job is computation (group, average, join), not storage.</li>
+    <li><strong>The mean of means is not the global mean.</strong> Each node computes the mean for <em>its own</em> events. If a vendor's events are split across two nodes, the true global mean is (sum of local sums) ÷ (sum of local counts) — never average the per-node means. If node 1 saw 1 event of 5.00 and node 2 saw 2 events of 9.00, mean-of-means gives \((5+9)/2 = 7.00\), while the correct mean is \((5+9+9)/3 \approx 7.67\).</li>
+    <li><strong>A client cannot read results it did not register for.</strong> The data flow layer decides which events go to which client, and only after the client registers for consumership.</li>
+  </ul>
+</div>
+<p>Real-world: this exact pattern — a card scheme launch followed by per-vendor spending analysis — is a standard streaming analytics workload in banking: continuous events in, group-by aggregations out, with the results feeding dashboards and business feedback loops. Streaming processing engines implement precisely this group-by-mean computation over windows of events, and the same pattern generalizes to per-store sales totals, per-device error rates, and per-IP traffic averages.</p>
+<div class="key-takeaway">
+  <p><strong>Recap:</strong> nodes are the machines where computation happens; clients are the downstream consumers of processed data; the data flow layer (the Kafka broker, in this stack) decides which event goes to which node and which client. The canonical workload is the group-by-vendor mean \(\bar{a}_v = \frac{1}{|E_v|} \sum_{e \in E_v} a_e\). The next section moves from the happy path to the failure modes that make a coordinator necessary.</p>
+</div>
+
+<h2 id="5.3-failure-modes-the-coordinator-must-handle">5.3 Failure Modes the Coordinator Must Handle</h2>
+<h3 id="5.3.1-unreliable-network-connections">5.3.1 Unreliable Network Connections</h3>
+<p>The main purpose of the coordination and configuration system is to track problems across the tiers. The professor enumerates the failure points explicitly:</p>
+<ol>
+  <li>Failure of the network between the <strong>collection tier and the data flow tier</strong>.</li>
+  <li>Failure of the network between the <strong>data flow layer and the processing layer</strong>.</li>
+  <li>Problems <strong>within the processing layer itself</strong> — if some node misbehaves, how do you even track that?</li>
+</ol>
+<div class="warning-box">
+  <p><strong>Scope: how unreliable networks really are.</strong> Even inside a single well-managed datacenter, a network is unreliable compared to a single machine: latency varies moment to moment, bandwidth changes over time, and connections can be lost. In a wide-area setting, a single severed cable can split previously unified networks in two — an event with the vivid industry name of a "backhoe event." Any of the three failure points above translates directly into the delays and missed processing described in Section 5.1.2.</p>
+</div>
+<p>Without a coordinator, these failures translate directly into the delays and missed processing from Section 5.1.2. The coordinator's job is to track these problems so the pipeline can react instead of silently degrading.</p>
+<h3 id="5.3.2-clock-synchronization">5.3.2 Clock Synchronization</h3>
+<p>Every node in the network carries a system clock, and the times on those clocks vary. <strong>Clock synchronization</strong> is the mechanism that brings consistency into the time space of the cluster.</p>
+<p>Why does clock skew matter? Different systems will be having different times, and that becomes a real problem for applications that must be delivered on time — the professor's example is applications whose delivery depends on another cluster manager or cluster machines; if their clocks disagree, coordination breaks down and the delivery fails. Clock synchronization fixes the variability in times so every machine in the network works on a common timestamp. This is not optional polish; it is a prerequisite for any cross-node coordination.</p>
+<div class="warning-box">
+  <p><strong>What happens when clocks drift.</strong> Server hardware clocks are not perfect and drift over time. If they drift far enough, one server can observe an event as happening <em>after</em> the current time. Concretely: an analysis system comparing the timestamps of two types of events can start computing <strong>negative durations</strong> — nonsense output caused purely by clock skew, not by the data. The standard fix is the Network Time Protocol (NTP), which adjusts each machine's clock against a set of time servers. NTP is "close enough" in most setups, but it fails when machines cannot synchronize to the same NTP servers — for example, a secure internal domain behind a restricted gateway. There the internal NTP server can drift away from the external one, and time-based services (such as authorization APIs that use time) can break outright.</p>
+</div>
+<h3 id="5.3.3-the-split-brain-problem-and-replication">5.3.3 The Split Brain Problem and Replication</h3>
+<p>A second failure mode is the <strong>split brain problem</strong>. The professor's description is intuitive: within a certain timeframe, a chunk of information goes missing. Concretely: some amount of <strong>state becomes inaccessible</strong> — the state being computed at a particular node cannot be reached. The consequence is that the distributed state across the cluster cannot be updated. The cluster literally has two "brains" — the part that is reachable and the part that is not — and the system cannot reconcile them.</p>
+<p><strong>Analogy:</strong> two offices of the same company lose the phone line between them. Each office still works and each believes it has the full picture — one office approves a raise, the other approves a different raise for the same employee, and nobody can reconcile the two realities. A cluster in split brain is exactly this: two groups, two versions of the truth, and no way to join them.</p>
+<p>The handling strategy is <strong>replication</strong>: create a copy of the machine. With a replica in place, you allow one partition to remain functional by degrading the capabilities of the other. The professor is candid that degrading a partition's capabilities may not be a good option either — but with a replication of the machine, whatever state information was lost through the failed node can be recovered from the backup. Replication is the safety net that makes state loss survivable.</p>
+<div class="important-note">
+  <p><strong>How the functional side is chosen — the odd-count quorum trick.</strong> A common strategy is to require a quorum (a minimum number of servers) for a partition to stay fully functional. Size the cluster as an odd number and a beautiful property appears: split an odd number of servers into two groups, and one group always has an odd count while the other has an even count. The odd group stays functional; the even group is degraded (read-only, or with reduced capabilities). So at most one partition can ever claim to be the live "brain," and the two halves of a split brain can never both believe they have the authority to update state. ZooKeeper uses this same quorum idea, and Section 5.11.3 states its availability rule.</p>
+</div>
+<div class="key-takeaway">
+  <p><strong>Recap:</strong> three failure modes make the coordinator necessary — unreliable networks between the tiers (delays and missed processing), unsynchronized clocks (skew breaks on-time delivery and can even produce negative durations), and the split brain problem (state becomes inaccessible and the cluster cannot reconcile two realities). Replication is the safety net that makes state loss survivable, and an odd-count quorum decides which partition stays functional during a split.</p>
+</div>
+
+<h2 id="5.4-leader-election-the-modified-paxos-algorithm">5.4 Leader Election: The Modified Paxos Algorithm</h2>
+<h3 id="5.4.1-how-a-leader-is-chosen">5.4.1 How a Leader Is Chosen</h3>
+<p>ZooKeeper does not rely on Paxos exactly — it uses a <strong>modified version of the Paxos algorithm</strong>. The professor's plain-language description of the election mechanism is the core of this section:</p>
+<ul>
+  <li>The whole ZooKeeper network — which is continuously monitoring the flow of events — has a <strong>leader node</strong> and <strong>worker nodes</strong>.</li>
+  <li>Each worker node pings the leader node. The leader is selected based on the number of pings: whichever node has the maximum responses from the ping operation is elected as the leader.</li>
+  <li>Once the leader is elected, the remaining nodes become <strong>executors</strong> (workers).</li>
+  <li>If a problem occurs with the leader node, another leader is elected — the election runs again.</li>
+</ul>
+<p>The logic is simple and robust: the node that the network can reach best (maximum ping responses) is the node best positioned to coordinate.</p>
+<div class="important-note">
+  <p><strong>Why "modified Paxos"?</strong> The election rule — "whichever node has maximum responses from the ping operation" — is quoted from the lecture, and the mechanics of how the responses are counted are not specified in detail in the lecture. The reconciliation: in the actual protocol, candidate servers exchange votes rather than raw pings, and each vote is ranked by an epoch number plus a transaction counter (the zxid); the candidate with the highest-ranked state wins, and the leader must collect acknowledgments from a quorum before committing changes. The lecture's "maximum ping responses" is the plain-language stand-in for "the servers that can reach you and agree to vote for you." The professor's version and the standard mechanism agree in spirit, so both are kept: pings = the votes and acknowledgments described in Section 5.11.2.</p>
+</div>
+<h3 id="5.4.2-the-zookeeper-ensemble">5.4.2 The ZooKeeper Ensemble</h3>
+<p>The diagram of a running ZooKeeper system shows <strong>ZooKeeper followers</strong> and a <strong>ZooKeeper leader</strong> (drawn in blue). Apache ZooKeeper was conceptualized at <strong>Yahoo!</strong> and is used across various distributed platforms.</p>
+<p>The structure: there are client nodes and server nodes. From the perspective of a data architect, you configure the cluster, and the client node is somebody interacting with the cluster from outside — a client node can be the data ingestion source from which the data is coming in.</p>
+<p>The collection of ZooKeeper server nodes — the red box in the diagram — is called the <strong>ensemble</strong>: a collection of nodes, each with specific tasks, with <strong>no overlap of tasks</strong>, connected through a distributed network. The ensemble is the unit that survives failures; a single ZooKeeper process is never the whole system.</p>
+<div class="example-box">
+  <p><strong>Worked example: the election sequence.</strong></p>
+  <ol>
+    <li>A ZooKeeper network is monitoring the event flow.</li>
+    <li>Every worker node pings the leader node (or the candidate nodes, in the running system).</li>
+    <li>The node with the maximum number of successful ping responses becomes the leader.</li>
+    <li>All remaining nodes become executors.</li>
+    <li>If the leader fails, the election runs again and a new leader is elected.</li>
+  </ol>
+  <p>Concretely, with a three-server ensemble A, B, C: A reaches B and C, B reaches only A, C reaches A and B. A collects two successful responses, C collects two, B collects one. A and C tie for the maximum, and the tie-breaker (in the real protocol, the highest zxid) picks one of them; the other two become executors. If the elected leader fails, the remaining servers run the election again and one of them takes over.</p>
+</div>
+<p>This is the sequence that answers the student's question about what happens when ZooKeeper itself dies — see Section 5.8.3.</p>
+<div class="key-takeaway">
+  <p><strong>Recap:</strong> ZooKeeper elects a leader with a modified version of Paxos — in the lecture's terms, the node with the maximum ping responses wins, the rest become executors, and a failed leader triggers a fresh election. The ensemble (leader + followers, each with non-overlapping tasks) is the unit that survives failures; no single ZooKeeper process is ever the whole system.</p>
+</div>
+
+<h2 id="5.5-zookeeper-fundamentals-and-services">5.5 ZooKeeper Fundamentals and Services</h2>
+<h3 id="5.5.1-origin-and-the-api">5.5.1 Origin and the API</h3>
+<p>ZooKeeper is designed at Yahoo! and exposes a <strong>set of APIs for interaction</strong>, which is what allows it to be embedded in different platforms — the professor names <strong>Hadoop</strong> and <strong>HBase</strong> explicitly ("whether it is Hadoop or HBase platform"). Because the platform is generic, the same coordination services are available to any distributed system that plugs into it.</p>
+<div class="important-note">
+  <p><strong>What "a set of APIs" means in practice.</strong> ZooKeeper deliberately does not impose a fixed set of coordination features on its users. It provides a low-level API — modeled loosely on a hierarchical file system — and leaves the higher-level patterns (leader election, distributed queues, group membership) to be built on top of it. These patterns are called <strong>recipes</strong> in ZooKeeper jargon, and client libraries such as Curator ship battle-tested implementations of them. This trade-off is why one ZooKeeper cluster can serve many platforms: the service is generic, so Hadoop, HBase, Kafka, Storm, and Samza all use it for their coordination tasks.</p>
+</div>
+<h3 id="5.5.2-the-services-zookeeper-provides">5.5.2 The Services ZooKeeper Provides</h3>
+<p>ZooKeeper provides multiple services:</p>
+<ul>
+  <li><strong>Naming service</strong> — helps get node information, especially the node name. A node name is associated with a file name in the physical structure; logically, the system also creates names for the nodes. So each node is addressable both physically (the file) and logically (the name). This is the same idea as service discovery: applications look up "where is the service I need" instead of hard-coding addresses.</li>
+  <li><strong>Configuration management</strong> — multiple things fall under this, starting with updating the new configuration. When configuration must change across a cluster, the coordinator is the one place that pushes the change coherently.</li>
+  <li><strong>Cluster management</strong> — addition of nodes, deletion of nodes, and basically <strong>load factor management</strong>. Nodes join, nodes leave, and the coordinator keeps the cluster healthy and balanced.</li>
+</ul>
+<div class="key-concept">
+  <p><strong>The three services at a glance.</strong></p>
+  <table>
+    <thead>
+      <tr>
+        <th>Service</th>
+        <th>What it answers</th>
+        <th>Example</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>Naming service</td>
+        <td>"Where is node X, and what is it called?"</td>
+        <td>node name mapped to a physical file; logical names for nodes</td>
+      </tr>
+      <tr>
+        <td>Configuration management</td>
+        <td>"What is the current configuration?"</td>
+        <td>one place to push a cluster-wide configuration change</td>
+      </tr>
+      <tr>
+        <td>Cluster management</td>
+        <td>"Who is in the cluster, and is it balanced?"</td>
+        <td>add and delete nodes; load factor management</td>
+      </tr>
+    </tbody>
+  </table>
+  <p>In production terms: the naming service registers where things are, configuration management keeps every machine on the same settings, and cluster management keeps membership and load healthy. Together, the three services are how ZooKeeper plays the "data central" role from Section 5.1.</p>
+</div>
+<div class="key-takeaway">
+  <p><strong>Recap:</strong> ZooKeeper was designed at Yahoo! as a generic coordination service — an API, not a fixed feature set — which is why Hadoop, HBase, and the rest of the streaming stack can all plug into it. Its three headline services are naming (addressable names), configuration management (coherent updates), and cluster management (membership and load factor). The next sections go one level deeper: what a Z node is, and the three node types.</p>
+</div>
+
+<h2 id="5.6-z-nodes-names-paths-and-the-1-mb-limit">5.6 Z Nodes: Names, Paths, and the 1 MB Limit</h2>
+<h3 id="5.6.1-every-node-is-a-z-node-with-a-path">5.6.1 Every Node Is a Z Node with a Path</h3>
+<p>Every node in the ZooKeeper hierarchy is called a <strong>Z node</strong> (the lecture's term; the reference documentation calls the same object a <em>znode</em>). Each Z node has a name, and there is a path associated with that name. The professor's rule for path construction: whatever traversal you do, when you get the node information you just <strong>concatenate that node information at the end of the current path</strong>, and that becomes your entire path — which also refers to the name of the node. So a node at the root is <code>/</code>, a child of the root is <code>/app1</code>, a child of that is <code>/app1/1.1</code>, and so on; every node is identified by its name and the sequence of paths that lead to it.</p>
+<div class="important-note">
+  <p><strong>Analogy:</strong> think of the filesystem on your computer. <code>/users/docs/notes.md</code> is not four separate facts; it is one address built by concatenating every folder from the root down to the file. A Z node's path works the same way — the path <em>is</em> the address, and the last component <em>is</em> the node's name. The analogy breaks in one place: in ZooKeeper every node can also carry a small data payload (up to 1 MB, Section 5.6.2), so nodes behave like files <em>and</em> directories at once.</p>
+</div>
+<h3 id="5.6.2-why-1-mb-of-data-per-node">5.6.2 Why 1 MB of Data per Node</h3>
+<p>Every Z node can store up to <strong>1 MB of data</strong>. The professor asks the question himself: why 1 MB? Because this system is talking about events, and events are not memory heavy. Each event is of the order of a <strong>few bytes</strong> of information — the credit card transaction example from Section 5.2 is the template. A few-byte event fits comfortably in a 1 MB node. The design priority behind the limit is clear from the lecture: the main things are <strong>synchronization and fault tolerance</strong>, not data storage. ZooKeeper is a coordination store, not a data store; the 1 MB ceiling keeps nodes light so coordination stays fast.</p>
+<div class="warning-box">
+  <p><strong>Scope: what the 1 MB limit implies.</strong> Because ZooKeeper is not a bulk storage facility, it does not support partial reads, partial writes, or appends: reading or writing a Z node transmits the entire byte array in a single call. And because the whole dataset must stay in memory (with snapshots and change logs written to disk), the data kept in Z nodes is small and slow-changing — "which node is the leader for partition 7" — not the streaming events themselves, and not application state that changes thousands of times per second. If you are storing more than a few bytes per event, you are using the wrong tool.</p>
+</div>
+<h3 id="5.6.3-the-namespace-tree-and-the-path-correction">5.6.3 The Namespace Tree and the Path Correction</h3>
+<p>The namespace is a <strong>hierarchical tree</strong>. The example structure from the session: a root node; under the root, a node called first node; under first node, two child nodes; under the first of those, two directory nodes. The question is how you specify a path for each node. The tree, drawn as corrected during the session:</p>
+<pre><code>/
+└── first node
+    ├── f1
+    │   ├── d1
+    │   └── d2
+    └── f2</code></pre>
+<p>This triggers a student correction that the professor accepts enthusiastically — a valuable lesson in how paths work and in the care required to keep a diagram consistent:</p>
+<div class="example-box">
+  <p><strong>Worked example: addressing every node in the tree.</strong> Apply the concatenation rule from the root to each node:</p>
+  <ul>
+    <li>Root: <code>/</code></li>
+    <li>Child of root: <code>/first node</code></li>
+    <li>Children of first node: <code>/first node/f1</code> and <code>/first node/f2</code></li>
+    <li>Children of f1: <code>/first node/f1/d1</code> and <code>/first node/f1/d2</code></li>
+    <li>f2 has no children.</li>
+  </ul>
+  <p>Reading the deepest example: <code>/first node/f1/d1</code> = the node named d1, inside f1, inside first node, inside the root. The address of any Z node is fully determined by its ancestors — you never need anything else to find it.</p>
+</div>
+<div class="important-note">
+  <p><strong>Q:</strong> By the addressing, shouldn't it be /first node/f1? The way d1 and d2 are /f1/d1, /f1/d2 — so f1 should be /first node/f1. <strong>A:</strong> Correct, correct. You are right. I think there is a gap in this. You are correct. It should be /first node/f1/d1. That is what I explained on the board, but it is not reflected here. So there is a correction. I agree with you. This is a good observation. It is /first node/f1/d1. Right? And it is the same case with f2 — it should be /first node/f2. Every node, that is what it is.</p>
+</div>
+<p>The lesson of the correction: a diagram can silently drop path components — the slide showed d1 and d2 addressed under f1 but forgot the <code>/first node</code> prefix. The addressing rule itself never changes; only the drawing was wrong.</p>
+<div class="important-note">
+  <p><strong>Q:</strong> The observation is correct, but I think it is better if we remove /f1 from the leaf node — the tree can create that automatically. Nowhere are we giving the path, so the name can just be d1. But when you are looking at the path, at that time we can specify it. <strong>A:</strong> That may actually simplify. Yes, yes. Because otherwise there is an inconsistency — some places you are giving this, some places you are not giving this. Correct? It is a minor thing, but I agree with you.</p>
+</div>
+<p>The takeaway: a Z node's full path is the concatenation of every ancestor's name from the root — <code>/first node/f1/d1</code> means the node named d1 under f1 under first node under root — and a diagram or document must apply that rule uniformly or it breeds inconsistency. Whether you write the full path on every leaf or only at lookup time is a presentation choice; the addressing rule itself is fixed.</p>
+<div class="key-takeaway">
+  <p><strong>Recap:</strong> every Z node is addressable by the path formed by concatenating its ancestors' names from the root; a node holds at most 1 MB because events are a few bytes and ZooKeeper is a coordination store, not a data store; and the namespace is a tree whose diagrams must apply the concatenation rule uniformly — the session's correction: <code>/first node/f1/d1</code>, not <code>/f1/d1</code>.</p>
+</div>
+
+<h2 id="5.7-the-three-types-of-z-nodes">5.7 The Three Types of Z Nodes</h2>
+<h3 id="5.7.1-persistent-nodes">5.7.1 Persistent Nodes</h3>
+<p>ZooKeeper classifies nodes into three types, categorized by <strong>real lifetime</strong>: persistent, ephemeral, and sequential. The professor stresses that this theory matters — it is quiz material (see the Exam note below).</p>
+<p>A <strong>persistent node</strong> is the node which is alive even after the client that created it is disconnected. Persistency means exactly this: the node exists even when the client is not accessible. The node outlives the client.</p>
+<p>The professor's wording on the slide — "alive even after the client which created that particular Z node" — drew a sharp student question, and the correction is a useful precision about who creates nodes:</p>
+<div class="important-note">
+  <p><strong>Q:</strong> Why would the client create the Z node? The client is something — I mean, is the client creating it? <strong>A:</strong> No, no. The client is not creating the Z node. The statement is like this — the wording here is improper. Who is creating this? The node is created with ZooKeeper; it has nothing to do with the client. The point you need to understand is: a persistent node is the node which is live even after the client application becomes inaccessible. Only that part you see, nothing else.</p>
+</div>
+<p>The correction then connects to a subtle language point about the slide's phrasing:</p>
+<div class="important-note">
+  <p><strong>Q:</strong> So what is the value of making it passive voice — "which was created"? <strong>A:</strong> Yes, which was created — the passive construction is the right one, because it describes the node's origin without claiming that the client performed the creation. The client does not create Z nodes; the node is created with ZooKeeper.</p>
+</div>
+<p>So the correct mental model: clients connect to ZooKeeper and interact with nodes, but node creation is ZooKeeper's business. The word "created" in the slide describes the node's origin, not the client's action; the property that matters is persistence — the node survives client disconnection.</p>
+<h3 id="5.7.2-ephemeral-nodes">5.7.2 Ephemeral Nodes</h3>
+<p>An <strong>ephemeral node</strong> is the opposite: when the client is lost, the node is deleted or disconnected too. When the client gets disconnected, the ephemeral node is deleted automatically. The professor's phrasing: for an ephemeral node, <strong>the lifetime is equal to the client</strong> — node and client die together. (The spoken version sounds like "the top client," but the sense throughout the explanation — and the reference documentation — is the lifetime of the client: an ephemeral node is destroyed when the client session that created it loses contact with the ZooKeeper cluster or ends its session.)</p>
+<p>Ephemeral nodes are the natural building block for membership and liveness: a node registered as ephemeral disappears by itself the moment its owner goes away, so no one has to clean up after a dead client.</p>
+<div class="warning-box">
+  <p><strong>Pitfall: ephemeral nodes cannot have children.</strong> Because an ephemeral node may be destroyed at any moment — the instant its client's session ends — ZooKeeper does not allow ephemeral nodes to have children. As of the 3.4 series, an ephemeral node may be a file but may not be a directory. Building a hierarchy under an ephemeral node is a design that cannot work; put the children under a persistent parent instead.</p>
+</div>
+<h3 id="5.7.3-sequential-nodes">5.7.3 Sequential Nodes</h3>
+<p>A <strong>sequential node</strong> can be either persistent or ephemeral, but its representation is slightly different: its path is followed by a <strong>corresponding sequence number / ID</strong> attached at the end of the path. Where ordinary nodes have just a path, a sequential node's full name is <code>path</code> plus a sequence number.</p>
+<p>The main role of sequential nodes is providing <strong>synchronization and parallelism in the network</strong>. Ordered, unique, appended identifiers are exactly what you need to serialize operations or shard work across nodes without collisions — each node gets its own numbered slot.</p>
+<div class="example-box">
+  <p><strong>Worked example: unique, ordered identifiers.</strong> Suppose three servers join the same election path <code>/ducks</code>, and each creates an ephemeral sequential node:</p>
+  <ul>
+    <li>Server A creates <code>/ducks/n_0000000008</code></li>
+    <li>Server B creates <code>/ducks/n_0000000009</code></li>
+    <li>Server C creates <code>/ducks/n_0000000010</code></li>
+  </ul>
+  <p>The counter guarantees each name is unique — no two servers can ever collide. And because the sequence is monotonic, sorting the children (<code>n_0000000008</code> < <code>n_0000000009</code> < <code>n_0000000010</code>) yields a total order: the smallest sequence number identifies the first comer. This single trick implements leader election — the node with the smallest sequence is the leader, and when it disappears the next smallest takes over. That is the actual mechanism behind the election described in Section 5.4.</p>
+</div>
+<h3 id="5.7.4-exam-notes-on-node-types">5.7.4 Exam Notes on Node Types</h3>
+<div class="key-takeaway">
+  <p><strong>Exam note:</strong> this theory is explicitly flagged as examinable. The professor says: "This theory, whatever I am explaining — because you will have a quiz — in the quiz, I may ask a property pertaining to these nodes." Know the three types and, for each one, the property that defines its lifetime:</p>
+  <ul>
+    <li>Persistent node — lives on even after the client that created it disconnects; node exists without an accessible client.</li>
+    <li>Ephemeral node — deleted automatically when its client disconnects; lifetime equals the client's.</li>
+    <li>Sequential node — persistent or ephemeral, plus a sequence number appended to the path; provides synchronization and parallelism.</li>
+  </ul>
+  <p>No matter which type, remember the vocabulary correction from this section: no client creates a Z node — every node is created with ZooKeeper, and persistence describes the node's lifetime, not the client's action.</p>
+</div>
+
+<h2 id="5.8-sessions-and-heartbeats">5.8 Sessions and Heartbeats</h2>
+<h3 id="5.8.1-session-ids-and-fifo-execution">5.8.1 Session IDs and FIFO Execution</h3>
+<p>When you use ZooKeeper you request a <strong>session</strong>, and requests within the session are executed <strong>first in, first out (FIFO)</strong>. Whenever requests come in, they are put in a queue. Once the client connects to the server, a session is established and a <strong>session ID is assigned to the client</strong>. The session is the client's identity on the server, and the FIFO queue is how ZooKeeper keeps request order stable.</p>
+<div class="important-note">
+  <p><strong>Analogy:</strong> a numbered ticket at a deli counter. You take a ticket (your session ID) when you walk in, and your requests are served in the order they arrived — first in, first out. The ticket is what identifies <em>you</em> to the counter, just as the session ID identifies the client to the server. The FIFO discipline is the foundation of the sequential consistency guarantee in Section 5.15.1: because each client's requests are executed in order, the client can rely on that order.</p>
+</div>
+<h3 id="5.8.2-heartbeats-and-threshold-time">5.8.2 Heartbeats and Threshold Time</h3>
+<p>How does ZooKeeper know the current state of a client? Through <strong>heartbeats</strong> (a concept sometimes written as "hot bits" in noisy captions — the idea is the periodic liveness signal). The client sends heartbeat signals at regular intervals to indicate the session is valid. If the heartbeat is not received, ZooKeeper infers that the client has a problem.</p>
+<p>All of this is configurable: you specify the <strong>threshold time</strong> — how much time is allowed before ZooKeeper really checks whether the client is alive or not. Thresholds are the tuning knobs of liveness detection, and they come back in Section 5.14 when failed nodes are handled.</p>
+<div class="warning-box">
+  <p><strong>How the threshold behaves in the real system.</strong> The client keeps a long-lived session with the ZooKeeper servers and exchanges heartbeats periodically. A temporary interruption does not kill the session — it stays active while heartbeats keep arriving. But if the heartbeats cease for longer than the session timeout (the threshold time from the lecture), ZooKeeper declares the session dead. That is the moment everything tied to session lifetime kicks in: ephemeral nodes created by that session are deleted automatically (Section 5.7.2), and locks held by the session are released. In the standard configuration the threshold is expressed in tick units — <code>tickTime</code> (for example 2000 ms) with limits such as <code>initLimit</code> and <code>syncLimit</code> — and the client also sets its own session timeout when it connects.</p>
+</div>
+<h3 id="5.8.3-what-if-zookeeper-itself-dies">5.8.3 What If ZooKeeper Itself Dies?</h3>
+<p>The natural question follows: ZooKeeper receives heartbeats from clients — what happens if ZooKeeper itself is not alive? Is there another ZooKeeper?</p>
+<div class="important-note">
+  <p><strong>Q:</strong> ZooKeeper receives the heartbeats from the clients, right? So what happens if ZooKeeper itself is not alive? I mean, will there be another ZooKeeper? <strong>A:</strong> It cannot happen that way, because ZooKeeper is not a single entity. It is a cluster set of nodes — that is what you are saying. It might happen that one node gets disconnected or one node goes off. But since we are talking about the ensemble, the only possibility is that when the leader node dies off, there is an election mechanism with that Paxos algorithm I mentioned. Some election mechanism will happen and a new leader will be elected.</p>
+</div>
+<p>The professor adds a practical observation: it is true — most often it can happen even when you create a local machine and run ZooKeeper locally. After some minutes, if nothing is happening in terms of data ingestion or processing, you tend to see this thing happen.</p>
+<p>So the answer to "who monitors the monitor" is structure: ZooKeeper is never one process, it is an ensemble, and the only single point of failure — the leader — is replaceable by election. Even a local development machine will demonstrate this: an idle local ZooKeeper will eventually show leader change behavior. The ensemble does not wait for permission; it re-elects on its own.</p>
+<div class="key-takeaway">
+  <p><strong>Recap:</strong> a session is the client's identity on the server, and requests within it run FIFO. Heartbeats are the periodic liveness signal, and the threshold time you configure decides when ZooKeeper declares a session dead. And ZooKeeper itself can never "die" as a whole: it is an ensemble, and when the leader fails, the modified-Paxos election picks a new one automatically.</p>
+</div>
+
+<h2 id="5.9-watches-change-notification">5.9 Watches: Change Notification</h2>
+<h3 id="5.9.1-the-notification-mechanism">5.9.1 The Notification Mechanism</h3>
+<p>A <strong>watch</strong> is the mechanism for notification about whatever changes happen on ZooKeeper. When a client reads a particular node, ZooKeeper uses watches to tell the client about changes in the cluster of Z nodes.</p>
+<p>The alternative to watches is polling — the client repeatedly asking "has anything changed?" Watches invert this: the client registers interest once, and ZooKeeper pushes the news the moment something relevant changes.</p>
+<h3 id="5.9.2-the-exception-handling-analogy">5.9.2 The Exception Handling Analogy</h3>
+<p>The professor's analogy makes the mechanism click: think of <strong>exception handling</strong> in programming. The purpose of exception handling is graceful termination — when an exception occurs, the code you wrote for that case gets executed, and the exception preserves the context in which it occurred, instead of the program dying abnormally.</p>
+<p>In the same sense, a watch captures the <strong>context of the Z nodes</strong> — especially whether there is a change, and the health of the nodes (slow or fast, up or down). You configure what you want to be notified about. Watches turn ZooKeeper from a passive store into an event-driven one: interested clients are told the moment something relevant changes.</p>
+<div class="warning-box">
+  <p><strong>Pitfall: a watch fires once.</strong> A watch is a one-time operation: when the notification fires, the watch is used up, and the client must register it again to keep receiving notifications about the same path. If a change happens in the window between receiving a notification and re-registering the watch, that notification can be missed. ZooKeeper's designers anticipated this: setting a watch also reads the node's data, so clients can coalesce notifications — they always get the current data together with the change signal.</p>
+</div>
+<div class="key-takeaway">
+  <p><strong>Recap:</strong> a watch is the notification mechanism for changes in the cluster of Z nodes — the client registers interest, ZooKeeper pushes the change. The professor's analogy: a watch is like exception handling — it captures the context of what happened (the node's state and health) instead of letting the system fail silently. Watches make ZooKeeper event-driven rather than polled.</p>
+</div>
+
+<h2 id="5.10-read-and-write-operations">5.10 Read and Write Operations</h2>
+<h3 id="5.10.1-the-write-path-through-the-leader">5.10.1 The Write Path Through the Leader</h3>
+<p>Connecting to the server is straightforward — once the ZooKeeper process starts, it waits for clients to connect; nothing special has to be done. Then there are requests for everything.</p>
+<ul>
+  <li><strong>Read</strong>: if a client wants to read a particular Z node, it sends a read request for the Z node path, and the server responds with the data.</li>
+  <li><strong>Write</strong>: if a client wants to write, it sends a write request carrying the path and the data to the server. The server forwards the request to the leader, and the leader re-issues the write request to <strong>all the followers</strong>. If the responses come back successfully, the write operation is said to be successful; otherwise, the write operation is failing.</li>
+</ul>
+<div class="example-box">
+  <p><strong>Worked example: the write operation sequence.</strong></p>
+  <ol>
+    <li>Client sends a write request (path + data) to a ZooKeeper server.</li>
+    <li>The server forwards the request to the leader.</li>
+    <li>The leader re-issues the write request to all followers.</li>
+    <li>If the response is received successfully, the write is successful; if not, the write has failed.</li>
+  </ol>
+  <p>Concretely: a client writes the value "node-7 is leader" to the path <code>/config/leader</code>. The write lands on server S2; S2 forwards it to the leader L; L sends the same write to every follower (S1, S3, S4); each follower applies it and answers. Only when the responses come back successfully is the write acknowledged as successful. If even one follower does not answer within the threshold, the write fails.</p>
+</div>
+<p>The write path explains why a ZooKeeper cluster is safe: no write is acknowledged until the leader has propagated it across the ensemble. Read requests, by contrast, go directly to a server.</p>
+<div class="key-concept">
+  <p><strong>Versions on Z nodes (supporting detail).</strong> Every Z node carries a version number that starts at creation and increments each time the node's data changes. The client can pass this version to <code>delete</code> and <code>setData</code>; if the version on the server no longer matches the one the client expected, the operation is rejected. This is the mechanism that stops two clients from silently overwriting each other's changes — a compare-and-set style guard, and one more reason ZooKeeper's operations are safe.</p>
+</div>
+<h3 id="5.10.2-cli-and-the-api-good-to-know-not-exam-material">5.10.2 CLI and the API — Good to Know, Not Exam Material</h3>
+<p>ZooKeeper also has a <strong>command line interface (CLI)</strong>. Through the CLI you can configure the system and perform tasks like setting information and removing nodes — because dynamically, one can change the node structure in the tree. On the API side, the <strong>Z node is the most important thing</strong> in ZooKeeper's API; the class details are not required.</p>
+<p>The six fundamental operations of the Z node API are <code>create</code>, <code>delete</code>, <code>exists</code>, <code>setData</code>, <code>getData</code>, and <code>getChildren</code> — the vocabulary used by every client library, including Curator's fluent interface. (This is background vocabulary, not exam material.)</p>
+<p>The professor is explicit about the weight of this material: "These are some of the concepts, but you may not use it in real time. It is good to know these concepts. You don't have to remember this — just to know how the whole thing works. There is no point of remembering and reproducing, because I am not going to ask any of these points in the exam perspective." So CLI and API mechanics are background knowledge; the examinable theory is the node types (Section 5.7) and the system-level concepts.</p>
+<div class="key-takeaway">
+  <p><strong>Exam note:</strong> CLI and API mechanics are "good to know" concepts — how the whole thing works — but they are not asked from the exam perspective. The examinable theory is the node types of Section 5.7 (with their lifetime properties) and the system-level concepts: metadata vs state, sessions and heartbeats, watches, the write path, and the guarantees.</p>
+</div>
+
+<h2 id="5.11-the-server-cluster-atomic-broadcast-and-fault-tolerance">5.11 The Server Cluster, Atomic Broadcast, and Fault Tolerance</h2>
+<h3 id="5.11.1-the-ensemble-setup">5.11.1 The Ensemble Setup</h3>
+<p>The live setup, walked through with the official documentation, looks like this: ZooKeeper has <strong>multiple servers</strong>, and individual clients interact with the servers. The <strong>server leader</strong> is one of the servers coordinating with the rest of the nodes within ZooKeeper. There is deliberately <strong>no direct edge from a client to the leader</strong> — clients interact with individual server nodes, and the leader ensures the overall health of the server nodes (active, inactive, and so on) while coordinating with all of them.</p>
+<p>The reason ZooKeeper is <strong>replicated</strong> is to enforce <strong>fault tolerance</strong>. The professor also emphasizes that "ZooKeeper is ordered": if you look at the order of transactions, the server nodes apply them in a consistent order. Ordering plus replication is what makes the ensemble behave like one coherent system.</p>
+<h3 id="5.11.2-atomic-broadcast">5.11.2 Atomic Broadcast</h3>
+<p>Whenever a write request is processed, it goes through <strong>atomic broadcast</strong>. The terms are built up carefully:</p>
+<ul>
+  <li><strong>Broadcast</strong> — sending data across the nodes in the network.</li>
+  <li><strong>Atomic broadcast</strong> — broadcasting data that is atomic. <strong>Atomic data</strong> means a simple transaction: it should not have a lot of memory and size.</li>
+</ul>
+<p>So a write is a small, simple transaction that gets sent to every node as one indivisible unit. That is the transport mechanism behind the write path of Section 5.10.1: the leader broadcasts, and the ensemble receives the same transaction, atomically.</p>
+<div class="important-note">
+  <p><strong>The standard form: total order broadcast.</strong> The reference literature calls the same mechanism <em>total order broadcast</em>: every node receives the same messages in the same order — exactly the property that keeps replicas identical, since applying the same writes in the same order keeps every copy consistent. ZooKeeper's implementation is the <strong>Zab</strong> protocol — the "modified Paxos" from Section 5.4. Zab orders changes to state (transactions) rather than Paxos-style updates to the entire state, and it uses an epoch counter similar to Paxos's proposal numbers. The lecture's "atomic broadcast" and the literature's "total order broadcast" are the same concept.</p>
+</div>
+<h3 id="5.11.3-the-availability-rule">5.11.3 The Availability Rule</h3>
+<p>The practical rule the professor states: <strong>as long as the majority of the servers are available, the service is available.</strong> Because the state is replicated across the ensemble, you do not need every node up — you need the majority. This is the fault-tolerance payoff of replication: a minority of dead nodes does not stop the service.</p>
+<div class="warning-box">
+  <p><strong>Scope: why majority, and why odd numbers.</strong> A quorum rule requires a minimum number of servers to agree before the system commits anything. With an odd-sized ensemble (3 or 5 is standard), a network split always leaves exactly one group holding the majority — that group keeps serving, the minority degrades, and the two sides can never both believe they have the quorum. This is the split-brain defense from Section 5.3.3, now stated as a concrete arithmetic rule. An even number of servers buys no extra fault tolerance over its odd neighbor: 4 servers tolerate the same one failure as 3, so production ensembles are sized 3 or 5 — more on the sizing trade-off in Section 5.12.</p>
+</div>
+<div class="key-takeaway">
+  <p><strong>Recap:</strong> the ensemble is a replicated set of servers with no direct client-to-leader edge; writes travel as atomic broadcast — small, indivisible transactions delivered to every node in order (the standard literature calls it total order broadcast, implemented by Zab). Fault tolerance is bought by replication, and the availability rule falls out of it: as long as the majority of servers are available, the service is available.</p>
+</div>
+
+<h2 id="5.12-performance-more-servers-does-not-mean-more-throughput">5.12 Performance: More Servers Does Not Mean More Throughput</h2>
+<h3 id="5.12.1-the-non-linear-reality">5.12.1 The Non-Linear Reality</h3>
+<p>A natural instinct is that a coordination system will get faster with more servers — start with three servers, move to five, keep adding. The professor's data point contradicts this: <strong>increasing the number of servers does not necessarily guarantee performance</strong>. Throughput varies; it is not proportional to the number of servers. When you double the nodes, the percentage of requests that are read does not increase significantly, and the performance curve is not linear.</p>
+<p>Why? The professor pushes the class to think, then confirms the reasons:</p>
+<ol>
+  <li><strong>More nodes → higher probability of failure.</strong> In the context of failure, having a lot of nodes is not a good choice — each additional node is another thing that can go wrong.</li>
+  <li><strong>More nodes → harder coordination.</strong> The responses from all these nodes and the overall coordination become difficult. Every decision the leader makes must account for more participants, more responses, more chances for disagreement.</li>
+</ol>
+<p>So the trade-off is explicit: replication buys fault tolerance (Section 5.11), but it costs coordination overhead. You size an ensemble for reliability, not for raw speed.</p>
+<div class="important-note">
+  <p><strong>Q:</strong> Can you tell me the reason — when you increase the number of nodes, why the percentage of requests is not increasing significantly? Why is it not linear? <strong>A:</strong> There is a one-to-one relation with client and client number not increasing — you can think that way. But these are the reasons: if you have more nodes, the probability of occurrence of failure is also more. In the context of failure, it is not a good choice to have a lot of nodes. Also, the response from these nodes and the overall coordination become difficult. Various statistics are performed. The point to understand: just by increasing the number of nodes, it does not guarantee the performance or throughput of ZooKeeper.</p>
+</div>
+<div class="warning-box">
+  <p><strong>The sizing rule from the reference material.</strong> The reference documentation is blunt: there is an inverse relationship between fault tolerance — more servers — and performance, because every state change must maintain consensus across the ensemble; more servers means more time per change. There is no real reason to run a ZooKeeper cluster larger than <strong>five</strong> nodes, and no reason to run fewer than <strong>three</strong> (an even count adds no fault tolerance, as shown in Section 5.11.3). Pick three nodes when the cluster will be heavily used — for example, under Kafka's metadata workload — and five when it is lightly used and you want the extra fault tolerance.</p>
+</div>
+<div class="key-takeaway">
+  <p><strong>Recap:</strong> adding servers to the coordination tier does not raise throughput — the performance curve is not linear. Each extra node raises the probability of failure and makes coordination harder, and every write must still gather the quorum. Ensemble size is chosen for fault tolerance (majority availability), not for raw speed; the practical sizing is 3 or 5 nodes.</p>
+</div>
+
+<h2 id="5.13-features-of-streaming-data">5.13 Features of Streaming Data</h2>
+<h3 id="5.13.1-the-four-properties">5.13.1 The Four Properties</h3>
+<p>The session briefly recaps the features of streaming data — discussed several times already in the course, but worth re-anchoring before the pipeline discussion:</p>
+<ul>
+  <li><strong>High availability</strong> — the service stays up despite failures (the majority rule of Section 5.11.3).</li>
+  <li><strong>Low latency</strong> — events are processed quickly as they arrive.</li>
+  <li><strong>Fault tolerance</strong> — failures are survived via replication; state is not lost.</li>
+  <li><strong>Horizontal scalability</strong> — the system scales by adding machines.</li>
+</ul>
+<h3 id="5.13.2-why-these-properties-need-a-coordinator">5.13.2 Why These Properties Need a Coordinator</h3>
+<p>These four properties are the goals that the coordination system exists to support: availability and fault tolerance through replication and election, low latency through lightweight events and fast coordination, and horizontal scalability through adding nodes — with the caveat from Section 5.12 that the coordination tier itself does not scale linearly.</p>
+<div class="key-concept">
+  <p><strong>Mapping the four properties to the mechanisms.</strong> Each property is delivered by a specific piece of the session's machinery:</p>
+  <table>
+    <thead>
+      <tr>
+        <th>Property</th>
+        <th>Delivered by</th>
+        <th>Session section</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>High availability</td>
+        <td>Majority availability rule</td>
+        <td>5.11.3</td>
+      </tr>
+      <tr>
+        <td>Low latency</td>
+        <td>Few-byte events, lightweight Z nodes, fast coordination</td>
+        <td>5.2, 5.6.2</td>
+      </tr>
+      <tr>
+        <td>Fault tolerance</td>
+        <td>Replication, split-brain defense, re-election</td>
+        <td>5.3.3, 5.4</td>
+      </tr>
+      <tr>
+        <td>Horizontal scalability</td>
+        <td>Adding nodes and clients</td>
+        <td>5.12 (with its caveat)</td>
+      </tr>
+    </tbody>
+  </table>
+  <p>The coordination system is what makes all four possible at once — that is the payoff of the entire session's design.</p>
+</div>
+<div class="key-takeaway">
+  <p><strong>Recap:</strong> high availability, low latency, fault tolerance, and horizontal scalability are the properties streaming data demands. Every one of them is engineered through the coordination mechanisms of this session: replication and election (availability, fault tolerance), lightweight few-byte events and fast coordination (low latency), and node addition (horizontal scalability) — bounded by the coordination tier's own non-linear performance ceiling.</p>
+</div>
+
+<h2 id="5.14-leader-responsibilities-and-handling-a-failed-node">5.14 Leader Responsibilities and Handling a Failed Node</h2>
+<h3 id="5.14.1-what-the-leader-actually-does">5.14.1 What the Leader Actually Does</h3>
+<p>A student's question zeroes in on the leader's role: leader and followers are similar nodes, any follower can become the leader, and clients always connect to followers — so what does the leader do?</p>
+<p>The answer: the leader <strong>checks the health of each of the servers</strong>. In case of any failure, it must alert the system that the particular node has failed; and if there is a replicated duplicate node, it must bring that node into the active phase. It is, in the professor's words, "kind of health coordination": if somebody is dead, the leader routes the request to somebody else.</p>
+<div class="important-note">
+  <p><strong>Q:</strong> In the ZooKeeper cluster, the leader and the followers are similar nodes, so that any follower can become the leader — that is fine. But the clients are always connecting to the followers, not the leader. What is basically the responsibility of the leader? What does it do? <strong>A:</strong> Good question. It is checking the health of each of these servers. In case of any failure, it has to alert the system that the particular node has failed. If there is a replication — a duplicate node — it has to bring it to the active phase. Kind of health coordination. If somebody is dead, I will route the request to somebody else. As long as the majority of the servers are available, the service is available.</p>
+</div>
+<p>The leader is not a bigger or faster machine — it is the same hardware running the same software, with an extra job: watching everyone else and orchestrating recovery.</p>
+<h3 id="5.14.2-when-a-client-hits-a-dead-node">5.14.2 When a Client Hits a Dead Node</h3>
+<p>The follow-up question is the practical one: the client has no way to talk to the leader — what happens when the node the client is connected to fails?</p>
+<p>The mechanism, step by step:</p>
+<ol>
+  <li>The leader <strong>continuously monitors state information</strong>: which nodes are active, and whether the active nodes are engaged with any client applications.</li>
+  <li>When a node fails, the leader checks that aspect and <strong>facilitates connecting the client to another node</strong> — the client is redirected because the leader has already detected the failure.</li>
+  <li>The client always sends requests directly to a node, never to the leader; the leader's job is knowing whether each node is responding.</li>
+</ol>
+<p>The professor's office analogy: in your office, you are doing client work. Suppose you are not doing client work — then somebody gets escalated, somebody intervenes. The same system runs here: the leader is the escalation layer that notices a node is not doing its client work.</p>
+<p>But there is a window: between the client's failed send and the leader's detection, <strong>events can get lost</strong>.</p>
+<div class="important-note">
+  <p><strong>Q:</strong> If the client is trying to connect to a node and the node has failed or died, will ZooKeeper interact with the client, or will ZooKeeper straight away find another node? <strong>A:</strong> It will find another node, because continuously it will monitor the state information. State information means: which nodes are currently active, and are these active nodes engaged with any client applications? All that.</p>
+</div>
+<p>So the redirection is automatic: the leader's continuous monitoring of state information is what makes it possible — the client does not have to notice anything.</p>
+<div class="important-note">
+  <p><strong>Q:</strong> Then how will the replicated node connect with the client? Is it the responsibility of the replicated node to get connected with the client? <strong>A:</strong> No, no, no. It is the responsibility of the leader to check that aspect and facilitate the connecting to the client application. But the client always sends requests directly to the node, not to the leader. The leader's job is whether the node is responding or not. In your office, you are doing client work; suppose you are not doing client work — somebody gets escalated, somebody will intervene. The same system here.</p>
+</div>
+<p>The division of labor is strict: the client talks only to nodes; the leader manages the ensemble; the replacement node does not chase the client — the leader arranges the handoff.</p>
+<div class="important-note">
+  <p><strong>Q:</strong> But the client was trying to connect to the node and the node has failed. The client has no way to communicate with the leader. In the meantime, events could get lost because the client sent them to the node. <strong>A:</strong> Yes, that can happen. That is why you see the delivery semantics. For example, the places where you have at-most-once delivery semantics — the event is okay if you lose a couple of events; in that case it is okay. Suppose it is very sensitive and you cannot afford to lose the data — then you set the configurations for these nodes: what will be the threshold response time? It will check whether the node responded within the threshold time. That is how another node will be picked up from the ensemble.</p>
+</div>
+<p>The student's worry is real: the failed node may have accepted events that never got processed. That is why the answer moves from the mechanism to the guarantees — delivery semantics.</p>
+<h3 id="5.14.3-delivery-semantics-recovery-and-client-retry">5.14.3 Delivery Semantics, Recovery, and Client Retry</h3>
+<p>The professor's answer introduces the crucial design concept: <strong>delivery semantics</strong>. Where <strong>at-most-once delivery</strong> is acceptable, losing a couple of events is fine. Where the data is sensitive, you configure the <strong>threshold response time</strong> per node; if a node does not respond within the threshold, the ensemble picks another node.</p>
+<div class="key-concept">
+  <p><strong>The three delivery semantics (standard forms).</strong> Streaming pipelines classify their data-loss tolerance into three levels:</p>
+  <ul>
+    <li><strong>At-most-once</strong> — an event is delivered at most once; losing a couple of events is acceptable. The cheapest option, with the best latency, used when the metric tolerates small gaps.</li>
+    <li><strong>At-least-once</strong> — the system retries until every event is delivered at least once, but the same event can arrive twice, so duplicates must be handled downstream.</li>
+    <li><strong>Exactly-once</strong> — each event is processed exactly once, even across failures. The most expensive option; it needs coordination between the producer, the pipeline, and the storage.</li>
+  </ul>
+  <p>The lecture's example is the at-most-once end: "the event is okay if you lose a couple of events."</p>
+</div>
+<p>Recovery: because state information is centrally maintained, there is a way to look at state information and connection loss, and therefore a way to recover the events that got lost. But the professor is honest about the difficulty: recovery is slightly difficult, because events arrive on a regular basis — there is no finite snapshot to replay from. What you do: <strong>increase the capacity of the node</strong> (so it can absorb more) and <strong>configure the threshold response time for each node</strong>.</p>
+<p>Can the client help? Yes — retry is the client's responsibility:</p>
+<div class="important-note">
+  <p><strong>Q:</strong> I do not have much control over client nodes. But if the client knows the message might get lost or it might fail to connect to the server, it can do a retry in the configuration — for example, after one minute it sends the same message if it was not able to deliver, hoping meanwhile the leader will make someone in place to receive it. That way? <strong>A:</strong> Yes, this is the responsibility of the client to actually do the retry. That way also you can. But these are all configuration setups that are available, and by looking at those configuration settings you can customize the way you want.</p>
+</div>
+<p>So the client is not helpless: it can schedule its own retry after a configured interval, buying time for the leader to bring a replacement into place.</p>
+<div class="important-note">
+  <p><strong>Q:</strong> So there is no diversion possibility for the client — the requests cannot be diverted to another node like a load balancer? <strong>A:</strong> No, there is no diversion possibility. But that can happen depending upon the threshold — how much response time you are giving to this node. It can be forwarded or it can be load balanced based on the threshold that you set as the response time.</p>
+</div>
+<p>There is no client-side load balancer in the design — the routing decision belongs to the coordination layer, expressed through the thresholds you configure.</p>
+<p>The full picture: liveness detection (thresholds) + centralized state + client-side retry + capacity configuration together determine how much data loss a pipeline tolerates. At-most-once semantics tolerate loss; sensitive data needs threshold tuning and retry — and even then, some recovery of regularly arriving events is difficult by nature.</p>
+<div class="key-takeaway">
+  <p><strong>Recap:</strong> the leader is the health coordinator — it monitors which nodes are active and engaged, alerts on failure, and brings replicated duplicates into the active phase, while clients always talk to nodes directly. When a client's node dies, the leader detects it within the configured threshold and picks another node from the ensemble, but events sent into the failed node in the meantime can be lost — which is why delivery semantics, threshold tuning, node capacity, and client-side retry are the levers that decide how much loss a pipeline tolerates.</p>
+</div>
+
+<h2 id="5.15-the-guarantees-of-zookeeper">5.15 The Guarantees of ZooKeeper</h2>
+<h3 id="5.15.1-the-five-guarantees">5.15.1 The Five Guarantees</h3>
+<p>The professor walks through the guarantees ZooKeeper provides — the contract between the coordination system and everything that relies on it:</p>
+<ul>
+  <li><strong>Sequential consistency</strong> — updates from a client will be applied in the order they are sent.</li>
+  <li><strong>Atomicity</strong> — an update either succeeds or fails; there is no partial result.</li>
+  <li><strong>Single system image</strong> — the client always sees a single system view, because the transactions are atomic; the ensemble looks like one machine, not many.</li>
+  <li><strong>Reliability</strong> — once an update is applied, it will persist from that time forward until the client overwrites it.</li>
+  <li><strong>Timeliness</strong> — the system responds within a certain time bound; this is where the thresholds you specify come in.</li>
+</ul>
+<div class="key-concept">
+  <p><strong>Where each guarantee comes from.</strong> Each of the five is a contract backed by machinery built earlier in the session:</p>
+  <ul>
+    <li>Sequential consistency is the FIFO session discipline of Section 5.8.1 plus the ordered broadcast of Section 5.11.2.</li>
+    <li>Atomicity comes from atomic broadcast: a write is one indivisible transaction delivered to every node or to none.</li>
+    <li>Single system image is atomicity plus replication: because every node applies the same transactions in the same order, any server you talk to shows the same system.</li>
+    <li>Reliability is persistence on the replicated ensemble: once applied, an update survives until it is overwritten.</li>
+    <li>Timeliness is the threshold machinery of Sections 5.8.2 and 5.14: the system promises to respond within the time bound you configure.</li>
+  </ul>
+</div>
+<h3 id="5.15.2-why-the-guarantees-matter">5.15.2 Why the Guarantees Matter</h3>
+<p>These five guarantees are the answer to "why can I trust this system to coordinate my cluster": ordered, atomic, consistent, durable, and time-bounded operations — the properties built from everything earlier in the session (FIFO sessions, the write path, replication, and the threshold configuration).</p>
+<div class="warning-box">
+  <p><strong>Precision: what the guarantees do and do not cover.</strong> The literature adds two precision points. First, strictly speaking, ZooKeeper gives linearizable (atomic) <em>writes</em>; <em>reads</em> may be stale by default — a client that needs to see its own latest write must request it explicitly (in the reference client, a <code>sync</code> call before the read). Second, the guarantees hold for the coordination data — the small, slow-changing state in Z nodes — not for the high-volume event stream. The event stream itself is handled by the data flow layer (Kafka, Section 5.16), while ZooKeeper coordinates the ensemble underneath. Keep the two roles separate and the guarantees make sense.</p>
+</div>
+<div class="key-takeaway">
+  <p><strong>Recap:</strong> ZooKeeper's contract with everything that relies on it is five guarantees — sequential consistency, atomicity, single system image, reliability, and timeliness. Each one is engineered from the session's building blocks: FIFO sessions, atomic broadcast, replication, persistence, and the threshold configuration. They are the reason a distributed cluster can trust a coordination service at all.</p>
+</div>
+
+<h2 id="5.16-the-end-to-end-pipeline-and-what-comes-next">5.16 The End-to-End Pipeline and What Comes Next</h2>
+<h3 id="5.16.1-where-zookeeper-sits-in-the-architecture">5.16.1 Where ZooKeeper Sits in the Architecture</h3>
+<p>Closing the loop back to the tier diagram from Section 5.1: the collection layer, then processing. The messages coming in are where the coordination happens — <strong>ZooKeeper coordinates with the collection layer</strong>, for example with <strong>Kafka</strong>. Kafka itself is a cluster and is a combination of two things (collection plus the data flow layer); from Kafka the data goes to <strong>Spark</strong>. That is how the whole thing works: collection → Kafka → Spark, with ZooKeeper coordinating the ensemble underneath.</p>
+<pre><code>collection layer → data flow layer → processing layer
+    (sources)         (Kafka)           (Spark)
+        └─────────── ZooKeeper coordinates ───────────┘</code></pre>
+<p>Real-world: this is the concrete orchestration you will see in the live demo. The professor plans a demonstration after Kafka streaming is covered — watching the orchestration of the entire example live is where the actual parts become visible. Kafka itself relies on ZooKeeper for its own coordination — it uses ZooKeeper to track broker liveness and manage metadata for its servers and clients — so the coordination service sits under the whole pipeline, not just at one tier.</p>
+<h3 id="5.16.2-practicalities-the-next-topic-and-the-quiz">5.16.2 Practicalities, the Next Topic, and the Quiz</h3>
+<p>A few administrative threads were settled at the end of the session. One student asked about the documentation URL for people who were not attending live and could not see the chat:</p>
+<div class="important-note">
+  <p><strong>Q:</strong> For people who are not actually attending now and would like to see the documentation — the URL is not available in the chat. Can you put it somewhere? <strong>A:</strong> What they can do: they can download the slide deck — it gets uploaded in the folder in Teams. Once they download the slides, the link is available in the slide itself. That way they can also access it.</p>
+</div>
+<p>The documentation link lives inside the slide deck, which is uploaded to the course folder — so anyone who downloads the slides gets the link with them.</p>
+<p>The next topic was announced:</p>
+<div class="important-note">
+  <p><strong>Q:</strong> What is the topic we will start next class? <strong>A:</strong> We will be starting the streaming components like the data flow layer — how you should look at it. I will directly start with Kafka streaming.</p>
+</div>
+<p>And the quiz question was settled too:</p>
+<div class="important-note">
+  <p><strong>Q:</strong> What about the quiz? Are we going to have the quiz this week? <strong>A:</strong> No, no. I showed you the schedule right after a couple of lectures. We will plan.</p>
+</div>
+<div class="key-takeaway">
+  <p><strong>Exam note:</strong> the quiz is not this week; it is planned after a couple of lectures, per the schedule already shown. The next session starts the data flow layer, beginning with Kafka streaming — so the natural preparation is to understand what the collection and data flow layers do, and where ZooKeeper fits underneath them in the full pipeline.</p>
+</div>
+
+<h2 id="exam-guidance-summary">Exam Guidance Summary</h2>
+<ul>
+  <li><strong>Node types are the explicitly examinable theory of this session.</strong> The professor: "You will have a quiz... in the quiz, I may ask a property pertaining to these nodes." Know the three types and their lifetime properties: persistent (alive even after the client disconnects), ephemeral (deleted automatically when the client disconnects; lifetime equals the client's), sequential (persistent or ephemeral, with a sequence number appended to the path; provides synchronization and parallelism). Remember the vocabulary correction: no client creates a Z node — every node is created with ZooKeeper.</li>
+  <li><strong>Not examinable:</strong> the CLI and API mechanics. The professor stated directly that these are "good to know" concepts — how the whole thing works — but are not asked from the exam perspective ("I am not going to ask any of these points in the exam perspective"). The Z node is the most important thing in the API, but class details are not required.</li>
+  <li><strong>Quiz scheduling:</strong> no quiz this week; the quiz comes after a couple of lectures per the schedule shown in the session.</li>
+  <li><strong>Know the system-level concepts</strong> even though they were not explicitly marked as examinable, because they explain how ZooKeeper works: metadata vs state, clock synchronization, split brain, leader election (modified Paxos), the ensemble, atomic broadcast, the majority availability rule, and the five guarantees (sequential consistency, atomicity, single system image, reliability, timeliness).</li>
+  <li><strong>Next lecture:</strong> the data flow layer begins with Kafka streaming.</li>
+</ul>
+
+<h2 id="key-industry-applications">Key Industry Applications</h2>
+<ul>
+  <li><strong>Apache ZooKeeper</strong> — the configuration and coordination system of this architecture, conceptualized at Yahoo! and reused across distributed platforms including Hadoop and HBase. In production it is also the coordination backbone of Kafka (metadata for servers and clients) and of stream-processing frameworks such as Storm and Samza.</li>
+  <li><strong>ZooKeeper's services in production</strong> — naming service (node names mapped to physical files, plus logical names), configuration management (rolling out new configuration coherently), and cluster management (node addition/deletion and load factor management).</li>
+  <li><strong>Split brain handling via replication</strong> — the standard production answer to split brain is replication: keep a copy of each machine, keep one partition functional by degrading the other's capabilities (the odd-count quorum trick), and recover lost state from the backup.</li>
+  <li><strong>Leader election with a modified Paxos algorithm</strong> — used by ZooKeeper to elect and re-elect leaders by ping response counts (votes and acknowledgments, in the real protocol); the same family of consensus ideas underlies many distributed coordination systems, and ZooKeeper's own implementation is the Zab protocol with epoch numbers.</li>
+  <li><strong>Delivery semantics in real pipelines</strong> — at-most-once delivery tolerates occasional event loss; sensitive workloads require per-node threshold response time configuration, increased node capacity, and client-side retry after a configured interval. The standard taxonomy adds at-least-once and exactly-once for stricter guarantees.</li>
+  <li><strong>The non-linear performance lesson</strong> — adding servers to the coordination tier raises failure probability and coordination cost; ensemble size is chosen for fault tolerance (majority availability), not for throughput. Production ensembles are sized 3 or 5 nodes.</li>
+  <li><strong>The production stack</strong> — collection layer (Kafka) → processing layer (Spark), with ZooKeeper coordinating; a live demo of the full orchestration is planned after Kafka streaming is covered.</li>
+  <li><strong>1 MB Z-node limit</strong> — a design reminder that coordination stores hold tiny events (a few bytes, like credit card transaction events), not bulk data; synchronization and fault tolerance, not storage, are the goals.</li>
+</ul>
+    </main>
+
+    <!-- ============================================================
+    EXAM REVISION NOTES
+    Generated AFTER the main lecture-faithful content is complete. Each entry
+    distills one major concept into its most examinable elements.
+    Built FROM the core — never invented independently.
+
+    Each entry is a <div class="exam-revision-entry"> containing:
+      - .revision-topic (h3) — concept name
+      - .revision-mustknow — the single most examinable takeaway
+      - .revision-formula — central formula(s) in \[ ... \] MathJax
+      - .revision-pitfall — the #1 exam mistake
+      - .revision-check — one self-check question (no options)
+      - .revision-connections — linked concepts within this lecture
+    ============================================================ -->
+    <section class="exam-revision-section">
+      <h2>Exam Revision Notes</h2>
+      <p class="revision-intro">Below is the distilled, exam-ready core.
+      Every entry comes from the full explanation above. Use this section
+      for rapid review; return to the main notes when a point needs more context.</p>
+<div class="exam-revision-entry">
+  <h3 class="revision-topic">Why Streaming Needs a Configuration and Coordination System</h3>
+  <p class="revision-mustknow"><strong>Must-know:</strong> Events are the data; metadata is data about the data, captured separately through the configuration and coordination system. Processed metadata is called state, held centrally ('data central'). Without a coordinator, processing suffers delays or is missed.</p>
+  <p class="revision-pitfall"><strong>⚠️ Top pitfall:</strong> Confusing the event stream with metadata: events travel through the pipeline as data; state information (nodes, partitions, clients, requests) lives in the coordination system, not in the events.</p>
+  <p class="revision-check"><strong>Self-check:</strong> What are the two kinds of information a streaming pipeline carries, and which one is captured through the coordination system?</p>
+  <p class="revision-connections"><strong>Connects to:</strong> nodes, clients, and the data flow layer, failure modes</p>
+</div>
+
+<div class="exam-revision-entry">
+  <h3 class="revision-topic">Nodes, Clients, and the Data Flow Layer</h3>
+  <p class="revision-mustknow"><strong>Must-know:</strong> Nodes are machines where the actual computation happens (not message queues, not ZooKeeper); clients are downstream consumers that register for consumption; the data flow layer (Kafka broker) decides which event goes to which node and which client.</p>
+  <p class="revision-formula">\[ \bar{a}_v = \frac{1}{|E_v|} \sum_{e \in E_v} a_e \]</p>
+  <p class="revision-pitfall"><strong>⚠️ Top pitfall:</strong> The mean of means is not the global mean: with a vendor's events split across nodes, combine sums and counts (sum of local sums / sum of local counts), never average per-node means.</p>
+  <p class="revision-check"><strong>Self-check:</strong> A card swipe event has a timestamp, card number, amount, and vendor. Three swipes at one vendor are 4.50, 5.00, 8.00 — what is the mean amount per swipe?</p>
+  <p class="revision-connections"><strong>Connects to:</strong> configuration and coordination basics, Z nodes and paths, leader responsibilities and failed nodes</p>
+</div>
+
+<div class="exam-revision-entry">
+  <h3 class="revision-topic">Failure Modes the Coordinator Must Handle</h3>
+  <p class="revision-mustknow"><strong>Must-know:</strong> Failure modes the coordinator must handle: (1) unreliable networks between collection tier, data flow layer, and processing layer; (2) clock synchronization — clock skew breaks on-time delivery and can produce negative durations; (3) split brain — state becomes inaccessible, handled by replication plus a quorum rule.</p>
+  <p class="revision-pitfall"><strong>⚠️ Top pitfall:</strong> Treating clocks as reliable: without synchronization, one server can observe an event as happening after the current time (negative duration), so NTP-level consistency is a prerequisite, not polish.</p>
+  <p class="revision-check"><strong>Self-check:</strong> Why does an odd-sized ensemble matter for split brain?</p>
+  <p class="revision-connections"><strong>Connects to:</strong> configuration and coordination basics, atomic broadcast and fault tolerance</p>
+</div>
+
+<div class="exam-revision-entry">
+  <h3 class="revision-topic">Leader Election: The Modified Paxos Algorithm</h3>
+  <p class="revision-mustknow"><strong>Must-know:</strong> Leader election uses a modified Paxos algorithm: each worker pings, the node with the maximum number of successful ping responses is elected leader, the rest become executors; if the leader fails, the election runs again. The ensemble (collection of server nodes, no overlapping tasks) is the unit that survives failures.</p>
+  <p class="revision-pitfall"><strong>⚠️ Top pitfall:</strong> Thinking ZooKeeper uses stock Paxos: it uses a modified version (the reference implementation is Zab, which orders state changes and uses an epoch counter); the professor's 'maximum ping responses' is the plain-language form of vote counting.</p>
+  <p class="revision-check"><strong>Self-check:</strong> What happens when the leader node of a ZooKeeper ensemble fails?</p>
+  <p class="revision-connections"><strong>Connects to:</strong> Z node types, sessions and heartbeats, atomic broadcast and fault tolerance</p>
+</div>
+
+<div class="exam-revision-entry">
+  <h3 class="revision-topic">ZooKeeper Fundamentals and Services</h3>
+  <p class="revision-mustknow"><strong>Must-know:</strong> ZooKeeper is a generic platform: designed at Yahoo!, it exposes a set of APIs for interaction and is embedded in Hadoop, HBase, and other distributed platforms. Its services: naming service (node names, physically and logically), configuration management (coherent config updates), and cluster management (add/delete nodes, load factor management).</p>
+  <p class="revision-pitfall"><strong>⚠️ Top pitfall:</strong> Treating ZooKeeper as an application-specific component: the API is low-level and generic, and higher-level patterns (recipes such as leader election, distributed queues) are built on top of it by libraries like Curator.</p>
+  <p class="revision-check"><strong>Self-check:</strong> Name the three services ZooKeeper provides.</p>
+  <p class="revision-connections"><strong>Connects to:</strong> configuration and coordination basics, Z nodes and paths</p>
+</div>
+
+<div class="exam-revision-entry">
+  <h3 class="revision-topic">Z Nodes: Names, Paths, and the 1 MB Limit</h3>
+  <p class="revision-mustknow"><strong>Must-know:</strong> Every Z node has a name and a path; the path is the concatenation of ancestor names from the root (the session's correction: /first node/f1/d1, and f2 is /first node/f2). A Z node stores up to 1 MB: events are only a few bytes, and the priorities are synchronization and fault tolerance, not storage.</p>
+  <p class="revision-pitfall"><strong>⚠️ Top pitfall:</strong> Diagrams that drop path components: addressing must apply the concatenation rule uniformly, or it breeds inconsistency (the slide showed /f1/d1 instead of /first node/f1/d1).</p>
+  <p class="revision-check"><strong>Self-check:</strong> In the tree root → first node → f1 → d1, what is d1's full path?</p>
+  <p class="revision-connections"><strong>Connects to:</strong> nodes, clients, and the data flow layer, Z node types</p>
+</div>
+
+<div class="exam-revision-entry">
+  <h3 class="revision-topic">The Three Types of Z Nodes</h3>
+  <p class="revision-mustknow"><strong>Must-know:</strong> Three Z node types by lifetime: persistent — alive even after the client that created it disconnects (node exists without an accessible client; the client does NOT create the node, it is created with ZooKeeper); ephemeral — deleted automatically when its client disconnects, lifetime equals the client's; sequential — persistent or ephemeral plus a sequence number appended to the path, providing synchronization and parallelism.</p>
+  <p class="revision-pitfall"><strong>⚠️ Top pitfall:</strong> The vocabulary correction: 'the client which created the Z node' is improper wording — no client creates a Z node; the passive 'which was created' correctly describes the node's origin. Also, ephemeral nodes cannot have children.</p>
+  <p class="revision-check"><strong>Self-check:</strong> Which node type survives its client's disconnection, and which is deleted automatically when the client disconnects?</p>
+  <p class="revision-connections"><strong>Connects to:</strong> leader election (modified Paxos), Z nodes and paths, sessions and heartbeats</p>
+</div>
+
+<div class="exam-revision-entry">
+  <h3 class="revision-topic">Sessions and Heartbeats</h3>
+  <p class="revision-mustknow"><strong>Must-know:</strong> Clients request a session, requests within it are executed FIFO, and a session ID is assigned to the client. Heartbeats are the periodic liveness signal; the threshold time you configure decides when ZooKeeper checks whether a client is alive. ZooKeeper is not a single entity — it is an ensemble, and when the leader dies the modified-Paxos election runs again.</p>
+  <p class="revision-pitfall"><strong>⚠️ Top pitfall:</strong> Assuming one ZooKeeper process is the whole system: even on a local development machine, an idle ZooKeeper eventually shows leader change behavior; the ensemble re-elects automatically.</p>
+  <p class="revision-check"><strong>Self-check:</strong> What happens to the session when heartbeats cease for longer than the threshold time?</p>
+  <p class="revision-connections"><strong>Connects to:</strong> leader election (modified Paxos), Z node types, leader responsibilities and failed nodes</p>
+</div>
+
+<div class="exam-revision-entry">
+  <h3 class="revision-topic">Watches: Change Notification</h3>
+  <p class="revision-mustknow"><strong>Must-know:</strong> A watch is the mechanism for notification about changes on ZooKeeper: the client registers what it wants to be notified about, and ZooKeeper tells it the moment something relevant changes. The analogy: like exception handling, a watch captures the context of the Z nodes — whether there is a change and the health of the nodes (slow or fast, up or down).</p>
+  <p class="revision-pitfall"><strong>⚠️ Top pitfall:</strong> A watch fires once: after the notification, the client must re-register to keep watching the path; setting a watch also reads the node's data so notifications can be coalesced.</p>
+  <p class="revision-check"><strong>Self-check:</strong> How is ZooKeeper's notification different from polling?</p>
+  <p class="revision-connections"><strong>Connects to:</strong> Z node types, read and write operations</p>
+</div>
+
+<div class="exam-revision-entry">
+  <h3 class="revision-topic">Read and Write Operations</h3>
+  <p class="revision-mustknow"><strong>Must-know:</strong> Write path: client sends a write request (path + data) to a server → the server forwards it to the leader → the leader re-issues the write to all followers → success only if the responses come back successfully. Reads go directly to a server. CLI and API mechanics are 'good to know' but not asked from the exam perspective.</p>
+  <p class="revision-pitfall"><strong>⚠️ Top pitfall:</strong> Thinking a write is done when the receiving server answers: no write is acknowledged until the leader has propagated it across the ensemble.</p>
+  <p class="revision-check"><strong>Self-check:</strong> Trace the write operation sequence from client to followers.</p>
+  <p class="revision-connections"><strong>Connects to:</strong> atomic broadcast and fault tolerance, ZooKeeper guarantees</p>
+</div>
+
+<div class="exam-revision-entry">
+  <h3 class="revision-topic">The Server Cluster, Atomic Broadcast, and Fault Tolerance</h3>
+  <p class="revision-mustknow"><strong>Must-know:</strong> ZooKeeper is a cluster of servers with a server leader; there is no direct client-to-leader edge. ZooKeeper is replicated for fault tolerance and is ordered — server nodes apply transactions in a consistent order. Writes go through atomic broadcast: broadcasting atomic data (a small, simple transaction) to every node as one indivisible unit. Availability rule: as long as the majority of the servers are available, the service is available.</p>
+  <p class="revision-pitfall"><strong>⚠️ Top pitfall:</strong> Confusing broadcast with atomic broadcast: the atomically broadcast unit must be small and simple (few-byte transactions), matching the 1 MB Z-node design.</p>
+  <p class="revision-check"><strong>Self-check:</strong> Why does the service stay available when a minority of servers dies?</p>
+  <p class="revision-connections"><strong>Connects to:</strong> leader election (modified Paxos), read and write operations, ensemble performance</p>
+</div>
+
+<div class="exam-revision-entry">
+  <h3 class="revision-topic">Performance: More Servers Does Not Mean More Throughput</h3>
+  <p class="revision-mustknow"><strong>Must-know:</strong> Adding servers does not guarantee throughput — performance is not proportional to the number of servers. Reasons: (1) more nodes raise the probability of failure; (2) more nodes make the responses and overall coordination difficult. Replication buys fault tolerance but costs coordination overhead; size an ensemble for reliability, not raw speed.</p>
+  <p class="revision-pitfall"><strong>⚠️ Top pitfall:</strong> Assuming doubling the nodes doubles throughput: the percentage of requests does not increase significantly, and the performance curve is not linear.</p>
+  <p class="revision-check"><strong>Self-check:</strong> Why does adding more servers not raise ZooKeeper throughput?</p>
+  <p class="revision-connections"><strong>Connects to:</strong> atomic broadcast and fault tolerance, features of streaming data</p>
+</div>
+
+<div class="exam-revision-entry">
+  <h3 class="revision-topic">Features of Streaming Data</h3>
+  <p class="revision-mustknow"><strong>Must-know:</strong> The four features of streaming data: high availability (service stays up despite failures — the majority rule), low latency (events processed quickly as they arrive), fault tolerance (failures survived via replication; state not lost), and horizontal scalability (scale by adding machines).</p>
+  <p class="revision-pitfall"><strong>⚠️ Top pitfall:</strong> Expecting the coordination tier to scale linearly: horizontal scalability applies to the pipeline, while the coordination tier itself has a non-linear performance ceiling (Section 5.12).</p>
+  <p class="revision-check"><strong>Self-check:</strong> Name the four features of streaming data and the mechanism behind each.</p>
+  <p class="revision-connections"><strong>Connects to:</strong> configuration and coordination basics, atomic broadcast and fault tolerance, ensemble performance</p>
+</div>
+
+<div class="exam-revision-entry">
+  <h3 class="revision-topic">Leader Responsibilities and Handling a Failed Node</h3>
+  <p class="revision-mustknow"><strong>Must-know:</strong> The leader checks the health of each server, alerts the system on failure, and brings a replicated duplicate node into the active phase — 'kind of health coordination'. The leader continuously monitors state information; when a node fails it facilitates connecting the client to another node, but events sent into the failed node in the meantime can be lost. Delivery semantics: at-most-once tolerates losing a couple of events; sensitive data needs threshold response time configuration, increased node capacity, and client-side retry.</p>
+  <p class="revision-pitfall"><strong>⚠️ Top pitfall:</strong> There is no client-side load balancer: requests are never diverted to another node by the client — forwarding or load balancing happens only based on the threshold response time configured for the node.</p>
+  <p class="revision-check"><strong>Self-check:</strong> What does the leader do when it detects that a node has failed?</p>
+  <p class="revision-connections"><strong>Connects to:</strong> leader election (modified Paxos), sessions and heartbeats, atomic broadcast and fault tolerance</p>
+</div>
+
+<div class="exam-revision-entry">
+  <h3 class="revision-topic">The Guarantees of ZooKeeper</h3>
+  <p class="revision-mustknow"><strong>Must-know:</strong> The five guarantees of ZooKeeper: sequential consistency (updates from a client applied in the order sent), atomicity (an update either succeeds or fails, no partial result), single system image (client always sees a single system view), reliability (once applied, an update persists until overwritten), timeliness (response within a certain time bound, set by the thresholds).</p>
+  <p class="revision-pitfall"><strong>⚠️ Top pitfall:</strong> Assuming all reads are linearizable: ZooKeeper gives linearizable writes, but reads may be stale by default (a client must request sync before a read to see its own latest write).</p>
+  <p class="revision-check"><strong>Self-check:</strong> Which guarantee is backed by the FIFO session discipline, and which by the threshold configuration?</p>
+  <p class="revision-connections"><strong>Connects to:</strong> sessions and heartbeats, read and write operations, atomic broadcast and fault tolerance</p>
+</div>
+
+<div class="exam-revision-entry">
+  <h3 class="revision-topic">The End-to-End Pipeline and What Comes Next</h3>
+  <p class="revision-mustknow"><strong>Must-know:</strong> End-to-end: ZooKeeper coordinates with the collection layer, for example Kafka, which is a combination of collection plus the data flow layer; from Kafka the data goes to Spark. Next class starts the data flow layer, beginning with Kafka streaming. The quiz is not this week; it is planned after a couple of lectures per the schedule shown.</p>
+  <p class="revision-pitfall"><strong>⚠️ Top pitfall:</strong> None specific; note the documentation link for the session lives inside the slide deck uploaded to the course folder.</p>
+  <p class="revision-check"><strong>Self-check:</strong> What does the next class start with, and when is the quiz?</p>
+  <p class="revision-connections"><strong>Connects to:</strong> configuration and coordination basics, nodes, clients, and the data flow layer</p>
+</div>
+
+<div class="exam-revision-entry">
+  <h3 class="revision-topic">Exam Guidance Summary</h3>
+  <p class="revision-mustknow"><strong>Must-know:</strong> The quiz may ask a property pertaining to the three types of nodes: persistent (alive even after the client disconnects), ephemeral (deleted automatically when the client disconnects; lifetime equals the client's), sequential (persistent or ephemeral with a sequence number appended). CLI and API mechanics are not asked from the exam perspective. The quiz is not this week; it is planned after a couple of lectures.</p>
+  <p class="revision-pitfall"><strong>⚠️ Top pitfall:</strong> Spending revision time on CLI and API mechanics: the professor explicitly said these are 'good to know' and not examinable.</p>
+  <p class="revision-check"><strong>Self-check:</strong> Which node type's property would the quiz most likely ask about, and what is it?</p>
+  <p class="revision-connections"><strong>Connects to:</strong> Z node types, read and write operations, end-to-end pipeline</p>
+</div>
+
+<div class="exam-revision-entry">
+  <h3 class="revision-topic">Key Industry Applications</h3>
+  <p class="revision-mustknow"><strong>Must-know:</strong> Industry placement: ZooKeeper is the configuration and coordination system behind Hadoop, HBase, Kafka (metadata for servers and clients), Storm, and Samza; split brain is handled by replication (odd-count quorum trick); leader election uses a modified Paxos (Zab, with epoch numbers); production ensembles are sized 3 or 5; the stack runs collection (Kafka) → processing (Spark) with ZooKeeper coordinating.</p>
+  <p class="revision-pitfall"><strong>⚠️ Top pitfall:</strong> Sizing an ensemble for throughput: more servers raise failure probability and coordination cost; ensemble size is chosen for fault tolerance (majority availability), not throughput.</p>
+  <p class="revision-check"><strong>Self-check:</strong> Which production systems rely on ZooKeeper, and what is the standard ensemble size?</p>
+  <p class="revision-connections"><strong>Connects to:</strong> leader election (modified Paxos), atomic broadcast and fault tolerance, ensemble performance, leader responsibilities and failed nodes</p>
+</div>
+    </section>
+  </div>
+</body>
+</html>

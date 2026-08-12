@@ -1,0 +1,871 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+  <!-- Primary SEO -->
+  <title>Stream Processing: Architecture and Processing Strategies | Stream Processing and Analytics | BitsNotes</title>
+  <meta name="description" content="Stream Processing and Analytics: batch versus stream processing on four dimensions, the rate-mismatch problem, sampling, and Lambda versus Kappa.">
+  <meta name="keywords" content="Stream Processing and Analytics, batch processing, stream processing, data scope, data size, performance, analysis, rate mismatch problem, ingestion rate, processing rate, backlog, data flow layer, message queue, sampling, Lambda architecture, Kappa architecture, real-time systems, high availability, low latency, horizontal scalability">
+  <meta name="author" content="BitsNotes">
+  <meta name="robots" content="index, follow">
+  <link rel="canonical" href="https://bitsnotes.com/view/stream-processing-and-analytics/spa-lecture-04">
+
+  <!-- Open Graph / Facebook -->
+  <meta property="og:type" content="article">
+  <meta property="og:title" content="Stream Processing: Architecture and Processing Strategies | Stream Processing and Analytics">
+  <meta property="og:description" content="Stream Processing and Analytics: batch versus stream processing on four dimensions, the rate-mismatch problem, sampling, and Lambda versus Kappa.">
+  <meta property="og:url" content="https://bitsnotes.com/view/stream-processing-and-analytics/spa-lecture-04">
+  <meta property="og:image" content="https://bitsnotes.com/og-default.png">
+  <meta property="og:image:width" content="1200">
+  <meta property="og:image:height" content="630">
+  <meta property="og:site_name" content="BitsNotes">
+
+  <!-- Twitter Card -->
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="Stream Processing: Architecture and Processing Strategies | Stream Processing and Analytics">
+  <meta name="twitter:description" content="Stream Processing and Analytics: batch versus stream processing on four dimensions, the rate-mismatch problem, sampling, and Lambda versus Kappa.">
+  <meta name="twitter:image" content="https://bitsnotes.com/og-default.png">
+  <meta name="twitter:site" content="@BitsNotes">
+
+  <!-- Stylesheet -->
+  <link rel="stylesheet" href="/lecture-notes.css">
+
+  <!-- Structured Data: JSON-LD -->
+  <script type="application/ld+json">
+{"@context":"https://schema.org","@type":"Article","headline":"Stream Processing: Architecture and Processing Strategies | Stream Processing and Analytics","description":"Stream Processing and Analytics: batch versus stream processing on four dimensions, the rate-mismatch problem, sampling, and Lambda versus Kappa.","datePublished":"2026-08-07","inLanguage":"en","author":{"@type":"Organization","name":"BitsNotes"},"publisher":{"@type":"Organization","name":"BitsNotes"},"about":["batch processing","stream processing","rate mismatch problem","data flow layer","sampling","Lambda architecture","Kappa architecture","real-time systems","high availability","low latency","horizontal scalability"]}
+</script>
+
+  <!-- Lecture Metadata (for the BitsNotes platform viewer) -->
+  <!-- IMPORTANT: This is the ONLY metadata source. No companion .json file
+       is created. The viewer reads everything from this embedded script.
+       Required fields: title, subject, gradeLevel, datePublished,
+       targetAudience, sections (array), examRevisionNotes (array).
+       Optional fields: prerequisites (array of {subject, lecture, topics}).
+       NOT included (removed): summary, keyConcepts, quiz. -->
+  <script type="application/json" id="lecture-metadata">
+{
+  "title": "Stream Processing: Architecture and Processing Strategies",
+  "subject": "Stream Processing and Analytics",
+  "gradeLevel": "postgraduate",
+  "datePublished": "2026-08-07",
+  "targetAudience": "Postgraduate students in Stream Processing and Analytics",
+  "sections": [
+    {
+      "title": "4.1 Batch vs Stream Processing: The Four Dimensions",
+      "description": "Batch and stream processing contrasted along data scope, data size, performance, and analysis, and why batch results are accurate."
+    },
+    {
+      "title": "4.2 The Rate Mismatch Problem",
+      "description": "The 10 MB/s versus 6 MB/s worked problem: backlog rate, hourly leftover, data flow layer sizing, clearing time, horizontal scaling, and replication."
+    },
+    {
+      "title": "4.3 Sampling-Based Processing",
+      "description": "Sampling 10 percent per minute: the per-minute worked example, why the leftover problem disappears, weather monitoring, continuous sampling, and starvation."
+    },
+    {
+      "title": "4.4 The Layered Streaming Architecture",
+      "description": "Collection, data flow, analysis, delivery, and storage tiers, with data locality, serialization, and the three delivery semantics."
+    },
+    {
+      "title": "4.5 Lambda and Kappa Architectures",
+      "description": "The batch arm and speed arm of Lambda, why both layers receive the data, Kappa's limitation, and evolving between the two."
+    },
+    {
+      "title": "4.6 Stream Data Properties and Real-Time Systems",
+      "description": "Loosely structured stream data, cardinality, the frequency-of-events problem, and high availability, low latency, and horizontal scalability."
+    },
+    {
+      "title": "Exam Guidance Summary",
+      "description": "The consolidated exam strategy for differentiation questions, rate problems, and architecture design questions."
+    },
+    {
+      "title": "Key Industry Applications",
+      "description": "Named tools and use cases: Storm, Spark, Kafka, MongoDB, Cassandra, JSON and Avro, WebSockets, weather monitoring, and delivery apps."
+    }
+  ],
+  "examRevisionNotes": [
+    {
+      "topic": "Batch vs Stream Processing: The Four Dimensions",
+      "mustKnow": "Differentiate batch vs stream along all four dimensions — data scope (entire accumulated dataset vs live events), data size (large volumes vs small per-moment), performance (hours vs seconds/minutes), analysis (comprehensive hindsight vs lightweight in-moment) — or no marks are given.",
+      "keyFormula": "",
+      "commonPitfall": "Answering with only one dimension, or calling stream processing 'less accurate' — it is provisional (partial view), not wrong.",
+      "quickCheck": "Why is a batch result more accurate than a stream result?",
+      "connections": [
+        "4.2",
+        "4.4",
+        "4.5"
+      ]
+    },
+    {
+      "topic": "The Rate Mismatch Problem",
+      "mustKnow": "The rate-mismatch computation as one chain: ratio Rp/Ri = 6/10 = 0.6; backlog rate Ri - Rp = 4 MB/s; hourly leftover 60x60x40 = 144,000 messages = (Ri-Rp)x3600 = 14,400 MB = 14.4 GB (decimal scale); clearing time t = C/Rp = 14,400/6 = 2,400 s = 40 minutes. Continuous streaming needs Rp > Ri, achieved by horizontal scaling (cluster of nodes), with replication for fault tolerance.",
+      "keyFormula": "\\[C = (R_i - R_p) \\times 3600 = 4 \\times 3600 = 14{,}400 \\text{ MB} = 14.4 \\text{ GB}\\]",
+      "commonPitfall": "Using the binary scale (14.06 GB) instead of the decimal scale; leaving the clearing time in seconds; assuming continuous transfer when an hourly refresh exists.",
+      "quickCheck": "If ingestion is 12 MB/s and processing is 8 MB/s with a 2-hour refresh, what capacity is needed?",
+      "connections": [
+        "4.1",
+        "4.3",
+        "4.4"
+      ]
+    },
+    {
+      "topic": "Sampling-Based Processing",
+      "mustKnow": "With 10% sampling per minute: 600 messages/minute x 10% = 60 messages, processed at 6 msg/s in (600 x 10%)/6 = 10 seconds — the processor runs 10 s per minute and no storage is needed; continuous variant keeps 10% x 10 MB/s = 1 MB/s and drops 9 MB/s, needing no refresh and no scaling. Unsampled messages are lost, not delayed. Starvation = ready processor, no messages; fix by raising the sample rate and checking analytics empirically.",
+      "keyFormula": "\\[\\frac{600 \\times 10\\%}{6} = \\frac{60}{6} = 10 \\text{ seconds}\\]",
+      "commonPitfall": "Repeating the 14.4 GB storage math under sampling; answering that unsampled messages are delayed (they are lost); confusing sample rate with sample size.",
+      "quickCheck": "With 20% sampling per minute and 1 MB messages, how many seconds per minute does the processor run?",
+      "connections": [
+        "4.2",
+        "4.4"
+      ]
+    },
+    {
+      "topic": "The Layered Streaming Architecture",
+      "mustKnow": "Five tiers left to right: collection (entry point; TCP/HTTP; JSON and Avro formats), data flow (in-memory FIFO message queue sized C = (Ri - Rp) x t), analysis (data locality — code travels to the data; Storm/Spark/Kafka), delivery (separate tier serving streaming clients via WebSockets/JS/HTML), storage (in-memory store + long-term store; no schema-driven database because of data variety; feeds ML micro-batches). Three rates — ingestion, processing, consumption — each mismatch absorbed by the layer between. At least once delivery semantics; serialization is for portability and speed, not manipulation. Disk storage inside the stream violates the definition of stream processing.",
+      "keyFormula": "\\[C = (R_i - R_p) \\times t\\]",
+      "commonPitfall": "Designing disk-based streaming, choosing relational databases for stream insights, or answering that serialization is for data manipulation.",
+      "quickCheck": "Why is the long-term store not a relational database?",
+      "connections": [
+        "4.2",
+        "4.3",
+        "4.5"
+      ]
+    },
+    {
+      "topic": "Lambda and Kappa Architectures",
+      "mustKnow": "Lambda = batch arm (batch layer accumulates and produces accurate insights; serving layer indexes batch views) + speed arm (real-time filtering/aggregation). New data goes to BOTH layers — not replication, they answer different questions. Kappa = Lambda with the batch arm removed: one pipeline, real-time enrichment only, no comprehensive insights and no batch-level model development. Choose from the use case; architectures evolve over time; Spark Streaming's configurable micro-batch size slides between stream and batch behavior.",
+      "keyFormula": "",
+      "commonPitfall": "Answering that new data goes to only one layer, calling the two arms replication, or choosing Kappa when model development needs accumulated data.",
+      "quickCheck": "Why can a machine learning model not be developed from the speed layer alone?",
+      "connections": [
+        "4.1",
+        "4.2",
+        "4.3",
+        "4.4"
+      ]
+    },
+    {
+      "topic": "Stream Data Properties and Real-Time Systems",
+      "mustKnow": "Stream data is loosely structured — no schema — and can be structured, semi-structured, or unstructured; cardinality = number of unique values a field takes (drives filtering, storage and processing choices). The hard real-time problem is computing frequency of occurrence of events in motion (counting/histogramming without pausing). The three properties of real-time systems: high availability, low latency, horizontal scalability (adding servers in parallel = cluster). Next session covers these three in detail and reopens this session's material.",
+      "keyFormula": "",
+      "commonPitfall": "Conflating frequency (how many times a value occurs) with cardinality (how many distinct values); answering scalability with vertical scaling.",
+      "quickCheck": "What does cardinality mean, and which field property does it describe?",
+      "connections": [
+        "4.2",
+        "4.4",
+        "next session"
+      ]
+    },
+    {
+      "topic": "Exam Guidance Summary",
+      "mustKnow": "The four dimensions (data scope, data size, performance, analysis) for any batch-vs-stream differentiation; the full rate-mismatch chain (ratio 0.6, hourly leftover 14,400 MB = 14.4 GB, clearing time 40 min, sampling variant 10 s/minute); architecture design answers organized around the five tiers plus Lambda (batch + speed) versus Kappa (speed only) with pros and cons.",
+      "keyFormula": "",
+      "commonPitfall": "Answering the differentiation question without the four-dimension framework, or an architecture answer without stating assumptions and the trade-offs of the chosen family.",
+      "quickCheck": "What four dimensions must a batch-vs-stream differentiation be organized along?",
+      "connections": [
+        "4.1",
+        "4.2",
+        "4.3",
+        "4.4",
+        "4.5"
+      ]
+    },
+    {
+      "topic": "Key Industry Applications",
+      "mustKnow": "Named industry tools: Storm/Spark/Kafka (one core framework per pipeline), Spark Streaming micro-batch configuration, MongoDB/Cassandra for stream insight storage (no schema-driven databases), JSON/Avro for serialization, WebSockets/JavaScript/HTML for streaming clients, TCP/HTTP for ingestion, weather monitoring for sampling, delivery apps for decoupled delivery.",
+      "keyFormula": "",
+      "commonPitfall": "Presenting frameworks as interchangeable or multiple per pipeline; proposing relational storage for message data.",
+      "quickCheck": "Why do pipelines stick to one core streaming framework?",
+      "connections": [
+        "4.3",
+        "4.4",
+        "4.5"
+      ]
+    }
+  ]
+}
+</script>
+</head>
+<body>
+  <div class="container">
+    <!-- ============================================================
+    HERO HEADER
+    ============================================================ -->
+    <header class="hero-header">
+      <span class="subject-badge">Stream Processing and Analytics</span>
+      <h1 class="lecture-title">Stream Processing: Architecture and Processing Strategies</h1>
+      <div class="meta-info">
+        <div class="meta-item"><strong>Published:</strong> 2026-08-07</div>
+        <div class="meta-item"><strong>Level:</strong> postgraduate</div>
+        <div class="meta-item"><strong>Audience:</strong> Postgraduate students in Stream Processing and Analytics</div>
+      </div>
+    </header>
+
+    <!-- ============================================================
+    PREREQUISITE KNOWLEDGE
+    Optional section listing concepts from previous lectures that this
+    lecture builds on. Populated by Agent 3 from topic_mappings/*.yaml.
+    If no prerequisites exist, this section is omitted entirely.
+    ============================================================ -->
+    <section class="prerequisite-section">
+  <h2>Prerequisite Knowledge</h2>
+  <p class="prerequisite-intro">This lecture builds on the following
+  concepts from earlier lectures. If any feel unfamiliar, review the
+  linked notes before proceeding.</p>
+
+  <div class="prerequisite-entry">
+    <h3>Previously Covered in This Subject</h3>
+    <ul>
+      <li><strong>Batch vs Stream Processing</strong> — covered in Lecture 1 (Stream Processing vs Batch Processing) and Lecture 3 (Batch versus Stream Processing: Four Differentiators)</li>
+      <li><strong>Data scope and data size as differentiators</strong> — covered in Lecture 3</li>
+      <li><strong>Queues absorbing rate mismatch</strong> — covered in Lecture 2</li>
+      <li><strong>Replication and fault tolerance</strong> — covered in Lecture 2</li>
+      <li><strong>Hard, soft, and near real-time systems</strong> — covered in Lecture 3</li>
+      <li><strong>Storm, Spark, and Kafka frameworks</strong> — covered in Lecture 3</li>
+    </ul>
+  </div>
+</section>
+
+    <!-- ============================================================
+    MAIN LECTURE-FAITHFUL CONTENT
+    Page title = one h1.lecture-title
+    Each section = one h2.section-title
+    Each subsection = one h3.subsection-title
+    Callout boxes: .key-concept (blue), .important-note (violet),
+      .example-box (green), .warning-box (red), .key-takeaway (amber)
+    Display math: auto-scrolls via mjx-container CSS; .eqbox wrapper optional
+    ============================================================ -->
+    <main>
+<!-- Lecture title rendered in the hero header above. -->
+
+<h2 id="4.1-batch-vs-stream-processing-the-four-dimensions">4.1 Batch vs Stream Processing: The Four Dimensions</h2>
+<h3 id="4.1.1-data-scope-data-size-performance-and-analysis">4.1.1 Data Scope, Data Size, Performance, and Analysis</h3>
+<p>We return to the comparison between batch processing versus stream processing that began in the previous session, and we revisit the differences between them against four dimensions. The advice is direct: write these down in your own words, because they matter from an examination standpoint.</p>
+<div class="key-takeaway">
+  <p><strong>Exam note:</strong> if a question asks you to differentiate between batch processing and stream processing and your answer does not organize the comparison along these four dimensions, marks will not be given. The four dimensions are data scope, data size, performance, and analysis — learn them as a fixed framework, not as scattered points.</p>
+</div>
+<p>The four dimensions are <strong>data scope</strong>, <strong>data size</strong>, <strong>performance</strong>, and <strong>analysis</strong>. Before reading the details, notice the shape of the argument: every dimension is really one question that batch and stream answer differently.</p>
+<div class="important-note">
+  <p><strong>Hook:</strong> When you want an answer, you can wait until all the facts arrive and then decide (batch), or you can decide immediately with only the facts you have so far (stream). Why would anyone ever choose the second option?</p>
+</div>
+<ul>
+  <li><strong>Data scope</strong> decides which portion of the data is considered for processing. In batch processing the scope is the entire accumulated dataset; in stream processing it is the live events arriving right now. The textbook term for these two situations is <em>bounded</em> versus <em>unbounded</em> data: a batch input is bounded — it has a known, finite size, so the job knows when it has read everything — while a stream is unbounded and never "complete" in any meaningful way.</li>
+  <li><strong>Data size</strong> is about the size of the data in terms of memory. Batch systems handle large accumulated volumes; streaming systems work with smaller per-moment volumes that never fully materialize. The stream processor never holds "all the data" — only the events currently in front of it.</li>
+  <li><strong>Performance</strong> is essentially the time scale of the work: seconds and minutes for streaming, hours for batch windows. One way to turn batch into something closer to streaming is to shrink the chunk: instead of processing one day's worth of data every day, split it into fixed chunks of hours or minutes (we will see this micro-batch idea again in Section 4.5.4).</li>
+  <li><strong>Analysis</strong> refers to the nature of the analysis you can run: comprehensive, hindsight-style analysis on a full batch versus lightweight, in-moment analysis on each event. Batch can answer "what happened overall?"; stream answers "what is happening right now?"</li>
+</ul>
+<p>The four dimensions, side by side:</p>
+<table>
+  <thead>
+    <tr>
+      <th>Dimension</th>
+      <th>Batch processing</th>
+      <th>Stream processing</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td>Data scope</td>
+      <td>Entire accumulated dataset (bounded input)</td>
+      <td>Live events arriving now (unbounded input)</td>
+    </tr>
+    <tr>
+      <td>Data size</td>
+      <td>Large accumulated volumes</td>
+      <td>Small per-moment volumes, never fully materialized</td>
+    </tr>
+    <tr>
+      <td>Performance</td>
+      <td>Hours (batch windows)</td>
+      <td>Seconds and minutes</td>
+    </tr>
+    <tr>
+      <td>Analysis</td>
+      <td>Comprehensive, hindsight-style</td>
+      <td>Lightweight, in-moment</td>
+    </tr>
+  </tbody>
+</table>
+<p>The pair to remember is the one in the first and last rows: the bigger the scope you look at, the more complete the analysis you can run — and the longer you have to wait. That trade-off drives everything else in this session.</p>
+<h3 id="4.1.2-why-batch-gives-accurate-results">4.1.2 Why Batch Gives Accurate Results</h3>
+<div class="important-note">
+  <p><strong>Q:</strong> What does batch processing actually do with the events? <strong>A:</strong> Batch processing gathers a large number of events together and processes them as one unit, and that is what gives us an accurate result.</p>
+</div>
+<p>The follow-up point matters: know not just what batch does, but why. Because the entire dataset is present at processing time, every event contributes to the outcome, so the result reflects the complete picture. A streaming system, by contrast, decides from a partial view, so its conclusions are provisional.</p>
+<p>An everyday picture helps. Think of grading an exam. A teacher who waits until every answer sheet is submitted can report the class average with full confidence — every sheet contributes. A teacher who announces an average after the first five sheets have come in is giving a provisional number that will move as the rest arrive. Batch is the first teacher; stream is the second. The analogy breaks in one direction: a stream system is not graded "wrong" for being provisional — timeliness is its whole reason for existing, and in many use cases (an alert, a live dashboard) an early approximate answer is worth more than a late exact one.</p>
+<div class="important-note">
+  <p><strong>Why accuracy follows from scope.</strong> The accuracy of batch comes from <em>coverage</em>, not from any clever math: when the input is the complete dataset, nothing is left out of the calculation. Streams decide from the events that have arrived so far, so any number they report for an in-flight quantity is a snapshot, not a final figure. This is why real systems that need both use a hybrid: the stream answers now, and the batch corrects the answer later — the exact idea behind the Lambda architecture in Section 4.5.</p>
+</div>
+<div class="warning-box">
+  <p><strong>Pitfalls</strong></p>
+  <ol>
+    <li>Answering "what is the difference between batch and stream?" with one dimension only — timeliness, or scope, or size — loses the exam marks. The framework requires all four dimensions to be stated and contrasted.</li>
+    <li>Saying stream processing is "less accurate." It is not less accurate at what it claims — it reports the best answer from the data seen so far. The correct framing is <em>provisional</em> versus <em>complete</em>, not good versus bad.</li>
+    <li>Assuming "data size" means the same as "data scope." Scope is <em>which</em> data is considered; size is <em>how much</em> memory that data needs. Batch can have a large scope and a large size; stream has a large scope over time but a small size at any moment.</li>
+  </ol>
+</div>
+<div class="key-takeaway">
+  <p><strong>Recap + bridge.</strong> Batch processes a complete, bounded dataset and so produces an accurate, hindsight-style result; stream processes unbounded live events and so produces a fast, provisional result. That accuracy-versus-timeliness trade-off is the theme that runs through the whole session, and it comes back when we look at architectures in Section 4.5. Next, we turn the abstract contrast into arithmetic: what actually happens when the incoming data arrives faster than the system can process it?</p>
+</div>
+<p><strong>Real-world connection.</strong> The contrast is visible in everyday systems. Weather forecasting runs batch jobs over accumulated observations to build and refresh prediction models, while the live temperature you see on a weather site is stream-processed from current readings. Banks run batch reconciliations overnight for exact end-of-day totals, while fraud alerts on a credit-card swipe are stream decisions made from the transactions seen so far. In both cases the same raw data feeds both styles — which is exactly why the architecture in Section 4.4 places both kinds of processing in one pipeline.</p>
+
+<h2 id="4.2-the-rate-mismatch-problem">4.2 The Rate Mismatch Problem</h2>
+<h3 id="4.2.1-problem-setup-10-mb-s-ingestion-6-mb-s-processing">4.2.1 Problem Setup: 10 MB/s Ingestion, 6 MB/s Processing</h3>
+<div class="important-note">
+  <p><strong>Hook.</strong> Imagine a mail-sorting office where letters arrive faster than the sorting staff can sort them. What happens to the letters nobody got to? They pile up — unless someone decides where the pile goes. This lecture's first worked problem is exactly that office, with numbers.</p>
+</div>
+<p>The lecture moves from comparison to calculation with a worked problem. Consider a processing system where the data ingestion rate is 10 MB per second while the processing speed is 6 MB per second. You must recommend a processing strategy, knowing that the data analysis is performed hourly. Take a minute and try the problem before reading the walkthrough — problem solving is the whole point of this exercise, because the same style of problem reappears later.</p>
+<p>Visualize the system before doing arithmetic. Data injection happens from somewhere unknown — this is the <strong>injection layer</strong>, where data is collected. Somewhere else, processing happens — this is the <strong>processing layer</strong>. The two operate at different speeds. The ingestion rate \(R_i = 10\) MB/s is the data speed; the processing rate \(R_p = 6\) MB/s is the processing speed.</p>
+<p>The first calculation is the ratio of the two:</p>
+<p>\[ \frac{R_p}{R_i} = \frac{6}{10} = 0.6 \]</p>
+<p>So the processing speed is 60 percent of the ingestion rate. Put in messages: if 100 messages arrive in one second, the system can cater to only 60 of them; 40 are left out. In real life the processing layer is slower than the ingestion layer, so this leftover is not a special case — it is the bounded, expected situation. The question is what to do with the 40 that you cannot handle.</p>
+<div class="important-note">
+  <p><strong>Q:</strong> Can the spare forty percent be used for the data transfer instead of being lost? <strong>A:</strong> No — the leftover messages are kept in the data flow layer so that nothing is lost. The layer holds the 40 percent of messages until the processor can take them, which is exactly what we size in the worked example below.</p>
+</div>
+<div class="key-concept">
+  <p><strong>The two rates, defined.</strong> \(R_i\) (ingestion rate) is how fast data enters the system, measured in MB per second. \(R_p\) (processing rate) is how fast the processor can consume data, also in MB per second. The mismatch \(R_i - R_p\) is the <em>backlog rate</em> — the speed at which unprocessed data accumulates. When \(R_i > R_p\), the gap between the two numbers is the whole problem, and every component we add in the next sections exists to absorb that gap.</p>
+</div>
+<p><strong>Visual intuition.</strong> Picture a bathtub. The tap pours in at 10 L/s (the ingestion rate), the drain lets out 6 L/s (the processing rate). The water level rises at the difference, 4 L/s, no matter how long you wait. The bathtub is the future data flow layer: its size decides how long the system can survive the imbalance before the water overflows. The professor's version of the same picture is the hose that swells when its end is plugged — the pipe fills and eventually bursts unless something gives. Both images say the same thing: an unabsorbed rate gap always shows up somewhere.</p>
+<h3 id="4.2.2-worked-example-hourly-backlog-and-sizing">4.2.2 Worked Example: Hourly Backlog and Sizing</h3>
+<p>If every incoming message is processed and sent downstream as it arrives, and the processing speed is slower than the arrival speed, some messages will be lost. You must prevent that loss. The solution is an auxiliary storage where the leftover messages are parked until the processor can take them. This is the seed of the <strong>data flow layer</strong>, which we formalize in Section 4.4.</p>
+<div class="example-box">
+  <p><strong>Worked example — the hourly backlog, in messages and in megabytes.</strong></p>
+  <p><em>Step 1 — compute the leftover per second.</em> Of the 10 MB arriving each second, the processor handles 6 MB, so 4 MB are left out every second: \[ R_i - R_p = 10 - 6 = 4 \text{ MB/s} \]</p>
+  <p><em>Step 2 — the leftover per hour, in messages.</em> With 4 MB/s left out, a per-second view is awkward; scale up. Per minute the leftover is \(60 \times 4 = 240\) MB, and per hour (3,600 seconds) it is: \[ 60 \times 60 \times 4 = 3{,}600 \times 4 = 14{,}400 \text{ MB} \] Working with messages instead: 40 messages are left out every second, so per minute that is \(60 \times 40\), and per hour: \[ 60 \times 60 \times 40 = 144{,}000 \text{ messages} \]</p>
+  <p><em>Step 3 — the storage capacity \(C\).</em> The refresh period is one hour, which is 3,600 seconds, so the required capacity is the leftover rate times the window: \[ C = (R_i - R_p) \times 3600 = 4 \times 3600 = 14{,}400 \text{ MB} \]</p>
+  <p><em>Step 4 — convert to gigabytes.</em> The scale used here, established at the very beginning of the course, is decimal: 1 MB equals \(10^3\) KB and 1 GB equals \(10^3\) MB. So: \[ 14{,}400 \text{ MB} \div 10^3 = 14.4 \text{ GB} \]</p>
+  <p><strong>Final answer: the data flow layer must hold 14,400 MB, or 14.4 GB, of leftover messages per hour.</strong></p>
+  <p><em>Sense-check.</em> The leftover rate is 4 MB/s and an hour is 3,600 s, so 14,400 MB is \(4 \times 3{,}600\) — the number comes straight from the two given facts, which is exactly what an examiner expects to see.</p>
+</div>
+<div class="example-box">
+  <p><strong>Worked example — with a message size given.</strong> If the average message size is also given, say 10 KB, then you multiply the message count by the size to get the memory requirement for the intermediate layer: \[ 144{,}000 \text{ messages} \times 10 \text{ KB} = 1{,}440{,}000 \text{ KB} \] Convert with the decimal scale: \[ 1{,}440{,}000 \text{ KB} = 1{,}440 \text{ MB} = 1.44 \text{ GB} \] <strong>Final answer: 1.44 GB if messages average 10 KB.</strong> <em>Sense-check.</em> 144,000 messages at 10 KB each must be about 1.44 million KB, and dividing by \(10^6\) gives 1.44 GB — and this matches the byte-level route: 144,000 messages × 10 KB = 1.44 GB, while 60 × 144,000 messages would be the 1 MB case.</p>
+</div>
+<p>The answer structure is the same in both versions: capacity of the data flow layer = leftover volume over one refresh window. Depending on the scenario you might not need to store every message — sometimes losing some messages is acceptable — and we discuss exactly that in Section 4.3. But when the requirement says full retention, the answer is 14.4 GB.</p>
+<div class="warning-box">
+  <p><strong>Assumptions & scope.</strong> The whole calculation rests on four assumptions. (1) <em>The rates are constant</em> — if ingestion or processing speed varies wildly inside the hour, the backlog can exceed \(4 \times 3600\) MB at its peak even if the averages look fine. (2) <em>Full retention is required</em> — the answer changes completely under sampling (Section 4.3) or when loss is acceptable. (3) <em>The decimal scale applies</em> — 1 GB = \(10^3\) MB, not \(2^{10}\) MB; a binary conversion would give 14.06 GB and would not match the course convention. (4) <em>The refresh window is the survival time</em> — the layer only needs to cover the hour of imbalance because the source then stops. If the refresh window changes to 30 minutes, the capacity halves; if it becomes 6 hours, it quadruples to 86.4 GB.</p>
+</div>
+<h3 id="4.2.3-the-data-flow-layer">4.2.3 The Data Flow Layer</h3>
+<p>The data flow layer is introduced to handle the mismatch between the processing speed and the data ingestion speed. You cannot afford to keep a situation where messages silently vanish. The layer sits between injection and processing, accepting messages as they come and feeding them to the processor at the processor's pace. It acts as the buffer that absorbs the difference between the two rates.</p>
+<div class="important-note">
+  <p><strong>Q:</strong> Whether the transfer between ingestion and processing is continuous or intermittent — I assumed a continuous flow of transfer. <strong>A:</strong> You are the data architect; you decide. Because the source refreshes after one hour, the right proposal is an intermediate layer with enough capacity to hold one hour of leftover messages. After one hour the source stops, the layer clears, and the cycle restarts.</p>
+</div>
+<p>This exchange is worth sitting with. The first instinct is to assume a continuous transfer, but nothing in the problem forces that. The architect's job is to see the refresh cadence and exploit it: the system only needs to withstand one hour of imbalance, because the hourly refresh acts as a stopper. During that hour, injection runs continuously and processing runs continuously at 6 MB per second. When the source stops, the processor keeps running until the backlog is gone, and only then does injection restart.</p>
+<div class="important-note">
+  <p><strong>Why the layer exists — the engineering reason.</strong> The professor's argument is that the layer is <em>derived</em>, not invented: the numbers force it into existence. A 10 MB/s tap with a 6 MB/s processor loses 4 MB every second, which is 14.4 GB every hour — unaffordable loss. A queue between the two absorbs that mismatch, and this is exactly why real systems put message brokers such as Kafka between producers and consumers: the queue "provides a place for events to buffer when downstream workers hit their processing limits," so a burst of traffic does not overwhelm the processor or drop messages.</p>
+</div>
+<p>The deeper lesson is architectural method: a single numerical problem motivates every component we add. It is not that somebody tells you the components exist; you derive why each one must exist from the numbers. Common sense is the most important tool here — architectures get proposed from common sense, not from reading books.</p>
+<h3 id="4.2.4-worked-example-clearing-time">4.2.4 Worked Example: Clearing Time</h3>
+<p>The next number to compute is how long the system must sit without new input. The hourly backlog is 14,400 MB, and processing runs at 6 MB per second, so the clearing time \(t\) is:</p>
+<p>\[ t = \frac{C}{R_p} = \frac{14{,}400}{6} = 2{,}400 \text{ seconds} \]</p>
+<p>Divide by 60 to get minutes:</p>
+<p>\[ 2{,}400 \div 60 = 40 \text{ minutes} \]</p>
+<div class="example-box">
+  <p><strong>Worked example — the full cycle.</strong> Here is the complete strategy as a timeline.</p>
+  <table>
+    <thead>
+      <tr>
+        <th>Phase</th>
+        <th>Duration</th>
+        <th>What happens</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>Injection</td>
+        <td>1 hour (3,600 s)</td>
+        <td>10 MB/s flows in; processor consumes 6 MB/s; 14,400 MB accumulate</td>
+      </tr>
+      <tr>
+        <td>Clearing</td>
+        <td>40 minutes (2,400 s)</td>
+        <td>Injection stopped; processor clears the 14,400 MB backlog at 6 MB/s</td>
+      </tr>
+      <tr>
+        <td>Idle</td>
+        <td>20 minutes (1,200 s)</td>
+        <td>Backlog gone; the cycle waits until the next refresh begins</td>
+      </tr>
+    </tbody>
+  </table>
+  <p>The last row deserves a moment. The refresh cycle is 2 hours (1 hour injection + 1 hour break), but clearing takes only 40 minutes — the extra 20 minutes is slack. The processor is <em>not</em> obliged to use it: the cycle restarts when the next batch of data arrives.</p>
+  <p><strong>Final answer: the system must clear for 40 minutes after each hour of injection.</strong> <em>Sense-check.</em> 14,400 MB at 6 MB/s is 2,400 s, and 2,400 s at 60 s/min is 40 min — and 40 min is exactly two-thirds of an hour, which matches the ratio \(\frac{R_i - R_p}{R_p} \times 1\) hour \(= \frac{4}{6} = 0.667\) hours.</p>
+</div>
+<div class="important-note">
+  <p><strong>Q:</strong> Stop for how long? Until the leftover processing is done, how long must we wait? <strong>A:</strong> The hourly backlog is 14,400 MB and we process 6 MB per second, so clearing takes 2,400 seconds, which is 40 minutes. After one hour of injection you stop, wait 40 minutes, and start the next cycle.</p>
+</div>
+<p>The clearing time is part of the strategy, not an afterthought — if you cannot afford 40 minutes of idle injection, hourly refresh is the wrong design, and you need the continuous alternative below.</p>
+<h3 id="4.2.5-continuous-streaming-horizontal-scaling-and-clusters">4.2.5 Continuous Streaming: Horizontal Scaling and Clusters</h3>
+<p>If the use case demands that injection never stops, there is a concept called <strong>continuous streaming</strong>: you should not stop. The only way to run continuously is to make the processing layer fast enough — it should be much, much faster than the ingestion rate. Suppose the processing speed is double the ingestion speed. Then nothing is left over, and the processor is idle for some time; for safety you can still keep a small data flow layer in between so that small imbalances do not stall anything.</p>
+<p>How do you double the processing speed? You can have two processors. This is <strong>horizontal scaling</strong>, a concept from the first session: add more machines instead of making one machine faster. For continuous streaming you propose a cluster with two nodes, where one node takes half the load and the other node takes half the load, and a central mechanism does the merging of the results. This is where the cluster enters stream processing.</p>
+<div class="important-note">
+  <p><strong>Q:</strong> Can we make the processing speed double the ingestion speed by using two processors? <strong>A:</strong> Yes. This is horizontal scaling. We propose a cluster with two nodes; each node takes half the load, and a central mechanism does the merging and handles the orchestration.</p>
+</div>
+<div class="key-concept">
+  <p><strong>The arithmetic of doubling.</strong> Two nodes at 6 MB/s each give a combined processing rate of \(2 \times 6 = 12\) MB/s against an ingestion rate of 10 MB/s. Now \(R_p > R_i\), the backlog rate \(R_i - R_p\) is negative, and nothing accumulates — the processor even has 2 MB/s of spare capacity to absorb small surges. The general rule: with \(n\) nodes each capable of \(R_p\) MB/s, the system can carry ingestion up to \(n \times R_p\) MB/s, and continuous streaming is possible as soon as \(n \times R_p \geq R_i\).</p>
+</div>
+<p>There is a cost to the cluster: dividing the data among processors adds latency, and merging results adds latency too. Someone has to coordinate all of this work, and that coordination is called <strong>orchestration</strong>. We look at orchestration in detail later; for now, the point is that a multi-layer processing system needs it, and the reason for every layer traces back to a rate.</p>
+<div class="warning-box">
+  <p><strong>Pitfalls</strong></p>
+  <ol>
+    <li><em>Forgetting the scale convention.</em> The course uses the decimal scale (1 GB = \(10^3\) MB). Using the binary scale (\(2^{10}\)) produces 14.06 GB — a wrong answer on an exam where the decimal convention was stated.</li>
+    <li><em>Mixing units in the ratio.</em> The ratio \(\frac{R_p}{R_i} = 0.6\) is unitless, but the leftover must be tracked in one unit — messages or MB — and converted consistently; 40 messages per second and 4 MB per second are the same physical fact.</li>
+    <li><em>Forgetting to convert the clearing time.</em> \(t = 14{,}400 / 6 = 2{,}400\) is in seconds. The 40-minute answer requires the division by 60; leaving the answer in seconds is an incomplete solution.</li>
+    <li><em>Assuming a continuous transfer when a refresh exists.</em> Nothing in the problem forces continuous flow. The refresh cadence is a design lever: an hourly refresh lets the architect park one hour of imbalance and clear it later, instead of over-provisioning.</li>
+    <li><em>Thinking horizontal scaling is free.</em> Doubling the nodes halves the work per node but adds split and merge overhead, plus the orchestration cost of coordinating the nodes — the professor is explicit that these costs are real.</li>
+  </ol>
+</div>
+<h3 id="4.2.6-replication-and-fault-tolerance">4.2.6 Replication and Fault Tolerance</h3>
+<div class="important-note">
+  <p><strong>Q:</strong> Is it always good to keep a copy of the data, so that a stalled processor cannot lose messages? <strong>A:</strong> Yes. We maintain a copy of the data, and that copy is called replication. It gives the cluster fault tolerance: if one node fails, the other node preserves the state of everything done so far.</p>
+</div>
+<p>Once you have multiple nodes, you want the system to survive a node failure. You maintain a copy of the data — that is <strong>replication</strong>. If one node fails, the other node preserves the state information of whatever has been done so far, so no work is lost. This is <strong>fault tolerance</strong>: the cluster keeps functioning even when a member fails, because the state lives in more than one place.</p>
+<div class="important-note">
+  <p><strong>Replication in real systems.</strong> Replication is the standard answer to node failure: instead of writing a piece of data to one machine, the system writes it to several machines, "in the hopes that at least one of them survives." In distributed brokers such as Kafka, each partition of data has a leader and follower replicas on different servers, and a message is only made available to consumers after the replicas have acknowledged it. The professor's version — "if one node fails, the other node preserves the state of everything done so far" — is the same idea without the machinery: availability of the data comes from the data existing in more than one place.</p>
+</div>
+<div class="key-takeaway">
+  <p><strong>Recap + bridge.</strong> The rate-mismatch problem is one connected computation: ratio \(R_p/R_i = 0.6\), backlog rate \(R_i - R_p = 4\) MB/s, hourly leftover 14,400 MB (14.4 GB), clearing time 40 minutes — and three strategies for the mismatch: an hourly buffer that is sized, cleared, and refilled; a faster (horizontally scaled) processing layer for continuous streaming; and replication for fault tolerance. Every architectural component so far was derived from a number. Next, we change one number — the sampling fraction — and watch the entire 14.4 GB answer collapse.</p>
+</div>
+<div class="key-takeaway">
+  <p><strong>Exam note:</strong> the professor's warning was explicit — "I will use some problems like this." If you know how to solve the rate-mismatch problem, you will answer; if you do not, you will not be able to. Know the ratio, the hourly leftover, the capacity, and the clearing time as one connected computation — the problem returns in the exam with different numbers and the same structure.</p>
+</div>
+<p><strong>Real-world connection.</strong> The mismatch this section quantifies is the daily reality of message brokers. LinkedIn's Kafka, built to carry the site's event traffic, uses a log-structured buffer so that producers can run at full speed even when consumers lag, with retention policies (for example, keeping 12 hours or the last 50 GB of events) acting as the "refresh window" sizing decision from this section. In flight-radar and ride-hailing systems, bursty ingestion with a fixed-capacity processor is exactly the 10-versus-6 situation: the queue size is computed from the peak mismatch, and the cluster is sized from the sustained rate — the same two numbers we just computed.</p>
+
+<h2 id="4.3-sampling-based-processing">4.3 Sampling-Based Processing</h2>
+<h3 id="4.3.1-problem-setup-sampling-10-percent-per-minute">4.3.1 Problem Setup: Sampling 10 Percent Per Minute</h3>
+<div class="important-note">
+  <p><strong>Hook.</strong> The previous problem ended with a 14.4 GB storage bill — the price of keeping every message. What if you are allowed to throw most of the messages away before they ever reach the processor? This section changes one word in the problem ("sample"), and the entire answer collapses.</p>
+</div>
+<p>The next problem modifies the first one. In a streaming system, messages are to be processed as samples. The data ingestion rate \(R_i\) is 10 MB per second and the processing rate \(R_p\) is 6 MB per second, but now the sampling of the messages is done at the rate of 10 percent per minute: of all the messages produced in one minute, only 10 percent are taken for processing. Discuss the processing strategy, assuming a refresh rate of one hour.</p>
+<p>The single modification from the previous problem: you cut down the 10 percent fraction into the compute. Everything else stays the same. Before reading on, try the calculation yourself — the professor explicitly said this material is important from an examination standpoint, because problems in this style will be used again.</p>
+<div class="key-concept">
+  <p><strong>Sampling, defined.</strong> To <em>sample</em> a stream means to select a fixed fraction of the incoming messages — here 10 percent of each minute's traffic — and feed only that fraction to the processor. The rest of the data is <em>never stored and never processed</em>; it simply does not enter the computation. Sampling is a deliberate engineering decision: you trade completeness of the answer for a dramatic reduction in the work the system must do.</p>
+</div>
+<h3 id="4.3.2-worked-example-per-minute-processing">4.3.2 Worked Example: Per-Minute Processing</h3>
+<p>One student's approach: schedule the processing every minute, and let the sampling happen every minute too. In one minute, 600 MB accumulates, and the processor takes 10 percent of it — 60 MB — which takes a few seconds to process. That is the right shape of answer, but the professor pushes it to the message level, and there the numbers come out differently.</p>
+<div class="important-note">
+  <p><strong>Q:</strong> I will schedule the processing every minute and sample ten percent of the messages accumulated in that minute. That is 60 MB, processed in 6 seconds. <strong>A:</strong> Good direction, but let us count messages. If one message is 1 MB, we get 10 messages per second, so 600 messages per minute. Ten percent is 60 messages, and the processor handles 6 messages per second, so it needs 10 seconds. The processor runs every minute for just 10 seconds.</p>
+</div>
+<p>The message size is not given, so we assume a size — say one message is 1 MB — to make the fraction concrete. Then 10 messages arrive per second and 600 per minute.</p>
+<div class="example-box">
+  <p><strong>Worked example — the per-minute sample, step by step.</strong></p>
+  <p><em>Step 1 — messages per minute.</em> At 10 MB/s with 1 MB per message, the system receives 10 messages per second, so in one minute: \[ 10 \times 60 = 600 \text{ messages} \]</p>
+  <p><em>Step 2 — the sample size.</em> Ten percent of those 600 messages are taken for processing: \[ 600 \times 10\% = 60 \text{ messages} \]</p>
+  <p><em>Step 3 — processing time for the sample.</em> The processor handles 6 messages per second, so the sample takes: \[ \frac{600 \times 10\%}{6} = \frac{60}{6} = 10 \text{ seconds} \]</p>
+  <p><strong>Final answer: the processor runs for 10 seconds in every minute.</strong> <em>Sense-check.</em> The 60-sample needs 60 ÷ 6 = 10 seconds of processor time, leaving 50 seconds of every minute idle — and in the MB view the same answer appears: 60 MB of sample at 6 MB/s is again 10 seconds. The student's 6 seconds came from treating the MB rate as if 60 MB needed 6 MB/s × 10 s; the message-level count is the professor's correction.</p>
+</div>
+<p>The processor runs every minute, and its runtime is only 10 seconds. Either calculation — 60 MB of 600 MB at 6 MB/s, or 60 messages of 600 at 6 messages/s — leaves the processor overwhelmingly ahead of demand.</p>
+<h3 id="4.3.3-the-leftover-problem-disappears">4.3.3 The Leftover Problem Disappears</h3>
+<div class="important-note">
+  <p><strong>Q:</strong> Earlier we needed 14 GB of storage for the 40 percent leftover. With sampling, is extra storage still needed while the processor runs? <strong>A:</strong> No. With 10 percent sampling there is no leftover problem at all. We can process 60 messages but only need 10, so the processor is well ahead of what is expected, and no more storage for leftovers is needed.</p>
+</div>
+<p>This is the key correction. The earlier calculation needed 14.4 GB of auxiliary storage because 40 percent of the incoming volume had to be retained. Sampling changes the arithmetic entirely: we only take 10 percent of the messages, so we never build a backlog at all. Common sense confirms it — we can process 60 percent of the traffic but only need 10 percent, so we are far ahead of the requirement.</p>
+<div class="important-note">
+  <p><strong>Q:</strong> What happens to the other injected data? Will it be delayed and processed later? <strong>A:</strong> No. Because we only sample, we ignore the rest. Those messages are lost, and that is acceptable in this kind of use case.</p>
+</div>
+<p>The other 90 percent of the data is neither delayed nor stored. It is ignored, and the professor's conclusion is blunt: those messages are lost. This is a legitimate engineering decision — it only works where loss is affordable, which is exactly the situation the next scenario describes.</p>
+<h3 id="4.3.4-weather-monitoring-a-sampling-use-case">4.3.4 Weather Monitoring: A Sampling Use Case</h3>
+<div class="important-note">
+  <p><strong>The professor's use case.</strong> Where does dropping messages make sense? Consider weather monitoring — a meteorological survey running as a stream system. Atmospheric parameters do not change moment to moment; the changes happen gradually, on the scale of minutes or even hours. So you do not want to load your processing engine with every single reading. Instead of processing all messages arriving at 10 MB per second, you sample: for every second, you take just 0.1 percent and process those. The arithmetic is tiny — \(0.1\% \times 10\) MB/s \(= 0.01\) MB/s, or 10 KB/s — and it captures the behavior because the physics underneath changes slowly.</p>
+</div>
+<p>This is why sampling is defensible in practice: data dynamics in the real world do not change that quickly. Two general principles follow:</p>
+<ul>
+  <li>Depending on the use case, you can afford to lose some portion of the messages.</li>
+  <li>It is not mandatory that every message generated and injected into the injection layer be processed.</li>
+</ul>
+<p>The answer to "how much can we afford to lose?" is always "it depends on the use case." When no specific use case is given, you state your assumptions and make inferences like the ones just made.</p>
+<div class="warning-box">
+  <p><strong>Assumptions & scope.</strong> Sampling is only legitimate where three conditions hold. (1) <em>Slow-changing data</em> — the quantity being measured must not move meaningfully between samples; weather readings every second would be wasted, but a stock tick sampled at 10 percent per minute would miss trades. (2) <em>Loss is affordable</em> — some use cases cannot tolerate any loss (fraud detection, billing), and there sampling is wrong by definition. (3) <em>The sample is representative</em> — dropping messages at random or by arrival order is fine when the stream is uniform; if the dropped messages are systematically different (for example, dropping every burst of heavy traffic), the sample is biased and the analysis will lie. When a textbook problem gives no use case, the expected move is exactly the one made here: state the assumption (for example, "messages are 1 MB each") and compute with it.</p>
+</div>
+<h3 id="4.3.5-continuous-sampling-without-a-refresh">4.3.5 Continuous Sampling Without a Refresh</h3>
+<div class="important-note">
+  <p><strong>Q:</strong> Alternative: instead of a refresh, the processing component runs continuously. From 10 MB per second we take 10 percent, which is 1 MB, process it, and discard the other 9 MB. <strong>A:</strong> Exactly right. The processor is well equipped for 1 MB per second, the 9 MB are dropped, and you need no refresh mechanism and no scaling.</p>
+</div>
+<p>One more student proposal rounds out the design space: keep the processor continuous. That means taking 1 MB per second and discarding 9 MB per second, continuously:</p>
+<p>\[ 10\% \times 10 \text{ MB/s} = 1 \text{ MB/s} \]</p>
+<div class="key-concept">
+  <p><strong>Why no refresh and no scaling are needed.</strong> The refresh mechanism existed to stop injection and let the backlog clear. Here there is no backlog: the sampled load of 1 MB/s never comes close to the processing capacity of 6 MB/s, so the processor keeps up forever. No refresh, no buffer, no cluster — the 14.4 GB layer from Section 4.2 and the two-node cluster from Section 4.2.5 are both unnecessary because the workload itself shrank. The processor, capable of 6 MB per second, is far more than enough for 1 MB per second, and it idles most of the time.</p>
+</div>
+<h3 id="4.3.6-starvation-and-empirical-tuning">4.3.6 Starvation and Empirical Tuning</h3>
+<div class="important-note">
+  <p><strong>Q:</strong> What happens when the process is ready but messages are not coming in? <strong>A:</strong> That is starvation. The process is ready, but no messages arrive. You go back and increase the sample size from 10 percent to 20 percent and check whether the analytics change. These studies are empirical: you inspect and adopt.</p>
+</div>
+<p>There is a name for the idle-processor situation: <strong>starvation</strong> — the process is ready, but messages are not coming. The fix is to go back and increase the sample size, from 10 percent to 20 percent, and see whether the analytics output changes. These studies are empirical in nature: empirical means you inspect and adopt. When you start you do not know the right mix, so you run experiments and fine-tune the strategy until it behaves. Sampling rates are not handed down; they are tuned.</p>
+<div class="warning-box">
+  <p><strong>Pitfalls</strong></p>
+  <ol>
+    <li><em>Keeping the old storage math.</em> The 14.4 GB answer assumed full retention. With sampling there is no leftover, so repeating the storage calculation is a sign the sampling fraction was never cut into the compute — the professor's exact phrase for the required move.</li>
+    <li><em>Saying the unsampled data is "delayed."</em> It is not delayed and it is not stored — it is lost by design. Answering the exam with "processed later" reverses the whole point of sampling.</li>
+    <li><em>Confusing sample size with sample rate.</em> Ten percent per minute and 0.1 percent per second are different sampling plans with different loads (60 messages/minute versus 10 KB/s); the fraction must always be stated with its time unit.</li>
+    <li><em>Treating starvation as a fault.</em> A starving processor is not broken — it is over-provisioned for the sampled load. The correct response is tuning the sampling rate up (10% to 20%) and watching the analytics, not adding machines.</li>
+    <li><em>Forgetting that loss must be affordable.</em> Sampling is a valid answer only when the use case tolerates loss; an exam scenario that demands zero data loss rules sampling out entirely.</li>
+  </ol>
+</div>
+<div class="key-takeaway">
+  <p><strong>Recap + bridge.</strong> Sampling solves the rate mismatch by shrinking the work instead of growing the storage: 10 percent sampling turns a 14.4 GB storage problem into a 10-seconds-of-work-per-minute problem, with the processor idle — starving — most of the time and the sampling rate tuned empirically. The rate logic now drives everything: Sections 4.2 and 4.3 gave two strategies for the same mismatch, and both will return when we choose an architecture in Section 4.5. Next we walk the full five-layer architecture, where the data flow tier from Section 4.2 gets its formal place in the pipeline.</p>
+</div>
+<p><strong>Real-world connection.</strong> Sampling is standard practice wherever the full stream is unaffordable. Meteorological observation networks sample sensor feeds at intervals precisely because atmospheric change is slow; website analytics pipelines drop or down-sample raw click logs before heavy analysis; and distributed counters use sample-based estimation when exact counts are too expensive to compute in motion. The formal machinery behind this — reservoir sampling, which keeps a fixed-size random sample so that every element of the stream has the same chance of being included — is the textbook version of the professor's 10 percent, and it is what the "statistical approximation" chapters of the reference books build on. Where exactness is required instead, the opposite end of the design space — exactly-once delivery — is the topic of Section 4.4.7.</p>
+
+<h2 id="4.4-the-layered-streaming-architecture">4.4 The Layered Streaming Architecture</h2>
+<p>The two problems above established why a data flow tier exists: its purpose is exactly to match the rates — to absorb the difference between the processing rate and the ingestion rate. With that motivation in hand, we now walk through the layers of a streaming architecture from left to right: collection, data flow, analysis, delivery, and the data stores attached beneath them.</p>
+<p><strong>Visual intuition — the pipeline at a glance.</strong> Draw five boxes in a row, left to right: <em>collection → data flow → analysis → delivery</em>, with a <em>store</em> drawn as a box hanging under the analysis tier. Messages enter at the left, are admitted by collection, held and paced by the data flow queue, computed on by the analysis tier, and finally handed to clients on the right; the store box below holds insights for slow clients and for machine learning. Every box exists because of one of the rate mismatches we computed in Sections 4.2 and 4.3 — that is the whole design rule of this architecture.</p>
+<h3 id="4.4.1-collection-tier">4.4.1 Collection Tier</h3>
+<div class="key-concept">
+  <p><strong>The collection tier</strong> is the place where all messages are received — the entry point of the architecture. The source of data can be anything: mobile devices, web logs, sensor data, IoT data. All of it enters the system through the collection tier. The tier's job stops at admission: once a message is inside, it is handed over to the next tier. Nothing is analyzed, filtered, or transformed here — the collection tier is a doorway, not a workshop.</p>
+</div>
+<p>The collection system uses different application program interfaces — TCP protocol, HTTP — and accepts different file formats such as JSON files and Avro files. <em>Avro</em> is the structured data format developed for this exact purpose — a binary format with an embedded schema that different systems can read without sharing code; JSON is the plain-text alternative that is easy to read and debug. Both are portable formats whose job is to let many different producers and consumers exchange messages without caring about each other's internals. The collection tier's job stops at admission: once a message is inside, it is handed over to the next tier.</p>
+<h3 id="4.4.2-data-flow-tier">4.4.2 Data Flow Tier</h3>
+<p>From the collection tier, messages are fed into the <strong>data flow tier</strong>. It acts as a message queue: messages are appended into the queue and retrieved in first-in, first-out fashion. The separation between the collection tier and the processing tier exists because the rates at which these systems work are different — exactly the imbalance quantified in Section 4.2. If one system cannot cope with the other, the intermediate layer takes responsibility for accepting messages from the collection tier and providing them to the processing tier.</p>
+<div class="key-concept">
+  <p><strong>A queue in the middle.</strong> A <em>message queue</em> is a holding line for messages: producers append at one end, consumers take from the other, and the queue keeps the two sides from ever touching each other directly. This is the layer that turns the Section 4.2 arithmetic into a real component — when the processor cannot keep up, the queue holds the overflow; when the processor runs ahead, the queue simply stays short. Decoupling producers from consumers this way lets either side come and go without breaking the other.</p>
+</div>
+<p>You must specify how much capacity the intermediate layer requires, and that number comes from the computation performed earlier: capacity is the leftover rate times the refresh window:</p>
+<p>\[ C = (R_i - R_p) \times t \]</p>
+<p>where \(C\) is the required capacity of the data flow layer, \(R_i\) is the ingestion rate, \(R_p\) is the processing rate, and \(t\) is the length of the refresh window over which we must survive the imbalance. The professor stated this rule numerically in Section 4.2 (14.4 GB from \(4\) MB/s \(\times 3600\) s); this symbolic form is the general statement of the same rule, and it checks dimensionally: \((\text{MB/s} - \text{MB/s}) \times \text{s} = \text{MB}\).</p>
+<div class="important-note">
+  <p><strong>Q:</strong> Is the data flow layer more like a buffering layer? <strong>A:</strong> Yes, exactly. The buffer size depends on the processing speed and the injection speed, and everything happens in memory.</p>
+</div>
+<p>The buffering-layer framing is correct: the size of the buffer depends on the processing speed and the injection speed.</p>
+<div class="important-note">
+  <p><strong>Q:</strong> Is this all in memory? And can the buffer use a database? <strong>A:</strong> Yes, it is all in memory. A message queue has no storing in a database. The moment you say you will store on the disk, it is not stream processing, because stream processing means data in motion. Nowhere in any of the layers should the data be addressed on disk.</p>
+</div>
+<div class="warning-box">
+  <p><strong>The disk boundary.</strong> There is a hard boundary to remember — everything happens in memory. The moment a design stores to disk, it violates the definition of stream processing, because stream processing means data in motion. In a true stream, no layer addresses the data on disk; the queue itself is an in-memory structure, not a database read and write cycle. This boundary gets tested again and again in architecture questions: a stream that "writes the queue to disk" or "buffers on the filesystem" has quietly become a batch system. (The one deliberate exception is the long-term store of Section 4.4.5, which exists <em>beside</em> the stream, not inside it.)</p>
+</div>
+<h3 id="4.4.3-analysis-tier-and-the-data-locality-principle">4.4.3 Analysis Tier and the Data Locality Principle</h3>
+<p>The third tier is the <strong>analysis tier</strong>, where processing happens. It works on the <strong>data locality principle</strong>: your application moves towards the data.</p>
+<div class="key-concept">
+  <p><strong>The data locality principle.</strong> In ordinary programming you fetch data into your program: the program sits still and the data travels. A stream inverts this. The data is continuously moving, and the application goes to the data and collects it there — code travels, data does not. That inversion is what keeps the pipeline in-motion: nothing waits for a "fetch," because the processor lives on top of the moving stream and works on each event as it flows past.</p>
+</div>
+<p>Processing can be done with different frameworks: Storm, Spark, Kafka, and others. But one framework cannot do everything in isolation, and you best stick to one of these things for the core pipeline. The same holds for databases: you can use a variety of them, but the architecture does not depend on a single one. The analysis tier performs filtering, aggregation, and insight generation on the messages as they move.</p>
+<div class="important-note">
+  <p><strong>Why one core framework.</strong> Storm, Spark, and Kafka take different trade-offs: Storm moves tuples one at a time with very low latency; Spark Streaming cuts the stream into small batches (micro-batches) and processes each like a tiny batch job; Kafka is the log-based broker that holds and replays the stream. Mixing two engines in one pipeline forces duplicate plumbing — two systems to run, two failure modes, two sets of semantics — so the design rule is to pick one core engine for the pipeline and to change it only deliberately.</p>
+</div>
+<h3 id="4.4.4-delivery-tier">4.4.4 Delivery Tier</h3>
+<p>The <strong>delivery tier</strong> is nothing but the downstream. Once the data is processed, who captures it? Streaming clients — client applications sitting on the right-hand side of the entire flow. Those clients can be built with WebSockets, JavaScript, HTML, and similar technologies, or they can be documents being rendered somewhere. Each streaming client is itself an application with its own pace.</p>
+<div class="important-note">
+  <p><strong>Q:</strong> Is the delivery tier part of the processing tier, or is it always separate? <strong>A:</strong> It is always separate. Think of a delivery app: the restaurant does not know where you stay; it just receives your request and delivers. In the same spirit, the analytics tier renders the messages to the downstream without worrying about who consumes them, so someone needs to orchestrate the whole flow.</p>
+</div>
+<p>Real-world: the delivery app example is the mental model — a restaurant like a Swiggy delivery partner receives the order and delivers it without knowing anything else about you. The analytics tier renders messages to the downstream without worrying about who is consuming them or how. Because the tiers are decoupled this way, somebody must orchestrate the whole flow, and that orchestration role is what connects delivery back to the coordination we met in Section 4.2.</p>
+<h3 id="4.4.5-storage-in-memory-store-and-long-term-storage">4.4.5 Storage: In-Memory Store and Long-Term Storage</h3>
+<div class="important-note">
+  <p><strong>Q:</strong> I did not get the storage layer. Where do we store things? <strong>A:</strong> After the analysis tier produces insights, they go to an in-memory data store. Optionally there is a long-term storage as well, because client applications collect at their own speed, and if they lag we need somewhere to keep the data. The long-term store handles the mismatch between the consumption rate and the processing rate.</p>
+</div>
+<p>Storage appears in two places. First, an <strong>in-memory data store</strong> right after the analysis tier: insights are placed there so that clients can pick them up. Second, optionally, a <strong>long-term storage</strong> layer. It exists because not everyone takes the data the moment it is produced — client applications have their own speed of collecting data. If clients are not collecting, you need somewhere to store. The in-memory store exists for the same reason as the data flow layer: to beat the mismatch between the consumption layer and the processing layer. If the rate of consumption and the rate of processing are out of step, even while both sides are actively running, the store absorbs the lag.</p>
+<p>So there are three rates in the architecture: the rate of ingestion, the rate of processing, and the rate of consumption. Each mismatch between neighbors is absorbed by a layer sitting between them.</p>
+<div class="important-note">
+  <p><strong>Q:</strong> Why not store the insights in a relational database like SQL or Oracle? <strong>A:</strong> Not because of the real-time expectation. It is because of the variety of the data: messages have no structure you can rely on, so you filter, aggregate, and generate insights without a schema-driven database. MongoDB works for this too.</p>
+</div>
+<p>The reason the long-term store is not a relational database is often misunderstood. It is not the real-time expectation that rules out SQL or Oracle — it is the variety of the data. The data you are dealing with are messages, and you cannot expect any structure from them, so you do not limit yourself to a schema-driven database. MongoDB and Cassandra are the natural fits: they store artifacts of whatever shape, produced by filtering and aggregation. A relational table demands fixed columns in advance; a streamed message is whatever shape it is, so the store must accept documents of any structure — which is exactly what these stores do.</p>
+<div class="important-note">
+  <p><strong>Q:</strong> Can the analysis tier write to a permanent store, and why would it need to? <strong>A:</strong> Yes — you may run machine learning algorithms, and to develop a model you need sizable data. So you store the insights, fetch that sizable data as a micro batch from the storage, develop the model, and use the model to predict the events coming in from the left.</p>
+</div>
+<p>That is the second reason persistence exists — the enrichment of the stream with machine-learned knowledge: the stored insights become the training set for a model that is then put back into the live path.</p>
+<h3 id="4.4.6-serialization-in-the-streaming-pipeline">4.4.6 Serialization in the Streaming Pipeline</h3>
+<div class="important-note">
+  <p><strong>Q:</strong> In Java we connect serialization to data manipulation. Why do we need it here if the data is not manipulated? <strong>A:</strong> Not for manipulation. We serialize for portability and speed when several downstream systems consume the data, and that is why JSON and similar formats became popular.</p>
+</div>
+<p>Serialization appears when the in-memory store holds objects. Because we come from a Java background, the immediate intuition is that serialization means the data is being manipulated or persisted for transaction management. The correction: we do not manipulate the data at all — it is written once and read, never altered. Serialization exists for portability and speed when multiple systems in the downstream consume the data, and that is why JSON and adjacent formats became popular. Speed is part of it too: a portable, fast serialization format keeps the in-motion pipeline moving.</p>
+<div class="important-note">
+  <p><strong>The correction in full.</strong> <em>Serialization</em> is the act of converting an in-memory object into a sequence of bytes that can travel over a wire or be read by another program. In a Java application you meet it when saving objects; in a stream pipeline its purpose is different: many different systems downstream must read the same messages, so the message must be encoded in a format every one of them understands — portable — and compact enough to move quickly — fast. The data is never altered along the way: written once, read by whoever is listening. That is why JSON became popular: plain text, readable by any language, cheap to transmit.</p>
+</div>
+<h3 id="4.4.7-message-delivery-semantics">4.4.7 Message Delivery Semantics</h3>
+<p>One more concept belongs to the data flow tier: <strong>message delivery semantics</strong> — how you want to deliver the messages to the processing layer. Do you want every message delivered, or are samples enough?</p>
+<div class="key-concept">
+  <p><strong>Delivery semantics, the three options.</strong> The delivery guarantee a queue makes to the processor is one of three:</p>
+  <ul>
+    <li><strong>At most once</strong> — a message may get lost, but it will never be re-read: the system does not retry, so it is fast and lossy.</li>
+    <li><strong>At least once</strong> — a message is never lost, but it may be delivered more than once (for example, delivered again after a failure, because the broker could not tell whether it was processed). The processor must tolerate duplicates.</li>
+    <li><strong>Exactly once</strong> — a message is never lost and is processed once and only once: the hardest guarantee, built by retrying deliveries and removing the duplicates on the receiving side.</li>
+  </ul>
+</div>
+<p>The guarantee commonly cited is <strong>at least once semantics</strong>: every message that should be delivered is delivered at least once, so the processing layer never silently misses an event it was supposed to see. The cost is visible in the name — "at least once" allows duplicates, and the consumer must be written to absorb them (an <em>idempotent</em> operation: performing it twice has the same effect as performing it once). The sampling discussion of Section 4.3 is the flip side: when the use case tolerates loss, you relax the semantics deliberately and drop messages on purpose.</p>
+<table>
+  <thead>
+    <tr>
+      <th>Guarantee</th>
+      <th>Lost messages?</th>
+      <th>Duplicates?</th>
+      <th>Typical use</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td>At most once</td>
+      <td>Possible</td>
+      <td>No</td>
+      <td>Monitoring, metrics where loss is affordable</td>
+    </tr>
+    <tr>
+      <td>At least once</td>
+      <td>No</td>
+      <td>Possible</td>
+      <td>Most pipelines; the professor's default citation</td>
+    </tr>
+    <tr>
+      <td>Exactly once</td>
+      <td>No</td>
+      <td>No</td>
+      <td>Fraud detection, billing, financials</td>
+    </tr>
+  </tbody>
+</table>
+<div class="warning-box">
+  <p><strong>Pitfalls</strong></p>
+  <ol>
+    <li><em>Designing a queue that writes to disk and calling it streaming.</em> The in-memory rule of Section 4.4.2 is the professor's hard boundary — disk storage inside the stream means it is no longer data in motion.</li>
+    <li><em>Choosing a relational database for stream insights.</em> The objection is not performance or real-time — it is variety: messages have no reliable structure, so a schema-driven database is the wrong tool. This is the correction the professor made explicit, and it is a favorite exam point.</li>
+    <li><em>Answering the serialization question with "to manipulate the data."</em> The correction is portability and speed across downstream systems; the data is written once and read, never altered.</li>
+    <li><em>Confusing delivery semantics with sampling.</em> At-least-once is about never silently missing a message; sampling deliberately skips messages because the use case allows it. They are opposite design decisions, both legitimate in the right scenario.</li>
+    <li><em>Forgetting the third rate.</em> The architecture has three rates — ingestion, processing, consumption — and each mismatch is absorbed by the layer between the pair (data flow layer for the first gap, storage for the second).</li>
+  </ol>
+</div>
+<div class="key-takeaway">
+  <p><strong>Recap + bridge.</strong> The architecture is five boxes and one rule: collection admits, the data flow queue absorbs the ingestion–processing mismatch, the analysis tier filters and aggregates in motion (code travels, data does not), the delivery tier serves clients that come and go, and storage absorbs the consumption lag while also feeding machine learning. Every layer traces back to a rate, and the whole pipeline lives in memory. Next, we choose which arms of this architecture a given use case needs — the Lambda and Kappa families of Section 4.5.</p>
+</div>
+<p><strong>Real-world connection.</strong> This five-tier shape is the actual skeleton of real streaming stacks. Twitter-scale pipelines run a Kafka broker as the data flow tier between ingestion and Storm/Spark processors, and delivery to browsers happens over WebSockets and server-sent events; the Meetup RSVP pipeline in the course's primary reference is exactly this architecture with JSON events, a messaging tier, an analysis tier, and a publish-subscribe delivery channel. The same pipeline shape also explains why storage choices split: MongoDB and Cassandra for the schema-less long-term store, Redis-class in-memory stores for the fast insight cache — the two stores named in this section map to those two roles.</p>
+
+<h2 id="4.5-lambda-and-kappa-architectures">4.5 Lambda and Kappa Architectures</h2>
+<div class="key-takeaway">
+  <p><strong>Exam note:</strong> a question may give you a scenario and ask you to design a suitable architecture. To answer it you must keep the various components of data processing in mind — the tiers of Section 4.4, the rate logic of Sections 4.2–4.3 — and then choose between the two architecture families introduced now: <strong>Lambda architecture</strong> and <strong>Kappa architecture</strong>. The expected answer shape: name the layers, justify each one from the use case, pick a family, and state both its advantages and its limitations.</p>
+</div>
+<h3 id="4.5.1-lambda-architecture">4.5.1 Lambda Architecture</h3>
+<div class="important-note">
+  <p><strong>Hook.</strong> The first two problems of this session asked one question: do we keep everything (Section 4.2) or drop most of it (Section 4.3)? Lambda architecture is the answer a system gives when it refuses to choose: it runs both strategies at the same time, on the same data.</p>
+</div>
+<p>Why do these architectures exist? They provide the provision for either stream processing or batch processing, or both. Batch processing means you do not process events as they arrive; you accumulate the messages and process them as a single batch. Stream processing means messages are processed as they come in. <strong>Lambda architecture</strong> carries both arms: in the upper arm a batch layer and a serving layer; in the lower arm a speed layer. You have provision for batch processing and stream processing at the same time.</p>
+<div class="key-concept">
+  <p><strong>The two arms of Lambda.</strong> In the <em>batch arm</em> (upper): the <strong>batch layer</strong> accumulates messages until a sizable batch has formed, processes the whole batch, and writes the results as <em>batch views</em>; the <strong>serving layer</strong> takes those views and indexes them so that queries over them resolve fast. In the <em>stream arm</em> (lower): the <strong>speed layer</strong> filters and aggregates each event as it arrives and produces <em>real-time views</em> that answer queries about the most recent moments. A query layer merges the two answers: the batch views cover everything up to the last completed batch, and the speed layer covers the gap since then. The key division of labor: the batch layer computes slowly and accurately over all the data; the speed layer computes fast on a partial view of the recent data, and the serving layer is later overwritten by the (more accurate) batch result — the speed layer's inaccuracies are corrected by the batch, not covered up.</p>
+</div>
+<p><strong>Visual intuition.</strong> Draw a Y-shaped flow. The incoming stream reaches a fork: the upper branch feeds a batch layer box (with a serving layer box after it) that produces indexed views, the lower branch feeds a speed layer box that produces real-time views, and both arms converge on the user's query, which receives the merged answer. The upper arm moves slowly — hours — and the lower arm moves instantly; the query waits for neither, because each arm answers the part of the question it owns.</p>
+<p>The delegation logic follows the work being done. When the problem involves machine-learning-type activities, some use cases require the scheduling of events at periodic intervals — analyze the data every three hours or every four hours — and those fall to batch processing. Simultaneously, you may need to enrich each event and predict something from it in real time, and those fall to the streaming layer. When the use case demands both aspects, you propose Lambda architecture and delegate messages to the speed layer and to the batch layer appropriately.</p>
+<h3 id="4.5.2-why-both-layers-receive-the-data">4.5.2 Why Both Layers Receive the Data</h3>
+<div class="important-note">
+  <p><strong>Q:</strong> When new data comes, does it go to the batch layer or to the speed layer? <strong>A:</strong> To both. The batch layer collects the messages until a sizable number is formed and processes them as a whole, which gives more accurate insights. The speed layer does real-time filtering and aggregation and sends each message downstream immediately.</p>
+</div>
+<p>New data goes to both layers. The batch layer collects until a sizable number of messages has formed, then processes the whole batch; the speed layer filters and aggregates in real time and sends each message downstream immediately. Why both, and not one of them? Because batch processing yields more accurate insights. A machine learning model cannot be developed from the speed layer alone — you need to accumulate messages to a certain size, a batch level, and use the entire batch for model development.</p>
+<div class="important-note">
+  <p><strong>Q:</strong> Weather as an example: the current temperature is a real-time stream, while predicting tomorrow's temperature needs accumulated analytics. Is that right? <strong>A:</strong> Correct. The speed layer serves the current readings, and the batch layer accumulates data for the analytics and the prediction. Persistence is the difference between the layers, and the batch layer also handles the scheduling of events.</p>
+</div>
+<p>The weather example makes it concrete. Seeing the current temperature of a locality is streaming — you always get the current reading. Predicting tomorrow's temperature or the day after is analytics: the data accumulates on the batch layer, you run analytics on top of it, and you get the prediction. Persistence is the difference: the batch layer stores, the speed layer serves whoever needs it now. And it is not only persistence — the batch layer handles the scheduling of events. If a use case requires scheduling, such as processing jobs every three or four hours, that periodic work belongs to the batch side.</p>
+<div class="important-note">
+  <p><strong>Q:</strong> If messages go to both layers, is there replication of data? <strong>A:</strong> The tasks in batch and stream may be similar, but the accuracy of the information is different. Batch gives comprehensive insights, while stream processing only enriches the event, so the two layers are not a copy of each other.</p>
+</div>
+<p>Sending the same messages to both layers raises the replication question. The tasks performed in batch and stream may be similar, but the accuracy of the information differs and the details of the inferences differ: batch processing gives a comprehensive view, while stream processing just enriches the event. The two layers are not copies of each other; they answer different questions from the same raw feed.</p>
+<p>The serving layer, in the upper arm, creates multiple batch views from the previous batch, and searching speed comes through an indexing mechanism on those views.</p>
+<h3 id="4.5.3-kappa-architecture-and-its-limitation">4.5.3 Kappa Architecture and Its Limitation</h3>
+<p>There are scenarios where you do not need the batch layer at all — that is called <strong>Kappa architecture</strong>. Kappa is nothing but Lambda with the entire batch layer arm removed: it keeps the serving layer and the speed layer, and stream processing alone drives the pipeline. Its advantage is simplicity: one pipeline, no dual bookkeeping. Its limitation follows directly: because it has no batch layer, you cannot get the comprehensive, accurate insights that batch produces; you only get real-time enrichment of events. Every architecture choice is a trade of these pros and cons, and you should be able to state both sides for each architecture.</p>
+<table>
+  <thead>
+    <tr>
+      <th>Dimension</th>
+      <th>Lambda architecture</th>
+      <th>Kappa architecture</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td>Arms</td>
+      <td>Batch arm + speed arm</td>
+      <td>Speed arm only</td>
+    </tr>
+    <tr>
+      <td>Accurate, comprehensive insights</td>
+      <td>Yes (batch layer)</td>
+      <td>No — real-time enrichment only</td>
+    </tr>
+    <tr>
+      <td>Model development from accumulated data</td>
+      <td>Yes (batch level)</td>
+      <td>No (no accumulated batch)</td>
+    </tr>
+    <tr>
+      <td>Complexity</td>
+      <td>Two pipelines, dual bookkeeping</td>
+      <td>One pipeline, simple</td>
+    </tr>
+    <tr>
+      <td>Latency of first answer</td>
+      <td>Real time (speed layer), corrected later</td>
+      <td>Real time</td>
+    </tr>
+  </tbody>
+</table>
+<p>The one-line rule: Lambda when the use case needs both accurate accumulated insights <em>and</em> real-time enrichment; Kappa when real-time enrichment alone is enough.</p>
+<h3 id="4.5.4-evolving-between-architectures">4.5.4 Evolving Between Architectures</h3>
+<div class="important-note">
+  <p><strong>Q:</strong> Can we start with a Kappa architecture and later convert it into a Lambda architecture? <strong>A:</strong> It is better to decide from the use case itself whether you need a batch layer. Architectures are not written on stone; they evolve as a function of time. And frameworks help: Spark streaming works on micro batches by default, and you can specify the batch size in the configuration.</p>
+</div>
+<p>The question of whether the choice is fixed comes up twice, so the answer is worth restating. It is better to decide from the use case itself whether you need a batch layer — that decision should come from the problem, not from convenience. But the diagrams look static and the reality is not: architectures evolve as a function of time, regularly; nothing is written on stone. If a batch requirement appears later, you extend the Kappa architecture into a Lambda architecture — extensibility is a design principle for exactly this reason.</p>
+<div class="important-note">
+  <p><strong>What a micro batch actually is.</strong> <em>Micro batching</em> cuts the incoming stream into small blocks and treats each block as a miniature batch job — Spark Streaming's default mode, with a batch size typically around one second. A small micro batch behaves like streaming (answers arrive almost instantly); a large one behaves like batch (the framework waits, accumulates, and processes in bulk). That single configuration number slides the pipeline along the stream-versus-batch spectrum — which is why the same framework can serve either architecture.</p>
+</div>
+<p>The frameworks help with the transition. Spark streaming, for example, is by default based on micro batch: it is neither stream nor batch until you say otherwise, but you can specify the size of the micro batch in the configuration files, and depending on the size, the framework switches toward batch or toward stream. So the platforms themselves provide a mix of both, selected by configuration — nothing comes free, and you specify your configuration to get the behavior you need.</p>
+<div class="warning-box">
+  <p><strong>Pitfalls</strong></p>
+  <ol>
+    <li><em>Answering "which layer gets the data?" with one layer.</em> New data goes to <em>both</em> — that is the defining behavior of Lambda, and the professor tests it directly.</li>
+    <li><em>Calling the two arms replication.</em> They consume the same feed but compute different things (comprehensive views versus per-event enrichment), so they are not copies of each other.</li>
+    <li><em>Choosing Kappa when the scenario needs model development.</em> A machine learning model needs accumulated data — a batch level — which Kappa cannot provide.</li>
+    <li><em>Treating the architecture choice as permanent.</em> The decision should follow the use case, and the use case changes; architectures evolve over time, and Kappa extends into Lambda when a batch requirement appears.</li>
+    <li><em>Forgetting the limitation half of the trade.</em> An exam answer that states only Lambda's or Kappa's advantages is incomplete — the professor's rule is to state both sides of the trade.</li>
+  </ol>
+</div>
+<div class="key-takeaway">
+  <p><strong>Recap + bridge.</strong> Lambda runs both arms — batch layer plus serving layer for accurate accumulated insights, speed layer for real-time enrichment — and every new message feeds both; Kappa is Lambda with the batch arm removed, simpler but unable to produce comprehensive insights or support batch-level model development. The choice is made from the use case, and platforms such as Spark Streaming bridge the two by making the batch size a configuration value. Next, we look at what stream data itself is like — its properties — and at the three properties real-time systems must have.</p>
+</div>
+<p><strong>Real-world connection.</strong> Lambda architecture in its canonical form is exactly the design used by companies that serve both live and historical views of the same events: LinkedIn-style analytics with Kafka streams feeding both a speed layer (live dashboards) and nightly batch jobs (reporting), and weather services whose current-temperature feeds run through a speed layer while their forecast models are rebuilt from accumulated data on the batch side. The books' reference design even documents the failure-tolerance argument: because the serving layer is rebuilt from the batch views, a mistake in the speed layer is automatically corrected when the next batch arrives — the same "batch corrects stream" idea that closes this section.</p>
+
+<h2 id="4.6-stream-data-properties-and-real-time-systems">4.6 Stream Data Properties and Real-Time Systems</h2>
+<h3 id="4.6.1-stream-data-properties">4.6.1 Stream Data Properties</h3>
+<div class="important-note">
+  <p><strong>Hook.</strong> A batch table knows its shape before you touch it: fixed columns, fixed types. Stream data shows up with no shape at all — each event is whatever it happens to be. That single difference reshapes the entire pipeline from storage to analysis.</p>
+</div>
+<p>What are the properties of stream data? It is <strong>loosely structured</strong>: you do not have schema information defined for it. It arrives from various sources, and it can be structured, semi-structured, or unstructured, and so on.</p>
+<div class="key-concept">
+  <p><strong>Loosely structured, defined.</strong> A <em>schema</em> is the fixed shape of a dataset — the list of columns and types that a relational table enforces. Stream data has no such contract: a message might be a full JSON document with ten fields, the next a bare sensor reading with two. This is why Section 4.4 rejected schema-driven databases for stream storage (the variety argument) and why the analysis tier filters and aggregates on the fly instead of assuming a shape. The stream's properties are not a curiosity — they drive the storage and processing choices made earlier.</p>
+</div>
+<p>A concept that matters when filtering and analyzing such data is <strong>cardinality</strong> — the number of unique values a field takes. When you want to filter down and show analyses, the distribution of unique values shapes the work, and that is why the properties of the data drive the storage and processing choices made in Section 4.4.</p>
+<div class="important-note">
+  <p><strong>Cardinality in practice.</strong> If the stream's "city" field takes 5 values, the analysis is trivial — one counter per city. If it takes millions of values (for example, user IDs on a large platform), exact unique counts become expensive to keep in memory, and systems turn to probabilistic structures that estimate cardinality in tiny space: HyperLogLog estimates the number of distinct values using about 1.5 KB of memory even for a billion distinct items, at roughly 2 percent error. <em>Cardinality, then, is the first question a designer asks about a stream field: how many unique values, and can my counters hold them?</em> It is also the pairing to remember: cardinality answers "how many <em>distinct</em> values?" while the frequency of Section 4.6.2 answers "how many <em>times</em> did each value appear?"</p>
+</div>
+<h3 id="4.6.2-real-time-systems-frequency-of-events">4.6.2 Real-Time Systems: Frequency of Events</h3>
+<p>One of the major challenges of real-time systems is computing the <strong>frequency of occurrence of events</strong>. As events stream in, how do you find accurately how many of this particular type have come and how many of that particular type have come? With a batch you can always recount; in motion, you have no provision to compute those numbers accurately while the stream keeps moving. Counting and histogramming in-flight data, without pausing the flow, is precisely the hard part that streaming analytics exists to solve.</p>
+<div class="key-concept">
+  <p><strong>The in-motion counting problem.</strong> The naive solution is a set of counters, one per event type, incremented as events pass. The difficulty is that the stream is unbounded and arrives once: you cannot re-read yesterday's events to fix a counter, the full set of event types may be unknown in advance, and in a distributed cluster different nodes see different slices of the stream and must merge their counts. Three standard strategies answer this: <em>exact counters</em> in memory (small event-type space, but the counters die with the node), <em>sampling</em> (count a representative fraction and scale up — Section 4.3's idea applied to counting), and <em>probabilistic sketches</em> such as the Count-Min sketch, which answer "how many times did this event type occur?" with a small array of counters and a few hash functions — it never undercounts and rarely overcounts by much. All three are attempts at the same prize: an accurate frequency histogram of a stream that never pauses.</p>
+</div>
+<p><strong>Visual intuition.</strong> Picture a live histogram on a dashboard — event types on the horizontal axis, running counts on the vertical axis — with the bars growing as events stream in. In a batch world the histogram is drawn once from a fixed table, and you can redraw it any time. In a stream world the bars grow in front of you and the data that raised them is already gone; the histogram itself is the only copy of the counts. The challenge of Section 4.6.2 is that the bars must stay accurate while the data under them is unreadable a second after it arrives.</p>
+<h3 id="4.6.3-high-availability-low-latency-and-scalability">4.6.3 High Availability, Low Latency, and Scalability</h3>
+<p>The main things when it comes to real-time systems are <strong>high availability</strong>, <strong>low latency</strong>, and <strong>horizontal scalability</strong>. Horizontal scalability means adding more and more servers, or more memory, in parallel — you create a cluster with a set of nodes, and that cluster is your horizontal scaling, the same mechanism used for continuous streaming in Section 4.2.</p>
+<div class="key-concept">
+  <p><strong>The three properties, defined.</strong></p>
+  <ul>
+    <li><em>High availability</em> — the system keeps serving even when part of it fails. This is what replication was for in Section 4.2.6: the state exists in more than one place, so a failed node does not take the service down. A batch system can be down for minutes unnoticed; a real-time system may be sensitive even to scheduled maintenance windows.</li>
+    <li><em>Low latency</em> — the time between an event happening at the edge of the system and that event being available to processing and delivery stays small and stable. This is the whole reason streaming exists (Section 4.1): the per-moment scope buys seconds-and-minutes performance.</li>
+    <li><em>Horizontal scalability</em> — adding more servers in parallel, instead of making one server faster, to handle more load. Each new node takes part of the load, which is exactly the two-node cluster logic of Section 4.2.5, scaled up.</li>
+  </ul>
+</div>
+<div class="warning-box">
+  <p><strong>Pitfalls</strong></p>
+  <ol>
+    <li><em>Forgetting that the three properties are not independent.</em> More replication improves availability but adds latency (the replicas must agree); the trade-off between the three is a design decision, not a checklist.</li>
+    <li><em>Answering "scalability" with vertical scaling.</em> The term used here — and examined — is <em>horizontal</em>: more machines in a cluster, not a bigger machine.</li>
+    <li><em>Treating frequency and cardinality as the same question.</em> Frequency asks how many times a value occurs; cardinality asks how many distinct values exist. Both matter, and they need different tools (counters and sketches, respectively).</li>
+    <li><em>Assuming stream data has a fixed shape.</em> The loosely-structured property is the reason behind the storage choices of Section 4.4 — an exam answer that uses a relational table for the stream store contradicts the variety argument.</li>
+  </ol>
+</div>
+<div class="key-takeaway">
+  <p><strong>Recap + bridge.</strong> Stream data is loosely structured — no schema — so its properties (cardinality above all) drive the storage and analysis choices of Section 4.4; real-time systems must count and histogram events while they move, without pausing the stream; and the three headline properties of a real-time system are high availability, low latency, and horizontal scalability. These three properties are covered in detail in the next session, where the discussion continues.</p>
+</div>
+<div class="key-takeaway">
+  <p><strong>Exam note:</strong> expect high availability, low latency, and scalability to be examined in detail next time — and expect the opening of that session to revisit the material from this one, so the rate problems and the architecture layers here are also review material.</p>
+</div>
+<p><strong>Real-world connection.</strong> The frequency-counting challenge is daily work in observability platforms (counting error types per second across a microservice fleet), network monitoring (counting packets by protocol at 40 Gbps — a rate at which exact per-event counters are impossible), and social platforms (tracking engagement event counts per second). Cardinality estimation through HyperLogLog is built into analytics databases and distributed monitoring stacks, and the high-availability–latency–scalability trio is the standard checklist used to evaluate streaming platforms in industry comparisons — the same trio the next session will examine in detail.</p>
+
+<h2 id="exam-guidance-summary">Exam Guidance Summary</h2>
+<p>This lecture's examinable material, consolidated:</p>
+<ul>
+  <li><strong>Differentiation question:</strong> if asked to differentiate between batch processing and stream processing, answer along the four dimensions — data scope, data size, performance, and analysis — or no marks are given. Write the comparison in your own words.</li>
+  <li><strong>Rate problems:</strong> problems like the ingestion/processing mismatch will be used again. You must know the full computation: the ratio (6/10 = 0.6), the per-hour leftover (14,400 MB = 14.4 GB), the clearing time (40 minutes), and the sampling variant (10 percent per minute → 10 seconds of processing per minute). Exam note: "if you know how to solve, you will be able to do; if you don't know how to solve, you will not." Practise the chain with different numbers — change the ingestion rate, the processing rate, or the refresh window and recompute ratio, backlog, capacity, and clearing time end to end.</li>
+  <li><strong>Architecture design question:</strong> a scenario may be given and you may be asked to develop or design a suitable architecture. Keep the processing components in mind — collection, data flow, analysis, delivery, storage — and the rate logic that sizes them, then choose between Lambda (batch + speed layers) and Kappa (speed layer only) based on the use case. State the pros and cons of the architecture you choose.</li>
+  <li><strong>Assumptions:</strong> when no specific use case is given, state your inferences and assumptions, as done in the sampling problem — the message size assumption (1 MB), the sampling fraction, and the refresh window must be stated before the arithmetic begins.</li>
+  <li><strong>Sampling and loss:</strong> remember that depending on the use case you can afford to lose some messages, and not every injected message must be processed.</li>
+  <li><strong>Next-session material:</strong> high availability, low latency, and horizontal scalability are continued next time, and the next session opens by questioning the material from this one — so treat the rate problems, the four dimensions, and the five-tier architecture as review material for the coming session.</li>
+</ul>
+
+<h2 id="key-industry-applications">Key Industry Applications</h2>
+<p>The named tools and use cases from this lecture, collected in one place:</p>
+<ul>
+  <li>Real-world: Storm, Spark, and Kafka are the named streaming frameworks; one framework cannot do everything in isolation, so a pipeline sticks to one core engine. Storm processes events one at a time for the lowest latency; Spark cuts the stream into micro-batches; Kafka is the log-based broker that holds and replays the stream.</li>
+  <li>Real-world: Spark streaming works on micro batches by default, and the batch size is a configuration choice that moves the pipeline between batch-like and stream-like behavior — the mechanism by which a single platform can serve either side of the Lambda/Kappa choice.</li>
+  <li>Real-world: MongoDB and Cassandra are named as the long-term storage engines for stream insights, preferred over schema-driven databases because message data has no reliable structure — the variety argument of Section 4.4 in concrete form.</li>
+  <li>Real-world: JSON and similar portable formats became popular for serializing messages between downstream systems — portability and speed, not data manipulation, is the reason.</li>
+  <li>Real-world: streaming clients are built with WebSockets, JavaScript, and HTML, and messages enter through TCP or HTTP APIs in formats such as JSON and Avro — the WebSockets choice gives a full-duplex, fault-tolerant delivery channel to client applications.</li>
+  <li>Real-world: weather and meteorological monitoring is the motivating use case for sampling — atmospheric parameters change on the scale of minutes or hours, so sampling 0.1 percent per second still captures the behavior, and the same slow-dynamics logic justifies sampling in industrial sensor and telemetry pipelines.</li>
+  <li>Real-world: delivery apps illustrate the decoupled delivery tier — the restaurant receives the order and delivers without knowing the customer — and the same decoupling is why the delivery tier can be built and scaled independently of the analysis tier.</li>
+</ul>
+    </main>
+
+    <!-- ============================================================
+    EXAM REVISION NOTES
+    Generated AFTER the main lecture-faithful content is complete. Each entry
+    distills one major concept into its most examinable elements.
+    Built FROM the core — never invented independently.
+
+    Each entry is a <div class="exam-revision-entry"> containing:
+      - .revision-topic (h3) — concept name
+      - .revision-mustknow — the single most examinable takeaway
+      - .revision-formula — central formula(s) in \[ ... \] MathJax
+      - .revision-pitfall — the #1 exam mistake
+      - .revision-check — one self-check question (no options)
+      - .revision-connections — linked concepts within this lecture
+    ============================================================ -->
+    <section class="exam-revision-section">
+      <h2>Exam Revision Notes</h2>
+      <p class="revision-intro">Below is the distilled, exam-ready core.
+      Every entry comes from the full explanation above. Use this section
+      for rapid review; return to the main notes when a point needs more context.</p>
+  <div class="exam-revision-entry">
+    <h3 class="revision-topic">Batch vs Stream Processing: The Four Dimensions</h3>
+    <p class="revision-mustknow"><strong>Must-know:</strong> Differentiate batch vs stream along all four dimensions — data scope (entire accumulated dataset vs live events), data size (large volumes vs small per-moment), performance (hours vs seconds/minutes), analysis (comprehensive hindsight vs lightweight in-moment) — or no marks are given.</p>
+    <p class="revision-pitfall"><strong>⚠️ Top pitfall:</strong> Answering with only one dimension, or calling stream processing 'less accurate' — it is provisional (partial view), not wrong.</p>
+    <p class="revision-check"><strong>Self-check:</strong> Why is a batch result more accurate than a stream result?</p>
+    <p class="revision-connections"><strong>Connects to:</strong> 4.2, 4.4, 4.5</p>
+  </div>
+  <div class="exam-revision-entry">
+    <h3 class="revision-topic">The Rate Mismatch Problem</h3>
+    <p class="revision-mustknow"><strong>Must-know:</strong> The rate-mismatch computation as one chain: ratio Rp/Ri = 6/10 = 0.6; backlog rate Ri - Rp = 4 MB/s; hourly leftover 60x60x40 = 144,000 messages = (Ri-Rp)x3600 = 14,400 MB = 14.4 GB (decimal scale); clearing time t = C/Rp = 14,400/6 = 2,400 s = 40 minutes. Continuous streaming needs Rp > Ri, achieved by horizontal scaling (cluster of nodes), with replication for fault tolerance.</p>
+    <p class="revision-formula">\[C = (R_i - R_p) \times 3600 = 4 \times 3600 = 14{,}400 \text{ MB} = 14.4 \text{ GB}\]</p>
+    <p class="revision-pitfall"><strong>⚠️ Top pitfall:</strong> Using the binary scale (14.06 GB) instead of the decimal scale; leaving the clearing time in seconds; assuming continuous transfer when an hourly refresh exists.</p>
+    <p class="revision-check"><strong>Self-check:</strong> If ingestion is 12 MB/s and processing is 8 MB/s with a 2-hour refresh, what capacity is needed?</p>
+    <p class="revision-connections"><strong>Connects to:</strong> 4.1, 4.3, 4.4</p>
+  </div>
+  <div class="exam-revision-entry">
+    <h3 class="revision-topic">Sampling-Based Processing</h3>
+    <p class="revision-mustknow"><strong>Must-know:</strong> With 10% sampling per minute: 600 messages/minute x 10% = 60 messages, processed at 6 msg/s in (600 x 10%)/6 = 10 seconds — the processor runs 10 s per minute and no storage is needed; continuous variant keeps 10% x 10 MB/s = 1 MB/s and drops 9 MB/s, needing no refresh and no scaling. Unsampled messages are lost, not delayed. Starvation = ready processor, no messages; fix by raising the sample rate and checking analytics empirically.</p>
+    <p class="revision-formula">\[\frac{600 \times 10\%}{6} = \frac{60}{6} = 10 \text{ seconds}\]</p>
+    <p class="revision-pitfall"><strong>⚠️ Top pitfall:</strong> Repeating the 14.4 GB storage math under sampling; answering that unsampled messages are delayed (they are lost); confusing sample rate with sample size.</p>
+    <p class="revision-check"><strong>Self-check:</strong> With 20% sampling per minute and 1 MB messages, how many seconds per minute does the processor run?</p>
+    <p class="revision-connections"><strong>Connects to:</strong> 4.2, 4.4</p>
+  </div>
+  <div class="exam-revision-entry">
+    <h3 class="revision-topic">The Layered Streaming Architecture</h3>
+    <p class="revision-mustknow"><strong>Must-know:</strong> Five tiers left to right: collection (entry point; TCP/HTTP; JSON and Avro formats), data flow (in-memory FIFO message queue sized C = (Ri - Rp) x t), analysis (data locality — code travels to the data; Storm/Spark/Kafka), delivery (separate tier serving streaming clients via WebSockets/JS/HTML), storage (in-memory store + long-term store; no schema-driven database because of data variety; feeds ML micro-batches). Three rates — ingestion, processing, consumption — each mismatch absorbed by the layer between. At least once delivery semantics; serialization is for portability and speed, not manipulation. Disk storage inside the stream violates the definition of stream processing.</p>
+    <p class="revision-formula">\[C = (R_i - R_p) \times t\]</p>
+    <p class="revision-pitfall"><strong>⚠️ Top pitfall:</strong> Designing disk-based streaming, choosing relational databases for stream insights, or answering that serialization is for data manipulation.</p>
+    <p class="revision-check"><strong>Self-check:</strong> Why is the long-term store not a relational database?</p>
+    <p class="revision-connections"><strong>Connects to:</strong> 4.2, 4.3, 4.5</p>
+  </div>
+  <div class="exam-revision-entry">
+    <h3 class="revision-topic">Lambda and Kappa Architectures</h3>
+    <p class="revision-mustknow"><strong>Must-know:</strong> Lambda = batch arm (batch layer accumulates and produces accurate insights; serving layer indexes batch views) + speed arm (real-time filtering/aggregation). New data goes to BOTH layers — not replication, they answer different questions. Kappa = Lambda with the batch arm removed: one pipeline, real-time enrichment only, no comprehensive insights and no batch-level model development. Choose from the use case; architectures evolve over time; Spark Streaming's configurable micro-batch size slides between stream and batch behavior.</p>
+    <p class="revision-pitfall"><strong>⚠️ Top pitfall:</strong> Answering that new data goes to only one layer, calling the two arms replication, or choosing Kappa when model development needs accumulated data.</p>
+    <p class="revision-check"><strong>Self-check:</strong> Why can a machine learning model not be developed from the speed layer alone?</p>
+    <p class="revision-connections"><strong>Connects to:</strong> 4.1, 4.2, 4.3, 4.4</p>
+  </div>
+  <div class="exam-revision-entry">
+    <h3 class="revision-topic">Stream Data Properties and Real-Time Systems</h3>
+    <p class="revision-mustknow"><strong>Must-know:</strong> Stream data is loosely structured — no schema — and can be structured, semi-structured, or unstructured; cardinality = number of unique values a field takes (drives filtering, storage and processing choices). The hard real-time problem is computing frequency of occurrence of events in motion (counting/histogramming without pausing). The three properties of real-time systems: high availability, low latency, horizontal scalability (adding servers in parallel = cluster). Next session covers these three in detail and reopens this session's material.</p>
+    <p class="revision-pitfall"><strong>⚠️ Top pitfall:</strong> Conflating frequency (how many times a value occurs) with cardinality (how many distinct values); answering scalability with vertical scaling.</p>
+    <p class="revision-check"><strong>Self-check:</strong> What does cardinality mean, and which field property does it describe?</p>
+    <p class="revision-connections"><strong>Connects to:</strong> 4.2, 4.4, next session</p>
+  </div>
+  <div class="exam-revision-entry">
+    <h3 class="revision-topic">Exam Guidance Summary</h3>
+    <p class="revision-mustknow"><strong>Must-know:</strong> The four dimensions (data scope, data size, performance, analysis) for any batch-vs-stream differentiation; the full rate-mismatch chain (ratio 0.6, hourly leftover 14,400 MB = 14.4 GB, clearing time 40 min, sampling variant 10 s/minute); architecture design answers organized around the five tiers plus Lambda (batch + speed) versus Kappa (speed only) with pros and cons.</p>
+    <p class="revision-pitfall"><strong>⚠️ Top pitfall:</strong> Answering the differentiation question without the four-dimension framework, or an architecture answer without stating assumptions and the trade-offs of the chosen family.</p>
+    <p class="revision-check"><strong>Self-check:</strong> What four dimensions must a batch-vs-stream differentiation be organized along?</p>
+    <p class="revision-connections"><strong>Connects to:</strong> 4.1, 4.2, 4.3, 4.4, 4.5</p>
+  </div>
+  <div class="exam-revision-entry">
+    <h3 class="revision-topic">Key Industry Applications</h3>
+    <p class="revision-mustknow"><strong>Must-know:</strong> Named industry tools: Storm/Spark/Kafka (one core framework per pipeline), Spark Streaming micro-batch configuration, MongoDB/Cassandra for stream insight storage (no schema-driven databases), JSON/Avro for serialization, WebSockets/JavaScript/HTML for streaming clients, TCP/HTTP for ingestion, weather monitoring for sampling, delivery apps for decoupled delivery.</p>
+    <p class="revision-pitfall"><strong>⚠️ Top pitfall:</strong> Presenting frameworks as interchangeable or multiple per pipeline; proposing relational storage for message data.</p>
+    <p class="revision-check"><strong>Self-check:</strong> Why do pipelines stick to one core streaming framework?</p>
+    <p class="revision-connections"><strong>Connects to:</strong> 4.3, 4.4, 4.5</p>
+  </div>
+    </section>
+  </div>
+</body>
+</html>

@@ -1,0 +1,1167 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+  <!-- Primary SEO -->
+  <title>Spark Structured Streaming: Word Counts, Output Modes, and Windows | Stream Processing and Analytics | BitsNotes</title>
+  <meta name="description" content="Spark Structured Streaming notes for stream processing and analytics: the streaming word count, output modes, event time, and tumbling and sliding windows.">
+  <meta name="keywords" content="Stream Processing and Analytics, Spark Structured Streaming, streaming word count, micro-batches, output modes, complete mode, update mode, append mode, watermark, event time, stream time, time skew, windows, tumbling windows, sliding windows, trigger policy, eviction policy, moving average">
+  <meta name="author" content="BitsNotes">
+  <meta name="robots" content="index, follow">
+  <link rel="canonical" href="https://bitsnotes.com/view/stream-processing-and-analytics/spa-lecture-11">
+
+  <!-- Open Graph / Facebook -->
+  <meta property="og:type" content="article">
+  <meta property="og:title" content="Spark Structured Streaming: Word Counts, Output Modes, and Windows | Stream Processing and Analytics">
+  <meta property="og:description" content="Spark Structured Streaming notes for stream processing and analytics: the streaming word count, output modes, event time, and tumbling and sliding windows.">
+  <meta property="og:url" content="https://bitsnotes.com/view/stream-processing-and-analytics/spa-lecture-11">
+  <meta property="og:image" content="https://bitsnotes.com/og-default.png">
+  <meta property="og:image:width" content="1200">
+  <meta property="og:image:height" content="630">
+  <meta property="og:site_name" content="BitsNotes">
+
+  <!-- Twitter Card -->
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="Spark Structured Streaming: Word Counts, Output Modes, and Windows | Stream Processing and Analytics">
+  <meta name="twitter:description" content="Spark Structured Streaming notes for stream processing and analytics: the streaming word count, output modes, event time, and tumbling and sliding windows.">
+  <meta name="twitter:image" content="https://bitsnotes.com/og-default.png">
+  <meta name="twitter:site" content="@BitsNotes">
+
+  <!-- Stylesheet -->
+  <link rel="stylesheet" href="/lecture-notes.css">
+
+  <!-- Structured Data: JSON-LD -->
+  <script type="application/ld+json">
+{"@context":"https://schema.org","@type":"Article","headline":"Spark Structured Streaming: Word Counts, Output Modes, and Windows","description":"Spark Structured Streaming notes for stream processing and analytics: the streaming word count, output modes, event time, and tumbling and sliding windows.","datePublished":"2026-08-07","author":{"@type":"Organization","name":"BitsNotes"},"publisher":{"@type":"Organization","name":"BitsNotes"},"about":["streaming word count","output modes","complete mode","update mode","append mode","watermark","event time","stream time","time skew","windows","tumbling windows","sliding windows","trigger policy","eviction policy","Spark Structured Streaming"]}
+</script>
+
+  <!-- Lecture Metadata (for the BitsNotes platform viewer) -->
+  <!-- IMPORTANT: This is the ONLY metadata source. No companion .json file
+       is created. The viewer reads everything from this embedded script.
+       Required fields: title, subject, gradeLevel, datePublished,
+       targetAudience, sections (array), examRevisionNotes (array).
+       Optional fields: prerequisites (array of {subject, lecture, topics}).
+       NOT included (removed): summary, keyConcepts, quiz. -->
+  <script type="application/json" id="lecture-metadata">
+{
+  "title": "Spark Structured Streaming: Word Counts, Output Modes, and Windows",
+  "subject": "Stream Processing and Analytics",
+  "gradeLevel": "postgraduate",
+  "datePublished": "2026-08-07",
+  "targetAudience": "Postgraduate students learning stream processing and analytics",
+  "sections": [
+    {
+      "title": "Spark Structured Streaming and the Streaming Word Count",
+      "description": "The classic streaming word count: transformations and actions, the SparkSession singleton, the netcat TCP socket data source, and the pipeline end to end."
+    },
+    {
+      "title": "The Streaming Word Count Demo, Batch by Batch",
+      "description": "Micro-batches and how counts roll in, the full four-micro-batch worked example, and the whitespace-tokenization gotcha."
+    },
+    {
+      "title": "Output Modes: Complete, Update, and Append",
+      "description": "The three output modes, the complete-mode rerun, update mode, and append mode's watermark requirement for aggregations."
+    },
+    {
+      "title": "Event Time, Stream Time, and Time Skew",
+      "description": "The two timelines, why stream time always lags, and the time skew formula."
+    },
+    {
+      "title": "Windows: Why Streams Need Them",
+      "description": "The window as a lens over an infinite stream, non-deterministic streaming algorithms, and the trigger and eviction policies."
+    },
+    {
+      "title": "Tumbling Windows",
+      "description": "Tumbling window mechanics, the five-minute timeline worked example, and the no-overlap property."
+    },
+    {
+      "title": "Sliding Windows",
+      "description": "Sliding (hopping) windows, the five-minute slide over a ten-minute window, and moving averages."
+    },
+    {
+      "title": "Exam Guidance Summary",
+      "description": "Exam strategy from the session: output modes, event time versus stream time, quiz logistics, and window concepts to review."
+    },
+    {
+      "title": "Key Industry Applications",
+      "description": "Real-world connections: socket word counts, traffic charging systems, moving averages, dashboards, and water pollution sampling."
+    }
+  ],
+  "examRevisionNotes": [
+    {
+      "topic": "Spark Structured Streaming and the Streaming Word Count",
+      "mustKnow": "The streaming word count pipeline: ncat -lk 9999 listens on port 9999, Spark reads the socket (format socket, host localhost, port 9999), and each Enter press becomes one micro-batch; the SparkSession is a singleton per use case; a socket source is for development, not production.",
+      "keyFormula": "",
+      "commonPitfall": "Forgetting the listener must run before the application; using a raw socket feed in production; mixing up -l (listen) and -k (keep connection open).",
+      "quickCheck": "What does -k do in the ncat -lk 9999 command?",
+      "connections": [
+        "11.2"
+      ]
+    },
+    {
+      "topic": "The Streaming Word Count Demo, Batch by Batch",
+      "mustKnow": "Update mode rule: the words shown are always the current batch's words, and the counts shown are running totals across all batches so far; a word seen before but not in the current batch is absent from the output.",
+      "keyFormula": "",
+      "commonPitfall": "Whitespace-tokenization gotcha: 'Java,' with a comma attached is a different token from Java, so the count stays 1 until the plain word is typed; preprocessing normalizes tokens (lowercase, strip punctuation).",
+      "quickCheck": "In update mode, why does Spark show count 2 in the second micro-batch while programming and language disappear from the output?",
+      "connections": [
+        "11.1",
+        "11.3"
+      ]
+    },
+    {
+      "topic": "Output Modes: Complete, Update, and Append",
+      "mustKnow": "Output modes are exam-critical: complete mode rewrites the full history (8 rows after two batches: 5 + 5 - 2 overlaps), update mode writes only the current batch's words with running totals, and append mode requires a watermark whenever the stream performs aggregations.",
+      "keyFormula": "",
+      "commonPitfall": "Rerunning a streaming query without removing the checkpoint directory resumes old state; the watermark is a time boundary for finalized windows, not a save point.",
+      "quickCheck": "Why did the append-mode run fail with 'Append output is not supported when there are streaming aggregations on streaming data without watermark'?",
+      "connections": [
+        "11.2",
+        "11.4"
+      ]
+    },
+    {
+      "topic": "Event Time, Stream Time, and Time Skew",
+      "mustKnow": "Event time is when the event occurs; stream time is when its information reaches the platform; t_skew = t_stream - t_event > 0 because messages pass through a data flow layer; on the skew graph, event time is on the x-axis, stream time on the y-axis, the ideal is the y = x line, and the observed line hangs below it by the skew.",
+      "keyFormula": "\\[t_{\\text{skew}} = t_{\\text{stream}} - t_{\\text{event}} > 0\\]",
+      "commonPitfall": "Processing by stream time when the question is about event time — windowed results shift by a non-constant amount; treating the skew as fixed; assuming arrival order equals event order.",
+      "quickCheck": "If an event happens at 12:00:04 and reaches the platform at 12:00:09, what is the time skew, and can another event that happened at 12:00:05 arrive before it?",
+      "connections": [
+        "11.5"
+      ]
+    },
+    {
+      "topic": "Windows: Why Streams Need Them",
+      "mustKnow": "Windows are finite slices of an unbounded stream: the window length defines how much data each slice holds; the trigger policy decides when processing runs; the eviction policy decides when processed data is thrown away; and because only windowed samples are ever processed, streaming algorithms are non-deterministic while batch algorithms always see the full data set.",
+      "keyFormula": "",
+      "commonPitfall": "Confusing trigger (when processing runs) with eviction (when data is thrown away); expecting exact answers from a windowed algorithm; thinking the window waits for the stream to end.",
+      "quickCheck": "With the river-water mug, what do the mug, the water, the analysis, and throwing the water away each stand for?",
+      "connections": [
+        "11.4",
+        "11.6"
+      ]
+    },
+    {
+      "topic": "Tumbling Windows",
+      "mustKnow": "Tumbling window: T_batch = T_window; consecutive non-overlapping slices (12:00-12:05 gets e1,e2,e3; 12:05-12:10 gets e4,e5,e6); headline property: any event belongs to exactly one window; natural question is 'how many new orders in the last five minutes?'",
+      "keyFormula": "\\[T_{\\text{batch}} = T_{\\text{window}}\\]",
+      "commonPitfall": "Counting a boundary event in two windows; using a tumbling window to compute a moving average (needs overlap); forgetting that the engine only runs at the trigger, so events arriving after a window closes wait for the next one.",
+      "quickCheck": "With five-minute tumbling windows starting at 12:00, which window does an event at 12:07 belong to?",
+      "connections": [
+        "11.5",
+        "11.7"
+      ]
+    },
+    {
+      "topic": "Sliding Windows",
+      "mustKnow": "Sliding window: T_window > T_slide; with a 5-minute slide and a 10-minute window, triggers fire at 12:00 (11:50-12:00), 12:05 (11:55-12:05), 12:10 (12:00-12:10), and each run's history overlaps the previous by T_window - T_slide; the event's own timestamp (event time) decides its window; the clean timeline assumes unit processing time.",
+      "keyFormula": "\\[T_{\\text{window}} > T_{\\text{slide}}\\]",
+      "commonPitfall": "Sliding when the question is tumbling (new-orders counting gets complicated); assuming the slide must divide the window (5-minute slide with 7-minute window is fine); keying windows to stream time; ignoring that non-unit processing time shifts results by a non-constant delta.",
+      "quickCheck": "With a 5-minute slide and a 7-minute window, by how much do consecutive windows overlap?",
+      "connections": [
+        "11.6",
+        "11.4"
+      ]
+    },
+    {
+      "topic": "Exam Guidance Summary",
+      "mustKnow": "Quiz logistics: quiz next week covering everything so far, four-day window including the weekend (28th-29th), announcement on Canvas gives the official start; review output modes, the two timelines, trigger/eviction policies, and tumbling vs sliding windows with small timeline examples; remove the checkpoint directory before rerunning a streaming app.",
+      "keyFormula": "",
+      "commonPitfall": "Rerunning a streaming application without removing the old checkpoint directory — it resumes old state and the demo output does not restart cleanly.",
+      "quickCheck": "What must you do before rerunning a streaming query so that it starts fresh instead of resuming old state?",
+      "connections": [
+        "11.3",
+        "11.4",
+        "11.6",
+        "11.7"
+      ]
+    },
+    {
+      "topic": "Key Industry Applications",
+      "mustKnow": "Named anchors: netcat socket word count (interview starter); traffic charging (event time vs stream time); moving averages in stock prices and top-10 transactions over recent hours (sliding); new orders in the last five minutes (tumbling); water pollution sampling (window capacity and eviction); socket sources are development-only, not production.",
+      "keyFormula": "",
+      "commonPitfall": "Relying on raw socket feeds in production — they offer no durability, replay, or ordering guarantees.",
+      "quickCheck": "Which industry use case is the canonical sliding-window application mentioned in the session?",
+      "connections": [
+        "11.1",
+        "11.4",
+        "11.6",
+        "11.7"
+      ]
+    }
+  ]
+}
+</script>
+</head>
+<body>
+  <div class="container">
+    <!-- ============================================================
+    HERO HEADER
+    ============================================================ -->
+    <header class="hero-header">
+      <span class="subject-badge">Stream Processing and Analytics</span>
+      <h1 class="lecture-title">Spark Structured Streaming: Word Counts, Output Modes, and Windows</h1>
+      <div class="meta-info">
+        <div class="meta-item"><strong>Published:</strong> 2026-08-07</div>
+        <div class="meta-item"><strong>Level:</strong> postgraduate</div>
+        <div class="meta-item"><strong>Audience:</strong> Postgraduate students learning stream processing and analytics</div>
+      </div>
+    </header>
+
+    <!-- ============================================================
+    PREREQUISITE KNOWLEDGE
+    Optional section listing concepts from previous lectures that this
+    lecture builds on. Populated by Agent 3 from topic_mappings/*.yaml.
+    If no prerequisites exist, this section is omitted entirely.
+    ============================================================ -->
+    
+
+    <!-- ============================================================
+    MAIN LECTURE-FAITHFUL CONTENT
+    Page title = one h1.lecture-title
+    Each section = one h2.section-title
+    Each subsection = one h3.subsection-title
+    Callout boxes: .key-concept (blue), .important-note (violet),
+      .example-box (green), .warning-box (red), .key-takeaway (amber)
+    Display math: auto-scrolls via mjx-container CSS; .eqbox wrapper optional
+    ============================================================ -->
+    <main>
+<p>This session brings Spark streaming to life. Everything before was vocabulary and setup — the families of stream operations, the two working environments, and the idea that a stream is processed in small chunks. This session runs the classic <strong>streaming word count</strong>: a netcat listener feeds lines of text over a TCP socket, and a Spark application turns each line into a micro-batch, splits it into words, and counts them live, table by table.</p>
+<p>The session then answers three questions that every streaming application must face. <strong>What should the output look like after each batch?</strong> Spark offers three answers — complete, update, and append — and the demo shows all three, including one that refuses to run without a watermark. <strong>What is the difference between when an event happens and when it reaches the system?</strong> The two timestamps — event time and stream time — and the gap between them, called time skew, turn out to be quiz material. <strong>How do you compute over a stream that never ends?</strong> The answer is windows, and the session covers the two core types — tumbling and sliding — with the trigger and eviction policies that define how each window fills and empties.</p>
+<p>By the end, the word-count tables from the demo, the three output modes, the two timelines, and the two window types all connect into one picture: how a finite-memory engine processes an unbounded stream in slices, and why every result has a scope attached to it.</p>
+
+<h2 id="11.1-spark-structured-streaming-and-the-streaming-word-count">11.1 Spark Structured Streaming and the Streaming Word Count</h2>
+<div class="important-note">
+  <p><strong>The hook.</strong> What does a real streaming application look like from the inside — not a diagram, but a running program? This section builds one: a listener process on a terminal window, a Spark application in an IDE, and text messages flowing from one to the other over a network port. It is the smallest complete streaming pipeline there is, and it shows every moving part in action.</p>
+</div>
+<h3 id="11.1.1-where-we-start-transformations-actions-and-the-two-environments">11.1.1 Where We Start: Transformations, Actions, and the Two Environments</h3>
+<p>The session picks up from where the last one left off. The earlier session introduced Spark streaming and covered the two families of operations you can run on a stream:</p>
+<ul>
+  <li><strong>Transformations</strong> — operations that build a new stream or DataFrame from an existing one but compute nothing by themselves. They describe what to do; they do not do it.</li>
+  <li><strong>Actions</strong> — operations that actually trigger computation and return results. The work happens only when an action fires.</li>
+</ul>
+<div class="important-note">
+  <p><strong>Intuition — a recipe book.</strong> Think of transformations as the recipe and actions as the cooking. You can read a recipe and plan the whole meal without a single pot being touched — that is a chain of transformations. The moment you turn on the stove, the cooking starts — that is the action. A Spark program can pile up a long chain of transformations and still do no work; the work starts at the action, and every transformation in the chain runs at that point.</p>
+</div>
+<p>Two working environments were set up during installation. One is <strong>Jupyter Notebook</strong>, a browser-based cell-by-cell environment where you run small pieces of code in order and see each result immediately. The other is <strong>PyCharm</strong>, a full Python IDE where you write a script and run it as a program. Both work for Spark streaming; the live demo in this session runs in PyCharm.</p>
+<p>One practical point from the setup phase: the streaming commands shown below do not need a notebook environment at all. A plain command prompt is enough for the data-generation side, and the notebook stack (such as Anaconda) is not required for that part. The two sides of the demo are deliberately low-tech: a terminal window on one side, an IDE on the other.</p>
+<p>The example the session runs is the classic <strong>streaming word count</strong>. It is the "hello world" of streaming: a stream of text messages arrives, and the application counts how often each word appears. It matters beyond the classroom too — this is the first streaming application people are asked about in job interviews, because it exercises almost every core streaming idea: a data source, micro-batches, state, and output modes.</p>
+<h3 id="11.1.2-the-sparksession-singleton">11.1.2 The SparkSession Singleton</h3>
+<p>Every Spark application starts the same way: by opening a <strong>SparkSession</strong>. A SparkSession is the entry point that ties together configuration, the cluster, and your code. Before you can read a stream, register a DataFrame, or run any computation, the session must exist.</p>
+<div class="key-concept">
+  <p><strong>The key rule: a SparkSession is a singleton.</strong> Singleton means one object for the whole application — exactly one session per use case. You do not create several Spark sessions for one use case; you create one session and run all the operations for that particular use case through it. The pattern in the demo application looks like this:</p>
+  <pre><code>from pyspark.sql import SparkSession
+
+spark = SparkSession.builder \
+    .appName("StreamingWordCount") \
+    .config("spark.sql.streaming.stopActiveRunOnRestart", "true") \
+    .getOrCreate()</code></pre>
+  <p>The application code sets a few things on the session: an <strong>application name</strong> (used to identify the job in logs and the cluster UI) and a <strong>configuration for shutdown</strong> — the demo requests a graceful shutdown so that the running query can stop cleanly rather than being killed mid-state. Logging is optional: if you want logs you can create a logger object; otherwise you can skip it.</p>
+</div>
+<div class="important-note">
+  <p><strong>Intuition — one front door.</strong> Think of the SparkSession as the single front door of a building. All visitors (operations) enter through that one door, and the building's systems (config, cluster connection, catalog) are all reachable from it. Two doors would mean two buildings — two separate Spark contexts with separate state, which is why the rule is "one use case, one session."</p>
+</div>
+<h3 id="11.1.3-the-data-source-netcat-and-a-tcp-socket">11.1.3 The Data Source: Netcat and a TCP Socket</h3>
+<p>The word count needs a stream of text as input, and the data source used here is a <strong>TCP socket</strong>. The setup has two sides. On one side, a small application called <strong>netcat</strong> (invoked as <code>ncat</code>) generates the stream of text messages; on the other side, Spark reads those messages from a port on the network. This is the "listen" model: the netcat process listens on a port, waits for a connection, and then forwards whatever you type to whoever is connected — in this case, your Spark application.</p>
+<p>To generate the stream you first install netcat. The netcat application can be downloaded from <strong>nmap.org</strong>, which publishes installers for different machines — Windows, Mac, and others. On Windows you get an executable installer (the version used here is nmap 7.9.4 setup.exe). Once installed, you can run the message-generating command on the fly from a command prompt. You could also bake the netcat command into a configuration file, but the demo prefers running on the fly: open a command prompt in the folder where the streaming application lives, and type:</p>
+<pre><code>ncat -lk 9999</code></pre>
+<p>Here <code>-l</code> puts netcat into <strong>listen mode</strong>, <code>-k</code> keeps the connection open after the client disconnects, and <code>9999</code> is the <strong>port number</strong> the messages are sent to. The text is sent over the TCP/IP protocol to port 9999, and the Spark application, which has already been told about that port, receives the lines. Because the messages are generated and consumed on the same machine, the host is <code>localhost</code>.</p>
+<div class="example-box">
+  <p><strong>Worked example — the message path, step by step.</strong></p>
+  <ol>
+    <li>Start the listener: run <code>ncat -lk 9999</code> in a command prompt. The process now sits waiting on port 9999 — no messages exist yet.</li>
+    <li>Start the Spark application in PyCharm. The application opens its SparkSession and attaches a streaming read to the socket: stream format <code>socket</code>, host <code>localhost</code>, port <code>9999</code>.</li>
+    <li>Type a message in the netcat window, for example <code>Hello Spark</code>, and press Enter.</li>
+    <li>The text travels over TCP/IP to port 9999 on the same machine (<code>localhost</code>).</li>
+    <li>The Spark application receives the line as one unit of stream data, splits it into words (<code>Hello</code>, <code>Spark</code>), counts them, and prints the result table.</li>
+  </ol>
+  <p><strong>Result:</strong> every Enter press in the netcat window becomes one round of processing in the Spark application. The message path is: netcat window → TCP socket → Spark application → count table. <em>Sense-check:</em> the direction is easy to verify — type anything in the netcat window and the Spark window prints a table within a moment; type nothing and no table appears.</p>
+</div>
+<p>Real-world: netcat, distributed from nmap.org, is the standard quick tool for generating test network streams — you will see it in many streaming tutorials. The word-count-over-socket setup is also a faithful miniature of how real streaming systems ingest data: messages pass through a data flow layer before reaching the processing engine. One caution from the demo: a socket source is fine for development and testing, but a production streaming application should not rely on a raw socket feed — Spark itself warns about this when you run it.</p>
+<div class="warning-box">
+  <p><strong>Pitfalls.</strong></p>
+  <ul>
+    <li><strong>Forgetting the listener must run first.</strong> If the Spark application starts while netcat is not listening, it connects to nothing. The listener must be active on the port before the application reads.</li>
+    <li><strong>Mixing up <code>-l</code> and <code>-k</code>.</strong> <code>-l</code> alone closes the connection after the first client disconnects; <code>-k</code> keeps it alive for the next batch. The demo needs both, in that order: <code>-lk</code>.</li>
+    <li><strong>Using a socket source in production.</strong> A raw socket feed has no durability, no replay, and no ordering guarantees. It is a teaching and testing tool — real pipelines read from Kafka, Kinesis, or files.</li>
+    <li><strong>Treating the port as an application property.</strong> The port is a number agreed between the two sides — netcat must listen on the same port (9999) that the Spark read uses. A mismatch silently produces no data.</li>
+  </ul>
+</div>
+<h3 id="11.1.4-what-the-application-does-end-to-end">11.1.4 What the Application Does End to End</h3>
+<p>Putting the pieces together: the netcat listener runs in one window; the Spark word count application runs in another. With the listener active but no messages typed yet, the application sits idle and prints counts of zero. The moment you type a line and press Enter, that line becomes a unit of stream data — a <strong>micro-batch</strong> — that Spark picks up, splits into words, counts, and prints.</p>
+<div class="key-takeaway">
+  <p><strong>Recap + bridge.</strong> The streaming word count is a complete miniature pipeline: netcat on a TCP socket produces the stream, a singleton SparkSession owns the application, and each typed line becomes a micro-batch that the engine transforms and counts. Handoff: section 11.2 runs the demo batch by batch and watches the counts — and the surprises — roll in.</p>
+</div>
+
+<h2 id="11.2-the-streaming-word-count-demo-batch-by-batch">11.2 The Streaming Word Count Demo, Batch by Batch</h2>
+<div class="important-note">
+  <p><strong>The hook.</strong> Type a sentence, press Enter, and a table appears. Type another sentence, and the table changes — but not the way you might guess: some words climb by one, some vanish entirely, and one word stubbornly refuses to count when it looks identical to a word counted before. This section works through those tables one by one, because the way counts move between batches is the way streaming state actually works.</p>
+</div>
+<h3 id="11.2.1-micro-batches-and-how-the-counts-roll-in">11.2.1 Micro-Batches and How the Counts Roll In</h3>
+<p>A <strong>micro-batch</strong> is the small chunk of stream data that Spark processes at each trigger. The stream is not one giant computation — it is a sequence of tiny computations, one per micro-batch. In the demo, one typed line equals one micro-batch.</p>
+<p>Here is the first micro-batch. In the netcat window you type:</p>
+<pre><code>Spark is good programming language</code></pre>
+<p>Press Enter. The application counts the words in this micro-batch: <em>Spark</em>, <em>is</em>, <em>good</em>, <em>programming</em>, <em>language</em> — five words, and each appears once, so each gets a count of 1.</p>
+<table>
+  <thead>
+    <tr>
+      <th>Word</th>
+      <th>Count</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td>Spark</td>
+      <td>1</td>
+    </tr>
+    <tr>
+      <td>is</td>
+      <td>1</td>
+    </tr>
+    <tr>
+      <td>good</td>
+      <td>1</td>
+    </tr>
+    <tr>
+      <td>programming</td>
+      <td>1</td>
+    </tr>
+    <tr>
+      <td>language</td>
+      <td>1</td>
+    </tr>
+  </tbody>
+</table>
+<p>Now the second micro-batch. You type:</p>
+<pre><code>Spark is supports Java, Scala, Python</code></pre>
+<p>The moment you press Enter, a new batch table appears:</p>
+<table>
+  <thead>
+    <tr>
+      <th>Word</th>
+      <th>Count</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td>Spark</td>
+      <td>2</td>
+    </tr>
+    <tr>
+      <td>is</td>
+      <td>2</td>
+    </tr>
+    <tr>
+      <td>supports</td>
+      <td>1</td>
+    </tr>
+    <tr>
+      <td>Java,</td>
+      <td>1</td>
+    </tr>
+    <tr>
+      <td>Scala</td>
+      <td>1</td>
+    </tr>
+    <tr>
+      <td>Python</td>
+      <td>1</td>
+    </tr>
+  </tbody>
+</table>
+<div class="important-note">
+  <p><strong>What the second table tells you.</strong> Two observations jump out. First, <em>Spark</em> shows a count of 2 even though it appears once in this micro-batch — because Spark was used in the first batch as well, and its stored count was carried forward and incremented. Second, look at what is missing: the words <em>programming</em> and <em>language</em>, both in the first batch, do not appear in this output at all.</p>
+</div>
+<p>Why? Because the batch update happens with respect to the words of the current batch. The output concentrates on the words from the current micro-batch only; it does not redisplay words from previous batches. But wherever a word appears in a previous batch <em>and</em> in the current one, that word's count is incremented — the accumulated value is updated even though the word itself was last seen earlier. So the rule has two halves:</p>
+<ul>
+  <li><strong>The words shown are always the current batch's words.</strong></li>
+  <li><strong>The counts shown are the running totals across all batches so far.</strong></li>
+</ul>
+<p>This behavior is called <strong>update mode</strong>, and the name captures exactly what is happening: the update happens per the current batch, but the information from previous batches is updated too. We will come back to output modes formally in the next section.</p>
+<p><strong>Exam note:</strong> this update-mode demonstration is not just a demo detail — the session made a point of calling the output modes very important from an examination standpoint. Watch the tables here until the behavior makes sense before moving on.</p>
+<h3 id="11.2.2-worked-example-four-micro-batches-of-streaming-word-count">11.2.2 Worked Example: Four Micro-Batches of Streaming Word Count</h3>
+<p>The demo continued through four micro-batches, and each one is worth reconstructing in full because the counts show the state behavior of the stream.</p>
+<div class="example-box">
+  <p><strong>Worked example — micro-batches 3 and 4.</strong></p>
+  <p><strong>Micro-batch 3.</strong> You type:</p>
+  <pre><code>C++ is good programming language</code></pre>
+  <p>The next count table shows: <em>C++</em> count 1, <em>is</em> count 3, <em>good</em> count 2, <em>programming</em> count 2, <em>language</em> count 2.</p>
+  <table>
+    <thead>
+      <tr>
+        <th>Word</th>
+        <th>Count</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>C++</td>
+        <td>1</td>
+      </tr>
+      <tr>
+        <td>is</td>
+        <td>3</td>
+      </tr>
+      <tr>
+        <td>good</td>
+        <td>2</td>
+      </tr>
+      <tr>
+        <td>programming</td>
+        <td>2</td>
+      </tr>
+      <tr>
+        <td>language</td>
+        <td>2</td>
+      </tr>
+    </tbody>
+  </table>
+  <p>The interesting moves: <em>programming</em> and <em>language</em> appeared earlier as well, so their counts become 2 — they went from 1 to 2, not from nothing. <em>good</em> likewise becomes 2. <em>is</em> has now appeared in all three batches, so it reaches 3. <em>C++</em> is new, so it enters with 1.</p>
+  <p><strong>Micro-batch 4.</strong> Before typing, the class was asked to predict the output for:</p>
+  <pre><code>Python is better here than Java</code></pre>
+  <p>The prediction: <em>Python</em> will be count 2 (it appeared in the second batch as well), <em>is</em> will move to 4, <em>here</em> will be 1, <em>than</em> will be 1, and <em>Java</em> should be 2 — because the second batch contained the word Java, or so it seemed.</p>
+  <table>
+    <thead>
+      <tr>
+        <th>Word</th>
+        <th>Count</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>Python</td>
+        <td>2</td>
+      </tr>
+      <tr>
+        <td>is</td>
+        <td>4</td>
+      </tr>
+      <tr>
+        <td>better</td>
+        <td>1</td>
+      </tr>
+      <tr>
+        <td>here</td>
+        <td>1</td>
+      </tr>
+      <tr>
+        <td>than</td>
+        <td>1</td>
+      </tr>
+      <tr>
+        <td>Java</td>
+        <td>1</td>
+      </tr>
+    </tbody>
+  </table>
+  <p>The table confirmed the predictions except for one: <em>Java</em> became 1, not 2. Why? Because in the second micro-batch the sentence was typed as "Java," — with a comma attached. The word-splitter breaks text on whitespace, so the token "Java," with the comma glued on is a different word from "Java" without it. The comma got counted as part of the token, not as punctuation separating it. When the sentence was typed again with a plain Java, no comma, the count went to 2 as expected.</p>
+  <p><em>Sense-check:</em> every count in the four tables obeys the same rule — current batch's words shown, running totals incremented. The only way to check the Java mystery is to look at the raw token, not the word you meant: "Java," and Java are two different tokens, so 1 is the correct count for the fourth batch.</p>
+</div>
+<div class="warning-box">
+  <p><strong>Pitfall — the whitespace-tokenization gotcha.</strong> This is the classic whitespace-tokenization gotcha: what looks like one word to a human can be two tokens to the counter if any punctuation is attached. In a real streaming system this is exactly why preprocessing pipelines normalize tokens — lowercasing, stripping punctuation — before counting. A message stream "Hello!" and "Hello" should describe the same word; the counter will not know that unless the pipeline cleans the tokens first.</p>
+</div>
+<h3 id="11.2.3-student-questions-and-answers">11.2.3 Student Questions and Answers</h3>
+<div class="important-note">
+  <p><strong>Q:</strong> Why did Java show a count of one instead of two? I expected the Java from the second batch to be counted again.</p>
+  <p><strong>A:</strong> Because the second batch was typed as "Java," with a comma attached. The splitter breaks on whitespace, so the comma-attached "Java," is a different token from plain Java. Only the plain word Java, typed without punctuation, is what the counter saw this time — so its count starts from one. Remove the comma and it becomes two.</p>
+</div>
+<div class="important-note">
+  <p><strong>Q:</strong> In the second batch, why do we not see programming and language anymore, and yet Spark shows a higher count?</p>
+  <p><strong>A:</strong> Because update mode only displays the words from the current micro-batch. Words from earlier batches are not redisplayed. Their stored counts, however, keep accumulating — whenever the same word appears again, its count is incremented. That is why Spark, which is in the first batch as well as the second, shows two, while programming and language, which are not in the second batch, are simply absent from the output.</p>
+</div>
+<div class="important-note">
+  <p><strong>Q:</strong> So the displayed table always belongs to the current batch only?</p>
+  <p><strong>A:</strong> Yes — the words are from the current batch, displayed with respect to the current micro-batch. The counts themselves are the running totals, because wherever a word appeared in a previous batch, that count is also updated.</p>
+</div>
+<div class="key-takeaway">
+  <p><strong>Recap + bridge.</strong> A micro-batch is one typed line, and update mode shows the current batch's words with running totals — which is why Spark climbs to 2 while programming and language vanish, and why "Java," from batch 2 did not become Java in batch 4. Handoff: section 11.3 formalizes the output modes — the three ways the engine writes its result after every batch.</p>
+</div>
+
+<h2 id="11.3-output-modes-complete-update-and-append">11.3 Output Modes: Complete, Update, and Append</h2>
+<div class="important-note">
+  <p><strong>The hook.</strong> After every micro-batch, the engine must decide what to write: everything it has ever counted, only the rows that changed, or only brand-new rows? Those three choices are the output modes, and the session demonstrated all three — including the one that refused to run. The session called this topic very important from an examination standpoint.</p>
+</div>
+<h3 id="11.3.1-complete-mode">11.3.1 Complete Mode</h3>
+<p>Spark supports three <strong>output modes</strong> — the ways the streaming query writes its result after each micro-batch. The first is <strong>complete mode</strong>.</p>
+<p>In complete mode, the result DataFrame is completely overwritten after every micro-batch. A <strong>DataFrame</strong> — the same idea seen in the earlier session — is the in-memory dataset that holds the result. Complete mode takes that entire result set and rewrites it from scratch each time: you get the whole output, the full result set across all micro-batches, on every trigger. Nothing is kept hidden; everything seen so far is redisplayed. That is exactly why it is called complete: the result set is overwritten in full, so the output always reflects the entire history of the stream.</p>
+<div class="key-concept">
+  <p><strong>Formalize — complete mode in one sentence.</strong> The whole result table is rebuilt and written out after every micro-batch: output after batch \(k\) contains the full cumulative state of all \(k\) batches, because the result set is overwritten in full each time.</p>
+  <p>The word-count engine keeps state between batches — a running total per word — and the three output modes are three different policies for <em>which part of that state</em> gets written when a batch finishes. Complete mode writes all of it; the other two policies are formalized in sections 11.3.3 and 11.3.4.</p>
+</div>
+<h3 id="11.3.2-worked-example-the-complete-mode-rerun">11.3.2 Worked Example: The Complete-Mode Rerun</h3>
+<p>To see complete mode, the application was stopped with Ctrl+C, the <strong>checkpoint directory</strong> was removed, and the same application was restarted with the output mode changed from update to complete. (The checkpoint directory is where the application stores its streaming state so it can resume; when you rerun a streaming query you must remove the old checkpoint directory or the run resumes old state instead of starting fresh.)</p>
+<div class="example-box">
+  <p><strong>Worked example — the complete-mode rerun.</strong></p>
+  <p>The same messages were typed again — "Spark is good programming language", then "Spark is supports Java, Scala, Python". This time the output is different: instead of showing only the current batch's words, the complete-mode table shows every word that has ever been counted, with its running total. The first batch still shows the five words at count 1, but by the second micro-batch the output is the full cumulative table:</p>
+  <table>
+    <thead>
+      <tr>
+        <th>Word</th>
+        <th>Count</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>Spark</td>
+        <td>2</td>
+      </tr>
+      <tr>
+        <td>is</td>
+        <td>2</td>
+      </tr>
+      <tr>
+        <td>supports</td>
+        <td>1</td>
+      </tr>
+      <tr>
+        <td>Java,</td>
+        <td>1</td>
+      </tr>
+      <tr>
+        <td>Scala</td>
+        <td>1</td>
+      </tr>
+      <tr>
+        <td>Python</td>
+        <td>1</td>
+      </tr>
+      <tr>
+        <td>programming</td>
+        <td>1</td>
+      </tr>
+      <tr>
+        <td>language</td>
+        <td>1</td>
+      </tr>
+    </tbody>
+  </table>
+  <p>Note what changed versus update mode: <em>programming</em> and <em>language</em> are back in the output even though they did not appear in the current micro-batch, because complete mode gives the complete output across all micro-batches — the earlier history is included, and it is rewritten on every batch.</p>
+  <p><em>Sense-check:</em> every word ever typed appears exactly once in the table, with the number of times it has appeared. Five words from batch 1, five from batch 2, two overlaps (Spark, is) — so \(5 + 5 - 2 = 8\) rows. The table has exactly 8 rows, and the two overlapping words are the only counts above 1. The state and the display now agree perfectly.</p>
+</div>
+<div class="warning-box">
+  <p><strong>Pitfall — rerunning a streaming query without clearing the checkpoint.</strong> If you restart a streaming application and the checkpoint directory still holds the old run's state, the query resumes from where it left off — old counts persist, and the "fresh" demo output never starts clean. Remove the checkpoint directory (or point the application at a new one) before every rerun.</p>
+</div>
+<h3 id="11.3.3-update-mode">11.3.3 Update Mode</h3>
+<p>The second output mode is <strong>update mode</strong>, which we already met live in the word count demo. In update mode you see only those records that are either <strong>new</strong> — first appearing in the current micro-batch — or records whose <strong>old value is updated</strong> — words that were seen before and now have a higher count. So where there are common words across batches, those are updated; entirely new words appear fresh; and everything else stays out of the output. The words (or records) displayed are the ones from the current batch, with respect to the current micro-batch, and their displayed counts carry the accumulated totals.</p>
+<p>To say it compactly: update mode writes only the changed rows — new records and updated counts — while complete mode rewrites the entire result set.</p>
+<div class="key-concept">
+  <p><strong>Comparison — complete vs update on the same two batches.</strong></p>
+  <table>
+    <thead>
+      <tr>
+        <th></th>
+        <th>Complete mode</th>
+        <th>Update mode</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>After batch 1</td>
+        <td>5 rows: every word, count 1</td>
+        <td>5 rows: every word, count 1</td>
+      </tr>
+      <tr>
+        <td>After batch 2</td>
+        <td>8 rows: every word ever seen, full history</td>
+        <td>5 rows: only batch 2's words (Spark 2, is 2, supports 1, Java, 1, Scala 1, Python 1)</td>
+      </tr>
+      <tr>
+        <td>Rows from batch 1 not in batch 2</td>
+        <td>Redisplayed (programming, language)</td>
+        <td>Hidden (programming, language)</td>
+      </tr>
+      <tr>
+        <td>Changed rows</td>
+        <td>All rewritten</td>
+        <td>Only changed rows written</td>
+      </tr>
+    </tbody>
+  </table>
+  <p>When to pick which: use complete mode when the full state must be visible at a glance (small result tables, dashboards over aggregated state); use update mode when the output should mirror the current input and you want to avoid rewriting unchanged history.</p>
+</div>
+<h3 id="11.3.4-append-mode-and-the-watermark-requirement">11.3.4 Append Mode and the Watermark Requirement</h3>
+<p>The third output mode is <strong>append mode</strong>. Append mode is like a simple insert of unique records: the query appends only new rows to the result, never touching previously emitted rows.</p>
+<p>In the demo, the mode was switched from update to append and the application was restarted. The run stopped almost immediately with an error message:</p>
+<pre><code>Append output is not supported when there are streaming aggregations on streaming data without watermark.</code></pre>
+<div class="important-note">
+  <p><strong>What the error means.</strong> The important part: when the stream performs <strong>aggregations</strong> — like the running word counts, which combine data across batches — append mode is not supported unless an extra condition is satisfied. That condition is the <strong>watermark</strong>. The watermark concept is announced here and its mechanics arrive with the window discussion in the next sections: in short, a watermark tells the streaming engine how long to keep waiting for late-arriving data before it finalizes and emits a result — which is precisely what append mode needs to guarantee that a row is never emitted twice.</p>
+</div>
+<div class="warning-box">
+  <p><strong>Assumptions & scope.</strong> The rule to remember: append mode is fine for plain new rows (a stream without aggregations, where every record is independent and emitted once as it arrives). But once you add streaming aggregations, you must supply a watermark or the query is rejected. The reason: with an aggregation, the engine cannot know that a row is complete — a late event could still change an earlier window's result — so "append once and never touch again" is only safe when a watermark marks the point after which no late events for that window are expected.</p>
+</div>
+<h3 id="11.3.5-student-questions-and-answers">11.3.5 Student Questions and Answers</h3>
+<div class="important-note">
+  <p><strong>Q:</strong> In complete mode I expected every word to be counted once — why does the output show more than one?</p>
+  <p><strong>A:</strong> Complete mode overwrites the whole result set after each micro-batch. The table is rebuilt from the full history, so a word seen twice across batches shows a count of two, even in the very first output after the second batch arrives. The count is the number of <em>occurrences</em> across the whole stream, not the number of times it appears in the current table.</p>
+</div>
+<div class="important-note">
+  <p><strong>Q:</strong> The append-mode run failed with "Append output is not supported when there are streaming aggregations on streaming data without watermark". Does the missing condition work like a save point?</p>
+  <p><strong>A:</strong> The required condition is the watermark, not a save point. A save point would store progress and let the run resume; a watermark is a time boundary the engine uses to decide when old data can be considered finished, so rows are only appended once. Append mode cannot run with streaming aggregations unless a watermark is set — the engine needs it to know when old data can be considered finished so rows are only appended once. The details of how the watermark works arrive with the window concept.</p>
+</div>
+<div class="key-takeaway">
+  <p><strong>Exam note:</strong> the output modes were flagged as very important from an examination standpoint. Be able to reproduce the word-count tables for update mode (current batch's words shown, running totals incremented) and complete mode (full result set overwritten every micro-batch), and state the append-mode rule: streaming aggregations require a watermark.</p>
+  <p><strong>Recap + bridge.</strong> Complete mode rewrites the full history each batch; update mode writes only new or changed rows; append mode writes only new rows and needs a watermark for aggregations — which is why the water bucket is thrown over to the next sections. Handoff: section 11.4 introduces the two timelines — event time and stream time — that make the watermark's job understandable.</p>
+</div>
+
+<h2 id="11.4-event-time-stream-time-and-time-skew">11.4 Event Time, Stream Time, and Time Skew</h2>
+<div class="important-note">
+  <p><strong>The hook.</strong> A person jumps a signal at a crossing. When did the event happen — the instant the foot crosses the line, or the moment the camera system records it? The answer is not the same, and the difference between those two instants is a quantity you can write down, measure, and quiz students on. This section names both times, defines the gap between them, and shows why the gap matters for every windowed computation that follows.</p>
+</div>
+<h3 id="11.4.1-two-timelines-event-time-and-stream-time">11.4.1 Two Timelines: Event Time and Stream Time</h3>
+<p>Streaming processing deals with two different times, and keeping them apart is a core skill. The first is <strong>event time</strong>: the time at which the event actually occurs in the world. The second is <strong>stream time</strong>: the time at which the event's information reaches the platform.</p>
+<div class="example-box">
+  <p><strong>Worked example — the traffic monitoring scenario.</strong></p>
+  <p>Take the demo example: monitoring traffic on a road, and suppose a person jumps the signal at a crossing.</p>
+  <ul>
+    <li><strong>Event time</strong> — the time at which the person actually jumped the signal. This is written on the event itself, as a timestamp produced where the event happened.</li>
+    <li><strong>Stream time</strong> — the time at which that event's information reached the streaming platform. The message carrying the jump travels through a data flow layer first, so the platform sees it a moment after it happened.</li>
+  </ul>
+  <p>Everything that happens after the jump — snapping the photo, computing the fine, sending the alert — is part of <strong>processing</strong>, downstream of the event itself.</p>
+  <table>
+    <thead>
+      <tr>
+        <th>Stage</th>
+        <th>Timeline</th>
+        <th>Timestamp</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>Signal jumped</td>
+        <td>Event time</td>
+        <td>12:00:03</td>
+      </tr>
+      <tr>
+        <td>Photo snapped</td>
+        <td>Processing</td>
+        <td>12:00:04</td>
+      </tr>
+      <tr>
+        <td>Message reaches platform</td>
+        <td>Stream time</td>
+        <td>12:00:07</td>
+      </tr>
+      <tr>
+        <td>Fine computed and alert sent</td>
+        <td>Processing</td>
+        <td>12:00:08</td>
+      </tr>
+    </tbody>
+  </table>
+  <p><em>Sense-check:</em> the event time (12:00:03) is always the earliest timestamp on the record, and stream time (12:00:07) always comes after it, because the message must physically travel to the platform before it can be processed.</p>
+</div>
+<div class="important-note">
+  <p><strong>Q:</strong> Is this like the automatic traffic charging systems we see today, where a broken signal is captured by a camera?</p>
+  <p><strong>A:</strong> Exactly — the broken signal is the event generated over there. The event time is the moment the signal was broken; everything afterward — snapping the photo, computing the fine, sending the alert — is the processing that follows.</p>
+</div>
+<p>Two consequences follow, and both are worth writing down.</p>
+<p><strong>First, stream time will always lag a little behind event time.</strong> The actual timestamp of an event is earlier than the moment the event reaches the system, because there is a data flow layer the messages must pass through. You cannot expect an event to reach the processing platform at the same instant it occurs, and you do not directly ingest messages straight into the streaming engine — the messages travel through the data flow layer first.</p>
+<p><strong>Second, this lag is exactly why the two timestamps must be distinguished.</strong> If you process by the arrival time instead of the occurrence time, your windowed results will be shifted. A window keyed to arrival time groups events by when they were <em>seen</em>, not when they <em>happened</em> — and for an out-of-order world, those two groupings disagree.</p>
+<div class="important-note">
+  <p><strong>Q:</strong> Streaming time will always be a little behind, right? The event happened, but the system sees it later because of the data flow layer.</p>
+  <p><strong>A:</strong> Yes — the gap exists because events pass through a data flow layer before they reach the platform. You cannot ingest a message directly into the engine at the same instant the event occurs; the arrival is always after the fact, so stream time lags event time.</p>
+</div>
+<p><strong>Exam note:</strong> note down the event time / stream time distinction — the session flagged it explicitly as quiz material. A quiz is planned for the coming weekend covering everything up to this point, so treat both definitions and the gap between them as testable.</p>
+<h3 id="11.4.2-time-skew">11.4.2 Time Skew</h3>
+<p>Because stream time always lags event time, the two timelines do not line up. If you plot the two against each other — event time on one axis, stream time on the other — the ideal situation would be a straight line through the origin: the stream sees every event at the moment it occurs. In practice the observed curve sits below that ideal line: the stream sees each event a little later, and the lag widens as events flow through the data flow layer.</p>
+<p>The gap between the ideal time and the observed time — the difference between event time and stream time — is called the <strong>time skew</strong>:</p>
+<p>\[ t_{\text{skew}} = t_{\text{stream}} - t_{\text{event}} > 0 \]</p>
+<p>where \(t_{\text{event}}\) is the time at which the event occurred, \(t_{\text{stream}}\) is the time at which the event's information reached the platform, and \(t_{\text{skew}}\) is their difference. Since stream time always lags, the skew is always positive.</p>
+<div class="key-concept">
+  <p><strong>Formalize — the skew formula, symbol by symbol.</strong></p>
+  <ul>
+    <li>\(t_{\text{event}}\) — the event timestamp, produced where the event happens. Units: clock time (seconds or milliseconds from a reference).</li>
+    <li>\(t_{\text{stream}}\) — the arrival timestamp, produced when the message reaches the streaming platform. Same units.</li>
+    <li>\(t_{\text{skew}} = t_{\text{stream}} - t_{\text{event}}\) — the lag between the two, a duration in the same units.</li>
+  </ul>
+  <p>Because the message cannot arrive before it happens, \(t_{\text{stream}} \geq t_{\text{event}}\) always holds, and in practice the inequality is strict: \(t_{\text{skew}} > 0\). The skew is not a fixed constant — it depends on how long the message spends in the data flow layer, so it varies event by event.</p>
+  <p><strong>Visual intuition.</strong> Draw a chart with <strong>event time on the horizontal axis</strong> and <strong>stream time on the vertical axis</strong>, both in clock time. The ideal situation is the straight line \(y = x\) through the origin: stream time equal to event time at every point, the stream seeing each event at the instant it occurs. The observed line hangs below it — for every event, the observed stream time is greater than the event time, so the observed curve is always below the diagonal. The vertical gap between the diagonal and the curve at any moment is exactly the time skew: the lag between when an event occurred and when the stream saw it. The takeaway: the diagonal is the "same instant" dream, the gap under it is the reality of the data flow layer, and the width of the gap decides how careful windowing must be.</p>
+</div>
+<div class="example-box">
+  <p><strong>Worked example — measuring the skew with real numbers.</strong></p>
+  <p>Three events arrive at the platform, each carrying its own event timestamp, with the messages taking different times to travel through the data flow layer:</p>
+  <table>
+    <thead>
+      <tr>
+        <th>Event</th>
+        <th>\(t_{\text{event}}\)</th>
+        <th>\(t_{\text{stream}}\)</th>
+        <th>\(t_{\text{skew}}\)</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>\(e_1\)</td>
+        <td>12:00:03</td>
+        <td>12:00:05</td>
+        <td>2 s</td>
+      </tr>
+      <tr>
+        <td>\(e_2\)</td>
+        <td>12:00:04</td>
+        <td>12:00:09</td>
+        <td>5 s</td>
+      </tr>
+      <tr>
+        <td>\(e_3\)</td>
+        <td>12:00:05</td>
+        <td>12:00:06</td>
+        <td>1 s</td>
+      </tr>
+    </tbody>
+  </table>
+  <p>For \(e_2\): \(t_{\text{skew}} = 12{:}00{:}09 - 12{:}00{:}04 = 5\) seconds. Note that \(e_2\) has a <em>larger</em> skew than \(e_1\) even though it happened later — the skew is per-event, not a global constant. Also note the ordering effect: \(e_3\) (event time 12:00:05) reaches the platform <em>before</em> \(e_2\) (arrives 12:00:09), so the arrival order is \(e_1, e_3, e_2\) while the event order is \(e_1, e_2, e_3\). <strong>This is out-of-order data: the stream can see \(e_3\) before \(e_2\).</strong> <em>Sense-check:</em> on the skew graph, \(e_2\) sits farthest below the diagonal (5 s of gap), \(e_3\) sits closest (1 s); both below, never above — which matches the rule \(t_{\text{skew}} > 0\).</p>
+</div>
+<div class="warning-box">
+  <p><strong>Pitfalls.</strong></p>
+  <ul>
+    <li><strong>Processing by stream time when the business question is about event time.</strong> The classic error: counting "requests per minute" by the minute the request <em>arrived</em> rather than the minute it <em>happened</em> — a stream processor that restarts and replays a backlog makes the arrival rate look like a spike even when the real rate was steady. Window results keyed to the wrong timeline are shifted, and the shift is not constant.</li>
+    <li><strong>Treating the skew as a fixed number.</strong> The lag varies event by event (1 s, 5 s, 2 s in the example above) and can change with network load. A single "average delay" does not describe the stream.</li>
+    <li><strong>Assuming arrival order equals event order.</strong> Because skews differ per event, messages can arrive out of order. Any computation that assumes "first seen = first happened" will be wrong for the stragglers.</li>
+    <li><strong>Ignoring the clock source.</strong> Event timestamps are only trustworthy if the producing device's clock is sane; a mis-set client clock can turn a normal event into a bizarre straggler.</li>
+  </ul>
+</div>
+<p>Why this matters for windows: when you group events into time windows, you must decide which timestamp the window reads. The events carry their own timestamps, so a window can be keyed to event time even when the records arrive late — and handling that late-ness is the job of the watermark.</p>
+<div class="key-takeaway">
+  <p><strong>Recap + bridge.</strong> Event time is when the event happened; stream time is when its message reached the platform; the skew \(t_{\text{skew}} = t_{\text{stream}} - t_{\text{event}}\) is always positive, varies per event, and is why arrival order is not event order. Handoff: section 11.5 uses these two timelines to motivate windows — the finite slices that make an infinite stream computable — and the watermark that governs late events.</p>
+</div>
+
+<h2 id="11.5-windows-why-streams-need-them">11.5 Windows: Why Streams Need Them</h2>
+<div class="important-note">
+  <p><strong>The hook.</strong> The stream never ends, and the machine's memory is fixed. How can a computation that needs the data finish when the data never finishes arriving? The answer is a trick as old as reading: do not look at the whole page — look through a lens, one stretch at a time. Those stretches are windows, and this section explains why every streaming system runs on them.</p>
+</div>
+<h3 id="11.5.1-the-window-as-a-lens-over-an-infinite-stream">11.5.1 The Window as a Lens over an Infinite Stream</h3>
+<p>A stream is, by nature, infinite — or at least unbounded — and the processing engine's memory is finite. You cannot hold the entire stream for processing, and you do not want to wait for it to end before computing anything. So the processing happens on finite slices of the stream, and those slices are called <strong>windows</strong>.</p>
+<div class="important-note">
+  <p><strong>Intuition — the magnifying lens.</strong> The framing used in the discussion: imagine a magnifying lens held over a page. You cannot read the entire sentence at once — you can only read the words that fall inside the lens diameter. That lens diameter is the <strong>window length</strong>: whatever the window's capacity is, only that many data points and events are sent to the processing engine at a time. You define the window length to match what your processing speed can handle — you never capture more messages than you can process, because in any streaming application you never capture the entire stream anyway.</p>
+  <p>Where the analogy holds: the page is the stream, the lens is the window, and moving the lens down the page is the stream flowing past. Where it breaks: a page ends and the stream does not — the lens keeps moving forever, and the words it already passed are gone unless the engine kept a summary of them.</p>
+</div>
+<p>There is a deeper point hiding here: in stream processing, the definition is always that processing happens on a finite amount of data. That is the price of working with an unbounded input and a bounded machine.</p>
+<p>A window can be defined by <strong>time</strong> (the lens covers events from 12:00 to 12:05, say) or by <strong>count</strong> (the lens covers the next 100 events). The discussion that follows stays with time windows; count-based windows are a simpler variant — how many events you take — and were noted as not important for the current treatment.</p>
+<p>Real-world: every production streaming system (click analytics, fraud detection, IoT sensor processing) is windowing by default — no engine can wait for a stream to end, so results are always per-window results.</p>
+<h3 id="11.5.2-streaming-algorithms-are-non-deterministic">11.5.2 Streaming Algorithms Are Non-deterministic</h3>
+<p>Because streaming algorithms work on windows rather than on the whole data set, they are called <strong>non-deterministic algorithms</strong>.</p>
+<div class="key-concept">
+  <p><strong>The reasoning, step by step.</strong></p>
+  <ol>
+    <li>A batch algorithm reads the entire data set, so its answer does not depend on how the data is sliced — the same input gives the same output every run.</li>
+    <li>A streaming algorithm never sees the entire data — it only collects samples through the concept of the window.</li>
+    <li>Which window an event falls into depends on windowing choices: the window type, the length, the slide, the trigger.</li>
+    <li>Therefore the same stream processed twice, with windows sliced differently, can produce different answers.</li>
+  </ol>
+  <p>So a streaming result is not wrong when it differs from another run — it is <em>approximate in a principled way</em>. The approximation is built into the windowing, not a bug in the engine.</p>
+</div>
+<div class="warning-box">
+  <p><strong>Comparison — batch versus streaming determinism.</strong></p>
+  <table>
+    <thead>
+      <tr>
+        <th></th>
+        <th>Batch processing</th>
+        <th>Streaming processing</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>Data seen</td>
+        <td>Full data set</td>
+        <td>Only windowed slices</td>
+      </tr>
+      <tr>
+        <td>Input</td>
+        <td>Bounded</td>
+        <td>Unbounded</td>
+      </tr>
+      <tr>
+        <td>Same input, same answer?</td>
+        <td>Yes, every time</td>
+        <td>Not guaranteed — answer depends on windowing choices</td>
+      </tr>
+      <tr>
+        <td>Result status</td>
+        <td>Exact</td>
+        <td>Principled approximation</td>
+      </tr>
+    </tbody>
+  </table>
+  <p>When to pick which: when the question must be answered exactly over a known, finite data set, batch processing is the right tool; when data arrives continuously and the answer must keep updating, streaming with windows is the only option — and the approximation is the accepted trade-off.</p>
+</div>
+<h3 id="11.5.3-trigger-policy">11.5.3 Trigger Policy</h3>
+<p>Once you have windowed the stream, you still need to decide <strong>when</strong> the processing runs. The <strong>trigger policy</strong> defines the rules for when the code should be executed: you have collected the events, and you want to process them; the decision that "I am going to process this window now" is the trigger. You trigger the algorithm on the window data, and the algorithm is run on the processing engine — potentially across the executors that do the distributed work. So the trigger policy is the schedule of when each window gets processed, while the window defines what data gets processed.</p>
+<div class="important-note">
+  <p><strong>Intuition — an alarm clock.</strong> The window is the cup of coffee to drink; the trigger is the alarm that says "drink it now." A tumbling window's alarm rings every window length (fixed schedule); a sliding window's alarm rings every slide interval; a count-based window's alarm rings when the window is full. Whatever the rule, the trigger is a <em>when</em> decision — it never changes what data is in the window, only when the engine looks at it.</p>
+</div>
+<h3 id="11.5.4-eviction-policy">11.5.4 Eviction Policy</h3>
+<p>The flip side of the trigger is the <strong>eviction policy</strong>: what happens to the window's data after processing. The picture used here was a water sampling trip on a river. You dip a mug into the stream, collect one mug of water, and analyze it — what salts are in it, what the pollution levels are. Then you throw the water away. Throwing it away is the eviction policy: you clean up your window to make room for the next set of records, or events. You take the same mug to a slightly different position in the water, collect another mug of water, and analyze that.</p>
+<div class="important-note">
+  <p><strong>The mug-and-river mapping.</strong></p>
+  <ul>
+    <li>The <strong>mug</strong> is the window capacity: with one mug you cannot store the entire river, just as with finite memory you cannot store the entire stream.</li>
+    <li>The <strong>water</strong> is the data.</li>
+    <li>The <strong>analysis</strong> is the processing.</li>
+    <li><strong>Emptying the mug</strong> after each analysis is the eviction policy.</li>
+  </ul>
+  <p>Without an eviction policy, windows would pile up and the finite memory would fill. The eviction policy is what keeps the engine's storage bounded: process, empty, refill.</p>
+</div>
+<div class="important-note">
+  <p><strong>Q:</strong> With the mug, you throw away the analyzed water — that throw-away is the eviction policy, right?</p>
+  <p><strong>A:</strong> Yes. You analyze one mug of water, then you throw that water away to clean up your window and store the next set of records. Then you take the same mug to a slightly different position in the stream and collect again. The mug is your window capacity — you cannot store the entire river water in one mug, and in the same sense you cannot store the entire stream data in your window, because your memory is finite while the stream is infinite.</p>
+</div>
+<div class="important-note">
+  <p><strong>Q:</strong> I did not follow the trigger and eviction discussion — what types of windows exist?</p>
+  <p><strong>A:</strong> The window types — tumbling and sliding — come next. What has been covered so far are the two policies: the trigger policy decides when the window's data gets processed, and the eviction policy decides when the processed data is thrown away to free the window for the next records.</p>
+</div>
+<h3 id="11.5.5-student-questions-and-answers">11.5.5 Student Questions and Answers</h3>
+<div class="important-note">
+  <p><strong>Q:</strong> At any one moment, is only one window active, or can several windows be active at the same time?</p>
+  <p><strong>A:</strong> One window only — always one. The window exists because the processing engine has limited storage and is collecting data it cannot hold; the engine collects the data, processes it, and dumps it. With one window, the engine never holds more than it can handle. (Whether the window holds more events is a matter of window size — that is where the different window types come in.)</p>
+</div>
+<div class="warning-box">
+  <p><strong>Pitfalls.</strong></p>
+  <ul>
+    <li><strong>Confusing trigger with eviction.</strong> The trigger says <em>when processing runs</em>; the eviction policy says <em>when processed data is thrown away</em>. A window can trigger many times before it evicts (sliding windows are exactly that case).</li>
+    <li><strong>Forgetting the eviction policy exists.</strong> A window that never empties fills the finite memory — the "lens" stops moving because the lens itself is full.</li>
+    <li><strong>Expecting exact answers from a windowed algorithm.</strong> Non-deterministic is not a bug report; it is the definition of streaming computation. Design for it (windows, watermarks, aggregates) instead of against it.</li>
+    <li><strong>Thinking the window waits for the stream to end.</strong> It never does — the whole reason windows exist is that the stream will not end. If a computation needs all the data, it is batch processing, not streaming.</li>
+  </ul>
+</div>
+<div class="key-takeaway">
+  <p><strong>Recap + bridge.</strong> The stream is unbounded and the memory is bounded, so processing happens on finite slices called windows; the trigger policy decides when each window runs, the eviction policy decides when its data is emptied, and windowed computation is non-deterministic by definition. Handoff: the two concrete window types — tumbling first, then sliding — turn these policies into numbers.</p>
+</div>
+
+<h2 id="11.6-tumbling-windows">11.6 Tumbling Windows</h2>
+<div class="important-note">
+  <p><strong>The hook.</strong> Ask "how many orders arrived in the last five minutes?" and you want one clean number per five-minute slice — 12:00–12:05 gets its own answer, 12:05–12:10 gets another, and no order is ever counted twice. The window type that delivers exactly that is the tumbling window, and its whole character fits in one equation: batch size equals window size.</p>
+</div>
+<h3 id="11.6.1-tumbling-window-mechanics">11.6.1 Tumbling Window Mechanics</h3>
+<p>The first window type is the <strong>tumbling window</strong>. A window is simply a collection of events grouped together for processing. In a tumbling window there are two quantities: the <strong>batch size</strong> and the <strong>window size</strong> — and the defining property is that in a tumbling window the batch size equals the window size:</p>
+<p>\[ T_{\text{batch}} = T_{\text{window}} \]</p>
+<p>where \(T_{\text{batch}}\) is the batch interval — how often the engine processes — and \(T_{\text{window}}\) is the window size — how much time's worth of events is collected. When they are equal, every processing run collects exactly the events of the latest window, processes them together, and moves on to the next, non-overlapping window.</p>
+<div class="key-concept">
+  <p><strong>Formalize — the equal-interval rule, symbol by symbol.</strong></p>
+  <ul>
+    <li>\(T_{\text{batch}}\) — the batch interval: the time between one processing run and the next. It answers "how often does the engine run?"</li>
+    <li>\(T_{\text{window}}\) — the window size: the span of time whose events each run collects. It answers "how much history does one run cover?"</li>
+  </ul>
+  <p>The equation \(T_{\text{batch}} = T_{\text{window}}\) means the two answers are the same number: the engine runs once per window, and each run covers exactly one window's worth of time. Because the run interval and the covered span are equal, consecutive windows butt up against each other with no gap and no overlap — which is the defining property of the tumbling window.</p>
+</div>
+<p>Example: take a window size of five minutes. The engine processes every five minutes, and each time it collects only the events that arrived inside those five minutes. It is like dipping the mug into the water at 12:00 and collecting only until 12:05 — the events between 12:00 and 12:05 are collected into the window because the window size is five minutes and the batch interval is five, so every five minutes the engine processes the events from the last five minutes.</p>
+<h3 id="11.6.2-worked-example-the-five-minute-timeline">11.6.2 Worked Example: The Five-Minute Timeline</h3>
+<div class="example-box">
+  <p><strong>Worked example — the five-minute timeline.</strong></p>
+  <p>Here is the timeline the demo worked through. Suppose the time axis runs 12:00, 12:05, 12:10, and the window size is five minutes. Events occur at various moments: call them \(e_1, e_2, e_3\) between 12:00 and 12:05, \(e_4, e_5, e_6\) between 12:05 and 12:10, and so on, with \(e_7\) somewhere further along.</p>
+  <table>
+    <thead>
+      <tr>
+        <th>Window</th>
+        <th>Covers</th>
+        <th>Events processed</th>
+        <th>When the trigger fires</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>Window 1</td>
+        <td>12:00–12:05</td>
+        <td>\(e_1, e_2, e_3\)</td>
+        <td>12:05</td>
+      </tr>
+      <tr>
+        <td>Window 2</td>
+        <td>12:05–12:10</td>
+        <td>\(e_4, e_5, e_6\)</td>
+        <td>12:10</td>
+      </tr>
+      <tr>
+        <td>Window 3</td>
+        <td>12:10–12:15</td>
+        <td>\(e_7, \ldots\)</td>
+        <td>12:15</td>
+      </tr>
+    </tbody>
+  </table>
+  <ul>
+    <li>Window 1 covers 12:00 to 12:05. The events processed together are \(e_1, e_2, e_3\).</li>
+    <li>Window 2 covers 12:05 to 12:10. The events processed are \(e_4, e_5, e_6\).</li>
+    <li>The process repeats: every five minutes, the engine takes the events that happened in the last five minutes and processes them as one batch.</li>
+  </ul>
+  <p>The names matter less than the pattern: the events are grouped in consecutive, non-overlapping slices of the timeline, and each slice is processed as a unit. <em>Sense-check:</em> each event appears in exactly one row of the table — \(e_4\) lands only in Window 2, never in Window 1 or Window 3 — and the windows cover the timeline with no gaps, because \(T_{\text{batch}} = T_{\text{window}}\).</p>
+</div>
+<p><strong>Visual intuition.</strong> Draw a horizontal time axis from 12:00 to 12:15. Mark five-minute blocks — 12:00–12:05, 12:05–12:10, 12:10–12:15 — like tiles laid edge to edge. Scatter the events \(e_1\) through \(e_7\) at their times: each dot falls inside exactly one tile, never on a boundary twice. The takeaway: tumbling windows partition the timeline — tiles that share edges but never overlap, and every event lands in exactly one tile.</p>
+<h3 id="11.6.3-key-properties">11.6.3 Key Properties</h3>
+<p>The tumbling window has one headline property: <strong>any event belongs to only one window</strong>. There is no overlap of events across the windows — each event lands in exactly one slice of the timeline. If an event sits between 12:00 and 12:05, it is processed in the first window and never again.</p>
+<div class="key-concept">
+  <p><strong>The no-overlap property, stated precisely.</strong> For tumbling windows with window size \(T_{\text{window}}\), window \(k\) covers the half-open interval \([kT_{\text{window}}, (k+1)T_{\text{window}})\). Every event with timestamp \(t\) satisfies \(kT_{\text{window}} \leq t < (k+1)T_{\text{window}}\) for exactly one integer \(k\) — so the event belongs to exactly one window. The half-open form is what makes the boundaries work: an event at exactly 12:05 belongs to the 12:05–12:10 window, not both.</p>
+</div>
+<h3 id="11.6.4-use-cases-for-tumbling-windows">11.6.4 Use Cases for Tumbling Windows</h3>
+<p>When do you reach for a tumbling window? Whenever your question is about a fixed slice of time — for example: <strong>how many new orders were received in the last five minutes?</strong> That kind of question maps directly onto a tumbling window, because each window cleanly reports on its own slice without double-counting. A moving average, by contrast, is not a tumbling-window job — sliding windows handle that case, and they are the next topic.</p>
+<p>Real-world: dashboards that answer "orders in the last five minutes", "errors in the last hour", or "transactions per minute" are tumbling-window reports in production systems.</p>
+<h3 id="11.6.5-student-questions-and-answers">11.6.5 Student Questions and Answers</h3>
+<div class="important-note">
+  <p><strong>Q:</strong> Are the windows always continuous? If I process e3 and then the next window begins, could e4 be missed?</p>
+  <p><strong>A:</strong> No — nothing is missed. The tumbling window collects the events between 12:00 and 12:05, then the events between 12:05 and 12:10, and so on. Every event falls into its own five-minute slice; the next window simply starts where the previous one ended.</p>
+</div>
+<div class="important-note">
+  <p><strong>Q:</strong> So any event belongs to only one window, and there is no overlap of events across the windows?</p>
+  <p><strong>A:</strong> Fantastic — exactly that: one event, one window, no overlap. If you see that, you have understood the tumbling window.</p>
+</div>
+<div class="warning-box">
+  <p><strong>Pitfalls.</strong></p>
+  <ul>
+    <li><strong>Counting an event in two windows.</strong> With tumbling windows this should never happen — an event near a boundary (at 12:05, say) belongs to one window only, determined by the boundary convention. If a report double-counts a boundary event, the boundary handling, not the window type, is the bug.</li>
+    <li><strong>Treating a tumbling window as a sliding window.</strong> A moving average needs overlap; a tumbling window has none by definition. Reaching for tumbling to compute a moving average silently turns it into a step function of disjoint averages.</li>
+    <li><strong>Forgetting the trigger.</strong> The engine processes at \(T_{\text{batch}}\), not continuously — events that arrive after the window closed wait for the next one. A low-latency question needs a smaller window size.</li>
+  </ul>
+</div>
+<div class="key-takeaway">
+  <p><strong>Recap + bridge.</strong> A tumbling window is defined by \(T_{\text{batch}} = T_{\text{window}}\): the engine runs once per window, each window is a non-overlapping slice, and every event belongs to exactly one window. Handoff: section 11.7 relaxes the equal-interval rule — a window that covers more history than each slide, overlapping on purpose, for moving averages.</p>
+</div>
+
+<h2 id="11.7-sliding-windows">11.7 Sliding Windows</h2>
+<div class="important-note">
+  <p><strong>The hook.</strong> A stock trader wants the average of the last five minutes — then the average of the next five minutes, recomputed every minute, always covering the recent past. A tumbling window cannot do that job, because each slice would discard the history the average needs. The sliding window exists for exactly this: windows that overlap on purpose, so every new result still remembers the recent past.</p>
+</div>
+<h3 id="11.7.1-what-sliding-windows-are-for">11.7.1 What Sliding Windows Are For</h3>
+<p>The second window type is the <strong>sliding window</strong>, also called the <strong>hopping window</strong>. Think of the magnifying glass again, but this time sliding it along the page: as it moves, the words at the trailing edge fall out while new words enter at the leading edge, and at any moment the lens still shows a continuous stretch. The key difference from the tumbling window is that sliding windows can <strong>overlap</strong> — the same event can be part of several consecutive windows.</p>
+<p>The natural use case is computing a <strong>moving average</strong> — for example, moving averages in stock prices: what is the average of the last five minutes, then the average of the next five minutes, and so on. There, overlap is exactly what you want, because each new window must include the recent history to make the average smooth. The same idea serves when you want to track the top 10 transactions in the last three hours — a window that slides forward and always covers the recent past.</p>
+<div class="warning-box">
+  <p><strong>Comparison — tumbling versus sliding.</strong></p>
+  <table>
+    <thead>
+      <tr>
+        <th></th>
+        <th>Tumbling window</th>
+        <th>Sliding window</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>\(T_{\text{batch}}\) vs \(T_{\text{window}}\)</td>
+        <td>Equal</td>
+        <td>Window larger than slide</td>
+      </tr>
+      <tr>
+        <td>Overlap between windows</td>
+        <td>None</td>
+        <td>Yes, by design</td>
+      </tr>
+      <tr>
+        <td>An event belongs to</td>
+        <td>Exactly one window</td>
+        <td>Possibly several windows</td>
+      </tr>
+      <tr>
+        <td>Natural question</td>
+        <td>"New orders in the last 5 minutes"</td>
+        <td>"Moving average over the last 5 minutes"</td>
+      </tr>
+      <tr>
+        <td>An event in several windows</td>
+        <td>Never</td>
+        <td>Normal and intended</td>
+      </tr>
+    </tbody>
+  </table>
+  <p>When to pick which: ask whether the question needs <em>smoothness from shared history</em> — if yes, sliding; if the question wants <em>clean, disjoint slices</em>, tumbling.</p>
+</div>
+<div class="important-note">
+  <p><strong>Q:</strong> Could I not compute the new-orders count, the tumbling-window use case, with a sliding window as well?</p>
+  <p><strong>A:</strong> You would have to keep marking which events were already processed, and the counts would get complicated — the "new orders in the last five minutes" question is naturally a tumbling-window question, because the windows do not overlap and nothing is counted twice. When you want a moving average, or a running window over the last few hours, the sliding window is the natural fit.</p>
+</div>
+<h3 id="11.7.2-slide-interval-and-window-interval">11.7.2 Slide Interval and Window Interval</h3>
+<p>The sliding window is defined by two quantities. One is the <strong>slide interval</strong> — how often the window moves forward and a new processing run is triggered. The other is the <strong>window interval</strong> (also called the batch interval here) — how much data each processing run covers. In a sliding window these two are not equal; the window interval is larger than the slide interval, and that difference is what creates overlap:</p>
+<p>\[ T_{\text{window}} > T_{\text{slide}} \]</p>
+<p>where \(T_{\text{slide}}\) is the slide interval (how often the trigger fires) and \(T_{\text{window}}\) is the window interval (how much history each trigger processes). Because the window covers more history than one slide, the older events of the past window remain part of the current window as well. So a sliding window can contain duplicates across runs — some of the events that were part of the previous processing batch also appear in the current batch.</p>
+<div class="key-concept">
+  <p><strong>Formalize — the overlap rule, symbol by symbol.</strong></p>
+  <ul>
+    <li>\(T_{\text{slide}}\) — the slide interval: how often the trigger fires and the engine runs. It answers "how often does the window move forward?"</li>
+    <li>\(T_{\text{window}}\) — the window interval: how much history each run processes. It answers "how far back does the window look?"</li>
+  </ul>
+  <p>The inequality \(T_{\text{window}} > T_{\text{slide}}\) is the entire recipe: the engine moves forward a little (\(T_{\text{slide}}\)) while looking back a lot (\(T_{\text{window}}\)). The overlap between two consecutive windows is \(T_{\text{window}} - T_{\text{slide}}\), and events inside that overlap are processed in both runs. The special case \(T_{\text{window}} = T_{\text{slide}}\) reduces the sliding window to a tumbling window — one event, one window again — which is the cleanest way to see the two types as one family.</p>
+</div>
+<h3 id="11.7.3-worked-example-a-five-minute-slide-over-a-ten-minute-window">11.7.3 Worked Example: A Five-Minute Slide over a Ten-Minute Window</h3>
+<div class="example-box">
+  <p><strong>Worked example — slide 5 minutes, window 10 minutes.</strong></p>
+  <p>Take the numbers used in the demo: the slide interval is five minutes and the window interval is ten minutes. Every five minutes a trigger fires — that is the sliding. But each trigger processes the data of the past ten minutes — that is the window.</p>
+  <table>
+    <thead>
+      <tr>
+        <th>Trigger fires at</th>
+        <th>Window covers</th>
+        <th>Events in the overlap with the previous run</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>12:00</td>
+        <td>11:50–12:00</td>
+        <td>—</td>
+      </tr>
+      <tr>
+        <td>12:05</td>
+        <td>11:55–12:05</td>
+        <td>11:55–12:00</td>
+      </tr>
+      <tr>
+        <td>12:10</td>
+        <td>12:00–12:10</td>
+        <td>12:00–12:05</td>
+      </tr>
+    </tbody>
+  </table>
+  <p>So at 12:00 you process events from 11:50 to 12:00; at 12:05 you process events from 11:55 to 12:05; at 12:10 you process events from 12:00 to 12:10; and so on. Events from 11:55 to 12:00 are processed in the 12:00 run and again in the 12:05 run — they appear in two consecutive windows. The window time is not equal to the batch interval, and that is the whole point of the sliding window: you accumulate more data than each slide, so the processing batches overlap.</p>
+  <p>In the numbers of the demo, ten minutes is a multiple of five — double the slide interval — which makes the overlap tidy and easy to follow. The multiples are a convenience for understanding, not a requirement.</p>
+  <p><em>Sense-check:</em> consecutive windows overlap by \(T_{\text{window}} - T_{\text{slide}} = 10 - 5 = 5\) minutes, and the table shows exactly that — each new window shares its last five minutes with the previous window. An event at 11:57 appears in the 12:00 run and the 12:05 run, twice in total — overlap by design, not double-counting by accident.</p>
+</div>
+<p><strong>Visual intuition.</strong> Draw the time axis with two horizontal bars. The first bar is the window at 12:00, running from 11:50 to 12:00. The second bar sits five minutes to the right, from 11:55 to 12:05. The two bars overlap between 11:55 and 12:00 — shade that shared stretch. Each new bar is a copy of the old one shifted right by the slide, always longer than the shift, so the shaded overlap is always \(T_{\text{window}} - T_{\text{slide}}\) wide. The takeaway: the window is longer than its step, and that extra length is exactly the overlap.</p>
+<h3 id="11.7.4-student-questions-and-answers">11.7.4 Student Questions and Answers</h3>
+<div class="important-note">
+  <p><strong>Q:</strong> Must the window interval always be a multiple of the slide interval? Could the slide be five minutes and the window seven minutes, for example?</p>
+  <p><strong>A:</strong> Yes, you can have that — a five-minute slide with a seven-minute window is fine. It is not a problem. The multiples are simply a convenient way to understand the behavior. The only requirement is \(T_{\text{window}} > T_{\text{slide}}\); 7 > 5, so the windows overlap by two minutes and everything else works the same way.</p>
+</div>
+<div class="important-note">
+  <p><strong>Q:</strong> For the sliding window, how does the system decide which events fall between these times — does it take the event time or the streaming time?</p>
+  <p><strong>A:</strong> It looks at when the events occurred — the event time. That timestamp is carried on the event itself, so the event record brings its time along when it passes to the streaming system; the engine does not have to worry about arrival times for this. It only looks at the clock when it wants to refresh, when it wants to trigger — the refresh happens every five minutes here, while you are accumulating data worth of ten minutes.</p>
+  <p>One assumption to keep in mind: this works cleanly if the time taken to actually process a window is unit time — effectively instant. If you account for the actual processing time, you shift everything by that delta — and the delta is not constant, because some windows have fewer events than others. It keeps moving.</p>
+</div>
+<div class="important-note">
+  <p><strong>Q:</strong> Which timestamp decides which window a late event lands in?</p>
+  <p><strong>A:</strong> The event time, again. The event's own timestamp decides its window, not the moment the stream system happened to receive it. Handling events that arrive late — after their window was already processed — is where the watermark comes in, as announced with append mode.</p>
+</div>
+<div class="warning-box">
+  <p><strong>Pitfalls.</strong></p>
+  <ul>
+    <li><strong>Sliding when the question is tumbling.</strong> Counting "new orders per five minutes" with a sliding window means inventing bookkeeping to avoid double-counting overlapping history — the counts get complicated for no benefit.</li>
+    <li><strong>Assuming the slide must divide the window.</strong> A 5-minute slide with a 7-minute window is legal; the overlap is simply 2 minutes. Multiples are convenience, not law.</li>
+    <li><strong>Keying windows to stream time.</strong> If the engine groups by arrival time instead of the event's own timestamp, late arrivals land in the wrong window and the moving average is distorted. The event timestamp travels with the event; use it.</li>
+    <li><strong>Ignoring processing time.</strong> The clean timeline assumes processing a window takes unit time. Real processing time shifts every result by a delta — and the delta varies with window load, so the shift is not a constant you can subtract once.</li>
+  </ul>
+</div>
+<h3 id="11.7.5-the-connection-to-what-comes-next">11.7.5 The Connection to What Comes Next</h3>
+<p>Count-based windows, stream joins, and the full watermark mechanics are the next items on the path: stream joins are planned as the next topic, and the watermark's role is to tell the engine how long to wait for late events before a window is finalized. With tumbling and sliding windows plus the two timelines under your belt, the watermark will feel like the missing piece clicking into place.</p>
+<div class="key-takeaway">
+  <p><strong>Recap + bridge.</strong> A sliding window is defined by \(T_{\text{window}} > T_{\text{slide}}\): the trigger fires every slide, each run processes the last window-interval's worth of history, and the difference between the two intervals is the deliberate overlap that moving averages need. Handoff: next session brings the watermark — the clock that decides when a window is old enough to finalize — and then stream joins.</p>
+</div>
+
+<h2 id="exam-guidance-summary">Exam Guidance Summary</h2>
+<ul>
+  <li><strong>Output modes are exam-critical.</strong> The session stated in so many words that complete, update, and append modes are very important from an examination standpoint. Be able to reproduce the word-count tables for update mode (current batch's words shown, running totals incremented) and complete mode (full result set overwritten every micro-batch), and state the append-mode rule: streaming aggregations require a watermark.</li>
+  <li><strong>Event time vs stream time is quiz material.</strong> Both definitions were flagged to be noted down because a quiz is coming. You should be able to define event time (when the event occurs), stream time (when the event's information reaches the platform), time skew (their difference, \(t_{\text{skew}} = t_{\text{stream}} - t_{\text{event}} > 0\)), and why stream time always lags — including the data-flow-layer reason.</li>
+  <li><strong>Quiz logistics.</strong> A quiz is planned for next week, covering everything covered up to this point. The window for taking it is four days, including Saturday and Sunday of the coming weekend (28th–29th). The session said the 29th (Monday) would not be needed. An announcement will be posted on the course platform (Canvas) once the quiz is uploaded, so the posting itself gives the official start time.</li>
+  <li><strong>Assignment.</strong> The assignment was reported as nearly finished; the deadline gives time till next weekend (the 28th). Both the quiz and the assignment round out the evaluation components, which the session plans to finish next week.</li>
+  <li><strong>Window concepts to review for the quiz:</strong> the window as a lens over an infinite stream, trigger policy (when processing runs), eviction policy (cleaning the window), tumbling windows (batch size equals window size, no overlap, one event in one window), and sliding windows (slide interval vs window interval, overlap, moving averages). Expect questions connecting these definitions to small timeline examples like the 12:00–12:10 five-minute case, and be ready to state which of the two window types a given question calls for.</li>
+  <li><strong>Practical tip for rerunning streaming apps:</strong> remove the checkpoint directory (or use a fresh one) before each rerun; otherwise the application resumes old streaming state and the demo output will not restart cleanly.</li>
+</ul>
+
+<h2 id="key-industry-applications">Key Industry Applications</h2>
+<ul>
+  <li><strong>Streaming word count over a TCP socket</strong> — the classic first streaming application; netcat (from nmap.org) generates the message stream, Spark reads it on port 9999. The same question is a standard interview starter for streaming roles, and the mini-pipeline it demonstrates — a data source, micro-batches, state, and output modes — is a faithful miniature of production ingestion through a data flow layer.</li>
+  <li><strong>Traffic monitoring and automatic traffic charging systems</strong> — a person jumping a signal is the event; snapping the photo, computing the fine, and sending the alert are downstream processing. Event time is when the signal was jumped; stream time is when the system sees it. The gap between the two is the time skew, and windowing by the wrong timeline shifts every report.</li>
+  <li><strong>Moving averages in stock prices</strong> — the canonical sliding-window application: the average of the last five minutes, sliding forward every five minutes, with overlapping windows that keep the average smooth over shared history.</li>
+  <li><strong>"Top 10 transactions in the last three hours"</strong> — another sliding-window use case over recent history: the window always covers the recent past, so the ranking never forgets the transactions that slid in minutes ago.</li>
+  <li><strong>New orders in the last five minutes</strong> — the canonical tumbling-window dashboard question: each window reports its own non-overlapping slice, so nothing is double-counted and each five-minute block has one clean answer.</li>
+  <li><strong>Water pollution monitoring (sample collection)</strong> — the mug-and-river picture of window capacity and eviction: analyze one mug of water, throw it away, collect the next at a slightly different position. The same pattern shows up in any stream where finite memory meets an unbounded feed: process, empty, refill.</li>
+  <li><strong>Development caution</strong> — socket sources like netcat are for development and testing; production streaming applications should not rely on raw socket feeds, which offer no durability, replay, or ordering guarantees.</li>
+</ul>
+    </main>
+
+    <!-- ============================================================
+    EXAM REVISION NOTES
+    Generated AFTER the main lecture-faithful content is complete. Each entry
+    distills one major concept into its most examinable elements.
+    Built FROM the core — never invented independently.
+
+    Each entry is a <div class="exam-revision-entry"> containing:
+      - .revision-topic (h3) — concept name
+      - .revision-mustknow — the single most examinable takeaway
+      - .revision-formula — central formula(s) in \[ ... \] MathJax
+      - .revision-pitfall — the #1 exam mistake
+      - .revision-check — one self-check question (no options)
+      - .revision-connections — linked concepts within this lecture
+    ============================================================ -->
+    <section class="exam-revision-section">
+      <h2>Exam Revision Notes</h2>
+      <p class="revision-intro">Below is the distilled, exam-ready core.
+      Every entry comes from the full explanation above. Use this section
+      for rapid review; return to the main notes when a point needs more context.</p>
+<div class="exam-revision-entry">
+  <h3 class="revision-topic">Spark Structured Streaming and the Streaming Word Count</h3>
+  <p class="revision-mustknow"><strong>Must-know:</strong> The streaming word count pipeline: ncat -lk 9999 listens on port 9999, Spark reads the socket (format socket, host localhost, port 9999), and each Enter press becomes one micro-batch; the SparkSession is a singleton per use case; a socket source is for development, not production.</p>
+  <p class="revision-pitfall"><strong>⚠️ Top pitfall:</strong> Forgetting the listener must run before the application; using a raw socket feed in production; mixing up -l (listen) and -k (keep connection open).</p>
+  <p class="revision-check"><strong>Self-check:</strong> What does -k do in the ncat -lk 9999 command?</p>
+  <p class="revision-connections"><strong>Connects to:</strong> 11.2</p>
+</div>
+
+<div class="exam-revision-entry">
+  <h3 class="revision-topic">The Streaming Word Count Demo, Batch by Batch</h3>
+  <p class="revision-mustknow"><strong>Must-know:</strong> Update mode rule: the words shown are always the current batch's words, and the counts shown are running totals across all batches so far; a word seen before but not in the current batch is absent from the output.</p>
+  <p class="revision-pitfall"><strong>⚠️ Top pitfall:</strong> Whitespace-tokenization gotcha: 'Java,' with a comma attached is a different token from Java, so the count stays 1 until the plain word is typed; preprocessing normalizes tokens (lowercase, strip punctuation).</p>
+  <p class="revision-check"><strong>Self-check:</strong> In update mode, why does Spark show count 2 in the second micro-batch while programming and language disappear from the output?</p>
+  <p class="revision-connections"><strong>Connects to:</strong> 11.1, 11.3</p>
+</div>
+
+<div class="exam-revision-entry">
+  <h3 class="revision-topic">Output Modes: Complete, Update, and Append</h3>
+  <p class="revision-mustknow"><strong>Must-know:</strong> Output modes are exam-critical: complete mode rewrites the full history (8 rows after two batches: 5 + 5 - 2 overlaps), update mode writes only the current batch's words with running totals, and append mode requires a watermark whenever the stream performs aggregations.</p>
+  <p class="revision-pitfall"><strong>⚠️ Top pitfall:</strong> Rerunning a streaming query without removing the checkpoint directory resumes old state; the watermark is a time boundary for finalized windows, not a save point.</p>
+  <p class="revision-check"><strong>Self-check:</strong> Why did the append-mode run fail with 'Append output is not supported when there are streaming aggregations on streaming data without watermark'?</p>
+  <p class="revision-connections"><strong>Connects to:</strong> 11.2, 11.4</p>
+</div>
+
+<div class="exam-revision-entry">
+  <h3 class="revision-topic">Event Time, Stream Time, and Time Skew</h3>
+  <p class="revision-mustknow"><strong>Must-know:</strong> Event time is when the event occurs; stream time is when its information reaches the platform; t_skew = t_stream - t_event &gt; 0 because messages pass through a data flow layer; on the skew graph, event time is on the x-axis, stream time on the y-axis, the ideal is the y = x line, and the observed line hangs below it by the skew.</p>
+  <p class="revision-formula">\[t_{\text{skew}} = t_{\text{stream}} - t_{\text{event}} > 0\]</p>
+  <p class="revision-pitfall"><strong>⚠️ Top pitfall:</strong> Processing by stream time when the question is about event time — windowed results shift by a non-constant amount; treating the skew as fixed; assuming arrival order equals event order.</p>
+  <p class="revision-check"><strong>Self-check:</strong> If an event happens at 12:00:04 and reaches the platform at 12:00:09, what is the time skew, and can another event that happened at 12:00:05 arrive before it?</p>
+  <p class="revision-connections"><strong>Connects to:</strong> 11.5</p>
+</div>
+
+<div class="exam-revision-entry">
+  <h3 class="revision-topic">Windows: Why Streams Need Them</h3>
+  <p class="revision-mustknow"><strong>Must-know:</strong> Windows are finite slices of an unbounded stream: the window length defines how much data each slice holds; the trigger policy decides when processing runs; the eviction policy decides when processed data is thrown away; and because only windowed samples are ever processed, streaming algorithms are non-deterministic while batch algorithms always see the full data set.</p>
+  <p class="revision-pitfall"><strong>⚠️ Top pitfall:</strong> Confusing trigger (when processing runs) with eviction (when data is thrown away); expecting exact answers from a windowed algorithm; thinking the window waits for the stream to end.</p>
+  <p class="revision-check"><strong>Self-check:</strong> With the river-water mug, what do the mug, the water, the analysis, and throwing the water away each stand for?</p>
+  <p class="revision-connections"><strong>Connects to:</strong> 11.4, 11.6</p>
+</div>
+
+<div class="exam-revision-entry">
+  <h3 class="revision-topic">Tumbling Windows</h3>
+  <p class="revision-mustknow"><strong>Must-know:</strong> Tumbling window: T_batch = T_window; consecutive non-overlapping slices (12:00-12:05 gets e1,e2,e3; 12:05-12:10 gets e4,e5,e6); headline property: any event belongs to exactly one window; natural question is 'how many new orders in the last five minutes?'</p>
+  <p class="revision-formula">\[T_{\text{batch}} = T_{\text{window}}\]</p>
+  <p class="revision-pitfall"><strong>⚠️ Top pitfall:</strong> Counting a boundary event in two windows; using a tumbling window to compute a moving average (needs overlap); forgetting that the engine only runs at the trigger, so events arriving after a window closes wait for the next one.</p>
+  <p class="revision-check"><strong>Self-check:</strong> With five-minute tumbling windows starting at 12:00, which window does an event at 12:07 belong to?</p>
+  <p class="revision-connections"><strong>Connects to:</strong> 11.5, 11.7</p>
+</div>
+
+<div class="exam-revision-entry">
+  <h3 class="revision-topic">Sliding Windows</h3>
+  <p class="revision-mustknow"><strong>Must-know:</strong> Sliding window: T_window &gt; T_slide; with a 5-minute slide and a 10-minute window, triggers fire at 12:00 (11:50-12:00), 12:05 (11:55-12:05), 12:10 (12:00-12:10), and each run's history overlaps the previous by T_window - T_slide; the event's own timestamp (event time) decides its window; the clean timeline assumes unit processing time.</p>
+  <p class="revision-formula">\[T_{\text{window}} > T_{\text{slide}}\]</p>
+  <p class="revision-pitfall"><strong>⚠️ Top pitfall:</strong> Sliding when the question is tumbling (new-orders counting gets complicated); assuming the slide must divide the window (5-minute slide with 7-minute window is fine); keying windows to stream time; ignoring that non-unit processing time shifts results by a non-constant delta.</p>
+  <p class="revision-check"><strong>Self-check:</strong> With a 5-minute slide and a 7-minute window, by how much do consecutive windows overlap?</p>
+  <p class="revision-connections"><strong>Connects to:</strong> 11.6, 11.4</p>
+</div>
+
+<div class="exam-revision-entry">
+  <h3 class="revision-topic">Exam Guidance Summary</h3>
+  <p class="revision-mustknow"><strong>Must-know:</strong> Quiz logistics: quiz next week covering everything so far, four-day window including the weekend (28th-29th), announcement on Canvas gives the official start; review output modes, the two timelines, trigger/eviction policies, and tumbling vs sliding windows with small timeline examples; remove the checkpoint directory before rerunning a streaming app.</p>
+  <p class="revision-pitfall"><strong>⚠️ Top pitfall:</strong> Rerunning a streaming application without removing the old checkpoint directory — it resumes old state and the demo output does not restart cleanly.</p>
+  <p class="revision-check"><strong>Self-check:</strong> What must you do before rerunning a streaming query so that it starts fresh instead of resuming old state?</p>
+  <p class="revision-connections"><strong>Connects to:</strong> 11.3, 11.4, 11.6, 11.7</p>
+</div>
+
+<div class="exam-revision-entry">
+  <h3 class="revision-topic">Key Industry Applications</h3>
+  <p class="revision-mustknow"><strong>Must-know:</strong> Named anchors: netcat socket word count (interview starter); traffic charging (event time vs stream time); moving averages in stock prices and top-10 transactions over recent hours (sliding); new orders in the last five minutes (tumbling); water pollution sampling (window capacity and eviction); socket sources are development-only, not production.</p>
+  <p class="revision-pitfall"><strong>⚠️ Top pitfall:</strong> Relying on raw socket feeds in production — they offer no durability, replay, or ordering guarantees.</p>
+  <p class="revision-check"><strong>Self-check:</strong> Which industry use case is the canonical sliding-window application mentioned in the session?</p>
+  <p class="revision-connections"><strong>Connects to:</strong> 11.1, 11.4, 11.6, 11.7</p>
+</div>
+    </section>
+  </div>
+</body>
+</html>
