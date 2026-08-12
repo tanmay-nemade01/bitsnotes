@@ -2,6 +2,7 @@ import { env } from 'cloudflare:workers';
 import { getFallbackMetadata } from './metadata';
 import type { DocumentMetadata, ResourceKind, AvailableMode, ResourceScope, MetadataSource } from './metadata';
 import { normalizeCatalogEntry, type RawCatalogEntry, slugify } from './lectureDisplay';
+import { renderMathInHtml } from './mathRender';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -438,6 +439,9 @@ export async function getLectureContent(subjectName: string, lectureFolderName: 
       console.error(`[notesLoader] Error reading local note: ${err.message}`);
       return null;
     }
+
+    // Pre-render LaTeX → KaTeX at serve time in dev (no CDN caching here).
+    htmlContent = renderMathInHtml(htmlContent);
   } else {
     // Production: fetch HTML file from Cloudflare R2
     const bucket = (env as any).NOTES_BUCKET;
@@ -454,6 +458,12 @@ export async function getLectureContent(subjectName: string, lectureFolderName: 
         return null;
       }
       htmlContent = await obj.text();
+
+      // Pre-render LaTeX → KaTeX HTML (Phase: math at build/serve time). This
+      // replaces the client-side MathJax pipeline (620KB + seconds of main-thread
+      // CPU) and runs once per cache window — the converted HTML is what gets
+      // cached below, so repeat requests never re-render math.
+      htmlContent = renderMathInHtml(htmlContent);
 
       // Fetch optional companion CSS and JS from R2
       const folderPrefixKey = `notes/${subjectName}/${lectureFolderName}/`;

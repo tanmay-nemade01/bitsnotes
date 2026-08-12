@@ -356,46 +356,57 @@
       .replace(/'/g, '&#039;');
   }
 
-  // Ensure MathJax is loaded and available
-  function ensureMathJax(cb) {
-    if (window.MathJax && window.MathJax.typesetPromise) {
+  // Ensure KaTeX is loaded and available (lazy — only fetched when a chat
+  // message actually contains math). Self-hosted; far lighter than MathJax.
+  function ensureKaTeX(cb) {
+    var ready = function () {
+      return window.katex && window.renderMathInElement;
+    };
+    if (ready()) {
       if (cb) cb();
       return;
     }
-    if (document.getElementById('MathJax-script')) {
-      var id = setInterval(function () {
-        if (window.MathJax && window.MathJax.typesetPromise) {
-          clearInterval(id);
-          if (cb) cb();
-        }
-      }, 100);
-      return;
+    if (!document.getElementById('katex-script')) {
+      var s = document.createElement('script');
+      s.id = 'katex-script';
+      s.async = true;
+      s.src = '/vendor/katex/katex.min.js';
+      document.head.appendChild(s);
     }
-    window.MathJax = {
-      tex: {
-        inlineMath: [['$', '$'], ['\\(', '\\)']],
-        displayMath: [['$$', '$$'], ['\\[', '\\]']],
-      },
-      startup: {
-        typeset: false
+    if (!document.getElementById('katex-autorender-script')) {
+      var ar = document.createElement('script');
+      ar.id = 'katex-autorender-script';
+      ar.async = true;
+      ar.src = '/vendor/katex/contrib/auto-render.min.js';
+      document.head.appendChild(ar);
+    }
+    var startedAt = Date.now();
+    var poll = setInterval(function () {
+      if (ready()) {
+        clearInterval(poll);
+        if (cb) cb();
+      } else if (Date.now() - startedAt > 20000) {
+        clearInterval(poll);
       }
-    };
-    var s = document.createElement('script');
-    s.id = 'MathJax-script';
-    s.async = true;
-    s.src = 'https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-svg.js';
-    if (cb) s.onload = cb;
-    document.head.appendChild(s);
+    }, 100);
   }
 
-  // Typeset MathJax equations inside a target element
+  // Typeset KaTeX equations inside a target element
   function typesetElement(el) {
     if (!el) return;
-    ensureMathJax(function () {
-      if (window.MathJax && window.MathJax.typesetPromise) {
-        window.MathJax.typesetPromise([el]).catch(function (err) {
-          console.warn('[chatbot] MathJax typeset error:', err);
+    ensureKaTeX(function () {
+      try {
+        window.renderMathInElement(el, {
+          delimiters: [
+            { left: '$$', right: '$$', display: true },
+            { left: '\\[', right: '\\]', display: true },
+            { left: '\\(', right: '\\)', display: false },
+            { left: '$', right: '$', display: false }
+          ],
+          throwOnError: false
         });
+      } catch (err) {
+        console.warn('[chatbot] KaTeX render error:', err);
       }
     });
   }
