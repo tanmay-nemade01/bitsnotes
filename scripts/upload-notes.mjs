@@ -48,21 +48,9 @@ function saveCache() {
 }
 
 function getCachedHash(key) {
-  if (uploadCache[key] !== undefined) {
-    return uploadCache[key];
-  }
-  // Fallback: Case-insensitive match to handle casing changes gracefully
-  const lowerKey = key.toLowerCase();
-  for (const existingKey of Object.keys(uploadCache)) {
-    if (existingKey.toLowerCase() === lowerKey) {
-      const hash = uploadCache[existingKey];
-      delete uploadCache[existingKey];
-      uploadCache[key] = hash;
-      saveCache();
-      return hash;
-    }
-  }
-  return undefined;
+  // Exact key only. A case-insensitive hit means the R2 object lives under a
+  // different key than the manifest will request — still upload the new key.
+  return uploadCache[key];
 }
 
 function updateCacheEntry(key, hash) {
