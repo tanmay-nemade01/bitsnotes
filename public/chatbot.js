@@ -358,6 +358,8 @@
 
   // Ensure KaTeX is loaded and available (lazy — only fetched when a chat
   // message actually contains math). Self-hosted; far lighter than MathJax.
+  // auto-render captures `window.katex` at ITS load time, so it must never
+  // initialize before katex.min.js — chain the two loads.
   function ensureKaTeX(cb) {
     var ready = function () {
       return window.katex && window.renderMathInElement;
@@ -366,19 +368,25 @@
       if (cb) cb();
       return;
     }
-    if (!document.getElementById('katex-script')) {
-      var s = document.createElement('script');
-      s.id = 'katex-script';
-      s.async = true;
-      s.src = '/vendor/katex/katex.min.js';
-      document.head.appendChild(s);
-    }
-    if (!document.getElementById('katex-autorender-script')) {
+
+    var loadAutoRender = function () {
+      if (document.getElementById('katex-autorender-script')) return;
       var ar = document.createElement('script');
       ar.id = 'katex-autorender-script';
       ar.async = true;
       ar.src = '/vendor/katex/contrib/auto-render.min.js';
       document.head.appendChild(ar);
+    };
+
+    if (window.katex) {
+      loadAutoRender();
+    } else if (!document.getElementById('katex-script')) {
+      var s = document.createElement('script');
+      s.id = 'katex-script';
+      s.async = true;
+      s.src = '/vendor/katex/katex.min.js';
+      s.onload = loadAutoRender;
+      document.head.appendChild(s);
     }
     var startedAt = Date.now();
     var poll = setInterval(function () {
