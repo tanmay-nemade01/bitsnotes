@@ -24,6 +24,21 @@ export default defineConfig({
 
   vite: {
     plugins: [tailwindcss()],
+    server: {
+      watch: {
+        ignored: [
+          '**/.wrangler/**',
+          '**/dist/**',
+          '**/.astro/**',
+          '**/playwright-report/**',
+          '**/test-results/**',
+          '**/.notes-upload-cache.json'
+        ]
+      }
+    },
+    optimizeDeps: {
+      include: ['obscenity']
+    },
     ssr: {
       external: ['cloudflare:email']
     },

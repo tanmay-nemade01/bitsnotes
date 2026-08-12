@@ -220,6 +220,17 @@ CREATE TABLE IF NOT EXISTS blog_follows (
 CREATE INDEX IF NOT EXISTS idx_blog_follows_author ON blog_follows(author);
 CREATE INDEX IF NOT EXISTS idx_blog_follows_user ON blog_follows(user_id);
 
+-- ─── Chatbot Usage Tracking ────────────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS chatbot_usage (
+  user_id       TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  usage_date    TEXT NOT NULL,             -- YYYY-MM-DD (UTC)
+  message_count INTEGER NOT NULL DEFAULT 0,
+  PRIMARY KEY (user_id, usage_date)
+);
+
+CREATE INDEX IF NOT EXISTS idx_chatbot_usage_date
+  ON chatbot_usage (usage_date, user_id);
+
 -- ─── Views Tracking ────────────────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS page_views (
   page_key      TEXT PRIMARY KEY,

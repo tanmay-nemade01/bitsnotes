@@ -50,6 +50,7 @@ export const onRequest = defineMiddleware(async (context, next) => {
   const { request, url, locals } = context;
   const pathname = url.pathname;
 
+
   // ─── Cheap early exit: static assets never need auth ────────────────
   // Skip cookie parsing and all session/DB imports for assets, fonts, and
   // other static files. This keeps the hot path (public HTML, CSS, JS, fonts)
@@ -205,7 +206,10 @@ export const onRequest = defineMiddleware(async (context, next) => {
     const isAdmin = pathname.startsWith('/admin');
     const isMutation = request.method !== 'GET' && request.method !== 'HEAD';
     if (!user && !isAdmin && !isMutation) {
-      headers.set('Cache-Control', 'public, max-age=0, s-maxage=300, stale-while-revalidate=600, must-revalidate');
+      // Edge-only caching: s-maxage lets Cloudflare cache anonymous page shells,
+      // but no `max-age`/`public` means browsers never store HTML — so a page
+      // cached while signed-out can never be shown to a just-signed-in user.
+      headers.set('Cache-Control', 's-maxage=300, stale-while-revalidate=600, must-revalidate');
       const vary = headers.get('Vary');
       if (vary) {
         if (!vary.includes('Cookie')) {
