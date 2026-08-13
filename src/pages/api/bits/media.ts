@@ -1,6 +1,7 @@
 import type { APIRoute } from 'astro';
 import { env } from 'cloudflare:workers';
 import { badRequest, notFound } from '../../../lib/apiHelpers';
+import { getLocalSvgMarkup } from '../../../utils/bitsLoader';
 
 export const prerender = false;
 
@@ -49,6 +50,17 @@ export const GET: APIRoute = async (context) => {
   const contentType = ALLOWED_EXT[ext];
   if (!contentType) {
     return notFound();
+  }
+
+  const localSvg = getLocalSvgMarkup(slug, file);
+  if (typeof localSvg === 'string') {
+    return new Response(localSvg, {
+      status: 200,
+      headers: {
+        'Content-Type': contentType,
+        'Cache-Control': 'public, max-age=86400',
+      },
+    });
   }
 
   const svg = globValue(svgGlob, slug, file);
