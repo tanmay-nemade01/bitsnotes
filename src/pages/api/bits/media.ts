@@ -1,5 +1,6 @@
 import type { APIRoute } from 'astro';
 import { env } from 'cloudflare:workers';
+import { badRequest, notFound } from '../../../lib/apiHelpers';
 
 export const prerender = false;
 
@@ -26,21 +27,31 @@ function isSafeSegment(value: string): boolean {
   return /^[a-zA-Z0-9._-]+$/.test(value) && !value.includes('..');
 }
 
-export const GET: APIRoute = async ({ params }) => {
-  const slug = params.slug ?? '';
-  const file = params.file ?? '';
+function globValue<T>(glob: Record<string, T>, slug: string, file: string): T | undefined {
+  const suffix = `/bits/${slug}/${file}`;
+  for (const [key, value] of Object.entries(glob)) {
+    const normalized = key.replace(/\\/g, '/');
+    if (normalized.endsWith(suffix) || normalized === `/src/content/bits/${slug}/${file}`) {
+      return value;
+    }
+  }
+  return undefined;
+}
+
+export const GET: APIRoute = async (context) => {
+  const slug = context.url.searchParams.get('slug') ?? '';
+  const file = context.url.searchParams.get('file') ?? '';
   if (!isSafeSegment(slug) || !isSafeSegment(file)) {
-    return new Response('Not found', { status: 404 });
+    return badRequest('Invalid media path');
   }
 
   const ext = file.split('.').pop()?.toLowerCase() ?? '';
   const contentType = ALLOWED_EXT[ext];
   if (!contentType) {
-    return new Response('Not found', { status: 404 });
+    return notFound();
   }
 
-  const globKey = `/src/content/bits/${slug}/${file}`;
-  const svg = svgGlob[globKey];
+  const svg = globValue(svgGlob, slug, file);
   if (typeof svg === 'string') {
     return new Response(svg, {
       status: 200,
@@ -51,19 +62,19 @@ export const GET: APIRoute = async ({ params }) => {
     });
   }
 
-  const bundledUrl = urlGlob[globKey];
+  const bundledUrl = globValue(urlGlob, slug, file);
   if (bundledUrl) {
-    return Response.redirect(bundledUrl, 302);
+    return Response.redirect(new URL(bundledUrl, context.url.origin).href, 302);
   }
 
   const bucket = (env as any).NOTES_BUCKET;
   if (!bucket) {
-    return new Response('Not found', { status: 404 });
+    return notFound();
   }
 
   try {
     const obj = await bucket.get(`bits/${slug}/${file}`);
-    if (!obj) return new Response('Not found', { status: 404 });
+    if (!obj) return notFound();
     return new Response(obj.body, {
       status: 200,
       headers: {
@@ -72,6 +83,6 @@ export const GET: APIRoute = async ({ params }) => {
       },
     });
   } catch {
-    return new Response('Not found', { status: 404 });
+    return notFound();
   }
 };

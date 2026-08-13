@@ -202,5 +202,6 @@ export function bitPreview(bit: Bit, max = 160): string {
 }
 
 export function bitImageSrc(slug: string, filename: string): string {
-  return `/bits/media/${encodeURIComponent(slug)}/${encodeURIComponent(filename)}`;
+  const params = new URLSearchParams({ slug, file: filename });
+  return `/api/bits/media?${params.toString()}`;
 }
