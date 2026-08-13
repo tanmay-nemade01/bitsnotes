@@ -67,7 +67,7 @@ export async function seedOffsetForKey(key: string): Promise<number> {
 
   if (key.startsWith('blog:')) {
     const slug = key.substring(5);
-    const post = getPostBySlug(slug);
+    const post = await getPostBySlug(slug);
     if (post && post.frontmatter.publishedAt) {
       if (isNewDate(post.frontmatter.publishedAt)) {
         return 0;
@@ -114,7 +114,7 @@ export async function isValidViewKey(key: string): Promise<boolean> {
   if (key.startsWith('blog:')) {
     const slug = key.slice(5);
     if (!slug || slug.includes('/') || slug.includes('..')) return false;
-    return !!getPostBySlug(slug);
+    return !!(await getPostBySlug(slug));
   }
 
   if (key.startsWith('lecture:')) {

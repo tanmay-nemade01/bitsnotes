@@ -26,7 +26,7 @@ export const GET: APIRoute = async (context) => {
 
   // Add blog posts
   try {
-    const posts = getPublishedPosts();
+    const posts = await getPublishedPosts();
     for (const post of posts) {
       keys.push(`blog:${post.slug}`);
     }

@@ -30,6 +30,7 @@ Free, open-source AI/ML study notes — lectures across multiple subjects with i
 - **Accounts** — OAuth or email sign-in; bookmarks/collections, reading progress, threaded comments
 - **Study tools** — Pomodoro timer; client-side “Ask AI Doubts” chatbot (bring-your-own API key)
 - **Blog** — Posts, tags, RSS, likes, author follows
+- **Bits** — Short takes, link cards, memes, emoji reactions (no comments)
 - **Site polish** — Dark/light theme, SEO (JSON-LD, sitemap), edge caching, security headers
 
 ---
@@ -54,8 +55,11 @@ Optional local setup:
 | `npm run test:e2e` | Playwright E2E |
 | `npm run deploy` | Guard checks + build + Workers deploy |
 | `npm run upload-notes` | Sync note HTML/JSON to R2 |
+| `npm run upload-blog` | Sync blog posts to R2 (live without a deploy) |
+| `npm run upload-bits` | Sync bits to R2 (live without a deploy) |
 | `npm run db:migrate:remote` | Apply D1 schema in production |
 | `npm run blog:new` | Scaffold a blog post |
+| `npm run bits:new` | Scaffold a bit |
 | `npm run audit:theme` | Ensure content CSS uses design tokens |
 
 ---
@@ -67,7 +71,8 @@ src/
 ├── components/     # UI (nav, search, comments, chatbot, pomodoro, …)
 ├── content/
 │   ├── notes/      # Lectures & resources (HTML + JSON per folder)
-│   └── blog/       # Blog posts
+│   ├── blog/       # Blog posts
+│   └── bits/       # Short stream posts
 ├── data/           # Subject catalog, site config
 ├── db/             # D1 schema + migrations
 ├── layouts/
@@ -111,7 +116,27 @@ src/content/notes/<Subject>/<ResourceFolder>/
 
 ### Blog
 
-Posts live under `src/content/blog/<slug>/` as `index.html` + `index.json`. Use `npm run blog:new` to scaffold.
+Posts live under `src/content/blog/<slug>/` as `index.html` + `index.json`. Use `npm run blog:new` to scaffold, then `npm run upload-blog` to publish to production immediately (same R2 path as notes — no Worker deploy or PR required for content). Local `npm run dev` still reads posts from disk.
+
+After the first deploy that includes R2-backed blog loading, new posts go live with:
+
+```
+npm run upload-blog
+```
+
+Anonymous HTML at the edge can take up to 5 minutes to refresh. Drafts (`draft: true` in `index.json`) are uploaded but not listed.
+
+### Bits
+
+Short posts live under `src/content/bits/<slug>/` as `index.json` (required) plus optional `index.html` and image files. Use `npm run bits:new "optional title"` to scaffold, then `npm run upload-bits` to publish (same R2 path as notes/blog). Local `npm run dev` reads bits from disk.
+
+A bit can be text, an image, a link card, or any mix. `publishedAt` should be an ISO timestamp (include time). Signed-in visitors can toggle emoji reactions; there are no comments.
+
+```
+npm run upload-bits
+```
+
+After changing D1 schema (including `bit_reactions`), run `npm run db:migrate`.
 
 ### Transcript → notes kit
 
@@ -125,10 +150,10 @@ For turning lecture transcripts into HTML notes, see [`make-transcript-notes-kit
 Request → Cloudflare Edge → Astro Worker
                               ├─ Static pages (ASSETS)
                               ├─ SSR / API (D1)
-                              └─ Lecture content (R2 in prod)
+                              └─ Lecture + blog + bits content (R2 in prod)
 ```
 
-Notes are authored in git under `src/content/notes/`. At build time, `notesLoader.ts` discovers them via Vite glob imports. In production, HTML/JSON are also uploaded to R2 and fetched on demand; a manifest supports catalog queries.
+Notes, blog posts, and bits are authored in git under `src/content/`. At build time, loaders discover them via Vite glob imports for local dev. In production, HTML/JSON are uploaded to R2 and fetched on demand; manifests support catalog queries.
 
 User data (auth, bookmarks, comments, progress) lives in D1. Schema: [`src/db/schema.sql`](src/db/schema.sql). Auth code: `src/lib/auth/`. API routes: `src/pages/api/`.
 
@@ -154,8 +179,10 @@ Never commit credentials. Prefer Worker secrets over tracked config.
 
 1. Ensure secrets and bindings are configured
 2. `npm run deploy`
-3. `npm run upload-notes` when content changed
-4. `npm run db:migrate:remote` when the schema changed
+3. `npm run upload-notes` when lecture content changed
+4. `npm run upload-blog` when blog posts changed
+5. `npm run upload-bits` when bits changed
+6. `npm run db:migrate:remote` when the schema changed
 
 Target domains: `bitsnotes.com` / `www.bitsnotes.com`.
 
@@ -172,4 +199,4 @@ Target domains: `bitsnotes.com` / `www.bitsnotes.com`.
 
 ## License / contributing
 
-Open source — contributions via pull request are welcome. Keep lecture CSS on design tokens (`npm run audit:theme`), and avoid committing secrets or generated caches (`.dev.vars`, `.notes-upload-cache.json`, etc.).
+Open source — contributions via pull request are welcome. Keep lecture CSS on design tokens (`npm run audit:theme`), and avoid committing secrets or generated caches (`.dev.vars`, `.notes-upload-cache.json`, `.blog-upload-cache.json`, etc.).

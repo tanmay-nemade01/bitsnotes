@@ -50,7 +50,7 @@ vi.mock('../src/utils/notesLoader', () => ({
 }));
 
 vi.mock('../src/utils/blogLoader', () => ({
-  getPublishedPosts: vi.fn(() => [
+  getPublishedPosts: vi.fn(async () => [
     {
       slug: 'kimi-k3-a-justified-price-jump',
       frontmatter: {
@@ -62,7 +62,7 @@ vi.mock('../src/utils/blogLoader', () => ({
       html: '<p>test</p>',
     }
   ]),
-  getPostBySlug: vi.fn((slug: string) => {
+  getPostBySlug: vi.fn(async (slug: string) => {
     if (slug === 'kimi-k3-a-justified-price-jump') {
       return {
         slug: 'kimi-k3-a-justified-price-jump',

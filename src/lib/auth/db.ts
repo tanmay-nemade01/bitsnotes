@@ -123,6 +123,7 @@ export async function deleteUserAccount(db: AuthDb, userId: string): Promise<voi
   await db.prepare('DELETE FROM topic_progress WHERE user_id = ?').bind(userId).run();
   await db.prepare('DELETE FROM blog_likes WHERE user_id = ?').bind(userId).run();
   await db.prepare('DELETE FROM blog_follows WHERE user_id = ?').bind(userId).run();
+  await db.prepare('DELETE FROM bit_reactions WHERE user_id = ?').bind(userId).run();
   await db.prepare('DELETE FROM admin_users WHERE user_id = ?').bind(userId).run();
   await db.prepare('DELETE FROM identities WHERE user_id = ?').bind(userId).run();
   await db.prepare('DELETE FROM entitlements WHERE user_id = ?').bind(userId).run();

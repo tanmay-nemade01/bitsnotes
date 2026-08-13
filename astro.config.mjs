@@ -32,7 +32,8 @@ export default defineConfig({
           '**/.astro/**',
           '**/playwright-report/**',
           '**/test-results/**',
-          '**/.notes-upload-cache.json'
+          '**/.notes-upload-cache.json',
+          '**/.blog-upload-cache.json'
         ]
       }
     },

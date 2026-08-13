@@ -1,6 +1,7 @@
 import type { APIRoute } from 'astro';
 import { listSubjects, listLectures } from '../utils/notesLoader';
 import { getPublishedPosts } from '../utils/blogLoader';
+import { getPublishedBits } from '../utils/bitsLoader';
 import { slugify } from '../utils/lectureDisplay';
 
 export const prerender = false;
@@ -24,14 +25,24 @@ export const GET: APIRoute = async ({ url }) => {
     { path: '/privacy', changefreq: 'yearly',  priority: '0.4' },
     { path: '/terms',   changefreq: 'yearly',  priority: '0.4' },
     { path: '/blog',    changefreq: 'weekly',  priority: '0.8' },
+    { path: '/bits',    changefreq: 'daily',   priority: '0.6' },
   ];
 
-  const blogPosts = getPublishedPosts();
+  const blogPosts = await getPublishedPosts();
   for (const post of blogPosts) {
     pages.push({
       path: `/blog/${post.slug}`,
       changefreq: 'monthly',
       priority: '0.7',
+    });
+  }
+
+  const bits = await getPublishedBits();
+  for (const bit of bits) {
+    pages.push({
+      path: `/bits/${bit.slug}`,
+      changefreq: 'monthly',
+      priority: '0.5',
     });
   }
 
