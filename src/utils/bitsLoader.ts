@@ -253,10 +253,12 @@ export async function getAllBits(): Promise<Bit[]> {
     return buildLocalBits();
   }
   const manifest = await getManifest();
-  if (manifest.posts.length > 0) {
-    return bitsFromManifest(manifest);
+  // Trust a fetched manifest even when it has zero posts. Falling back to
+  // the Worker bundle would resurrect old bits after they were deleted.
+  if (manifest.version === 'empty' || manifest.version === 'error') {
+    return buildLocalBits();
   }
-  return buildLocalBits();
+  return bitsFromManifest(manifest);
 }
 
 export async function getPublishedBits(): Promise<Bit[]> {

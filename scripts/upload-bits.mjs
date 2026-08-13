@@ -188,10 +188,23 @@ for (const slug of bitFolders) {
 const timestamp = new Date().toISOString();
 const versionHash = crypto.createHash('sha256').update(timestamp + String(manifestPosts.length)).digest('hex').substring(0, 16);
 
+// Older Workers treat an empty `posts` array as "manifest missing" and fall
+// back to bits bundled in the deploy. A draft sentinel keeps the live feed
+// empty until that Worker is replaced.
+const postsForManifest = manifestPosts.length > 0
+  ? manifestPosts
+  : [{
+      slug: '_empty-feed',
+      frontmatter: {
+        publishedAt: '1970-01-01T00:00:00.000Z',
+        draft: true,
+      },
+    }];
+
 const manifest = {
   version: versionHash,
   updatedAt: timestamp,
-  posts: manifestPosts,
+  posts: postsForManifest,
 };
 
 const manifestPath = path.join(process.cwd(), '.bits-manifest.json');
