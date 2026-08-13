@@ -3,7 +3,7 @@ import { getEnv, json, unauthorized, forbidden } from '../../../../lib/apiHelper
 import { getUser } from '../../../../lib/apiHelpers';
 import { isAdmin } from '../../../../lib/comments';
 import { logAuthEvent } from '../../../../lib/auth';
-import { getPublishedPosts, getPostBySlug } from '../../../../utils/blogLoader';
+import { getPublishedPosts } from '../../../../utils/blogLoader';
 import { listCatalog } from '../../../../utils/notesLoader';
 import { slugify } from '../../../../utils/lectureDisplay';
 
@@ -56,6 +56,9 @@ export const GET: APIRoute = async (context) => {
     }
   }
 
+  const blogPosts = await getPublishedPosts();
+  const blogBySlug = new Map(blogPosts.map((p) => [p.slug, p]));
+
   // Fetch comments
   const rows = await env.DB.prepare(
     `SELECT id, page_type, subject, lecture, parent_id, depth, display_name, body, status, moderation_reason, author_user_id, score, report_count, created_at, updated_at
@@ -101,7 +104,7 @@ export const GET: APIRoute = async (context) => {
     
     if (c.page_type === 'blog') {
       pageUrl = `/blog/${c.subject}#comment-${c.id}`;
-      const post = getPostBySlug(c.subject);
+      const post = blogBySlug.get(c.subject);
       label = `Blog: ${post ? post.frontmatter.title : c.subject}`;
     } else if (c.page_type === 'lecture') {
       const lookupKey = `${c.subject}:${c.lecture || ''}`;

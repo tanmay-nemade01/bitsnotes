@@ -1,11 +1,11 @@
 import type { APIRoute } from 'astro';
 import { getPublishedPosts } from '../../utils/blogLoader';
 
-export const prerender = true;
+export const prerender = false;
 
 export const GET: APIRoute = async ({ url }) => {
   const baseUrl = `${url.protocol}//${url.host}`;
-  const posts = getPublishedPosts();
+  const posts = await getPublishedPosts();
 
   const items = posts
     .map(
@@ -37,7 +37,7 @@ export const GET: APIRoute = async ({ url }) => {
     status: 200,
     headers: {
       'Content-Type': 'application/xml; charset=utf-8',
-      'Cache-Control': 'public, max-age=3600',
+      'Cache-Control': 'public, max-age=60, s-maxage=300',
       'X-Robots-Tag': 'noindex',
     },
   });

@@ -147,7 +147,7 @@ export const POST: APIRoute = async (context) => {
       }
     }
   } else if (v.pageType === 'blog') {
-    const allPosts = getPublishedPosts();
+    const allPosts = await getPublishedPosts();
     if (!allPosts.some((p) => p.slug === v.subject)) {
       return badRequest('Unknown blog post');
     }

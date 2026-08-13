@@ -2,6 +2,7 @@ import type { APIRoute } from 'astro';
 import { env } from 'cloudflare:workers';
 import { listCatalog, getLectureContent, getManifest } from '../utils/notesLoader';
 import { getPublishedPosts } from '../utils/blogLoader';
+import { getPublishedBits, bitPreview } from '../utils/bitsLoader';
 
 export const prerender = false;
 
@@ -64,7 +65,7 @@ export const GET: APIRoute = async () => {
 
     // 2. Index all published blog posts
     try {
-      const blogPosts = getPublishedPosts();
+      const blogPosts = await getPublishedPosts();
       for (const post of blogPosts) {
         const cleanText = cleanHtmlText(post.html);
         index.push({
@@ -80,6 +81,30 @@ export const GET: APIRoute = async () => {
       }
     } catch (err: any) {
       console.warn('[search-index] Failed to index blog posts:', err.message);
+    }
+
+    try {
+      const bits = await getPublishedBits();
+      for (const bit of bits) {
+        const extra = bit.html ? cleanHtmlText(bit.html) : '';
+        const fullText = [bit.frontmatter.text, bit.frontmatter.title, bit.frontmatter.imageAlt, bit.frontmatter.link?.title, extra]
+          .filter(Boolean)
+          .join(' ')
+          .replace(/\s+/g, ' ')
+          .trim();
+        index.push({
+          type: 'bit',
+          title: bitPreview(bit),
+          subject: 'Bits',
+          folderName: bit.slug,
+          slug: bit.slug,
+          topicTitle: bit.frontmatter.link?.title || '',
+          text: fullText,
+          snippet: fullText.slice(0, 300),
+        });
+      }
+    } catch (err: any) {
+      console.warn('[search-index] Failed to index bits:', err.message);
     }
 
     return new Response(JSON.stringify(index), {

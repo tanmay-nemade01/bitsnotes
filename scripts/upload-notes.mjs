@@ -576,6 +576,46 @@ if (fs.existsSync(BLOG_DIR)) {
   }
 }
 
+const BITS_DIR = path.join(process.cwd(), 'src/content/bits');
+if (fs.existsSync(BITS_DIR)) {
+  const bitFolders = fs.readdirSync(BITS_DIR, { withFileTypes: true })
+    .filter((dirent) => dirent.isDirectory())
+    .map((dirent) => dirent.name);
+
+  for (const bitFolder of bitFolders) {
+    const bitPath = path.join(BITS_DIR, bitFolder);
+    const jsonPath = path.join(bitPath, 'index.json');
+    const htmlPath = path.join(bitPath, 'index.html');
+    if (!fs.existsSync(jsonPath)) continue;
+    let meta;
+    try {
+      meta = JSON.parse(fs.readFileSync(jsonPath, 'utf-8'));
+    } catch {
+      continue;
+    }
+    if (!meta || meta.draft) continue;
+    const rawHtml = fs.existsSync(htmlPath) ? fs.readFileSync(htmlPath, 'utf-8') : '';
+    const extra = rawHtml ? cleanHtmlText(rawHtml) : '';
+    const cleanText = [meta.text, meta.title, meta.imageAlt, meta.link?.title, extra]
+      .filter(Boolean)
+      .join(' ')
+      .replace(/\s+/g, ' ')
+      .trim();
+    const title = (meta.title && String(meta.title).trim())
+      || (meta.text ? String(meta.text).replace(/\s+/g, ' ').trim().slice(0, 80) : bitFolder);
+    searchIndex.push({
+      type: 'bit',
+      title,
+      subject: 'Bits',
+      folderName: bitFolder,
+      slug: bitFolder,
+      topicTitle: meta.link?.title || '',
+      text: cleanText,
+      snippet: cleanText.slice(0, 300),
+    });
+  }
+}
+
 // Sort subjects alphabetically
 subjects.sort((a, b) => a.name.localeCompare(b.name));
 

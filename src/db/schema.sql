@@ -231,6 +231,19 @@ CREATE TABLE IF NOT EXISTS chatbot_usage (
 CREATE INDEX IF NOT EXISTS idx_chatbot_usage_date
   ON chatbot_usage (usage_date, user_id);
 
+-- ─── Bit Reactions ─────────────────────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS bit_reactions (
+  id            TEXT PRIMARY KEY,
+  user_id       TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  slug          TEXT NOT NULL,
+  emoji         TEXT NOT NULL,
+  created_at    INTEGER NOT NULL,
+  UNIQUE(user_id, slug, emoji)
+);
+
+CREATE INDEX IF NOT EXISTS idx_bit_reactions_slug ON bit_reactions(slug);
+CREATE INDEX IF NOT EXISTS idx_bit_reactions_user ON bit_reactions(user_id);
+
 -- ─── Views Tracking ────────────────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS page_views (
   page_key      TEXT PRIMARY KEY,

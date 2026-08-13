@@ -1,0 +1,156 @@
+---
+/**
+ * Client script for emoji reactions. Include once per page that renders BitReactions.
+ */
+---
+
+<div
+  id="bit-signin-nudge"
+  class="bit-signin-nudge"
+  role="status"
+>
+  <span>
+    <a id="bit-signin-nudge-link" href="/auth/signin" class="text-[var(--accent)] font-semibold hover:underline">Sign in</a>
+    to react
+  </span>
+  <button type="button" id="bit-signin-nudge-close" aria-label="Dismiss" class="text-[var(--text-muted)] hover:text-[var(--text)]">
+    <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+      <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" />
+    </svg>
+  </button>
+</div>
+
+<script is:inline>
+  (function () {
+    if (window.__bitReactionsInit) return;
+    window.__bitReactionsInit = true;
+
+    var _authState = null;
+
+    function getAuthState(cb) {
+      if (_authState !== null) { cb(_authState); return; }
+      fetch('/api/auth/me', { credentials: 'same-origin' })
+        .then(function (r) { return r.json(); })
+        .then(function (data) {
+          _authState = !!(data && data.user);
+          cb(_authState);
+        })
+        .catch(function () { _authState = false; cb(false); });
+    }
+
+    var nudgeTimeout = null;
+    function showSignInNudge() {
+      var el = document.getElementById('bit-signin-nudge');
+      var link = document.getElementById('bit-signin-nudge-link');
+      if (!el) return;
+      if (link) {
+        link.setAttribute('href', '/auth/signin?redirect=' + encodeURIComponent(window.location.pathname));
+      }
+      el.classList.add('is-visible');
+      clearTimeout(nudgeTimeout);
+      nudgeTimeout = setTimeout(function () {
+        el.classList.remove('is-visible');
+      }, 3500);
+    }
+
+    var closeBtn = document.getElementById('bit-signin-nudge-close');
+    if (closeBtn) {
+      closeBtn.addEventListener('click', function () {
+        var el = document.getElementById('bit-signin-nudge');
+        if (el) el.classList.remove('is-visible');
+      });
+    }
+
+    function applyState(root, counts, mine) {
+      counts = counts || {};
+      mine = mine || [];
+      var mineSet = {};
+      for (var i = 0; i < mine.length; i++) mineSet[mine[i]] = true;
+      var chips = root.querySelectorAll('.bit-reaction-chip');
+      for (var c = 0; c < chips.length; c++) {
+        var chip = chips[c];
+        var emoji = chip.getAttribute('data-emoji');
+        var n = counts[emoji] || 0;
+        var countEl = chip.querySelector('.bit-reaction-count');
+        if (countEl) {
+          if (n > 0) {
+            countEl.textContent = String(n);
+            countEl.hidden = false;
+          } else {
+            countEl.textContent = '';
+            countEl.hidden = true;
+          }
+        }
+        var on = !!mineSet[emoji];
+        chip.classList.toggle('is-active', on);
+        chip.setAttribute('aria-pressed', on ? 'true' : 'false');
+      }
+    }
+
+    function roots() {
+      return Array.prototype.slice.call(document.querySelectorAll('[data-bit-reactions]'));
+    }
+
+    function loadAll() {
+      var nodes = roots();
+      if (!nodes.length) return;
+      var slugs = nodes.map(function (n) { return n.getAttribute('data-bit-slug'); }).filter(Boolean);
+      var unique = [];
+      var seen = {};
+      for (var i = 0; i < slugs.length; i++) {
+        if (!seen[slugs[i]]) { seen[slugs[i]] = true; unique.push(slugs[i]); }
+      }
+      fetch('/api/bits/reactions?slugs=' + encodeURIComponent(unique.join(',')), { credentials: 'same-origin' })
+        .then(function (r) { return r.json(); })
+        .then(function (data) {
+          var map = (data && data.bits) || {};
+          for (var j = 0; j < nodes.length; j++) {
+            var slug = nodes[j].getAttribute('data-bit-slug');
+            var entry = map[slug] || { counts: {}, mine: [] };
+            applyState(nodes[j], entry.counts, entry.mine);
+          }
+        })
+        .catch(function () {});
+    }
+
+    document.addEventListener('click', function (e) {
+      var el = e.target;
+      if (el && el.nodeType === 3) el = el.parentElement;
+      var chip = el && el.closest ? el.closest('.bit-reaction-chip') : null;
+      if (!chip) return;
+      var root = chip.closest('[data-bit-reactions]');
+      if (!root) return;
+      var slug = root.getAttribute('data-bit-slug');
+      var emoji = chip.getAttribute('data-emoji');
+      if (!slug || !emoji) return;
+
+      getAuthState(function (loggedIn) {
+        if (!loggedIn) {
+          showSignInNudge();
+          return;
+        }
+        fetch('/api/bits/reactions', {
+          method: 'POST',
+          credentials: 'same-origin',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ slug: slug, emoji: emoji }),
+        })
+          .then(function (r) {
+            if (r.status === 401) { showSignInNudge(); return null; }
+            return r.json();
+          })
+          .then(function (data) {
+            if (!data) return;
+            applyState(root, data.counts, data.mine);
+          })
+          .catch(function () {});
+      });
+    });
+
+    if (document.readyState === 'loading') {
+      document.addEventListener('DOMContentLoaded', loadAll);
+    } else {
+      loadAll();
+    }
+  })();
+</script>

@@ -1,7 +1,7 @@
 import { describe, it, expect, vi } from 'vitest';
 
 vi.mock('../src/utils/blogLoader', () => ({
-  getPostBySlug: (slug: string) => {
+  getPostBySlug: async (slug: string) => {
     if (slug === 'kimi-k3-a-justified-price-jump') {
       return {
         slug,
