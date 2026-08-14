@@ -429,3 +429,7 @@ When you finish, the output is ready for Agent 3 (Formatter), who will:
 - Render the traceable `exam_revision` objects from section summaries
 - Run the lint gate and self-score against the rubric
 - Stop if any `*[verify]*` marker somehow reaches Phase 3
+
+> [!IMPORTANT]
+> **LOG FILE PROTECTION**: During file cleanup, **NEVER** delete or remove `*_run_events.jsonl` files from output folders. The event log is critical for live run tracking and job history auditing.
+
