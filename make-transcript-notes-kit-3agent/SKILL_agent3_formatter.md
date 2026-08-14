@@ -379,3 +379,7 @@ The lint checks: HTML tag balance & callout nesting, template hygiene, viewport 
 ## Ship checklist
 
 Run the lint gate (Step 9) and score against the rubric (Step 10). Both must pass with zero FAILs and zero red-list violations. Score must be ≥ 85/100. Additionally verify: no `*[verify]*` markers reached this phase, no pipeline jargon in any visible text (title, headings, body, metadata), no placeholders/TODOs remain, no `summary`/`keyConcepts`/`quiz` fields in metadata JSON, topic mapping prerequisite section is populated or correctly omitted, and HTML is pretty-printed (not minified).
+
+> [!IMPORTANT]
+> **LOG FILE PROTECTION**: During file cleanup, **NEVER** delete or remove `*_run_events.jsonl` files from output folders. The event log is critical for live run tracking and job history auditing.
+
