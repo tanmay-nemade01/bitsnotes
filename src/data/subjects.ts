@@ -22,9 +22,12 @@ export interface SubjectInfo {
   order?: number;
   /** Optional course code. */
   code?: string;
+  /** Optional semester number (e.g. 1, 2, 3...). Subjects without a semester appear in 'Basics'. */
+  semester?: number;
 }
 
 export const SUBJECTS: SubjectInfo[] = [
+  // Semester 2 Subjects
   {
     name: 'Artificial Computational Intelligence',
     shortName: 'ACI',
@@ -32,70 +35,81 @@ export const SUBJECTS: SubjectInfo[] = [
       'Foundations of intelligent agents, search, knowledge representation, and reasoning under uncertainty.',
     order: 1,
     code: 'ACI',
-  },
-  {
-    name: 'Data Management for Machine Learning',
-    shortName: 'DMML',
-    description:
-      'How data is stored, cleaned, versioned, and served to power reliable machine-learning pipelines.',
-    order: 2,
-    code: 'DMML',
-  },
-  {
-    name: 'Deep Neural Networks',
-    shortName: 'DNN',
-    description:
-      'Architectures, training dynamics, and optimization behind modern deep learning models.',
-    order: 3,
-    code: 'DNN',
-  },
-  {
-    name: 'Deep Reinforcement Learning',
-    shortName: 'DRL',
-    description:
-      'Agents that learn from reward through value methods, policy gradients, and exploration strategies.',
-    order: 4,
-    code: 'DRL',
-  },
-  {
-    name: 'Introduction to Statistical Methods',
-    shortName: 'ISM',
-    description:
-      'Probability, estimation, and inference that underpin every quantitative ML technique.',
-    order: 5,
-    code: 'ISM',
-  },
-  {
-    name: 'Machine Learning',
-    shortName: 'ML',
-    description:
-      'Core supervised and unsupervised learning algorithms, model selection, and evaluation.',
-    order: 6,
-    code: 'ML',
-  },
-  {
-    name: 'Mathematical Foundations for Machine Learning',
-    shortName: 'Math Fdn',
-    description:
-      'Linear algebra, calculus, and probability you need to read ML papers with confidence.',
-    order: 7,
-    code: 'MFML',
+    semester: 2,
   },
   {
     name: 'Natural Language Processing',
     shortName: 'NLP',
     description:
       'From linguistic structure to modern sequence models for understanding and generating text.',
-    order: 8,
+    order: 2,
     code: 'NLP',
+    semester: 2,
+  },
+  {
+    name: 'Deep Reinforcement Learning',
+    shortName: 'DRL',
+    description:
+      'Agents that learn from reward through value methods, policy gradients, and exploration strategies.',
+    order: 3,
+    code: 'DRL',
+    semester: 2,
+  },
+  {
+    name: 'Data Management for Machine Learning',
+    shortName: 'DMML',
+    description:
+      'How data is stored, cleaned, versioned, and served to power reliable machine-learning pipelines.',
+    order: 4,
+    code: 'DMML',
+    semester: 2,
   },
   {
     name: 'Software Engineering for Machine Learning',
     shortName: 'SEML',
     description:
       'Engineering practices, testing, and MLOps that take models from notebook to production.',
-    order: 9,
+    order: 5,
     code: 'SEML',
+    semester: 2,
+  },
+
+  // Semester 1 Subjects
+  {
+    name: 'Machine Learning',
+    shortName: 'ML',
+    description:
+      'Core supervised and unsupervised learning algorithms, model selection, and evaluation.',
+    order: 1,
+    code: 'ML',
+    semester: 1,
+  },
+  {
+    name: 'Deep Neural Networks',
+    shortName: 'DNN',
+    description:
+      'Architectures, training dynamics, and optimization behind modern deep learning models.',
+    order: 2,
+    code: 'DNN',
+    semester: 1,
+  },
+  {
+    name: 'Mathematical Foundations for Machine Learning',
+    shortName: 'Math Fdn',
+    description:
+      'Linear algebra, calculus, and probability you need to read ML papers with confidence.',
+    order: 3,
+    code: 'MFML',
+    semester: 1,
+  },
+  {
+    name: 'Introduction to Statistical Methods',
+    shortName: 'ISM',
+    description:
+      'Probability, estimation, and inference that underpin every quantitative ML technique.',
+    order: 4,
+    code: 'ISM',
+    semester: 1,
   },
 ];
 
