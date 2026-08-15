@@ -21,8 +21,53 @@ const subjectsVM = catalog.map((s) => {
     description: info.description,
     lectureCount: lectures.length,
     additionalCount: additional.length,
+    semester: info.semester,
+    order: info.order ?? 999,
   };
 });
+
+// Group subjects into sections: Semesters in descending order (e.g. Semester 2, Semester 1), then Basics
+const semesterNumbers = Array.from(
+  new Set(
+    subjectsVM
+      .map((s) => s.semester)
+      .filter((sem): sem is number => typeof sem === 'number')
+  )
+).sort((a, b) => b - a);
+
+interface SubjectSection {
+  id: string;
+  title: string;
+  subjects: typeof subjectsVM;
+}
+
+const sections: SubjectSection[] = [];
+
+for (const sem of semesterNumbers) {
+  const semSubjects = subjectsVM
+    .filter((s) => s.semester === sem)
+    .sort((a, b) => a.order - b.order || a.name.localeCompare(b.name));
+
+  if (semSubjects.length > 0) {
+    sections.push({
+      id: `semester-${sem}`,
+      title: `Semester ${sem}`,
+      subjects: semSubjects,
+    });
+  }
+}
+
+const basicsSubjects = subjectsVM
+  .filter((s) => typeof s.semester !== 'number')
+  .sort((a, b) => a.order - b.order || a.name.localeCompare(b.name));
+
+if (basicsSubjects.length > 0) {
+  sections.push({
+    id: 'basics',
+    title: 'Basics',
+    subjects: basicsSubjects,
+  });
+}
 
 const recentPosts = (await getPublishedPosts()).slice(0, 3);
 
@@ -87,45 +132,58 @@ const webSiteJson = JSON.stringify(webSiteSchema);
       <ViewCounter pageKey="home" class="text-xs text-[var(--text-faint)]" />
     </div>
 
-    <!-- ============ VIEW: SUBJECTS (grid) ============ -->
-    <section aria-label="Subjects">
+    <!-- ============ VIEW: SUBJECTS (grouped by semester / category) ============ -->
+    <section aria-label="Subjects" class="space-y-10">
       <h2 class="sr-only">Subjects</h2>
-      <div id="subjects-grid" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-        {subjectsVM.map((s) => {
-          const param = encodeURIComponent(s.name);
-          return (
-            <a
-              href={`/subject/${param}`}
-              data-astro-prefetch
-              data-subject-name={s.name.toLowerCase()}
-              data-subject-description={s.description.toLowerCase()}
-              class="bn-subject-card group border border-[var(--border)] rounded-[var(--r-md)] p-5 hover:border-[var(--border-strong)] hover:bg-[var(--bg-subtle)] transition-colors no-underline"
-            >
-              <div class="flex items-start gap-3">
-                <div class="mt-0.5 w-8 h-8 rounded-[var(--r-sm)] bg-[var(--accent-subtle)] flex items-center justify-center text-[var(--accent)] shrink-0">
-                  <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
-                    <path stroke-linecap="round" stroke-linejoin="round" d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253"/>
-                  </svg>
-                </div>
-                <div class="min-w-0 flex-1">
-                  <h3 class="font-display font-bold text-[var(--text)] text-base leading-snug group-hover:text-[var(--accent)] transition-colors line-clamp-2">
-                    {s.name}
-                  </h3>
-                  <p class="text-xs text-[var(--text-muted)] mt-1">
-                    {s.lectureCount} {s.lectureCount === 1 ? 'lecture' : 'lectures'}{s.additionalCount > 0 ? ` · ${s.additionalCount} ${s.additionalCount === 1 ? 'resource' : 'resources'}` : ''}
-                  </p>
-                  <p class="text-xs text-[var(--text-faint)] mt-1.5 line-clamp-2">
-                    {s.description}
-                  </p>
-                </div>
-                <svg class="w-4 h-4 text-[var(--text-faint)] mt-1 shrink-0 group-hover:text-[var(--accent)] group-hover:translate-x-0.5 transition-colors" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
-                  <path stroke-linecap="round" stroke-linejoin="round" d="M9 5l7 7-7 7"/>
-                </svg>
-              </div>
-            </a>
-          );
-        })}
-      </div>
+      {sections.map((sec) => (
+        <div class="space-y-4">
+          <div class="flex items-center justify-between border-b border-[var(--border)] pb-2">
+            <h3 class="font-display text-xl sm:text-2xl font-bold text-[var(--text)] tracking-tight">
+              {sec.title}
+            </h3>
+            <span class="text-xs font-medium px-2.5 py-0.5 rounded-full bg-[var(--bg-subtle)] text-[var(--text-muted)] border border-[var(--border)]">
+              {sec.subjects.length} {sec.subjects.length === 1 ? 'subject' : 'subjects'}
+            </span>
+          </div>
+
+          <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+            {sec.subjects.map((s) => {
+              const param = encodeURIComponent(s.name);
+              return (
+                <a
+                  href={`/subject/${param}`}
+                  data-astro-prefetch
+                  data-subject-name={s.name.toLowerCase()}
+                  data-subject-description={s.description.toLowerCase()}
+                  class="bn-subject-card group border border-[var(--border)] rounded-[var(--r-md)] p-5 hover:border-[var(--border-strong)] hover:bg-[var(--bg-subtle)] transition-colors no-underline"
+                >
+                  <div class="flex items-start gap-3">
+                    <div class="mt-0.5 w-8 h-8 rounded-[var(--r-sm)] bg-[var(--accent-subtle)] flex items-center justify-center text-[var(--accent)] shrink-0">
+                      <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253"/>
+                      </svg>
+                    </div>
+                    <div class="min-w-0 flex-1">
+                      <h4 class="font-display font-bold text-[var(--text)] text-base leading-snug group-hover:text-[var(--accent)] transition-colors line-clamp-2">
+                        {s.name}
+                      </h4>
+                      <p class="text-xs text-[var(--text-muted)] mt-1">
+                        {s.lectureCount} {s.lectureCount === 1 ? 'lecture' : 'lectures'}{s.additionalCount > 0 ? ` · ${s.additionalCount} ${s.additionalCount === 1 ? 'resource' : 'resources'}` : ''}
+                      </p>
+                      <p class="text-xs text-[var(--text-faint)] mt-1.5 line-clamp-2">
+                        {s.description}
+                      </p>
+                    </div>
+                    <svg class="w-4 h-4 text-[var(--text-faint)] mt-1 shrink-0 group-hover:text-[var(--accent)] group-hover:translate-x-0.5 transition-colors" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+                      <path stroke-linecap="round" stroke-linejoin="round" d="M9 5l7 7-7 7"/>
+                    </svg>
+                  </div>
+                </a>
+              );
+            })}
+          </div>
+        </div>
+      ))}
     </section>
 
     {recentPosts.length > 0 && (
