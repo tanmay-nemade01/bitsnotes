@@ -9,22 +9,47 @@ export const prerender = false;
 let devCachedIndex: any[] | null = null;
 let devCachedManifestVersion: string | null = null;
 
+function extractSearchableNoteText(html: string, topicTitle?: string): { text: string; snippet: string } {
+  const parts: string[] = [];
+  if (topicTitle) parts.push(topicTitle);
+
+  const kwMatch = html.match(/<meta\s+name=["']keywords["']\s+content=["']([\s\S]*?)["']/i);
+  if (kwMatch && kwMatch[1]) parts.push(kwMatch[1]);
+
+  const descMatch = html.match(/<meta\s+name=["']description["']\s+content=["']([\s\S]*?)["']/i);
+  if (descMatch && descMatch[1]) parts.push(descMatch[1]);
+
+  const metaMatch = html.match(/<script\s+[^>]*id=["']lecture-metadata["'][^>]*>([\s\S]*?)<\/script>/i);
+  if (metaMatch) {
+    try {
+      const meta = JSON.parse(metaMatch[1].trim());
+      if (Array.isArray(meta.sections)) {
+        for (const sec of meta.sections) {
+          if (sec.title) parts.push(sec.title);
+          if (sec.description) parts.push(sec.description);
+        }
+      }
+      if (Array.isArray(meta.examRevisionNotes)) {
+        for (const note of meta.examRevisionNotes) {
+          if (typeof note === 'string') parts.push(note);
+        }
+      }
+    } catch {}
+  }
+
+  const text = parts.join(' ').replace(/\s+/g, ' ').trim();
+  const snippet = (descMatch && descMatch[1]) || (parts.length > 0 ? parts[0] : '');
+
+  return { text, snippet: snippet.slice(0, 300) };
+}
+
 function cleanHtmlText(html: string): string {
-  // Strip style tags and content
   let text = html.replace(/<style[^>]*>[\s\S]*?<\/style>/gi, ' ');
-  // Strip script tags and content
   text = text.replace(/<script[^>]*>[\s\S]*?<\/script>/gi, ' ');
-  // Strip head tags and content
   text = text.replace(/<head[^>]*>[\s\S]*?<\/head>/gi, ' ');
-  // Strip iframe tags and content
   text = text.replace(/<iframe[^>]*>[\s\S]*?<\/iframe>/gi, ' ');
-  // Strip svg tags and content
   text = text.replace(/<svg[^>]*>[\s\S]*?<\/svg>/gi, ' ');
-
-  // Strip HTML tags
   text = text.replace(/<[^>]*>/g, ' ');
-
-  // Decode HTML entities
   text = text
     .replace(/&nbsp;/g, ' ')
     .replace(/&lt;/g, '<')
@@ -32,8 +57,6 @@ function cleanHtmlText(html: string): string {
     .replace(/&amp;/g, '&')
     .replace(/&quot;/g, '"')
     .replace(/&#39;/g, "'");
-
-  // Normalize whitespace
   return text.replace(/\s+/g, ' ').trim();
 }
 
@@ -56,13 +79,13 @@ export const GET: APIRoute = async () => {
     const catalog = await listCatalog();
     const index: any[] = [];
 
-    // 1. Index all lecture notes
+    // 1. Index all lecture notes with lightweight metadata & concepts
     for (const subject of catalog) {
       for (const lecture of subject.lectures) {
         const content = await getLectureContent(subject.subject, lecture.folderName);
         if (content) {
           const title = lecture.displayTitle || lecture.name;
-          const fullText = cleanHtmlText(content.htmlContent);
+          const { text, snippet } = extractSearchableNoteText(content.htmlContent, lecture.topicTitle);
 
           index.push({
             type: 'note',
@@ -71,8 +94,8 @@ export const GET: APIRoute = async () => {
             folderName: lecture.folderName,
             slug: lecture.slug,
             topicTitle: lecture.topicTitle || '',
-            text: fullText,
-            snippet: fullText.slice(0, 300)
+            text,
+            snippet
           });
         }
       }
@@ -186,4 +209,3 @@ export const GET: APIRoute = async () => {
     });
   }
 };
-
