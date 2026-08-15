@@ -6,6 +6,9 @@ import { getPublishedBits, bitPreview } from '../utils/bitsLoader';
 
 export const prerender = false;
 
+let devCachedIndex: any[] | null = null;
+let devCachedManifestVersion: string | null = null;
+
 function cleanHtmlText(html: string): string {
   // Strip style tags and content
   let text = html.replace(/<style[^>]*>[\s\S]*?<\/style>/gi, ' ');
@@ -37,8 +40,20 @@ function cleanHtmlText(html: string): string {
 export const GET: APIRoute = async () => {
   // In development, build the search index dynamically so local edits reflect immediately
   if (import.meta.env.DEV) {
-    const catalog = await listCatalog();
     const manifest = await getManifest();
+
+    if (devCachedIndex && devCachedManifestVersion === manifest.version) {
+      return new Response(JSON.stringify(devCachedIndex), {
+        headers: {
+          'Content-Type': 'application/json',
+          'Cache-Control': 'public, max-age=300',
+          'ETag': `"${manifest.version}"`,
+          'X-Robots-Tag': 'noindex, nofollow'
+        }
+      });
+    }
+
+    const catalog = await listCatalog();
     const index: any[] = [];
 
     // 1. Index all lecture notes
@@ -106,6 +121,9 @@ export const GET: APIRoute = async () => {
     } catch (err: any) {
       console.warn('[search-index] Failed to index bits:', err.message);
     }
+
+    devCachedIndex = index;
+    devCachedManifestVersion = manifest.version;
 
     return new Response(JSON.stringify(index), {
       headers: {
