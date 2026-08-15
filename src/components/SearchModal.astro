@@ -158,7 +158,7 @@
     min-height: 120px;
   }
 
-  .search-modal-empty-state, :global(.search-modal-loading-state), :global(.search-modal-no-results) {
+  .search-modal-empty-state, :global(.search-modal-loading-state), :global(.search-modal-no-results), :global(.search-modal-searching-state) {
     padding: var(--space-12) var(--space-4);
     text-align: center;
     color: var(--text-muted);
@@ -168,6 +168,42 @@
     align-items: center;
     justify-content: center;
     gap: var(--space-2);
+  }
+
+  :global(.search-modal-pulse-indicator) {
+    position: relative;
+    width: 36px;
+    height: 36px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  :global(.search-modal-pulse-dot) {
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    background-color: var(--accent);
+    z-index: 2;
+  }
+
+  :global(.search-modal-pulse-ring) {
+    position: absolute;
+    inset: 0;
+    border-radius: 50%;
+    border: 2px solid var(--accent);
+    animation: search-pulse 1.4s cubic-bezier(0.24, 0, 0.38, 1) infinite;
+  }
+
+  @keyframes search-pulse {
+    0% {
+      transform: scale(0.4);
+      opacity: 0.9;
+    }
+    100% {
+      transform: scale(1.4);
+      opacity: 0;
+    }
   }
 
   :global(.search-modal-result-item) {
@@ -303,11 +339,19 @@
 <script>
   import { navigate } from 'astro:transitions/client';
   import { slugify } from '../utils/lectureDisplay';
+  import {
+    prepareSearchIndex,
+    executeSearch,
+    getSearchTitle,
+    getSearchSnippet,
+    type PreparedSearchItem,
+    type RawSearchItem
+  } from '../utils/searchEngine';
 
-  let searchIndex: any = null;
+  let searchIndex: PreparedSearchItem[] | null = null;
   let isFetchingIndex = false;
   let activeIndex = -1;
-  let resultsList: any[] = [];
+  let resultsList: PreparedSearchItem[] = [];
   
   async function fetchSearchIndex() {
     if (searchIndex || isFetchingIndex) return;
@@ -315,7 +359,8 @@
     try {
       const res = await fetch('/search-index.json');
       if (res.ok) {
-        searchIndex = await res.json();
+        const rawItems = (await res.json()) as RawSearchItem[];
+        searchIndex = prepareSearchIndex(rawItems);
       }
     } catch (e) {
       console.error('Failed to load search index:', e);
@@ -388,6 +433,18 @@
       `;
     }
 
+    function renderSearchingState() {
+      resultsContainer!.innerHTML = `
+        <div class="search-modal-searching-state">
+          <div class="search-modal-pulse-indicator">
+            <div class="search-modal-pulse-dot"></div>
+            <div class="search-modal-pulse-ring"></div>
+          </div>
+          <p class="font-medium text-[var(--text)] text-xs mt-3">Searching notes & concepts...</p>
+        </div>
+      `;
+    }
+
     function renderNoResults(query: string) {
       resultsContainer!.innerHTML = `
         <div class="search-modal-no-results">
@@ -400,189 +457,34 @@
       `;
     }
 
-    function countOccurrences(text: string, term: string, maxCount = 10): number {
-      if (!term || term.length === 0) return 0;
-      let count = 0;
-      let pos = 0;
-      const step = Math.max(1, term.length);
-      while (count < maxCount) {
-        pos = text.indexOf(term, pos);
-        if (pos === -1) break;
-        count++;
-        pos += step;
-      }
-      return count;
-    }
-
-    function getSearchSnippet(text: string, query: string, maxLen = 160) {
-      if (!query || !text) return (text || '').slice(0, maxLen) + ((text || '').length > maxLen ? '...' : '');
-      const rawQuery = query.trim().toLowerCase();
-      const terms = rawQuery.split(/\s+/).filter(Boolean);
-      if (terms.length === 0) return text.slice(0, maxLen) + (text.length > maxLen ? '...' : '');
-
-      let firstIndex = -1;
-      let matchedLength = 0;
-      const lowerText = text.toLowerCase();
-
-      // First try to locate the exact full query phrase in text
-      if (rawQuery.length >= 2) {
-        const phraseIdx = lowerText.indexOf(rawQuery);
-        if (phraseIdx !== -1) {
-          firstIndex = phraseIdx;
-          matchedLength = rawQuery.length;
-        }
-      }
-
-      // Fallback: locate the first occurrence of any term
-      if (firstIndex === -1) {
-        for (const term of terms) {
-          const idx = lowerText.indexOf(term);
-          if (idx !== -1 && (firstIndex === -1 || idx < firstIndex)) {
-            firstIndex = idx;
-            matchedLength = term.length;
-          }
-        }
-      }
-
-      if (firstIndex === -1) {
-        return text.slice(0, maxLen) + (text.length > maxLen ? '...' : '');
-      }
-
-      const start = Math.max(0, firstIndex - 60);
-      const end = Math.min(text.length, firstIndex + matchedLength + 100);
-      let snippet = text.slice(start, end);
-
-      if (start > 0) snippet = '...' + snippet;
-      if (end < text.length) snippet = snippet + '...';
-
-      let escaped = snippet
-        .replace(/&/g, '&amp;')
-        .replace(/</g, '&lt;')
-        .replace(/>/g, '&gt;');
-
-      // Only highlight terms of length >= 2 to avoid cluttering with every single letter
-      const sortedTerms = [...terms].filter(t => t.length >= 2).sort((a, b) => b.length - a.length);
-      for (const term of sortedTerms) {
-        const escapedTerm = term.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&');
-        const regex = new RegExp(`(${escapedTerm})`, 'gi');
-        escaped = escaped.replace(regex, '<mark class="bg-[var(--accent-subtle)] text-[var(--accent)] font-semibold px-0.5 rounded-[2px]">$1</mark>');
-      }
-
-      return escaped;
-    }
-
-    function getSearchTitle(title: string, query: string) {
-      const terms = query.toLowerCase().split(/\s+/).filter(Boolean);
-      let escaped = title
-        .replace(/&/g, '&amp;')
-        .replace(/</g, '&lt;')
-        .replace(/>/g, '&gt;');
-      if (terms.length === 0) return escaped;
-
-      // Only highlight terms of length >= 2
-      const sortedTerms = [...terms].filter(t => t.length >= 2).sort((a, b) => b.length - a.length);
-      for (const term of sortedTerms) {
-        const escapedTerm = term.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&');
-        const regex = new RegExp(`(${escapedTerm})`, 'gi');
-        escaped = escaped.replace(regex, '<mark class="bg-[var(--accent-subtle)] text-[var(--accent)] font-semibold px-0.5 rounded-[2px]">$1</mark>');
-      }
-      return escaped;
-    }
-
     function performSearch(query: string) {
       if (!searchIndex) {
         renderLoadingState();
         fetchSearchIndex().then(() => {
-          if (input!.value === query) {
+          if (input!.value.trim() === query.trim()) {
             performSearch(query);
           }
         });
         return;
       }
 
-      const rawQuery = query.trim();
-      const queryLower = rawQuery.toLowerCase();
-      const terms = queryLower.split(/\s+/).filter(Boolean);
+      const res = executeSearch(searchIndex, query, 20);
 
-      if (terms.length === 0) {
+      if (res.status === 'empty') {
         resultsList = [];
         activeIndex = -1;
         renderDefaultState();
         return;
       }
 
-      const isShortQuery = queryLower.length < 2;
-      const matches = [];
-
-      for (const item of searchIndex) {
-        const titleLower = (item.title || '').toLowerCase();
-        const subjectLower = (item.subject || '').toLowerCase();
-        const topicTitleLower = (item.topicTitle || '').toLowerCase();
-        const textLower = isShortQuery ? '' : (item.text || item.snippet || '').toLowerCase();
-
-        let score = 0;
-        let termMatchesCount = 0;
-
-        // Exact contiguous query match
-        if (queryLower.length >= 2) {
-          if (titleLower.includes(queryLower)) score += 1000;
-          if (topicTitleLower.includes(queryLower)) score += 800;
-          if (subjectLower.includes(queryLower)) score += 300;
-
-          if (textLower.includes(queryLower)) {
-            const exactCount = countOccurrences(textLower, queryLower, 10);
-            score += 500 + exactCount * 50;
-          }
-        }
-
-        // Score individual terms
-        for (const term of terms) {
-          let termMatched = false;
-
-          const inTitleIdx = titleLower.indexOf(term);
-          if (inTitleIdx !== -1) {
-            termMatched = true;
-            score += (inTitleIdx === 0 ? 200 : 100);
-          }
-
-          const inTopicIdx = topicTitleLower.indexOf(term);
-          if (inTopicIdx !== -1) {
-            termMatched = true;
-            score += (inTopicIdx === 0 ? 150 : 80);
-          }
-
-          const inSubjectIdx = subjectLower.indexOf(term);
-          if (inSubjectIdx !== -1) {
-            termMatched = true;
-            score += (inSubjectIdx === 0 ? 50 : 25);
-          }
-
-          if (!isShortQuery) {
-            const inTextIdx = textLower.indexOf(term);
-            if (inTextIdx !== -1) {
-              termMatched = true;
-              const count = countOccurrences(textLower, term, 10);
-              score += 15 + count * 5;
-            }
-          }
-
-          if (termMatched) {
-            termMatchesCount++;
-          }
-        }
-
-        if (termMatchesCount > 0) {
-          if (termMatchesCount === terms.length) {
-            score += 200;
-          } else {
-            score = score * (termMatchesCount / terms.length);
-          }
-          matches.push({ item, score });
-        }
+      if (res.status === 'too_short') {
+        resultsList = [];
+        activeIndex = -1;
+        renderSearchingState();
+        return;
       }
 
-      // Cap displayed results to top 20 for instant rendering and light DOM footprint
-      resultsList = matches.sort((a, b) => b.score - a.score).slice(0, 20).map(r => r.item);
+      resultsList = res.matches;
       activeIndex = -1;
 
       if (resultsList.length === 0) {
@@ -600,9 +502,9 @@
           ? `/blog/${encodeURIComponent(item.slug)}`
           : isBit
             ? `/bits/${encodeURIComponent(item.slug)}`
-            : `/view/${encodeURIComponent(slugify(item.subject))}/${encodeURIComponent(item.slug || item.folderName)}`;
+            : `/view/${encodeURIComponent(slugify(item.subject))}/${encodeURIComponent(item.slug || item.folderName || '')}`;
         const highlightedTitle = getSearchTitle(item.title, query);
-        const snippet = getSearchSnippet(item.text || item.snippet || '', query);
+        const snippet = getSearchSnippet(item.text || item._previewSnippet || '', query);
         const badgeText = isBlog ? 'BLOG' : isBit ? 'BITS' : item.subject;
         
         return `
@@ -644,7 +546,7 @@
       clearTimeout(debounceTimer);
       debounceTimer = setTimeout(() => {
         performSearch(q);
-      }, 100);
+      }, 180);
     });
 
     if (clearBtn) {
