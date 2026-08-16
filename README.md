@@ -24,7 +24,7 @@ Free, open-source AI/ML study notes — lectures across multiple subjects with i
 ## Features
 
 - **Lecture viewer** — Notes, Study Guide, Exam Revision, and Quiz tabs
-- **Subjects** — ACI, DMML, DNN, DRL, ISM, ML, MFML, NLP, SEML, plus additional lecture sets (e.g. Big Data, Data Warehousing)
+- **Subjects** — ACI, AMTCS, DMML, DNN, DRL, ISM, ML, MFML, NLP, SEML, plus additional lecture sets (e.g. Big Data, Data Warehousing)
 - **Cross-lecture resources** — Race cards, one-sheets, concept maps, question banks, worksheets, solved papers
 - **Search** — Ctrl+K across subjects, lectures, and concepts
 - **Accounts** — OAuth or email sign-in; bookmarks/collections, reading progress, threaded comments

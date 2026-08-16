@@ -517,15 +517,15 @@ for (const subjectName of subjectFolders) {
     if (kwMatch && kwMatch[1]) parts.push(kwMatch[1]);
     const descMatch = currentHtmlContent.match(/<meta\s+name=["']description["']\s+content=["']([\s\S]*?)["']/i);
     if (descMatch && descMatch[1]) parts.push(descMatch[1]);
-    if (embeddedMeta) {
-      if (Array.isArray(embeddedMeta.sections)) {
-        for (const sec of embeddedMeta.sections) {
+    if (metadata) {
+      if (Array.isArray(metadata.sections)) {
+        for (const sec of metadata.sections) {
           if (sec.title) parts.push(sec.title);
           if (sec.description) parts.push(sec.description);
         }
       }
-      if (Array.isArray(embeddedMeta.examRevisionNotes)) {
-        for (const note of embeddedMeta.examRevisionNotes) {
+      if (Array.isArray(metadata.examRevisionNotes)) {
+        for (const note of metadata.examRevisionNotes) {
           if (typeof note === 'string') parts.push(note);
         }
       }
