@@ -73,6 +73,15 @@ export const SUBJECTS: SubjectInfo[] = [
     code: 'SEML',
     semester: 2,
   },
+  {
+    name: 'AI & ML Techniques for Cyber Security',
+    shortName: 'AMTCS',
+    description:
+      'Applications of machine learning to threat detection, security telemetry, defender frameworks, and adversarial robustness.',
+    order: 6,
+    code: 'AMTCS',
+    semester: 2,
+  },
 
   // Semester 1 Subjects
   {
