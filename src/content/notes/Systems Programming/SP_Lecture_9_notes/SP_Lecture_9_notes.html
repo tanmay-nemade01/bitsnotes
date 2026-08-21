@@ -1,0 +1,1070 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+  <!-- Primary SEO -->
+  <title>Files, Directories and Device Management | Systems Programming | BitsNotes</title>
+  <meta name="description" content="Systems Programming notes on Unix directory entries (16=2+14), inode links, namei translation, df flags and device management.">
+  <meta name="keywords" content="Systems Programming, Files Directories Device Management, Unix Directory Entry, Inode Number, Inode Structure, namei Algorithm, Path Translation, Disk Access, df, lsblk, fdisk, Character Device, Block Device, Major Minor Numbers, 16-byte Entry">
+  <meta name="author" content="BitsNotes">
+  <meta name="robots" content="index, follow">
+  <link rel="canonical" href="https://bitsnotes.com/view/systems-programming/files-directories-and-device-management">
+
+  <!-- Open Graph / Facebook -->
+  <meta property="og:type" content="article">
+  <meta property="og:title" content="Files, Directories and Device Management | Systems Programming">
+  <meta property="og:description" content="Systems Programming notes on Unix directory entries (16=2+14), inode links, namei translation, df flags and device management.">
+  <meta property="og:url" content="https://bitsnotes.com/view/systems-programming/files-directories-and-device-management">
+  <meta property="og:image" content="https://bitsnotes.com/og-default.png">
+  <meta property="og:image:width" content="1200">
+  <meta property="og:image:height" content="630">
+  <meta property="og:site_name" content="BitsNotes">
+
+  <!-- Twitter Card -->
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="Files, Directories and Device Management | Systems Programming">
+  <meta name="twitter:description" content="Systems Programming notes on Unix directory entries (16=2+14), inode links, namei translation, df flags and device management.">
+  <meta name="twitter:image" content="https://bitsnotes.com/og-default.png">
+  <meta name="twitter:site" content="@BitsNotes">
+
+  <!-- Stylesheet -->
+  <link rel="stylesheet" href="/lecture-notes.css">
+
+  <!-- Structured Data: JSON-LD -->
+  <script type="application/ld+json">
+{"@context":"https://schema.org","@type":"Article","headline":"Files, Directories and Device Management | Systems Programming","description":"Systems Programming notes on Unix directory entries (16=2+14), inode links, namei translation, df flags and device management.","about":["Files and Directories — The Unix View","Unix Directory Entry Structure","The Link Between Name and Content — Inodes","Path Name to Inode Translation — The namei Algorithm","Disk Access Walkthrough — From cat Command to Data Blocks","Disk Usage Inspection — The df Family","Unix Input/Output — Character versus Block Devices","Device Identification — Major and Minor Numbers, lsblk and fdisk"],"author":{"@type":"Organization","name":"BitsNotes"},"publisher":{"@type":"Organization","name":"BitsNotes"},"datePublished":"2026-08-20","keywords":"Systems Programming, Files Directories Device Management, Unix Directory Entry, Inode Number, Inode Structure, namei Algorithm, Path Translation, Disk Access, df, lsblk, fdisk, Character Device, Block Device, Major Minor Numbers, 16-byte Entry","mainEntityOfPage":{"@type":"WebPage","@id":"https://bitsnotes.com/view/systems-programming/sp-lecture-9-notes"}}
+</script>
+
+  <!-- Lecture Metadata (for the BitsNotes platform viewer) -->
+  <!-- IMPORTANT: This is the ONLY metadata source. No companion .json file
+       is created. The viewer reads everything from this embedded script.
+       Required fields: title, subject, gradeLevel, datePublished,
+       targetAudience, sections (array), examRevisionNotes (array).
+       Optional fields: prerequisites (array of {subject, lecture, topics}).
+       NOT included (removed): summary, keyConcepts, quiz. -->
+  <script type="application/json" id="lecture-metadata">
+{
+  "title": "Files, Directories and Device Management",
+  "subject": "Systems Programming",
+  "gradeLevel": "postgraduate",
+  "datePublished": "2026-08-20",
+  "targetAudience": "Postgraduate students in Systems Programming",
+  "sections": [
+    {
+      "title": "Files and Directories — The Unix View",
+      "description": "Unix treats every object as a byte-sequence file with open/read/write/close and directories as tables that map names to inode numbers."
+    },
+    {
+      "title": "Unix Directory Entry Structure",
+      "description": "Classic Unix directory is a table of 16-byte entries (2 bytes inode number + 14 bytes name) at offsets 0,16,32...; names beyond 14 chars are truncated and can collide; . / .. are fixed entries."
+    },
+    {
+      "title": "The Link Between Name and Content — Inodes",
+      "description": "The 2-byte inode number in the directory entry is the only name→content bridge (called a link); the number points to the larger inode structure which fans out to data blocks."
+    },
+    {
+      "title": "Path Name to Inode Translation — The namei Algorithm",
+      "description": "namei converts a path string to an inode by initializing working inode W to root (absolute) or wd (relative) and walking components left-to-right with lookup, release and hop; symlink triggers path replacement."
+    },
+    {
+      "title": "Disk Access Walkthrough — From cat Command to Data Blocks",
+      "description": "First cat on an absolute path does disk→memory for each level's inode plus 1K=1024-byte data block, looking up each component (root 2, home 13, hello 53) before file bytes arrive; caching removes repeats."
+    },
+    {
+      "title": "Disk Usage Inspection — The df Family",
+      "description": "df reports filesystem use in 1K-blocks with columns Filesystem/Used/Available/Use%; flags -a/-i/-h/-T/-t/-x reshape to dummy, inode, human (98G/9.4G/84G 11%), type (ext4/squashfs/tmpfs) views."
+    },
+    {
+      "title": "Unix Input/Output — Character versus Block Devices",
+      "description": "Memory ladder RAM/disk/tape/cache sets stage; ls -li /dev shows c (character stream, no kernel block buffering: RAM/printer/terminal) vs b (block structured 1K=1024 bytes, kernel buffered: disks/tapes) via first letter."
+    },
+    {
+      "title": "Device Identification — Major and Minor Numbers, lsblk and fdisk",
+      "description": "Major selects driver family (8 disk sda/sda1, 7 loop loop0..22) and minor selects instance within; lsblk shows MAJ:MIN RM RO TYPE MOUNTPOINT; fdisk shows 512-byte sectors, start 2048, 100GB DOS label, needing sudo."
+    },
+    {
+      "title": "Exam Guidance Summary",
+      "description": "Mid-sem exam covers files/directories up to this lecture; almost all questions are command/flag prediction (df/lsblk/fdisk/namei) with old paper on Taksila portal."
+    },
+    {
+      "title": "Key Industry Applications",
+      "description": "Real-world ties: everything-is-a-file to /dev, 16=2+14 to legacy bugs, namei to every open/cat, df types to live images/tmpfs, lsblk majors to fleet parsing, fdisk alignment to cloud images."
+    }
+  ],
+  "examRevisionNotes": [
+    {
+      "topic": "Files and Directories — The Unix View",
+      "mustKnow": "Everything-is-a-file lets the same four calls handle regular files, directories and devices; a directory holds only name→inode maps, not file bytes.",
+      "keyFormula": "",
+      "commonPitfall": "Thinking a directory contains file bytes instead of just the name-to-inode link; mixing fixed-length classic limit with modern variable names.",
+      "quickCheck": "Why can you list /dev and /home with the same ls logic?",
+      "connections": [
+        "9.2",
+        "9.3"
+      ]
+    },
+    {
+      "topic": "Unix Directory Entry Structure",
+      "mustKnow": "16 = 2 + 14 and offset_k = 16*k; 14-char truncation causes collision when first 14 chars match; . is current, .. is parent, / is root.",
+      "keyFormula": "\\[ 16 = 2 + 14 \\] and \\[ \\text{offset}_k = 16 \\times k \\]",
+      "commonPitfall": "Thinking long names are stored fully; under old 16-byte layout only first 14 chars kept and two files with same prefix collide.",
+      "quickCheck": "What byte offset is entry k and what happens to a 20-char name in the classic table?",
+      "connections": [
+        "9.3",
+        "9.4"
+      ]
+    },
+    {
+      "topic": "The Link Between Name and Content — Inodes",
+      "mustKnow": "File name is a link (bridge) to a 2-byte inode number; the inode structure holds mode, owner, times, size, link count and block pointers to data blocks.",
+      "keyFormula": "",
+      "commonPitfall": "Confusing inode number (2-byte table entry) with inode structure (larger record with pointers); or mixing this minimal link with hard/soft link.",
+      "quickCheck": "What is stored in the 2-byte field vs what is in the inode structure?",
+      "connections": [
+        "9.2",
+        "9.4"
+      ]
+    },
+    {
+      "topic": "Path Name to Inode Translation — The namei Algorithm",
+      "mustKnow": "namei: W = root if p starts with / else wd; while c in p: read dir of W, match c to 14-byte name, get N, release W, W←N; symlink replaces prefix and reprocesses.",
+      "keyFormula": "\\[ W = \\begin{cases} \\text{root} & \\text{if } p \\text{ starts with } / \\\\ \\text{wd} & \\text{otherwise} \\end{cases} \\]",
+      "commonPitfall": "Treating file extension as separate component; thinking walk is right-to-left; forgetting release step order.",
+      "quickCheck": "For /home/ubuntu/sp/file_name.txt what is the last component and what is W after matching home?",
+      "connections": [
+        "9.5",
+        "9.2"
+      ]
+    },
+    {
+      "topic": "Disk Access Walkthrough — From cat Command to Data Blocks",
+      "mustKnow": "Each directory level costs inode + data block (1K=1024 bytes) fetches; cat /home/spiderman/hello.txt with root 2, home 13, hello 53 needs 8 transfers (4 levels ×2) including root and file.",
+      "keyFormula": "\\[ 1\\,\\text{K} = 1024\\,\\text{bytes} \\] and \\[ \\text{offset}_k = 16 \\times k \\]",
+      "commonPitfall": "Forgetting root's pair or the file's own inode+block when counting; thinking cached second cat costs same as cold first cat.",
+      "quickCheck": "How many inode and block fetches for cat /home/spiderman/hello.txt with no cache?",
+      "connections": [
+        "9.4",
+        "9.6"
+      ]
+    },
+    {
+      "topic": "Disk Usage Inspection — The df Family",
+      "mustKnow": "df shows 1K-blocks; -a adds dummy, -i shows Inodes, -h shows 98G/9.4G/84G 11% human, -T adds Type (ext4/squashfs/tmpfs), -t/-x filter by type, path narrows to one mount.",
+      "keyFormula": "",
+      "commonPitfall": "Mixing -t (filter include) with -T (show type column); thinking 100% squashfs means disk full by error rather than sized image.",
+      "quickCheck": "Which df flag shows human sizes and what does df -i show instead of blocks?",
+      "connections": [
+        "9.5",
+        "9.8"
+      ]
+    },
+    {
+      "topic": "Unix Input/Output — Character versus Block Devices",
+      "mustKnow": "ls -li /dev: first char c=character (stream, no kernel block buffering) vs b=block (structured blocks, kernel buffers); char examples RAM/printer/terminal, block examples disk/tape.",
+      "keyFormula": "",
+      "commonPitfall": "Claiming character has zero buffering anywhere or that block needs no buffering; tapes are block in this lecture's classification.",
+      "quickCheck": "How to tell block vs character with ls and what buffering rule applies to each?",
+      "connections": [
+        "9.8",
+        "9.1"
+      ]
+    },
+    {
+      "topic": "Device Identification — Major and Minor Numbers, lsblk and fdisk",
+      "mustKnow": "Major 8 = disk driver (sda 8:0, sda1 8:1), major 7 = loop (loop0 7:0 .. 22); lsblk RM/RO/TYPE; fdisk -l needs sudo, sector 512, start 2048, F free 0, L list types, p print.",
+      "keyFormula": "",
+      "commonPitfall": "Forgetting sudo for fdisk -l (permission denied); mixing fdisk -l vs inside L vs p/F; mistaking start 2048 as random not 1MB alignment.",
+      "quickCheck": "What do 8:1 and 7:5 mean in lsblk and why does fdisk without sudo fail?",
+      "connections": [
+        "9.7",
+        "9.6"
+      ]
+    },
+    {
+      "topic": "Exam Guidance Summary",
+      "mustKnow": "Syllabus is files/directories through this lecture; question style is command-output justification; study slides flags and Taksila old paper.",
+      "keyFormula": "\\[ 16 = 2 + 14 \\]",
+      "commonPitfall": "Learning every fdisk type instead of just L lists, p prints, F shows free 0.",
+      "quickCheck": "Which df flag combo gives human size plus type for ext4 only?",
+      "connections": [
+        "9.2",
+        "9.4",
+        "9.6"
+      ]
+    },
+    {
+      "topic": "Key Industry Applications",
+      "mustKnow": "Each lecture concept maps to daily ops: /dev listing, ext4 vs squashfs vs tmpfs, namei for containers, lsblk major parsing, fdisk 1MB alignment.",
+      "keyFormula": "",
+      "commonPitfall": "Treating 100% squashfs as error vs sized image.",
+      "quickCheck": "Why does a second cat cost less than the first?",
+      "connections": [
+        "9.1",
+        "9.5",
+        "9.8"
+      ]
+    }
+  ]
+}
+</script>
+</head>
+<body>
+  <div class="container">
+    <!-- ============================================================
+    HERO HEADER
+    ============================================================ -->
+    <header class="hero-header">
+      <span class="subject-badge">Systems Programming</span>
+      <h1 class="lecture-title">Files, Directories and Device Management</h1>
+      <div class="meta-info">
+        <div class="meta-item"><strong>Published:</strong> 2026-08-20</div>
+        <div class="meta-item"><strong>Level:</strong> postgraduate</div>
+        <div class="meta-item"><strong>Audience:</strong> Postgraduate students in Systems Programming</div>
+      </div>
+    </header>
+
+    <!-- ============================================================
+    PREREQUISITE KNOWLEDGE
+    Optional section listing concepts from previous lectures that this
+    lecture builds on. Populated by Agent 3 from topic_mappings/*.yaml.
+    If no prerequisites exist, this section is omitted entirely.
+    ============================================================ -->
+    
+
+    <!-- ============================================================
+    MAIN LECTURE-FAITHFUL CONTENT
+    Page title = one h1.lecture-title
+    Each section = one h2.section-title
+    Each subsection = one h3.subsection-title
+    Callout boxes: .key-concept (blue), .important-note (violet),
+      .example-box (green), .warning-box (red), .key-takeaway (amber)
+    Display math: auto-scrolls via mjx-container CSS; .eqbox wrapper optional
+    ============================================================ -->
+    <main>
+<h2 id="9.1-files-and-directories-the-unix-view">9.1 Files and Directories — The Unix View</h2>
+<h3 id="9.1.1-everything-is-a-file-and-basic-operations">9.1.1 Everything Is a File and Basic Operations</h3>
+<div class="important-note">
+  <p><strong>Hook — why does Unix say a keyboard is a file?</strong> If every object looks different — a text file, a printer, a folder — how can one set of calls handle all of them? The answer is the Unix decision to treat everything you can read or write as a <em>file</em>.</p>
+</div>
+<p>In Unix and Linux everything is treated as a file. The system deals with any and every object as a file, whether it looks like plain text, a device, or a folder. That single view lets the kernel use the same set of calls for many different objects. The classic statement from the textbooks is simple: a <em>file</em> — a sequence of bytes with no imposed structure — is the only abstraction the kernel needs at the lowest level. Meaning comes from the program that interprets the bytes, not from the kernel.</p>
+<p>On a file we can do a small set of core actions. We can open a file, close a file, read from a file, and write into a file. The phrasing matters: we read <em>from</em> a file and write <em>into</em> a file. Opening sets up a handle, reading and writing move bytes, closing releases the handle. Those four verbs are the base of almost all file work that follows.</p>
+<div class="key-concept">
+  <p><strong>Everything-is-a-file, built step by step.</strong></p>
+  <ol>
+    <li>A <em>byte</em> is 8 bits — one character for our purpose.</li>
+    <li>A <em>file</em> is a sequence of bytes stored on disk or produced by a device. The kernel attaches no structure or type to it.</li>
+    <li>A <em>file descriptor</em> is the integer the kernel returns on <code>open()</code> — your ticket to later <code>read()</code> and <code>write()</code> on that sequence.</li>
+    <li>A <em>device file</em> is a sequence too: typing on a keyboard produces bytes, a line printer consumes bytes, data flowing in a pipe is bytes. Even though the source looks different, the kernel sees a byte stream in each case.</li>
+  </ol>
+  <p>So a regular file <code>/etc/passwd</code>, a character device <code>/dev/tty</code>, and a directory <code>/home</code> all pass through the same four calls. The uniformity is what keeps the interface small.</p>
+</div>
+<p>Think of a file like a named box that holds bytes, and the directory like a list that tells where each box lives. The file itself holds the content; the directory holds the map. Another everyday picture is a universal power socket: many appliances look different, but they all use the same plug shape. Here the plug is the <code>open-read-write-close</code> pattern, and everything — disk file, tape, terminal — fits it. Where the analogy breaks: real devices have timing and error behaviour that a plain disk file does not, so programs must still handle device-specific errors even though the call looks the same.</p>
+<p>Visual intuition: picture a long tape of bytes with a moving finger. <code>open</code> puts the finger at the start, <code>read</code> advances it and copies bytes to memory, <code>write</code> inserts bytes at the finger, <code>close</code> lifts the finger. For a device file the tape is not stored beforehand — bytes are produced or consumed on the fly — but the finger idea still holds.</p>
+<div class="warning-box">
+  <p><strong>Scope — when the view helps and when it hides.</strong></p>
+  <ul>
+    <li><strong>Applies:</strong> kernel I/O path, shell redirection, <code>cat</code>, <code>ls</code>, <code>cp</code> — all use the same file calls whether the argument is a regular file or a device under <code>/dev</code>.</li>
+    <li><strong>Does not hide:</strong> permissions, file type, and blocking behaviour still differ. A directory cannot be written with a plain <code>write()</code> in the same way as a text file; a terminal may block until a line is ready. The unified call does not mean identical semantics.</li>
+    <li><strong>Assumes:</strong> byte-stream view. Modern systems add richer interfaces (memory-mapped I/O, ioctl) for cases where byte-stream alone is not enough.</li>
+  </ul>
+</div>
+<h3 id="9.1.2-what-a-directory-holds">9.1.2 What a Directory Holds</h3>
+<p>A <em>directory</em> — a folder that lists what is inside it — holds information about what is present inside that particular directory. What can be inside? Either files or other subfolders, often called subdirectories, can be present inside that directory. In implementation terms a directory is itself a file whose bytes are a table of entries, not free-form text.</p>
+<p>File names inside a directory may be handled in two broad ways: fixed length or variable length. Fixed length means every name slot reserves the same number of bytes even if the real name is shorter. Variable length means each slot grows or shrinks with the name. Unix in particular follows the fixed length structure for directory entries, and that choice has direct limits on how long a name can be.</p>
+<div class="important-note">
+  <p><strong>Everyday analogy — fixed pigeonholes vs elastic folders.</strong> Fixed length is like a wall of mailboxes each with the same sized label slot: short names waste space, long names spill over. Variable length is like hanging folders that expand to the label: no waste, but you need extra bookkeeping to find the next folder. Classic Unix chose the fixed mailbox wall to make offset math trivial.</p>
+</div>
+<p>Real-world: This same idea of treating everything as a file is why you can list devices under <code>/dev</code> with the same tool you use to list normal files. Running <code>ls /dev</code> and <code>ls /home</code> goes through the same directory-read logic because both <code>/dev</code> and <code>/home</code> are directories whose entries the kernel reads as tables.</p>
+<div class="warning-box">
+  <p><strong>Pitfalls for this idea.</strong></p>
+  <ul>
+    <li>Do not think a directory <em>contains</em> the file bytes. It contains only the name-to-inode map; the bytes live in data blocks pointed to by the inode.</li>
+    <li>Do not mix up fixed-length with “always 14 characters today.” The 14-character limit is the classic Version 7 layout; modern ext4, xfs and others use variable names and allow 255 characters.</li>
+    <li>Remember the spelling: <code>read from</code>, <code>write into</code> — examiners notice the prepositions.</li>
+  </ul>
+</div>
+<h3 id="9.1.3-how-this-connects-to-what-came-before">9.1.3 How This Connects to What Came Before</h3>
+<p>This session continues directly from the previous one that introduced what a file is and what a directory is. The plan here is to summarize those ideas quickly and then move forward into how the system turns a path name into the bytes on disk, and how to inspect disks and devices from the command line.</p>
+<p>The lecture flow from here is intentional: first the static layout — how a directory entry maps name to number (section 9.2) — then the bridge from name to content via inodes (section 9.3), then the dynamic search that turns a path string into an inode (section 9.4), then the cost of that search in disk fetches (section 9.5), and finally the user-visible tools <code>df</code>, <code>lsblk</code> and <code>fdisk</code> that let you see the same structures from the shell (sections 9.6–9.8).</p>
+<div class="key-takeaway">
+  <p><strong>Recap — 9.1 in one line:</strong> Unix treats every I/O object as a byte-sequence <em>file</em> accessed by <code>open-read-write-close</code>, and a <em>directory</em> is itself a file that maps names to inode numbers — the fixed-length table idea sets up the 16-byte entry you see next.</p>
+  <p><strong>Bridge:</strong> With that map idea in mind, the next step is to open the table itself and measure its rows: 16 bytes, split 2 plus 14.</p>
+</div>
+
+<h2 id="9.2-unix-directory-entry-structure">9.2 Unix Directory Entry Structure</h2>
+<h3 id="9.2.1-the-16-byte-entry-and-its-two-parts">9.2.1 The 16-Byte Entry and Its Two Parts</h3>
+<div class="important-note">
+  <p><strong>Hook — how does the kernel jump straight to the 5th file in a folder without scanning names?</strong> Because every row in the directory table is the same size, so position is arithmetic, not search.</p>
+</div>
+<p>Unix stores directory entries in a small table with three columns visible in the teaching slide. The first column gives the byte offset in the directory — that is, where the next item sits inside the directory file itself. The source phrasing for the reconstruction is: "the difference between various row entries in that byte offset ... is 16 bytes ... every row is of size 16 bytes" and "every row ... consists of 16 bytes ... divided into two parts ... I node number ... 2 bytes ... 14 bytes ... file name."</p>
+<div class="key-concept">
+  <p><strong>Formalize — the 16-byte entry, step by step.</strong></p>
+  <p>An <em>offset</em> is the distance in bytes from the start of the directory file. An <em>I-node number</em> is a small integer that identifies the file's metadata structure. A <em>file name</em> field holds the characters of the name.</p>
+  <ol>
+    <li>Look at successive rows in the slide's offset column: offsets read \(0, 16, 32, 48, \dots\). The gap is constant \(16\).</li>
+    <li>So each row — one directory entry — must be \(16\) bytes.</li>
+    <li>The row is split into two fields: the first \(2\) bytes hold the I-node number, the remaining \(14\) bytes hold the name characters.</li>
+  </ol>
+  <p>Reconstructed size relation:</p>
+  <p>\[ 16 = 2 + 14 \]</p>
+  <p>where</p>
+  <ul>
+    <li>\(16\) is the size of one directory entry in bytes,</li>
+    <li>\(2\) bytes \(= 16\) bits hold the <em>I-node number</em> — a small integer that points to the file's metadata structure,</li>
+    <li>\(14\) bytes hold the file name characters under this old fixed length layout.</li>
+  </ul>
+  <p>Variable view inline: an entry is \(2\) bytes of inode number \(+\) \(14\) bytes of name, and the byte offset steps by \(16\) each row, so offsets read \(0, 16, 32, 48, \dots\).</p>
+  <p>The geometry check is simple: if each entry is \(16\) bytes, then the \(k\)-th entry starts at \[ \text{offset}_k = 16 \times k \]. That matches the observation that successive row offsets differ by \(16\).</p>
+  <p>The verbal audit trail for this math is kept as quoted above so the rebuild can be checked. The symbol rule here is that byte counts are in bytes, the inode number is a 16-bit unsigned integer in this classic layout, and offsets are directory byte positions.</p>
+</div>
+<p>Visual intuition: picture a ruler marked every 16 bytes. At \(0\) sits entry \(0\), at \(16\) entry \(1\), at \(32\) entry \(2\). Each 16-byte block is cut after 2 bytes: left slice is the number, right slice is the name. Because the cut is at the same place every time, the kernel computes the address of entry \(k\) without reading names — a direct calculation.</p>
+<div class="example-box">
+  <p><strong>Worked example — 16-byte entry table, step by step.</strong></p>
+  <p>Take a tiny directory that contains three files. The slide's table looks like this conceptually:</p>
+  <table>
+    <thead>
+      <tr>
+        <th>Byte offset</th>
+        <th>I-node number (2 bytes)</th>
+        <th>File name (14 bytes, padded)</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>\(0\)</td>
+        <td>\(123\)</td>
+        <td><code>file1.txt     </code></td>
+      </tr>
+      <tr>
+        <td>\(16\)</td>
+        <td>\(45\)</td>
+        <td><code>notes         </code></td>
+      </tr>
+      <tr>
+        <td>\(32\)</td>
+        <td>\(89\)</td>
+        <td><code>a.out         </code></td>
+      </tr>
+    </tbody>
+  </table>
+  <ol>
+    <li>Entry size confirmed: \(16 = 2 + 14\) bytes per row.</li>
+    <li>Offset of entry \(k\): \[\text{offset}_k = 16 \times k\]. So entry \(0\) at \(0\), entry \(1\) at \(16\), entry \(2\) at \(32\).</li>
+    <li>If you want entry \(2\)'s inode, seek to byte \(32\), read 2 bytes → \(89\). Those 2 bytes are the only link to the file's content.</li>
+    <li>Sense-check: \(2\) bytes \(= 16\) bits can represent \(2^{16}=65536\) distinct inode numbers (0 to 65535), which was the limit in this classic Version 7 design.</li>
+  </ol>
+  <p>This fixed wall of 16-byte slots is why the byte offset column steps by 16 — it is counting slots, not characters.</p>
+</div>
+<h3 id="9.2.2-the-14-character-name-limit-and-what-happens-on-overflow">9.2.2 The 14-Character Name Limit and What Happens on Overflow</h3>
+<p>Because \(14\) bytes are fixed for the name, Unix under this layout restricts a file name to a maximum of \(14\) characters. Anything longer will be truncated. The practical warning given is that if two files share the same first \(14\) characters, the system may treat them as colliding and the older file might be replaced by the newer one, with a prompt in interactive use. In short, a truncated name is not a safe name.</p>
+<p>Concretely, a name like <code>my_very_long_filename.txt</code> (24 chars) would be cut to <code>my_very_long_f</code> — only the first 14 characters kept. A second file <code>my_very_long_fileB.txt</code> also becomes <code>my_very_long_f</code> in the table, so the two entries collide.</p>
+<p>Real-world: Modern file systems like ext4 now allow much longer variable names — typically 255 characters — but the 14-character fixed slot is the classic Unix Version 7 layout that explains the design trade-off between simple table math and name flexibility. The limit also explains old stories of name-collision bugs on legacy installations.</p>
+<div class="warning-box">
+  <p><strong>Assumptions & scope — when the 14-character rule applies.</strong></p>
+  <ul>
+    <li><strong>Applies:</strong> classic Unix Version 7 and the teaching slide's 16-byte layout. The arithmetic \(16 = 2 + 14\) and the \(14\)-character truncation follow directly from that fixed design.</li>
+    <li><strong>Does not apply:</strong> modern ext4, xfs, btrfs, ntfs — all use variable-length entries and longer limits. Do not quote 14 characters as a current Linux limit in an exam unless the question says “classic/Version 7” or “16-byte entry.”</li>
+    <li><strong>Assumes:</strong> one byte per character (ASCII). With multi-byte encodings the byte vs character distinction would matter, but the vintage layout predates that concern.</li>
+  </ul>
+</div>
+<p><strong>Visual — truncation collision:</strong> imagine two mailboxes both labelled <code>my_very_long_f</code> because the label cutter chops after 14 letters. From the outside they look identical, so mail for one can overwrite the other. Modern variable-length systems print the full label, so no collision.</p>
+<div class="warning-box">
+  <p><strong>Pitfall — the “first-14 match” trap.</strong> Students often think a long name is simply stored longer. Under the old fixed slot it is silently cut, and two files whose first \(14\) characters match may appear as one entry. The older file might be replaced by the newer one, with a prompt in interactive use. If an exam asks why a long file name appears truncated, answer: the 14-byte fixed name field was exceeded, so the system keeps only the first 14 characters and risks collision.</p>
+</div>
+<p>Exam note: Expect a short theory or output-justification question on why a long file name is stored in truncated form and what the risk is when first \(14\) characters match.</p>
+<h3 id="9.2.3-special-entries-dot-dot-dot-and-root">9.2.3 Special Entries: Dot, Dot-Dot and Root</h3>
+<p>The last column of the table shows example file names such as <code>file1.txt</code>, along with two special entries <code>.</code> and <code>..</code>.</p>
+<ul>
+  <li><code>.</code> indicates the current directory itself.</li>
+  <li><code>..</code> indicates its parent directory.</li>
+  <li><code>/</code> indicates the root — the top of the whole hierarchy.</li>
+</ul>
+<p>Those three symbols are not ordinary files; they are entries that let the system walk up or stay in place without extra bookkeeping. In the 16-byte table they look like normal rows — for example offset \(0\) might be <code>.</code> with the inode of the current directory, offset \(16\) might be <code>..</code> with the parent's inode — but their meaning is fixed: <code>.</code> loops to the same inode, <code>..</code> moves one level up, and <code>/</code> is the top.</p>
+<div class="important-note">
+  <p><strong>Q:</strong> What is this <code>.</code> and what is this <code>..</code> in the directory listing?</p>
+  <p><strong>A:</strong> <code>.</code> is the current directory and <code>..</code> is its parent directory. The root itself is written as <code>/</code>. The entries behave like any other directory entry in the table, but their meaning is fixed: <code>.</code> loops to the same inode, <code>..</code> moves one level up, and <code>/</code> is the top. The question came up as a quick recall check, and the follow-up clarified that root is a single forward slash, not dot notation.</p>
+</div>
+<p>A helpful memory picture: inside any folder you always find two hidden signposts — one that says “you are here” (<code>.</code>) and one that says “go back one level” (<code>..</code>). Without them the kernel would need separate logic to stay put or go up; with them the same lookup loop works for every component, including “stay” and “up.”</p>
+<div class="key-takeaway">
+  <p><strong>Recap — 9.2 in one line:</strong> A classic Unix directory is a table of \(16\)-byte rows (\(2\) bytes inode number \(+\) \(14\) bytes name) at offsets \(0, 16, 32, \dots\) with formula \[16=2+14\] and \[ \text{offset}_k = 16\times k\], names beyond \(14\) characters are truncated and can collide, and <code>.</code> / <code>..</code> / <code>/</code> are the fixed signposts for current, parent and root.</p>
+  <p><strong>Bridge:</strong> The 2-byte number in each row is only a pointer — next we see what it points to and why the name itself is called a link.</p>
+</div>
+
+<h2 id="9.3-the-link-between-name-and-content-inodes">9.3 The Link Between Name and Content — Inodes</h2>
+<h3 id="9.3.1-the-file-name-as-a-link">9.3.1 The File Name as a Link</h3>
+<p>The first two bytes in each directory entry — the I-node number — are the only connection between the name of a file and its contents. For that reason, a file name inside a directory is called a <em>link</em> in this context. Do not confuse this use of link with hard link or soft link in their fuller forms; here link simply means the name acts as a bridge in the directory hierarchy that points to the I-node.</p>
+<p>Think of it like a phone book entry: the name you search is the link, and the phone number you dial is the inode number. The name lives in the directory; the contents live where the inode points. Tear out the phone book page and the phone still exists — similarly, removing a directory entry does not delete bytes until no link points to the inode and no process holds it open.</p>
+<div class="important-note">
+  <p><strong>Everyday analogy — library shelf mark.</strong> A book title on the catalogue card is the link; the shelf mark is the inode number; the shelf with the actual book is the data blocks. Many catalogue cards can point to the same shelf mark (hard links), but in this lecture the word “link” just means the single name→number bridge inside one directory row.</p>
+</div>
+<div class="warning-box">
+  <p><strong>Scope — what “link” means here vs later.</strong></p>
+  <ul>
+    <li><strong>Here (this lecture):</strong> <em>link</em> = the file name field in a 16-byte entry that bridges to an inode number. Every file name is a link in this minimal sense.</li>
+    <li><strong>Later (full Unix):</strong> <em>hard link</em> = two directory entries (maybe in different directories) that hold the same inode number, so the same bytes have two names. <em>Soft / symbolic link</em> = a tiny file whose content is another path, which the namei walk replaces and reprocesses. Do not carry the richer meanings back into this table-reading step.</li>
+  </ul>
+  <p>The exam warning for this moment is exactly that confusion: if a question says “file name is called a link”, it means the bridge role, not yet the hard/soft classification.</p>
+</div>
+<h3 id="9.3.2-i-node-number-versus-i-node-structure">9.3.2 I-Node Number versus I-Node Structure</h3>
+<p>Care is needed with the word <em>I-node</em>:</p>
+<ul>
+  <li><em>I-node number</em> is the 2-byte integer stored in the directory entry — a short handle for a file or directory. In the classic 16-bit design it ranges \(0\) to \(65535\).</li>
+  <li><em>I-node structure</em> (sometimes written inode) is the larger data structure that holds ownership, timestamps, permission bits, file type, size, link count, and pointers to the various data blocks where the actual file bytes are stored.</li>
+</ul>
+<p>So the directory gives you the number; the number leads you to the structure; the structure leads you to the data blocks.</p>
+<div class="key-concept">
+  <p><strong>The inode structure, field by field.</strong></p>
+  <p>When the kernel fetches inode \(123\) it gets a record like:</p>
+  <ul>
+    <li><em>Mode / type</em> — regular file, directory, character device etc., plus permission bits.</li>
+    <li><em>Owner and group</em> — who may read/write/execute.</li>
+    <li><em>Times</em> — last access, modification, status change.</li>
+    <li><em>Size</em> — bytes of file content.</li>
+    <li><em>Link count</em> — how many directory entries point here.</li>
+    <li><em>Block pointers</em> — array of disk block addresses. Direct pointers aim at data blocks; indirect pointers aim at blocks that themselves hold more block addresses for large files.</li>
+  </ul>
+  <p>The shape check: if \(W \in\) inodes and block pointers are disk addresses, then following <code>inode → block pointers → data blocks → bytes</code> moves from metadata to content in two hops. The 2-byte number is only the index into this structure; the structure is where the kernel learns <em>where</em> on disk to look.</p>
+</div>
+<p>A small picture was sketched: a directory such as <code>/home/you</code> contains an entry <code>FOO</code> with number <code>123</code> which goes to inode <code>123</code>. That inode holds the file details and pointers, which lead to the data blocks, which finally yield the data. The chain is name \(\rightarrow\) inode number \(\rightarrow\) inode structure \(\rightarrow\) data blocks \(\rightarrow\) bytes.</p>
+<p>Visual intuition: picture three layers. Top layer is the directory table (names + numbers). Middle layer is the wall of inode records (one per number). Bottom layer is the field of data blocks. An arrow drops from a name in the top layer to its numbered box in the middle, then fans out to blocks at the bottom. The top layer uses the 16-byte math; the middle and bottom use block math (typically \(1\,\text{K}=1024\) bytes per block).</p>
+<h3 id="9.3.3-putting-it-together">9.3.3 Putting It Together</h3>
+<p>A directory hierarchy is a tree-like nesting. At the top is <code>/</code>, inside it are subdirectories, inside those are further subdirectories and files. Each level uses the same 16-byte entry rule, and each name maps through its inode number to the next inode structure. Real-world: this is why moving a file within the same file system can be fast — the inode and blocks stay in place and only directory links move. A <code>mv /home/a.txt /home/b.txt</code> on the same partition just rewrites two directory rows; no byte is copied.</p>
+<p>Worked mini-walk: <code>/home/you/FOO</code> with <code>FOO</code> → \(123\). Start at <code>/</code>'s inode, get <code>/</code>'s data block, find <code>home</code> → get its inode, get <code>home</code>'s data block, find <code>you</code> → inode, find <code>FOO</code> → \(123\) → inode 123 → block pointers → “hello world”. Every hop repeats the same 16-byte row read and inode fetch pattern you saw in section 9.2, just nested level by level.</p>
+<div class="warning-box">
+  <p><strong>Pitfalls.</strong></p>
+  <ul>
+    <li>Saying “the directory contains the file” — it contains the <em>link</em> (name plus number), not the bytes.</li>
+    <li>Swapping number and structure: the 2-byte field is the number; the larger record with mode, size and block pointers is the structure. Mixing them makes the chain collapse.</li>
+    <li>Thinking inode numbers are global file handles like descriptors — they are file-system–local numbers baked into directory tables; descriptors are per-process handles returned by <code>open</code>.</li>
+  </ul>
+</div>
+<div class="key-takeaway">
+  <p><strong>Recap — 9.3 in one line:</strong> The file name in the 16-byte entry is a <em>link</em> — the only string→number bridge — and the 2-byte <em>I-node number</em> points to the larger <em>I-node structure</em> that fans out to data blocks via \[ \text{name} \rightarrow \text{inode number} \rightarrow \text{inode structure} \rightarrow \text{data blocks} \rightarrow \text{bytes} \].</p>
+  <p><strong>Bridge:</strong> Knowing the chain, the next question is how the kernel walks the whole chain for a full path like <code>/home/ubuntu/sp/file_name.txt</code> — that loop is the namei algorithm.</p>
+</div>
+
+<h2 id="9.4-path-name-to-inode-translation-the-namei-algorithm">9.4 Path Name to Inode Translation — The namei Algorithm</h2>
+<h3 id="9.4.1-absolute-versus-relative-paths-and-a-motivating-example">9.4.1 Absolute versus Relative Paths and a Motivating Example</h3>
+<div class="important-note">
+  <p><strong>Hook — why does the kernel care how you type the path?</strong> You type characters; the kernel must end with a number. The whole job of this section is that translation: path string → inode number.</p>
+</div>
+<p>Initial access to a file from a user point of view is through its path name. You must know where the file lives to name it. The kernel also starts from that path name, but internally it must work with I-nodes. It converts the path plus file name into the file's I-node.</p>
+<p>A running example carries through the whole discussion:</p>
+<ul>
+  <li><code>cat /home/ubuntu/sp/file_name.txt</code> where <code>cat</code> displays the contents of a file.</li>
+  <li>Equivalent form <code>cat /home/spiderman/hello.txt</code> used when counting disk transfers.</li>
+</ul>
+<p>A path can be of two types:</p>
+<ul>
+  <li>An <em>absolute path</em> always starts from the root <code>/</code>, for example <code>/home/ubuntu/sp/file_name.txt</code>.</li>
+  <li>A <em>relative path</em> is relative to the current directory and does not start from <code>/</code>, for example <code>exercises/sys_pgm1/test1/mydetails.pxt</code> when the current directory is <code>/home/sys_pgm</code>.</li>
+</ul>
+<p>The kernel passes the path name one component at a time, where a <em>component</em> — the text between slashes — is the unit of lookup. Even the first <code>/</code> itself counts as a component that means root. The next component is the first directory name, then the next directory name, and so on, with the last component being the file name itself including its extension. The distinction that the extension is part of the name, not a separate component, was made explicit.</p>
+<p>A <em>path component</em> example for <code>/home/ubuntu/sp/file_name.txt</code>:</p>
+<ul>
+  <li>component 1: <code>/</code> (root)</li>
+  <li>component 2: <code>home</code></li>
+  <li>component 3: <code>ubuntu</code></li>
+  <li>component 4: <code>sp</code></li>
+  <li>component 5: <code>file_name.txt</code> (name plus extension together)</li>
+</ul>
+<div class="important-note">
+  <p><strong>Q:</strong> What will be the last component of the path?</p>
+  <p><strong>A:</strong> A student offered "file extension." The clarification is that the file extension is part of the file, so the last component is the whole file name with name plus extension together. For <code>/home/ubuntu/sp/file_name.txt</code> the last component is <code>file_name.txt</code>, not just <code>txt</code>. The extension is not a separate hop; the kernel looks up the full string <code>file_name.txt</code> as one entry in the <code>sp</code> directory.</p>
+  <p><strong>Why the confusion feels real:</strong> in everyday talk we say “the txt file,” so it sounds like <code>txt</code> should be its own level. In the kernel table there is no row for <code>txt</code> — only a row whose 14-byte name field holds <code>file_name.txt</code>.</p>
+</div>
+<p>Exam note: The split <code>name + extension is one component</code> is a common point for a short question.</p>
+<h3 id="9.4.2-where-the-search-starts-root-and-current-directory-inodes">9.4.2 Where the Search Starts: Root and Current Directory Inodes</h3>
+<p>All path name searches start from the current directory of the process unless the path name starts with <code>/</code>, which indicates start from root. The kernel therefore keeps two inode numbers handy:</p>
+<ul>
+  <li>the root inode number, always available,</li>
+  <li>the inode number of the current working directory, updated whenever a <code>cd</code> is issued.</li>
+</ul>
+<p>An extra piece of context stored in the <em>U area</em> (user area) is the per-process information: what files are open for that process, what the current directory is, and what signal action to take when signals such as control-D, control-X, or control-Z arrive.</p>
+<div class="key-concept">
+  <p><strong>Why the U area matters here.</strong> The U area is the kernel's per-process scratch pad. For pathname work it remembers the <em>current directory inode</em> so a relative path can start without mentioning <code>/</code>. For shell life it also remembers open descriptors and disposition for terminal signals — control-D (end-of-file), control-X or control-Z patterns the professor mentioned as examples of per-process signal choices. The point is not the signal details but that “current directory” is per-process, not global: two shells can <code>cd</code> differently because each has its own U area entry.</p>
+</div>
+<p>A small detail that helps intuition: inside the kernel, you think in paths, but the kernel always works with inodes. The path is the user view; the inode chain is the kernel view. The path is what you type; the inode number is what the kernel caches and locks.</p>
+<h3 id="9.4.3-working-inodes-and-the-left-to-right-walk">9.4.3 Working Inodes and the Left-to-Right Walk</h3>
+<p>Components of the path are processed from left to right — that is the order the path is written and the order the kernel follows. A light aside noted that if a file system supported a language written right to left, the order might feel different, but on the systems in use the walk is left to right.</p>
+<p>Every component except the last one should be either a directory or a symbolic link:</p>
+<ul>
+  <li>Those intermediate inodes are called <em>working inodes</em>. They are the stepping stones that let the kernel reach the final file inode.</li>
+  <li>If the working inode is a directory, the kernel looks for the current path component inside the directory entry list for that working inode. If it is not found, it returns an error. If it is found, the inode number tied to that matched name becomes the new working inode.</li>
+  <li>If the working inode corresponds to a symbolic link, the path name up to and including the current component is replaced by the contents of the symbolic link and the pathname is reprocessed from the start, because a symlink is a shortcut that points elsewhere.</li>
+</ul>
+<div class="important-note">
+  <p><strong>Intuition — stepping stones.</strong> The teaching line that was restated several times is: home is the working inode, search for ubuntu inside it, then ubuntu becomes the working inode, then search for sp inside ubuntu, then sp becomes the working inode, and so on.</p>
+  <p>Picture a river crossing: each stone is a directory inode. You stand on <code>home</code>, you look inside <code>home</code>'s table for the name <code>ubuntu</code>, you hop to <code>ubuntu</code>'s inode-stone, then look for <code>sp</code>, hop again. The last hop lands on the file's inode. You never jump over a stone; you always move one component at a time, left to right.</p>
+</div>
+<p>The walk is exactly the left-to-right scan of the string you typed. For <code>/home/ubuntu/sp/file_name.txt</code> the kernel sees the stream <code>/</code> → <code>home</code> → <code>ubuntu</code> → <code>sp</code> → <code>file_name.txt</code> and processes them in that string order. The Arabic aside — whether a right-to-left language would flip the order — was answered as left-to-right for almost all systems in use because the path string itself is built left-to-right.</p>
+<h3 id="9.4.4-the-namei-algorithm-laid-out-step-by-step">9.4.4 The namei Algorithm Laid Out Step by Step</h3>
+<p>The algorithm that does this conversion is called the <em>namei algorithm</em> — spoken as "name I" — and every <code>cat</code>, <code>open</code>, or search for a file goes through this loop. “namei” literally means “name to inode.”</p>
+<p>Pseudo-steps preserved verbatim alongside the reconstruction:</p>
+<blockquote>
+  <p>"if path name starts with the root meaning that it is absolute path ... working I node is root I node ... if not ... working I node will be the current working I node ... while there are more in the path name ... read the next component ... read the directory content ... if component matches entry ... get I node number ... release working I node ... I node of match component becomes working I node ... return working I node."</p>
+</blockquote>
+<p>Reconstructed as structured prose with symbols:</p>
+<ul>
+  <li>Let \(p\) be the path string, let \(\text{wd}\) be the inode number of the current working directory, let \(\text{root}\) be the inode number of <code>/</code>, and let \(W\) be the working inode.</li>
+</ul>
+<p>\[ W = \begin{cases} \text{root} & \text{if } p \text{ starts with } / \\ \text{wd} & \text{otherwise} \end{cases} \]</p>
+<p>Then</p>
+<p>\[ \text{while there is a next component } c \text{ in } p: \] \[ \quad \text{read directory content of } W \] \[ \quad \text{if } c \text{ matches an entry in } W \text{ then } \] \[ \quad\quad \text{let } N = \text{inode number of matched entry} \] \[ \quad\quad \text{release } W \] \[ \quad\quad W \leftarrow N \] \[ \quad \text{else return error} \]</p>
+<p>When the loop ends, \(W\) is the inode number of the file name itself. The algorithm returns that working inode. That inode then leads via its block pointers to the data blocks that hold the actual bytes.</p>
+<div class="key-concept">
+  <p><strong>Reading the loop line by line.</strong></p>
+  <ul>
+    <li><em>Initialization:</em> The conditional on \(W\) chooses the start stone: root inode if the path is absolute, otherwise the process's current directory inode from the U area.</li>
+    <li><em>Read directory content of \(W\):</em> fetch the 16-byte entry table for the current directory (via its inode structure and data blocks).</li>
+    <li><em>Match:</em> linear search for the string \(c\) in the 14-byte name fields. On hit, pull the 2-byte number \(N\).</li>
+    <li><em>Release:</em> drop the in-memory hold on the old \(W\) — “release the working inode” means the kernel no longer pins that directory's inode as the focus.</li>
+    <li><em>Update:</em> \(W \leftarrow N\) — the matched entry's inode becomes the new stepping stone.</li>
+    <li><em>Error:</em> if no row has name \(c\), the path is bad (<code>No such file or directory</code>).</li>
+  </ul>
+  <p>Symbols in one place: \(p\) is a string, \(\text{wd}\) and \(\text{root}\) are inode numbers (16-bit in the classic layout, larger in modern systems), \(W\) and \(N\) are inode numbers, \(c\) is a component string like <code>home</code> or <code>file_name.txt</code>.</p>
+</div>
+<p>The verbal audit trail above is kept intact so the step "release the working inode" is not lost — it means the old working inode's in-memory copy is no longer held as the focus moves forward. The step matters for locking: without release, the kernel would pin every directory on the path at once.</p>
+<p>Real-world: This same loop explains why a broken intermediate directory name fails fast, while a dangling symlink causes reprocessing rather than a simple miss. Example of symlink: if <code>sp</code> is a symlink to <code>/srv/data</code>, the kernel replaces the path up to <code>sp</code> with <code>/srv/data</code> and restarts the walk from root — it does not just look for the next component inside <code>sp</code>.</p>
+<div class="example-box">
+  <p><strong>Worked example — namei walk for <code>/home/ubuntu/sp/file_name.txt</code>.</strong></p>
+  <p>Start: \(p=\)<code>/home/ubuntu/sp/file_name.txt</code>, so \(W=\text{root}\).</p>
+  <ol>
+    <li>\(c=\) <code>/</code> is implicit root — \(W\) already root.</li>
+    <li>\(c=\) <code>home</code> — read directory content of \(W\) (root's table), find entry <code>home</code> → \(N\), release old \(W\), \(W \leftarrow N\) (home is now working inode).</li>
+    <li>\(c=\) <code>ubuntu</code> — read home's table, find <code>ubuntu</code> → new \(N\), release home, \(W \leftarrow\) ubuntu's inode.</li>
+    <li>\(c=\) <code>sp</code> — read ubuntu's table, find <code>sp</code> → new \(N\), release ubuntu, \(W \leftarrow\) sp's inode.</li>
+    <li>\(c=\) <code>file_name.txt</code> — read sp's table, find <code>file_name.txt</code> → new \(N\), release sp, \(W \leftarrow\) file's inode. Loop ends. Return \(W\).</li>
+  </ol>
+  <p>At each line the pattern is “home is the working inode, search for ubuntu inside it, then ubuntu becomes the working inode, then search for sp inside ubuntu, then sp becomes the working inode” — exactly the professor's stepping-stones phrasing. If any lookup fails, the kernel returns an error before reaching the file. If an intermediate inode is a symlink, the prefix up to that component is replaced by the link content and the whole walk restarts.</p>
+  <p>For a relative path <code>exercises/sys_pgm1/test1/mydetails.pxt</code> with current directory <code>/home/sys_pgm</code>, the same loop runs but starts with \(W=\text{wd}\) (the inode of <code>/home/sys_pgm</code>) and components <code>exercises</code>, <code>sys_pgm1</code>, <code>test1</code>, <code>mydetails.pxt</code> in order.</p>
+</div>
+<p>Visual intuition: plot the path horizontally. Put a token \(W\) on the start stone (root or wd). Each iteration moves the token one notch right to the next stone, after peeking inside the current stone's 16-byte table. The token never leaps; symlink is the only case that teleports the token back to the start with a new path string.</p>
+<div class="warning-box">
+  <p><strong>Assumptions & scope — what namei assumes.</strong></p>
+  <ul>
+    <li><strong>Assumes:</strong> every intermediate component except the last resolves to a directory or a symlink. If an intermediate component is a regular file, the walk errors — you cannot look up a name inside a file.</li>
+    <li><strong>Assumes:</strong> directory tables are readable and follow the 16-byte / 2-plus-14 layout in this teaching model. Modern systems generalize the entry size, but the lookup logic is the same.</li>
+    <li><strong>Scope:</strong> namei finds the inode; it does not check permissions or open the file — later steps do that. Caching (inode and buffer cache) can avoid disk fetches for repeated components, but the logical walk stays left-to-right.</li>
+  </ul>
+  <p><strong>Common pitfalls.</strong></p>
+  <ul>
+    <li>Thinking the extension is a separate component — it is not; <code>file_name.txt</code> is one lookup.</li>
+    <li>Thinking the walk is right-to-left for some locales — it is left-to-right because the string is built that way; the Arabic joke was only a hook.</li>
+    <li>Forgetting the release: “get inode number, release working inode, inode of matched component becomes working inode” — order matters; the new inode is not valid until the old one is released and the next table is read.</li>
+  </ul>
+  <p>Exam note: Expect to apply the same left-to-right working-inode walk to a relative path example and to state how many inode and data block fetches occur.</p>
+</div>
+<h3 id="9.4.5-student-questions-during-the-walk">9.4.5 Student Questions During the Walk</h3>
+<div class="important-note">
+  <p><strong>Q:</strong> If Arabic were used for file systems, would the walk go right to left?</p>
+  <p><strong>A:</strong> The note was that the professor was not sure for such a system, but for almost all systems in use the walk is left to right because that is how the path string is built. The question worked as a memory hook: follow the string order you see on screen — <code>/home/...</code> is read from the slash on the left toward the file name on the right — and the kernel follows that same left-to-right token motion.</p>
+  <p><strong>Why it is useful anyway:</strong> it reminds you that namei is not scanning the disk in some optimized order; it is literally consuming the characters you typed from first to last, one slash-separated piece at a time.</p>
+</div>
+<p>The aside serves as a memory hook rather than a technical rule: follow the string order. The same hook helps with the exam: when asked to “show the working inode at each step,” list components left-to-right and update \(W\) after each match — exactly the loop invariant above.</p>
+<div class="key-takeaway">
+  <p><strong>Recap — 9.4 in one line:</strong> The <em>namei</em> (“name I”) algorithm turns a path \(p\) into an inode by initializing working inode \(W\) to \(\text{root}\) for absolute paths or \(\text{wd}\) for relative, then looping left-to-right — read directory of \(W\), match component \(c\) to a 14-byte name, grab its 2-byte inode \(N\), release \(W\), set \(W \leftarrow N\) — with symlink prefix replacement as the only detour, finally returning \(W\) for the file.</p>
+  <p><strong>Bridge:</strong> Once the final \(W\) is known, the next cost appears — each hop inside that loop can touch disk, so even a simple <code>cat</code> pays an inode-plus-data-block price at every level.</p>
+</div>
+
+<h2 id="9.5-disk-access-walkthrough-from-cat-command-to-data-blocks">9.5 Disk Access Walkthrough — From cat Command to Data Blocks</h2>
+<h3 id="9.5.1-the-example-path-used-for-counting">9.5.1 The Example Path Used for Counting</h3>
+<div class="important-note">
+  <p><strong>Hook — why does <code>cat</code> pause before printing?</strong> The bytes you asked for are not in memory yet. The kernel must first fetch a chain of tables and records, one per directory on the path, before the file's own bytes arrive.</p>
+</div>
+<p>The walkthrough example uses <code>cat /home/spiderman/hello.txt</code> and by analogy <code>cat /home/ubuntu/sp/file_name.txt</code>. The path is absolute, so the start is the root. Along the way concrete inode numbers were given: root is \(2\), <code>home</code> is \(13\), and <code>hello.txt</code> is \(53\). Those numbers are the short handles that move while the full inode structures stay on disk until fetched.</p>
+<div class="key-concept">
+  <p><strong>What those numbers mean.</strong> In this teaching demo the kernel's root inode number is \(2\) — the well-known fixed root used by ext-family file systems (inode \(1\) is often reserved). <code>home</code> → \(13\) and <code>hello.txt</code> → \(53\) are the 2-byte values you would read from the 14-byte name fields' companion numbers in the directory tables. The numbers themselves are small; the structures they point to are larger records with mode, size and block pointers.</p>
+</div>
+<p>For <code>/home/spiderman/hello.txt</code> the components are <code>/</code> → <code>home</code> → <code>spiderman</code> → <code>hello.txt</code> — three directories before the file, matching the four-component shape used for counting. For <code>/home/ubuntu/sp/file_name.txt</code> the shape is <code>/</code> → <code>home</code> → <code>ubuntu</code> → <code>sp</code> → <code>file_name.txt</code> — four directories before the file. The counting pattern scales with depth: each extra directory adds another inode-plus-data-block pair.</p>
+<h3 id="9.5.2-step-by-step-transfer-sequence">9.5.2 Step-by-Step Transfer Sequence</h3>
+<p>Each level does two fetches if not already cached: the inode structure itself and then the data block(s) that hold the directory entries. A <em>data block</em> — the unit the kernel moves between disk and main memory — is typically \(1\,\text{K}\), that is \(1024\) bytes.</p>
+<div class="example-box">
+  <p><strong>Worked trace — <code>cat /home/spiderman/hello.txt</code> with disk transfers.</strong></p>
+  <p>Path is absolute, so working inode \(W\) starts at root \(2\).</p>
+  <ol>
+    <li>The inode number of <code>/</code> is always with the kernel. That inode structure must be on persistent storage, so it is copied from disk to main memory. Then the data block of <code>/</code> is transferred to main memory. Now search for <code>home</code> inside the data block of <code>/</code> and obtain its inode number, which is \(13\).</li>
+  </ol>
+  <ul>
+    <li>Transfers so far: inode <code>/</code> (disk→memory) + data block <code>/</code> (disk→memory) = <strong>2</strong>.</li>
+  </ul>
+  <ol>
+    <li>Transfer the inode structure for \(13\) (home) from disk to main memory. Then transfer the data block associated with the home directory to main memory. Search for <code>spiderman</code> in that data block and obtain its inode number (call it \(N_{\text{spiderman}}\)).</li>
+  </ol>
+  <ul>
+    <li>Adding: inode \(13\) + data block home = <strong>+2</strong> (total <strong>4</strong>).</li>
+  </ul>
+  <ol>
+    <li>Transfer the inode structure for <code>spiderman</code> to main memory, then its data block to main memory. Search for <code>hello.txt</code> in that data block and obtain its inode number, which is \(53\).</li>
+  </ol>
+  <ul>
+    <li>Adding: inode spiderman + data block spiderman = <strong>+2</strong> (total <strong>6</strong>).</li>
+  </ul>
+  <ol>
+    <li>Transfer the inode structure for \(53\) (<code>hello.txt</code>) into main memory, and then transfer its data block — the one that holds the actual file bytes — into main memory. From there the CPU can access it and <code>cat</code> displays the content on screen.</li>
+  </ol>
+  <ul>
+    <li>Adding: inode \(53\) + data block hello.txt = <strong>+2</strong> (total <strong>8</strong>).</li>
+  </ul>
+  <p>The pattern spelled out for each directory is: fetch its inode \(\rightarrow\) fetch its data block \(\rightarrow\) look up next component name \(\rightarrow\) get next inode number. The file's final data block fetch is the one that actually yields the text to print. The same sequence applies if the path were <code>/home/ubuntu/sp/file_name.txt</code>: <code>/</code> to <code>home</code> to <code>ubuntu</code> to <code>sp</code> to <code>file_name.txt</code>, with inode + data block pairs at each hop — here depth \(4\) gives \(5\) inodes (root + 4 dirs/file) and \(5\) data blocks, total <strong>10</strong> transfers before the first byte of user data is seen.</p>
+  <p>The block size reminder heard is that a data block is typically \(1\)K, that is \(1024\) bytes, so each directory fetch brings a block-sized chunk of entry tables into memory. Formally:</p>
+  <p>\[ 1\,\text{K} = 1024\,\text{bytes} \]</p>
+  <p>and the earlier directory offset still steps by \[ \text{offset}_k = 16 \times k \] bytes within that block.</p>
+  <p><strong>Sense-check:</strong> \(8\) transfers for a 3-directory path is not “slow” — each transfer is one disk I/O, and caching removes most repeats. But the count explains why the <em>first</em> <code>cat</code> after boot costs more than the second: the buffer cache already holds the inodes and blocks the second time.</p>
+</div>
+<p>Visual intuition: draw a ladder with two rails — left rail is inode structures, right rail is data blocks. For each level of the path you climb one rung on the left (inode) and one on the right (block). The last rung on the right finally holds the file's text. Without caching you climb both rails at every level; with caching many rungs are already warm in memory.</p>
+<h3 id="9.5.3-counting-disk-operations">9.5.3 Counting Disk Operations</h3>
+<div class="key-concept">
+  <p><strong>How to count.</strong></p>
+  <ul>
+    <li>Define a <em>disk operation</em> as one transfer of an inode or a data block from disk to main memory.</li>
+    <li>For a path of depth \(d\) directories before the file, the first access costs:</li>
+  </ul>
+  <p>\[ \text{transfers} = 2 \times (d + 1) \] where the “+1” is the final file itself — even if you quote “per directory plus file,” the file also needs its inode and its data block. For <code>cat /home/spiderman/hello.txt</code> \(d=2\) (home, spiderman) plus root handling gives the 8 counted above once root's pair is included. For <code>/home/ubuntu/sp/file_name.txt</code> \(d=3\) gives 8 in the simplified per-directory count, or 10 including root's pair — examiners accept either breakdown if you label what you include.</p>
+  <p>Each transfer from disk to main memory is a disk operation. That is why even a simple <code>cat</code> can touch many disk structures before the first byte of user data is seen. Caching can reduce later repeats, but the first walk must materialize each inode and directory block.</p>
+</div>
+<p>Real-world: on a modern ext4 host the block size may be \(1\,\text{K}\), \(2\,\text{K}\) or \(4\,\text{K}\) rather than classic \(1\,\text{K}\), and the inode number is 32-bit, but the “two per level” pattern stays identical — inode then block, lookup, next inode. Tools like <code>stat</code> and <code>debugfs</code> let you inspect the same inode numbers (<code>stat /home</code> shows <code>Inode: 13</code> in the demo's vintage numbering) without running the full walk by hand.</p>
+<div class="warning-box">
+  <p><strong>Assumptions & scope.</strong></p>
+  <ul>
+    <li><strong>Assumes:</strong> cold cache — no inode or block is already in memory. In practice the buffer cache keeps recently used inodes/blocks, so repeated <code>cat</code> on the same path may need zero disk reads.</li>
+    <li><strong>Assumes:</strong> one data block per directory suffices to hold its 16-byte entry table for the lookup. Huge directories that span many blocks would need more than one block fetch per level.</li>
+    <li><strong>Scope:</strong> counting inode + data block per hop is a <em>disk-operation</em> estimate, not a timing estimate — seek and rotational costs are not modelled here.</li>
+  </ul>
+  <p><strong>Pitfall — forgetting root or the file's own pair.</strong> Students often count only intermediate directories and omit root's inode+block or the final file's inode+block. Name them explicitly: “root inode, root block, home inode, home block, …, file inode, file block.”</p>
+</div>
+<h3 id="9.5.4-a-second-set-of-paths-and-an-exercise">9.5.4 A Second Set of Paths and an Exercise</h3>
+<p>Two shorter examples contrast absolute and relative starts:</p>
+<ul>
+  <li>Absolute: <code>/etc/passwd</code> — starts from <code>/</code> as in the main example.</li>
+  <li>Relative: current directory is <code>/home/sys_pgm</code> and the path given is <code>exercises/sys_pgm1/test1/mydetails.pxt</code>. The exercise left to the class is to walk the namei loop starting from the current directory inode rather than root and process components <code>exercises</code>, <code>sys_pgm1</code>, <code>test1</code>, <code>mydetails.pxt</code> in order, applying the same working-inode replacement at each match.</li>
+</ul>
+<div class="example-box">
+  <p><strong>Exercise walk — relative path <code>exercises/sys_pgm1/test1/mydetails.pxt</code> from <code>/home/sys_pgm</code>.</strong></p>
+  <p>Let \(W = \text{inode}(\text{/home/sys_pgm})\) (the wd saved in the U area).</p>
+  <ol>
+    <li>\(c=\) <code>exercises</code> — read data block of \(W\), find <code>exercises</code> → \(N\), release \(W\), \(W\leftarrow N\).</li>
+    <li>\(c=\) <code>sys_pgm1</code> — read data block of \(W\), find <code>sys_pgm1</code> → \(N\), release, \(W\leftarrow N\).</li>
+    <li>\(c=\) <code>test1</code> — same: find <code>test1</code>, hop.</li>
+    <li>\(c=\) <code>mydetails.pxt</code> — find <code>mydetails.pxt</code> (= name plus extension as one component) in <code>test1</code>'s table, final \(W\) is the file's inode. Then fetch its inode structure and its data block — the 1K block at 1024 bytes — to get the bytes.</li>
+  </ol>
+  <p>Counting: 4 components → 4 levels of inode+block if warm-cache-free, plus the final file's own pair already included as the last level. Compare with the absolute <code>/etc/passwd</code> which starts at root \(2\), finds <code>etc</code> → its inode, then <code>passwd</code> → \(53\)-like number: only 2 hops, so far fewer transfers.</p>
+</div>
+<p>Exam note: Expect to apply the same left-to-right working-inode walk to a relative path example and to state how many inode and data block fetches occur. Label each hop as “inode \(X\) → data block \(X\) → lookup <code>name</code> → inode \(Y\).”</p>
+<div class="key-takeaway">
+  <p><strong>Recap — 9.5 in one line:</strong> For <code>cat /home/spiderman/hello.txt</code> the kernel does disk→memory for root inode + root data block → lookup <code>home</code> (\(13\)) → home inode + home block → lookup <code>spiderman</code> → spiderman inode + block → lookup <code>hello.txt</code> (\(53\)) → file inode \(53\) + file data block (\(1\,\text{K}=1024\) bytes), so \(2\) transfers per level (inode then \(1024\)-byte block, offsets still \(16\times k\) inside directories) before <code>cat</code> can print.</p>
+  <p><strong>Bridge:</strong> The inode-and-block cost you just counted is exactly what <code>df</code> summarizes from the other side — how many blocks and inodes the file system has, uses, and leaves free.</p>
+</div>
+
+<h2 id="9.6-disk-usage-inspection-the-df-family">9.6 Disk Usage Inspection — The df Family</h2>
+<h3 id="9.6.1-what-df-shows-at-base">9.6.1 What df Shows at Base</h3>
+<div class="important-note">
+  <p><strong>Hook — you counted individual block fetches; now step back: how full is the whole disk?</strong> That summary view is <code>df</code>.</p>
+</div>
+<p><em>df</em> — introduced as "disk file system" and in practice <em>disk free</em> — lists the file system view: file system name, total blocks, used blocks, available blocks, use percentage, and what it is mounted on. A plain <code>df</code> prints those columns for each mounted file system.</p>
+<p>A typical <code>df</code> header reads <code>Filesystem 1K-blocks Used Available Use% Mounted on</code>. Each “1K-block” is the same \(1\,\text{K}=1024\) byte unit you met in the transfer walk, so the numbers tie back: a file that needed a 1K data block contributes one to “Used,” and the free count drops by one.</p>
+<div class="key-concept">
+  <p><strong>The base table, column by column.</strong></p>
+  <ul>
+    <li><em>Filesystem</em> — device name, e.g., <code>/dev/sda1</code>.</li>
+    <li><em>1K-blocks</em> — total blocks on that file system, in units of 1024 bytes.</li>
+    <li><em>Used</em> — blocks that hold inodes’ data blocks, directory blocks, and file blocks.</li>
+    <li><em>Available</em> — blocks free for new files.</li>
+    <li><em>Use%</em> — \( \text{Used}/\text{total} \times 100\% \). A value like \(11\%\) means mostly free; \(100\%\) means a full file system where writes will fail.</li>
+    <li><em>Mounted on</em> — the directory where the file system appears in the single tree, e.g., <code>/</code> for root, <code>/home</code> for home.</li>
+  </ul>
+  <p>No flag means “one line per mounted file system” in the raw 1K-block unit — useful for scripts that parse numbers but hard for a human to eye-scan.</p>
+</div>
+<h3 id="9.6.2-options-that-change-the-view">9.6.2 Options That Change the View</h3>
+<ul>
+  <li><code>df -a</code> : include all file systems, even dummy ones. In the demo the output of <code>df</code> and <code>df -a</code> looked much the same on that system, but the flag concept is that <code>-a</code> forces display of entries that an ordinary <code>df</code> may hide — pseudo and dummy file systems with zero blocks that still appear in <code>/proc/mounts</code>.</li>
+  <li><code>df -i</code> : switch from blocks to inode information. Instead of size, it shows total inodes, used inodes, free inodes for each file system — the handle space rather than the byte space.</li>
+  <li><code>df -h</code> : human readable sizes. The raw <code>df</code> prints large block counts; <code>df -h</code> prints sizes like <code>98G</code>, <code>9.4G</code>, <code>84G</code> and a use percentage such as <code>11%</code>. The demo highlighted <code>/dev/sda1</code> with \(\text{size} \approx 98\,\text{GB}\), \(\text{used} \approx 9.4\,\text{GB}\), \(\text{available} \approx 84\,\text{GB}\), mounted on <code>/</code> with <code>11%</code> use, plus other lines at <code>100%</code> use. The math is the same blocks, just scaled: \(98\,\text{G} \approx 98 \times 1024 \times 1024\) K-blocks.</li>
+  <li><code>df -T</code> : add file system type column. The demo showed types such as <code>ext4</code>, <code>ext3</code>, <code>ntfs</code>, <code>fat</code>, <code>fat32</code> for normal read/write, <code>squashfs</code> for a compressed file system that stores a whole image in squeezed form, and <code>tmpfs</code> for a temporary file system that keeps data in local memory for fast read/write and transfer.</li>
+</ul>
+<div class="example-box">
+  <p><strong>Worked snippets — what you type and what changes.</strong></p>
+  <ul>
+    <li><code>df</code> → columns <code>Filesystem 1K-blocks Used Available Use% Mounted on</code>. Example line (raw): <code>/dev/sda1 102584320 9856000 87500000 11% /</code>.</li>
+    <li><code>df -i</code> → same rows but columns <code>Inodes IUsed IFree IUse%</code>. Example: <code>/dev/sda1 6553600 120000 6433600 2% /</code> — two percent of inodes used, so you can still create many files even though 11% of blocks are used.</li>
+    <li><code>df -h</code> → sizes in <code>K</code>, <code>M</code>, <code>G</code> rather than raw block counts. Example: <code>/dev/sda1 98G 9.4G 84G 11% /</code> — the exact demo numbers, easier to quote in viva.</li>
+    <li><code>df -T</code> → adds <code>Type</code> column, e.g., <code>/dev/sda1 ext4 98G 9.4G 84G 11% /</code>. The extra column tells you which driver family backs the blocks.</li>
+    <li><code>df -h /</code> or <code>df /home</code> → single line for the file system holding that path — use when a question asks “how full is <code>/</code>?”.</li>
+  </ul>
+  <p>Each snippet was run live, and the back-and-forth corrected the case of <code>-t</code> versus <code>-T</code> when a try with the wrong case did not give the expected filter.</p>
+</div>
+<p>Real-world: <code>tmpfs</code> is often used for <code>/tmp</code> or caches where speed matters and persistence is not needed; <code>squashfs</code> is common for live images. <code>ext4</code> is the typical read/write default on Linux; <code>squashfs</code> is compressed read-only, so its “Used” is the squeezed image size, not a dynamic count.</p>
+<p>Visual intuition: picture two gauges side by side. <code>df -h</code> is the fuel gauge in gigabytes — <code>98G</code> tank, <code>9.4G</code> used, <code>84G</code> left. <code>df -i</code> is the ticket-roll gauge — total tickets (inodes) <code>6.5M</code>, used <code>0.12M</code>, free <code>6.43M</code>. A file system can run out of tickets before it runs out of fuel if millions of tiny files are created — that is why <code>-i</code> exists.</p>
+<div class="warning-box">
+  <p><strong>Assumptions & scope.</strong></p>
+  <ul>
+    <li><strong>Assumes:</strong> the <code>1K-blocks</code> unit unless <code>-h</code> is added. Scripts that parse <code>df</code> should use the default or <code>df -k</code> explicitly; <code>df -h</code> is for humans.</li>
+    <li><strong>Scope:</strong> <code>df</code> summarizes the <em>file system</em> that contains a path, not the directory itself. <code>df /home</code> and <code>df /home/ubuntu/sp</code> can print the same line if both live on <code>/dev/sda1</code>.</li>
+    <li><strong>Case matters:</strong> lowercase <code>-t</code> is a <em>filter</em> (include only this type), uppercase <code>-T</code> is a <em>column</em> (show the type). Confusing them is the classic viva trap.</li>
+  </ul>
+  <p><strong>Pitfall — dummy vs real.</strong> <code>df -a</code> can add zero-block pseudo entries; students sometimes think the count changed. On the demo host <code>df</code> and <code>df -a</code> looked alike — that only means no extra dummy was mounted there, not that <code>-a</code> does nothing.</p>
+</div>
+<h3 id="9.6.3-targeted-and-filtered-queries">9.6.3 Targeted and Filtered Queries</h3>
+<p>A path can be given, for example <code>df -h /</code> or <code>df /home</code>, to show only the file system that holds that mount. That answers “which device backs this directory?” without listing all mounts.</p>
+<p>To filter by type:</p>
+<ul>
+  <li><code>df -t ext4</code> : include only file systems of type <code>ext4</code>. On an ext4-only host this shows the real disks; <code>squashfs</code> and <code>tmpfs</code> rows disappear.</li>
+  <li><code>df -x ext3</code> : exclude file systems of type <code>ext3</code>. This hides a type you are not interested in and shows everything else.</li>
+  <li>Lowercase <code>-t</code> means include type, uppercase <code>-T</code> means show type column — the case matters. Trying <code>df -t ext3</code> on a system with no <code>ext3</code> prints that no file system matched, while <code>df -x ext3</code> falls back to showing the rest.</li>
+</ul>
+<p>Combinations like <code>df -T -t ext4</code> or <code>df -T -x ext3</code> are allowed; the same include/exclude logic applies while also printing the type column. So <code>df -T -t ext4</code> means “show only ext4 and add the Type column,” which on the demo host highlighted the <code>/dev/sda1 ext4</code> line alone.</p>
+<p>Exam note: A question may ask to give the exact flag that yields a human-readable size view, an inode view, or a type-filtered view, or to justify output lines such as the <code>11%</code> versus <code>100%</code> entries. The <code>100%</code> entries in the demo were the <code>squashfs</code>/<code>tmpfs</code> loop rows — they are sized exactly to their content, so used equals total by design, not because the disk is actually full.</p>
+<h3 id="9.6.4-worked-command-snippets">9.6.4 Worked Command Snippets</h3>
+<div class="example-box">
+  <p><strong>Live-typed patterns to memorize.</strong></p>
+  <ul>
+    <li><code>df</code> → columns <code>Filesystem 1K-blocks Used Available Use% Mounted on</code>.</li>
+    <li><code>df -i</code> → same rows but columns <code>Inodes IUsed IFree IUse%</code> — inode view, not byte view.</li>
+    <li><code>df -h</code> → sizes in <code>K</code>, <code>M</code>, <code>G</code> rather than raw block counts. Recall <code>98G</code>, <code>9.4G</code>, <code>84G</code> for <code>/dev/sda1</code> at <code>11%</code>.</li>
+    <li><code>df -T</code> → adds <code>Type</code> column, e.g., <code>/dev/sda1 ext4</code>, plus <code>squashfs</code> (compressed) and <code>tmpfs</code> (memory) rows.</li>
+    <li><code>df -h /</code> → single line for the file system holding <code>/</code>.</li>
+    <li><code>df -t ext3</code> → <code>no file systems processed</code> when none match; <code>df -x ext3</code> → all others. As demoed, <code>df -t ext4</code> kept <code>ext4</code>, <code>df -x ext3</code> hid <code>ext3</code>.</li>
+    <li><code>df -T -t ext4</code> → filtered plus typed; <code>df -T -x ext3</code> → excluded plus typed.</li>
+  </ul>
+  <p>Each snippet was run live, and the back-and-forth corrected the case of <code>-t</code> versus <code>-T</code> when a try with the wrong case did not give the expected filter. A handy memory aid: <strong>little t = tiny filter, big T = big Table adds a column.</strong></p>
+</div>
+<div class="key-takeaway">
+  <p><strong>Recap — 9.6 in one line:</strong> <code>df</code> reports file system use as <code>1K-blocks Used Available Use%</code>, and flags reshape it — <code>-a</code> adds dummy file systems, <code>-i</code> swaps blocks for <code>Inodes IUsed IFree</code>, <code>-h</code> scales to <code>98G/9.4G/84G 11%</code> for humans, <code>-T</code> adds the <code>Type</code> (<code>ext4</code>, <code>ext3</code>, <code>ntfs</code>, <code>fat</code>, <code>squashfs</code>, <code>tmpfs</code>), <code>-t</code>/<code>-x</code> filter by type while a path argument like <code>df -h /</code> narrows to one mount.</p>
+  <p><strong>Bridge:</strong> <code>df</code> tells you how much space and how many inodes are left; the next layer tells you what <em>kind</em> of device that space sits on and whether the kernel buffers it.</p>
+</div>
+
+<h2 id="9.7-unix-input-output-character-versus-block-devices">9.7 Unix Input/Output — Character versus Block Devices</h2>
+<h3 id="9.7.1-memory-and-device-setting">9.7.1 Memory and Device Setting</h3>
+<p>Before device talk, the memory ladder was named: main memory is <em>RAM</em> (random access memory), secondary memory is the <em>hard disk</em>, tertiary examples are <em>tapes</em>, and cache sits above RAM in levels <code>L0</code>, <code>L1</code>, <code>L2</code> with no separate common name. That ladder matters because where bytes live decides how they move.</p>
+<div class="key-concept">
+  <p><strong>The ladder, bottom to top.</strong></p>
+  <ul>
+    <li><em>Tertiary:</em> tapes — cheapest per byte, slowest, often offline.</li>
+    <li><em>Secondary:</em> hard disks — your <code>sda</code> and partitions; block devices whose bytes are moved in \(1\,\text{K}=1024\) byte chunks.</li>
+    <li><em>Primary:</em> RAM — main memory where the kernel copies inode structures and data blocks before the CPU can use them; some views expose RAM itself as a character device.</li>
+    <li><em>Cache:</em> <code>L1</code>, <code>L2</code> (and sometimes <code>L0</code>) — tiny, fastest, no separate “disk-like” name; they hold recently used bytes so repeated <code>cat</code> fetches avoid disk.</li>
+  </ul>
+  <p>The device classification that follows is about the <em>interface</em> the kernel exposes for each rung, not just the hardware itself.</p>
+</div>
+<p>Visual intuition: picture a pyramid. The base is wide tapes, the middle is the disk, the top is narrow RAM, and the tip is cache. Bytes flow upward on <code>read</code> (disk block → RAM → cache → CPU) and downward on <code>write</code>. Character devices cut across this pyramid by streaming bytes without staging a whole block.</p>
+<h3 id="9.7.2-how-to-tell-the-type-ls-li-on-dev">9.7.2 How to Tell the Type: ls -li on /dev</h3>
+<p>A student asked how to know whether a device is block or character oriented.</p>
+<div class="important-note">
+  <p><strong>Q:</strong> Is there a simple command that tells which devices are block devices and which are character devices?</p>
+  <p><strong>A:</strong> Use <code>ls -li /dev</code>. The first character in the long listing tells the file type: <code>-</code> is a regular file, <code>d</code> is a directory, <code>c</code> is a character device, and <code>b</code> is a block device. Entries that start with <code>c</code> are character devices and those with <code>b</code> are block devices among the <code>/dev</code> files. That same flag <code>-i</code> also prints the inode number, so you see both the type and the handle in one view.</p>
+  <p>Example fragment from a live <code>ls -li /dev</code> (inodes illustrative):</p>
+  <pre><code>1234 crw-rw-rw- 1 root root 1, 5  ... /dev/zero   (c = character)
+5678 brw-rw---- 1 root disk 8, 0 ... /dev/sda    (b = block)
+9012 crw--w---- 1 root tty  4, 0 ... /dev/tty0   (c = character)</code></pre>
+  <p>The first column <code>c</code> vs <code>b</code> is the answer; the <code>1, 5</code> or <code>8, 0</code> after it are the major, minor numbers you meet in the next section.</p>
+</div>
+<p>Because <code>/dev</code> is itself a directory, the 16-byte entry logic still applies — each device name occupies a row whose 2-byte inode number points to a special inode that, instead of block pointers, stores major/minor device numbers. So <code>ls -li</code> is literally reading the same directory table you studied in section 9.2, plus dereferencing the device inode.</p>
+<p>Exam tip: if a question shows <code>crw-</code> vs <code>brw-</code> and asks “character or block?”, answer from the first letter alone: <code>c</code> → character, stream, no kernel block buffering; <code>b</code> → block, structured, kernel buffers.</p>
+<h3 id="9.7.3-character-devices-stream-of-bytes-no-buffering">9.7.3 Character Devices — Stream of Bytes, No Buffering</h3>
+<p><em>Character devices</em> treat data as a stream of bytes. Examples given are main memory (RAM itself as a char device view), line printers, and terminals. The interface between the two ends is unstructured or raw, and there is no buffering provided at that interface. Whatever bytes are produced at one end should be consumed at the other with internal protocol handling to avoid overflow, but the kernel does not stage the bytes in a separate block buffer.</p>
+<p>Think of it like a pipe with no tank: bytes flow as they come, and the sender and receiver must pace each other. If the receiver is slow, the sender must wait or bytes are lost — there is no pallet to park a whole block.</p>
+<div class="key-concept">
+  <p><strong>Character device traits.</strong></p>
+  <ul>
+    <li><em>Granularity:</em> one byte at a time — a <em>stream</em>, not a block.</li>
+    <li><em>Structure:</em> unstructured / raw — no record boundaries imposed by the kernel; a line printer receives raw bytes, a terminal sends keystrokes as they occur.</li>
+    <li><em>Buffering:</em> none provided by the kernel at the device interface for block staging. Flow control is by protocol between ends (e.g., terminal handshake), not by a kernel block buffer.</li>
+    <li><em>Examples:</em> RAM viewed as <code>/dev/mem</code> or <code>/dev/zero</code> (character view), line printer (<code>/dev/lp0</code>), terminal (<code>/dev/tty</code>).</li>
+  </ul>
+  <p>The “no buffering” phrase means no <em>block</em> buffer that holds a full \(1024\)-byte pallet. Tiny per-character queues may exist in hardware or driver, but the semantics presented is stream with no kernel block staging.</p>
+</div>
+<p>Where the analogy breaks: real terminals do have small driver queues and line disciplines, but from the programmer's view <code>read()</code> on a character device returns whatever bytes are available now, not a full block.</p>
+<h3 id="9.7.4-block-devices-blocks-structure-and-kernel-buffering">9.7.4 Block Devices — Blocks, Structure and Kernel Buffering</h3>
+<p><em>Block devices</em> move data in blocks rather than single bytes. Examples are disks and tape drives. The interface is structured: a block is read or a block is written. Because a whole block is moved at once — typically \(1\,\text{K} = 1024\) bytes was quoted — the other end may not be ready to accept or process it immediately. For that reason buffering is required, and that buffering is provided by the kernel.</p>
+<p>Think of it like pallets versus letters: character moves letters one by one, block moves a whole pallet that must be staged until a forklift is free. The pallet is the \(1024\)-byte block; the staging area is the kernel's buffer cache. Without the buffer, a block read would have to wait for the consumer to be instantly ready, which at block granularity is wasteful.</p>
+<div class="key-concept">
+  <p><strong>Block device traits, side-by-side with character.</strong></p>
+  <table>
+    <thead>
+      <tr>
+        <th>Dimension</th>
+        <th>Character (stream)</th>
+        <th>Block (structured)</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>Unit moved</td>
+        <td>single byte, stream</td>
+        <td>whole block, e.g., \(1\,\text{K}=1024\) bytes</td>
+      </tr>
+      <tr>
+        <td>Interface</td>
+        <td>unstructured / raw</td>
+        <td>structured — “read block N / write block N”</td>
+      </tr>
+      <tr>
+        <td>Kernel buffering</td>
+        <td><strong>none</strong> at block interface</td>
+        <td><strong>kernel provides</strong> buffer cache</td>
+      </tr>
+      <tr>
+        <td>Examples</td>
+        <td>RAM (char view), line printer, terminal</td>
+        <td>disks (<code>sda</code>), tape drives</td>
+      </tr>
+      <tr>
+        <td>Random access</td>
+        <td>generally sequential</td>
+        <td>random — can seek to any block number</td>
+      </tr>
+    </tbody>
+  </table>
+  <p><strong>When to pick which:</strong> If you need random access and efficiency for large data, you want block — file systems sit on block devices for this reason. If you need low-latency byte-by-byte interaction (typing, printing), you want character — the stream matches the device's natural timing.</p>
+</div>
+<p>Visual intuition: picture the disk as a wall of 1024-byte pallets. <code>read( block 5 )</code> lifts one pallet into the kernel buffer. If the process is not ready, the pallet waits on the staging floor (buffer cache) rather than being resent. Character's “letter” needs no staging floor — it is handed directly.</p>
+<p>Exam note: A contrast question may ask for two differences and an example each, plus who provides buffering: kernel for block, no buffering for character. A safe two-point answer: (1) stream vs block, (2) kernel buffering is required for block and provided by kernel, no buffering for character — with examples line printer / terminal vs disk / tape.</p>
+<div class="warning-box">
+  <p><strong>Assumptions & scope.</strong></p>
+  <ul>
+    <li><strong>Assumes:</strong> classic \(1\,\text{K}=1024\) byte block quoted in lecture; modern disks often use \(4\,\text{K}\) blocks but the principle is the same.</li>
+    <li><strong>Scope:</strong> buffering discussed is <em>kernel block buffering</em> for the structured interface. Character devices may still have driver-level queues, but those are not the block buffer meant here — do not claim “character has zero bytes buffered anywhere.”</li>
+    <li><strong>Pitfall:</strong> tapes were listed as block devices in lecture — even though tapes feel stream-like, their transfer here is described as block-structured, so classify them as block in exam answers tied to this lecture.</li>
+  </ul>
+  <p><strong>Common traps.</strong></p>
+  <ul>
+    <li>Saying block devices need no buffering because blocks are efficient — the lecture says the opposite: because a whole \(1024\)-byte block is moved at once, buffering <em>is</em> needed and the kernel provides it.</li>
+    <li>Mixing up the <code>-i</code> in <code>ls -li</code> (shows inode number) with the <code>-i</code> in <code>df -i</code> (shows inode counts). Same letter, different command.</li>
+  </ul>
+</div>
+<div class="key-takeaway">
+  <p><strong>Recap — 9.7 in one line:</strong> The RAM → disk → tape → cache ladder sets the stage; <code>ls -li /dev</code> reveals <code>c</code> (character, stream, no kernel block buffering, e.g., RAM/line printer/terminal) versus <code>b</code> (block, structured \(1024\)-byte blocks, kernel buffering, e.g., disks/tapes) via the first letter, with the <code>c</code>/<code>b</code> plus inode view echoing the 16-byte directory and inode ideas from earlier.</p>
+  <p><strong>Bridge:</strong> Once you can tell <code>c</code> from <code>b</code>, the next step is to read the numbers that appear beside those letters — major and minor — and the tools <code>lsblk</code> and <code>fdisk</code> that expose them for disks and partitions.</p>
+</div>
+
+<h2 id="9.8-device-identification-major-and-minor-numbers-lsblk-and-fdisk">9.8 Device Identification — Major and Minor Numbers, lsblk and fdisk</h2>
+<h3 id="9.8.1-major-as-driver-minor-as-instance">9.8.1 Major as Driver, Minor as Instance</h3>
+<p>Every hardware item in Linux is seen as a <em>device</em>, and a device works through its <em>device driver</em> installed in the system. The driver is the interface that makes the hardware operate.</p>
+<div class="key-concept">
+  <p><strong>Two numbers, two questions.</strong></p>
+  <ul>
+    <li><em>Major device number</em> indicates the type of the device and, by that, which driver is needed. When a device file is opened, Linux looks at its major number and forwards the call to the driver registered for that number. It is the “which kind” key.</li>
+    <li><em>Minor device number</em> indicates the specific instance among possibly many of that kind. There can be more than one hard disk, more than one RAM region, more than one CPU. The minor number picks one instance from the list for that major. It is the “which one” key.</li>
+  </ul>
+  <p>So major selects the driver family, minor selects the instance within the family. If major is the department, minor is the desk number inside that department.</p>
+</div>
+<p>A helpful rephrase from class: major is “what kind of device” and minor is “which one of that kind.” Opening <code>/dev/sda</code> with major \(8\) routes to the SCSI/SATA disk driver; minor \(0\) picks the whole disk, minor \(1\) picks its first partition <code>sda1</code>, minor \(5\) might pick a logical partition. The same majors appear under <code>/dev</code> as the <code>MAJ:MIN</code> pair you see in <code>lsblk</code>.</p>
+<p>Visual intuition: picture a switchboard. The major number chooses the bank of operators (disk bank, loop bank, terminal bank). The minor number chooses the operator within that bank. The kernel looks up the major table once, then dispatches to the minor entry — two-level routing, not one flat number.</p>
+<div class="important-note">
+  <p><strong>Why not just use the file name?</strong> Because names can vary (<code>/dev/sda</code> vs <code>/dev/disk/by-uuid/...</code>) but the major/minor pair is the kernel's stable dispatch key. The inode for the device-file stores this pair instead of block pointers — that is why <code>ls -li /dev</code> shows both inode number and major:minor together.</p>
+</div>
+<h3 id="9.8.2-lsblk-list-block-devices">9.8.2 lsblk — List Block Devices</h3>
+<p><em>lsblk</em> stands for list block and reports only block devices. Its columns were walked one by one:</p>
+<ul>
+  <li><code>NAME</code> — device name such as <code>sda</code>, <code>sda1</code>, <code>loop0</code>.</li>
+  <li><code>MAJ:MIN</code> — major and minor numbers, e.g., <code>8:0</code> for <code>sda</code> and <code>8:1</code> for <code>sda1</code>, <code>7:0</code> onward for loop devices.</li>
+  <li><code>RM</code> — removable flag as <code>0</code> or <code>1</code>, where <code>0</code> means non-removable and <code>1</code> means removable.</li>
+  <li><code>SIZE</code> — size of the device, e.g., <code>100G</code> for the main disk.</li>
+  <li><code>RO</code> — read-only flag as <code>0</code> or <code>1</code>, where <code>1</code> means read-only and <code>0</code> means read and write.</li>
+  <li><code>TYPE</code> — type such as <code>disk</code>, <code>part</code> (partition), <code>loop</code>.</li>
+  <li><code>MOUNTPOINT</code> — where it is mounted, if at all, such as <code>/</code>.</li>
+</ul>
+<div class="example-box">
+  <p><strong>Worked reading — lsblk rows from the demo, decoded.</strong></p>
+  <p>In the demo:</p>
+  <ul>
+    <li><code>sda</code> and <code>sda1</code> shared major <code>8</code>, which marks the disk driver family, with minors <code>0</code> and <code>1</code> marking whole disk and first partition. So <code>8:0</code> = disk driver, instance 0 (whole disk <code>sda</code>); <code>8:1</code> = same driver, instance 1 (first partition <code>sda1</code>).</li>
+    <li>Loop devices shared major <code>7</code> across about twenty-three instances such as <code>loop0</code> through <code>loop22</code>, all showing <code>RO</code> <code>1</code> for read-only, <code>RM</code> <code>0</code> for non-removable, and type <code>loop</code>. So <code>7:0</code> … <code>7:22</code> = loop driver, instances 0–22 — the squashfs images you saw under <code>df -T</code>.</li>
+    <li><code>sda1</code> and <code>sr0</code> showed <code>RO</code> <code>0</code> — readable and writable — while many loop entries showed <code>RO</code> <code>1</code> — read-only because they back compressed images.</li>
+    <li>One entry alone showed <code>RM</code> <code>1</code> to mark a removable disk drive — typically a USB stick or card reader.</li>
+    <li>Sizes: <code>sda</code> as <code>100G</code> in lsblk aligns with <code>sda1</code> as <code>98G</code>–<code>100GB</code> in <code>df -h</code> and <code>fdisk -l</code> — the small gap is partition overhead and rounding.</li>
+  </ul>
+  <p>These numbers make the earlier abstract major/minor idea concrete: <code>8</code> routes to the disk driver, <code>1</code> after the colon picks the instance; <code>7</code> routes to the loop driver for the many squashfs mounts.</p>
+  <p><strong>How to read a row in order:</strong> pick <code>MAJ:MIN</code> first (driver + instance), then <code>RM</code>/<code>RO</code> flags, then <code>TYPE</code> and <code>MOUNTPOINT</code> to see if it is mounted. Example mental voice: “<code>sda1 8:1 0 100G 0 part /</code> — disk driver instance 1, non-removable, read-write partition mounted as root.”</p>
+  <p><strong>Counting sense-check:</strong> major <code>7</code> with 23 loop entries shows the minor space is not limited to 0/1 — minors enumerate every instance for that major.</p>
+</div>
+<p>Visual intuition: picture <code>lsblk</code> as a roster. Leftmost <code>NAME</code> is the human label, middle <code>MAJ:MIN</code> is the kernel routing pair, flags <code>RM</code>/<code>RO</code> are sticky notes (“removable?”, “read only?”), <code>TYPE</code> is the role, <code>MOUNTPOINT</code> is where it hangs in the tree. The demo's wall of <code>loop0…loop22</code> with identical major <code>7</code> looks like a block of identical uniforms — same driver, many instances.</p>
+<div class="warning-box">
+  <p><strong>Scope — lsblk vs ls.</strong></p>
+  <ul>
+    <li><strong>lsblk</strong> = <em>only</em> block devices, structured table with <code>MAJ:MIN</code>, <code>RM</code>, <code>RO</code>, <code>TYPE</code>. It will not show character devices — use <code>ls -li /dev</code> for those (<code>c</code> rows).</li>
+    <li><strong>Scope:</strong> <code>lsblk</code> without flags shows the current topology; add <code>-f</code> for file system types if needed, but the lecture demo used the default columns listed above.</li>
+  </ul>
+</div>
+<h3 id="9.8.3-fdisk-partition-tables-and-details">9.8.3 fdisk — Partition Tables and Details</h3>
+<p><em>fdisk</em> is the partition tool known to Linux administrators for creating and editing partitions, but here it was used to inspect.</p>
+<ul>
+  <li><code>fdisk -l</code> lists all disks with details. Without <code>sudo</code> it returned <code>permission denied</code>, which was the cue that a privileged view is needed. With <code>sudo fdisk -l</code> it printed for each disk: size such as <code>100GB</code>, number of sectors, total bytes, sector size <code>512</code> bytes, I/O size <code>512</code> bytes, disk label type <code>DOS</code>, disk identifier such as a hex mark, and for <code>sda1</code> fields like boot flag <code>yes</code>, start sector <code>2048</code>, number of sectors, size, <code>Id</code>, and type such as <code>Linux</code> or the operating system installed.</li>
+</ul>
+<ul>
+  <li><code>sudo fdisk /dev/sda</code> opens the interactive view for that disk. Options walked in the help output were:</li>
+  <li><code>m</code> help,</li>
+  <li><code>a</code> toggle bootable flag,</li>
+  <li><code>d</code> delete a partition,</li>
+  <li><code>F</code> list free unpartitioned space — which in the demo was <code>0</code> because the whole \(100\) GB was already partitioned,</li>
+  <li><code>L</code> list known partition types — including <code>FAT12</code>, <code>XENIX</code>, <code>FAT16</code>, <code>FAT32</code>, <code>AIX</code>, <code>NTFS</code>, <code>ZFS</code> and many others,</li>
+  <li><code>p</code> print the partition table — which repeated the <code>fdisk -l</code> detail for <code>sda</code> alone,</li>
+  <li><code>v</code> verify the partition table and <code>i</code> print information about a partition (device, boot, sectors and so on).</li>
+</ul>
+<div class="example-box">
+  <p><strong>Worked inspection — fdisk outputs decoded.</strong></p>
+  <p>The <code>sudo fdisk -l</code> run for <code>sda</code> and the <code>p</code> run inside <code>sudo fdisk /dev/sda</code> echoed the same line conceptually:</p>
+  <ul>
+    <li>Disk <code>sda</code>: <code>100GB</code>, sectors = \(100 \times 1024^3 / 512 \approx 195\) million sectors, sector size \(512\) bytes, I/O size \(512\) bytes, label type <code>DOS</code>, identifier like <code>0xabc123</code>.</li>
+    <li>Partition <code>sda1</code>: boot <code>yes</code> (the bootable flag is set), start sector <code>2048</code>, number of sectors covering almost the whole disk, size ≈ <code>100G</code> (or <code>98G</code> as seen in <code>df -h</code> — same disk, different accounting), <code>Id</code> e.g., <code>83</code> for Linux, <code>Type</code> <code>Linux</code>.</li>
+    <li>Free space (<code>F</code>): <code>0</code> — no unpartitioned gap, because <code>sda1</code> starts at <code>2048</code> and runs to the end. The 2048-sector offset is intentional alignment: sector \(0\) is the MBR, sectors \(1\)–\(2047\) are reserved for alignment, so the first usable sector is \(2048\). At \(512\) bytes per sector, that reserves \(2048 \times 512 = 1\,048\,576\) bytes \(=1\) MB before the partition.</li>
+    <li>Type list (<code>L</code>): includes <code>FAT12</code>, <code>XENIX</code>, <code>FAT16</code>, <code>FAT32</code>, <code>AIX</code>, <code>NTFS</code>, <code>ZFS</code> and many more — you scroll this list to set <code>Id</code> when creating a partition, but the exam only asks that <code>L</code> lists types and <code>p</code> prints the table.</li>
+  </ul>
+  <p><strong>Permission lesson:</strong> bare <code>fdisk -l</code> → <code>permission denied</code>. With <code>sudo fdisk -l</code> → full detail. That split is exactly the teaching moment: partition tables are privileged state, so inspection needs elevated rights.</p>
+</div>
+<p>The actual <code>p</code> run for <code>sda</code> echoed the earlier line: <code>sda1</code> starts at <code>2048</code>, occupies the bulk of the disk, shows as bootable, and carries its <code>Id</code> and system type. The number \(2048\) appears in both <code>fdisk -l</code> and <code>lsblk</code> narratives because the first partition is aligned to 1 MB — a modern default that avoids misaligned I/O on 4K-sector drives.</p>
+<p>Real-world: In practice most day-to-day inspection uses <code>lsblk</code> and <code>df</code>; <code>fdisk -l</code> is the lower-level view an administrator pulls when planning partitions. You would run <code>lsblk</code> to see “what is mounted where,” <code>df -h</code> to see “how full,” and <code>sudo fdisk -l</code> to see “how the disk is sliced at sector granularity” including the \(512\)-byte sector and \(2048\) start.</p>
+<div class="warning-box">
+  <p><strong>Pitfalls & exam traps.</strong></p>
+  <ul>
+    <li><strong>Permission:</strong> <code>fdisk -l</code> without <code>sudo</code> → permission denied — always add <code>sudo</code> for the full table. That verbatim error is a teaching moment, not a typo.</li>
+    <li><strong>Case matters again:</strong> <code>fdisk -l</code> (lowercase L) lists tables; inside <code>fdisk /dev/sda</code> the commands are single letters where case matters — <code>p</code> prints, <code>F</code> shows free space, <code>L</code> lists partition types, <code>m</code> shows help. Do not mix <code>l</code> and <code>L</code>.</li>
+    <li><strong>Start <code>2048</code> is not magic:</strong> it is \(2048 \times 512 = 1\) MB alignment padding. If a question asks why the first partition starts at 2048, answer “1 MB alignment / DOS label reserved area,” not “random offset.”</li>
+    <li><strong>Sector size is two places:</strong> both “sector size 512” (logical) and “I/O size 512” appear; quote \(512\) bytes for both as seen in the demo.</li>
+  </ul>
+</div>
+<div class="key-takeaway">
+  <p><strong>Recap — 9.8 in one line:</strong> Every device file routes by <em>major</em> (driver family — \(8\) for disks <code>sda</code>/<code>sda1</code>, \(7\) for loop <code>loop0…loop22</code>) and <em>minor</em> (instance — \(0\) for whole disk, \(1\) for <code>sda1</code>, \(0…22\) for loops), visible as <code>MAJ:MIN</code> in <code>lsblk</code> with <code>RM</code>/<code>RO</code>/<code>TYPE</code>/<code>MOUNTPOINT</code> and at sector level as \(512\)-byte sectors, start \(2048\) (≈1 MB), <code>DOS</code> label, <code>100GB</code> size, <code>p</code>/<code>F</code>/<code>L</code> views, and <code>permission denied</code> without <code>sudo</code> in <code>fdisk</code>.</p>
+  <p><strong>Bridge:</strong> With major/minor you can now read any <code>/dev</code> entry the way you read the 16-byte directory entry — a small integer key that the kernel expands into a full structure, just as an inode number expands into inode plus blocks.</p>
+</div>
+
+<h2 id="exam-guidance-summary">Exam Guidance Summary</h2>
+<p>All exam-facing advice is gathered here, with inline markers also placed where the topics appear:</p>
+<ul>
+  <li><strong>Syllabus for the mid-semester exam</strong> is exactly the files and directories material covered up to this session, including directory entry layout, inode links, path-to-inode translation via the namei algorithm, and the df / device identification commands. No new heavy theory beyond that was added in this session. The session was the last class before the mid-semester, with no class next week.</li>
+  <li><strong>Question style</strong> is almost entirely commands. Expect to justify a specific output given a command, or to give the command plus option that produces a given output, with variations on flags. One or two very simple theory questions at most may appear, but the bulk is practical command use. Example patterns: “what does <code>df -h</code> show for <code>/dev/sda1</code> at 98G/9.4G/84G 11%?”, “which flag of <code>df</code> shows inode counts?”, “what does <code>ls -li /dev</code> show for <code>c</code> vs <code>b</code>?”.</li>
+  <li><strong>Study source</strong> is the slides and the options listed in the slides. There is no need to learn every flag a command supports; the flags shown in class — such as <code>df -a</code>, <code>df -i</code>, <code>df -h</code>, <code>df -T</code>, <code>df -t</code>/<code>-x</code> include/exclude, <code>ls -li /dev</code>, <code>lsblk</code>, <code>fdisk -l</code> and <code>fdisk /dev/sda</code> interactive <code>F</code>, <code>L</code>, <code>p</code> — are sufficient, even though that list is already long. For <code>df</code> remember <code>11%</code> vs <code>100%</code> interpretation; for <code>lsblk</code> remember major <code>8</code> for <code>sda</code>/<code>sda1</code> and major <code>7</code> for loop, plus <code>RM</code>/<code>RO</code> and <code>TYPE</code>; for <code>fdisk</code> remember sector size <code>512</code> bytes, start sector <code>2048</code>, disk size <code>100GB</code>, <code>DOS</code> label, and the need for <code>sudo</code>.</li>
+  <li><strong>Past paper</strong> — an old question paper with practice questions is or will be posted on the Taksila portal. That paper shows the pattern of asking for command and option and of interpreting listings such as the <code>df</code> table or <code>lsblk</code> rows. Practise by covering the output and predicting which flag produced it.</li>
+  <li><strong>Specific concept spotlights carried from sections:</strong></li>
+  <li><em>14-character truncation risk</em> (9.2): when first \(14\) characters match the truncated names collide; the older file might be replaced — expect a theory justification.</li>
+  <li><em>Name + extension is one component</em> (9.4): last component of <code>/home/ubuntu/sp/file_name.txt</code> is <code>file_name.txt</code>, not <code>txt</code> — expect a short question on component counting.</li>
+  <li><em>Working inode walk</em> (9.4): left-to-right \(W = \text{root}\) for absolute else \(\text{wd}\), then <code>16 = 2 + 14</code> style lookup per component — expect to walk a relative path like <code>exercises/sys_pgm1/test1/mydetails.pxt</code> from <code>/home/sys_pgm</code>.</li>
+  <li><em>Disk operation counting</em> (9.5): each level needs inode plus \(1\,\text{K}=1024\)-byte data block; root \(2\), home \(13\), hello \(53\) style numbers — expect to count transfers for a given path.</li>
+  <li><em>df flags</em> (9.6): <code>-a</code> (all including dummy), <code>-i</code> (inode <code>Inodes IUsed IFree</code>), <code>-h</code> (human <code>98G/9.4G/84G 11%</code>), <code>-T</code> (type <code>ext4</code>/<code>squashfs</code>/<code>tmpfs</code>), <code>-t</code>/<code>-x</code> (include/exclude type) plus case trap <code>-t</code> vs <code>-T</code>.</li>
+  <li><em>lsblk reading</em> (9.8): major <code>8</code> disk vs <code>7</code> loop, minors <code>0</code>/<code>1</code>/…/<code>22</code>, <code>RM</code> <code>0</code>/<code>1</code>, <code>RO</code> <code>0</code>/<code>1</code>, <code>TYPE</code> <code>disk</code>/<code>part</code>/<code>loop</code>, <code>SIZE</code> <code>100G</code>; <code>fdisk</code> needs <code>sudo</code>, sector <code>512</code>, start <code>2048</code>.</li>
+  <li><strong>Presentation hints</strong> heard earlier still apply: write assumptions, show work in tables where possible, and keep handwriting and formatting clear for grading, because a table makes the <code>16 = 2 + 14</code> split and the inode walk easier to award marks for. For namei, a three-column table — step, component \(c\), working inode \(W\) — scores well.</li>
+  <li><strong>Timing</strong> — this was the last class before the mid-semester, with no class next week. Wishes for the exams were extended to all courses.</li>
+</ul>
+<div class="key-takeaway">
+  <p><strong>Exam note:</strong> Do not spend time learning every <code>fdisk</code> partition type by heart; knowing that <code>L</code> lists types (including <code>FAT12</code>, <code>XENIX</code>, <code>FAT16</code>, <code>FAT32</code>, <code>AIX</code>, <code>NTFS</code>, <code>ZFS</code>) and that <code>p</code> and <code>F</code> show table and free space (\(0\) in demo because <code>100GB</code> was fully partitioned) is the level tested. Focus on the flag meanings above and the <code>16 = 2 + 14</code> → offset \(16\times k\) geometry, which is a reliable two-mark derivation.</p>
+</div>
+
+<h2 id="key-industry-applications">Key Industry Applications</h2>
+<p>Consolidated real-world connections for quick review:</p>
+<ul>
+  <li>Real-world: Everything-is-a-file underlies the way Linux exposes devices as files under <code>/dev</code>, listed with <code>ls -li</code> (<code>c</code> for character, <code>b</code> for block, <code>-</code> for regular, <code>d</code> for directory). The same <code>open-read-write-close</code> path handles <code>/etc/passwd</code> and <code>/dev/tty</code> — the uniformity keeps drivers small and tools reusable.</li>
+  <li>Real-world: The 14-byte fixed entry explains legacy systems and name-collision bugs on older Unix installations; modern ext4, xfs, ntfs and others use variable names to avoid truncation. When you see a vintage tar archive complain about truncated names, it is this \(16=2+14\) limit at work; today’s 255-character limit is the variable-length successor.</li>
+  <li>Real-world: The namei walk powers every <code>open</code> and <code>cat</code> on absolute paths such as <code>/etc/passwd</code> and on relative paths such as <code>exercises/sys_pgm1/test1/mydetails.pxt</code>. Container runtimes and web servers do millions of such walks; understanding <code>W = \text{root vs wd}</code> and the left-to-right stepping explains why symlink attacks must be handled by path reprocessing.</li>
+  <li>Real-world: <code>squashfs</code> appears in live USB images and container layers as a compressed read-only file system; <code>tmpfs</code> powers <code>/tmp</code> and fast staging where memory speed matters. The <code>df -T</code> row that shows <code>squashfs</code> at <code>100%</code> is not an alarm — it is a fixed image that is full by design, just like a container layer.</li>
+  <li>Real-world: <code>lsblk</code> major <code>8</code> for disks and major <code>7</code> for loops is the standard driver numbering seen on any Linux host; <code>RM</code> and <code>RO</code> flags let scripts distinguish removable or read-only mounts. Fleet monitoring parses <code>8:0</code> vs <code>7:0…7:22</code> to separate real storage from loop-backed snaps; <code>RO 1</code> marks the squashfs images that should never be written.</li>
+  <li>Real-world: <code>fdisk</code> with sector size \(512\) bytes and start sector \(2048\) is the usual alignment seen on a <code>DOS</code> label <code>100GB</code> disk with a single <code>sda1</code> partition. The \(2048\times512=1\) MB gap is the modern alignment rule that avoids 4K-sector penalties — every cloud VM image you launch inherits it.</li>
+  <li>Real-world: The inode-plus-\(1\,\text{K}=1024\)-byte-block counting explains cold-start latency: the first <code>cat</code> after boot touches root \(2\) → home \(13\) → file \(53\) inode+block pairs; the second <code>cat</code> hits the buffer cache and avoids disk. Capacity planning uses <code>df -i</code> (inodes free) alongside <code>df -h</code> (blocks free) because a mail spool can exhaust inodes with tiny files while blocks look healthy.</li>
+</ul>
+<p>These links stay within the lecture’s scope — each mirrors a flag, number, or walk you already traced: <code>16 = 2 + 14</code> at byte offsets \(16\times k\), working inode \(W\), block \(1\,\text{K}=1024\), <code>98G/9.4G/84G 11%</code> and <code>100%</code> loop rows, <code>MAJ:MIN 8:0/8:1</code> vs <code>7:0…7:22</code>, sector \(512\) and start \(2048\).</p>
+    </main>
+
+    <!-- ============================================================
+    EXAM REVISION NOTES
+    Generated AFTER the main lecture-faithful content is complete. Each entry
+    distills one major concept into its most examinable elements.
+    Built FROM the core — never invented independently.
+
+    Each entry is a <div class="exam-revision-entry"> containing:
+      - .revision-topic (h3) — concept name
+      - .revision-mustknow — the single most examinable takeaway
+      - .revision-formula — central formula(s) in \[ ... \] MathJax
+      - .revision-pitfall — the #1 exam mistake
+      - .revision-check — one self-check question (no options)
+      - .revision-connections — linked concepts within this lecture
+    ============================================================ -->
+    <section class="exam-revision-section">
+      <h2>Exam Revision Notes</h2>
+      <p class="revision-intro">Below is the distilled, exam-ready core.
+      Every entry comes from the full explanation above. Use this section
+      for rapid review; return to the main notes when a point needs more context.</p>
+<div class="exam-revision-entry">
+  <h3 class="revision-topic">Files and Directories — The Unix View</h3>
+  <p class="revision-mustknow"><strong>Must-know:</strong> Everything-is-a-file lets the same four calls handle regular files, directories and devices; a directory holds only name→inode maps, not file bytes.</p>
+  <p class="revision-formula"></p>
+  <p class="revision-pitfall"><strong>⚠️ Top pitfall:</strong> Thinking a directory contains file bytes instead of just the name-to-inode link; mixing fixed-length classic limit with modern variable names.</p>
+  <p class="revision-check"><strong>Self-check:</strong> Why can you list /dev and /home with the same ls logic?</p>
+  <p class="revision-connections"><strong>Connects to:</strong> 9.2, 9.3</p>
+</div>
+<div class="exam-revision-entry">
+  <h3 class="revision-topic">Unix Directory Entry Structure</h3>
+  <p class="revision-mustknow"><strong>Must-know:</strong> 16 = 2 + 14 and offset_k = 16*k; 14-char truncation causes collision when first 14 chars match; . is current, .. is parent, / is root.</p>
+  <p class="revision-formula">\[ 16 = 2 + 14 \] and \[ \text{offset}_k = 16 \times k \]</p>
+  <p class="revision-pitfall"><strong>⚠️ Top pitfall:</strong> Thinking long names are stored fully; under old 16-byte layout only first 14 chars kept and two files with same prefix collide.</p>
+  <p class="revision-check"><strong>Self-check:</strong> What byte offset is entry k and what happens to a 20-char name in the classic table?</p>
+  <p class="revision-connections"><strong>Connects to:</strong> 9.3, 9.4</p>
+</div>
+<div class="exam-revision-entry">
+  <h3 class="revision-topic">The Link Between Name and Content — Inodes</h3>
+  <p class="revision-mustknow"><strong>Must-know:</strong> File name is a link (bridge) to a 2-byte inode number; the inode structure holds mode, owner, times, size, link count and block pointers to data blocks.</p>
+  <p class="revision-formula"></p>
+  <p class="revision-pitfall"><strong>⚠️ Top pitfall:</strong> Confusing inode number (2-byte table entry) with inode structure (larger record with pointers); or mixing this minimal link with hard/soft link.</p>
+  <p class="revision-check"><strong>Self-check:</strong> What is stored in the 2-byte field vs what is in the inode structure?</p>
+  <p class="revision-connections"><strong>Connects to:</strong> 9.2, 9.4</p>
+</div>
+<div class="exam-revision-entry">
+  <h3 class="revision-topic">Path Name to Inode Translation — The namei Algorithm</h3>
+  <p class="revision-mustknow"><strong>Must-know:</strong> namei: W = root if p starts with / else wd; while c in p: read dir of W, match c to 14-byte name, get N, release W, W←N; symlink replaces prefix and reprocesses.</p>
+  <p class="revision-formula">\[ W = \begin{cases} \text{root} & \text{if } p \text{ starts with } / \\ \text{wd} & \text{otherwise} \end{cases} \]</p>
+  <p class="revision-pitfall"><strong>⚠️ Top pitfall:</strong> Treating file extension as separate component; thinking walk is right-to-left; forgetting release step order.</p>
+  <p class="revision-check"><strong>Self-check:</strong> For /home/ubuntu/sp/file_name.txt what is the last component and what is W after matching home?</p>
+  <p class="revision-connections"><strong>Connects to:</strong> 9.5, 9.2</p>
+</div>
+<div class="exam-revision-entry">
+  <h3 class="revision-topic">Disk Access Walkthrough — From cat Command to Data Blocks</h3>
+  <p class="revision-mustknow"><strong>Must-know:</strong> Each directory level costs inode + data block (1K=1024 bytes) fetches; cat /home/spiderman/hello.txt with root 2, home 13, hello 53 needs 8 transfers (4 levels ×2) including root and file.</p>
+  <p class="revision-formula">\[ 1\,\text{K} = 1024\,\text{bytes} \] and \[ \text{offset}_k = 16 \times k \]</p>
+  <p class="revision-pitfall"><strong>⚠️ Top pitfall:</strong> Forgetting root&#x27;s pair or the file&#x27;s own inode+block when counting; thinking cached second cat costs same as cold first cat.</p>
+  <p class="revision-check"><strong>Self-check:</strong> How many inode and block fetches for cat /home/spiderman/hello.txt with no cache?</p>
+  <p class="revision-connections"><strong>Connects to:</strong> 9.4, 9.6</p>
+</div>
+<div class="exam-revision-entry">
+  <h3 class="revision-topic">Disk Usage Inspection — The df Family</h3>
+  <p class="revision-mustknow"><strong>Must-know:</strong> df shows 1K-blocks; -a adds dummy, -i shows Inodes, -h shows 98G/9.4G/84G 11% human, -T adds Type (ext4/squashfs/tmpfs), -t/-x filter by type, path narrows to one mount.</p>
+  <p class="revision-formula"></p>
+  <p class="revision-pitfall"><strong>⚠️ Top pitfall:</strong> Mixing -t (filter include) with -T (show type column); thinking 100% squashfs means disk full by error rather than sized image.</p>
+  <p class="revision-check"><strong>Self-check:</strong> Which df flag shows human sizes and what does df -i show instead of blocks?</p>
+  <p class="revision-connections"><strong>Connects to:</strong> 9.5, 9.8</p>
+</div>
+<div class="exam-revision-entry">
+  <h3 class="revision-topic">Unix Input/Output — Character versus Block Devices</h3>
+  <p class="revision-mustknow"><strong>Must-know:</strong> ls -li /dev: first char c=character (stream, no kernel block buffering) vs b=block (structured blocks, kernel buffers); char examples RAM/printer/terminal, block examples disk/tape.</p>
+  <p class="revision-formula"></p>
+  <p class="revision-pitfall"><strong>⚠️ Top pitfall:</strong> Claiming character has zero buffering anywhere or that block needs no buffering; tapes are block in this lecture&#x27;s classification.</p>
+  <p class="revision-check"><strong>Self-check:</strong> How to tell block vs character with ls and what buffering rule applies to each?</p>
+  <p class="revision-connections"><strong>Connects to:</strong> 9.8, 9.1</p>
+</div>
+<div class="exam-revision-entry">
+  <h3 class="revision-topic">Device Identification — Major and Minor Numbers, lsblk and fdisk</h3>
+  <p class="revision-mustknow"><strong>Must-know:</strong> Major 8 = disk driver (sda 8:0, sda1 8:1), major 7 = loop (loop0 7:0 .. 22); lsblk RM/RO/TYPE; fdisk -l needs sudo, sector 512, start 2048, F free 0, L list types, p print.</p>
+  <p class="revision-formula"></p>
+  <p class="revision-pitfall"><strong>⚠️ Top pitfall:</strong> Forgetting sudo for fdisk -l (permission denied); mixing fdisk -l vs inside L vs p/F; mistaking start 2048 as random not 1MB alignment.</p>
+  <p class="revision-check"><strong>Self-check:</strong> What do 8:1 and 7:5 mean in lsblk and why does fdisk without sudo fail?</p>
+  <p class="revision-connections"><strong>Connects to:</strong> 9.7, 9.6</p>
+</div>
+<div class="exam-revision-entry">
+  <h3 class="revision-topic">Exam Guidance Summary</h3>
+  <p class="revision-mustknow"><strong>Must-know:</strong> Syllabus is files/directories through this lecture; question style is command-output justification; study slides flags and Taksila old paper.</p>
+  <p class="revision-formula">\[ 16 = 2 + 14 \]</p>
+  <p class="revision-pitfall"><strong>⚠️ Top pitfall:</strong> Learning every fdisk type instead of just L lists, p prints, F shows free 0.</p>
+  <p class="revision-check"><strong>Self-check:</strong> Which df flag combo gives human size plus type for ext4 only?</p>
+  <p class="revision-connections"><strong>Connects to:</strong> 9.2, 9.4, 9.6</p>
+</div>
+<div class="exam-revision-entry">
+  <h3 class="revision-topic">Key Industry Applications</h3>
+  <p class="revision-mustknow"><strong>Must-know:</strong> Each lecture concept maps to daily ops: /dev listing, ext4 vs squashfs vs tmpfs, namei for containers, lsblk major parsing, fdisk 1MB alignment.</p>
+  <p class="revision-formula"></p>
+  <p class="revision-pitfall"><strong>⚠️ Top pitfall:</strong> Treating 100% squashfs as error vs sized image.</p>
+  <p class="revision-check"><strong>Self-check:</strong> Why does a second cat cost less than the first?</p>
+  <p class="revision-connections"><strong>Connects to:</strong> 9.1, 9.5, 9.8</p>
+</div>
+    </section>
+  </div>
+</body>
+</html>
