@@ -4,12 +4,18 @@
  *
  * Each support channel is rendered only when its config is present/enabled:
  *   - `buymeacoffee` renders whenever `url` is set.
- *   - `upi` renders only when `enabled === true` (kept false for now; the
- *     static QR asset and config remain in place, ready to flip on later).
+ *   - `upi` renders only when `enabled === true`.
  */
 
 export interface BuyMeACoffeeConfig {
   url: string;
+}
+
+export interface UpiPreset {
+  /** Short label shown on the preset chip, e.g. "Chai". */
+  label: string;
+  /** Amount in INR. */
+  amount: number;
 }
 
 export interface UpiConfig {
@@ -17,6 +23,10 @@ export interface UpiConfig {
   payeeName: string;
   upiId: string;
   note?: string;
+  /** Preset amounts shown as selectable chips (chai-tier style). */
+  presets?: UpiPreset[];
+  /** Max characters allowed in the optional personal message (UPI `tn`). */
+  maxMessageLength?: number;
 }
 
 export interface SiteConfig {
@@ -28,17 +38,24 @@ export interface SiteConfig {
 
 export const site: SiteConfig = {
   support: {
-    // Active support channel for now.
     buymeacoffee: {
       url: 'https://buymeacoffee.com/bitsnotes',
     },
-    // Ready but disabled. Flip `enabled` to true to reveal the UPI block
-    // (static QR at /support-upi-qr.png must exist).
+    // Demo UPI ID for now — replace `upiId` with your real VPA before
+    // linking this page publicly. The live QR is generated in the browser
+    // from this config, so it updates automatically once changed.
     upi: {
-      enabled: false,
+      enabled: true,
       payeeName: 'BitsNotes',
       upiId: 'support@bitsnotes',
       note: 'Supporting BitsNotes',
+      presets: [
+        { label: 'A chai', amount: 20 },
+        { label: 'Study fuel', amount: 50 },
+        { label: 'Full meal', amount: 100 },
+        { label: 'Sponsor a subject', amount: 250 },
+      ],
+      maxMessageLength: 50,
     },
   },
 };
