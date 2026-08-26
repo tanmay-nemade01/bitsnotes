@@ -82,6 +82,15 @@ export const SUBJECTS: SubjectInfo[] = [
     code: 'AMTCS',
     semester: 2,
   },
+  {
+    name: 'Unsupervised Deep Learning',
+    shortName: 'UDL',
+    description:
+      'Representation learning and deep generative models, covering autoencoders, VAEs, GANs, normalizing flows, and diffusion models.',
+    order: 7,
+    code: 'UDL',
+    semester: 2,
+  },
 
   // Semester 1 Subjects
   {
