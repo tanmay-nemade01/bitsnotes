@@ -1,0 +1,717 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+  <!-- Primary SEO -->
+  <title>Splitting Models and Data | Distributed Machine Learning | BitsNotes</title>
+  <meta name="description" content="Distributed Machine Learning notes on splitting models and data: model, data and pipeline parallelism with row and column partitioning.">
+  <meta name="keywords" content="Distributed Machine Learning, Splitting Models and Data, model parallelism, data parallelism, pipeline parallelism, horizontal partitioning, vertical partitioning, synchronous replicas, model aggregation">
+  <meta name="author" content="BitsNotes">
+  <meta name="robots" content="index, follow">
+  <link rel="canonical" href="https://bitsnotes.com/view/distributed-machine-learning/splitting-models-and-data">
+
+  <!-- Open Graph / Facebook -->
+  <meta property="og:type" content="article">
+  <meta property="og:title" content="Splitting Models and Data | Distributed Machine Learning">
+  <meta property="og:description" content="Distributed Machine Learning notes on splitting models and data: model, data and pipeline parallelism with row and column partitioning.">
+  <meta property="og:url" content="https://bitsnotes.com/view/distributed-machine-learning/splitting-models-and-data">
+  <meta property="og:image" content="https://bitsnotes.com/og-default.png">
+  <meta property="og:image:width" content="1200">
+  <meta property="og:image:height" content="630">
+  <meta property="og:site_name" content="BitsNotes">
+
+  <!-- Twitter Card -->
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="Splitting Models and Data | Distributed Machine Learning">
+  <meta name="twitter:description" content="Distributed Machine Learning notes on splitting models and data: model, data and pipeline parallelism with row and column partitioning.">
+  <meta name="twitter:image" content="https://bitsnotes.com/og-default.png">
+  <meta name="twitter:site" content="@BitsNotes">
+
+  <!-- Stylesheet -->
+  <link rel="stylesheet" href="/lecture-notes.css">
+
+  <!-- Structured Data: JSON-LD -->
+  <script type="application/ld+json">
+{"@context":"https://schema.org","@type":"Article","headline":"Splitting Models and Data | Distributed Machine Learning","description":"Distributed Machine Learning notes on splitting models and data: model, data and pipeline parallelism with row and column partitioning.","author":{"@type":"Organization","name":"BitsNotes"},"about":["model parallelism","data parallelism","pipeline parallelism","horizontal partitioning","vertical partitioning","synchronous replicas","model aggregation"],"mainEntityOfPage":"https://bitsnotes.com/view/distributed-machine-learning/dml-lecture-1"}
+</script>
+
+  <!-- Lecture Metadata (for the BitsNotes platform viewer) -->
+  <!-- IMPORTANT: This is the ONLY metadata source. No companion .json file
+       is created. The viewer reads everything from this embedded script.
+       Required fields: title, subject, gradeLevel, datePublished,
+       targetAudience, sections (array), examRevisionNotes (array).
+       Optional fields: prerequisites (array of {subject, lecture, topics}).
+       NOT included (removed): summary, keyConcepts, quiz. -->
+  <script type="application/json" id="lecture-metadata">
+{
+  "title": "Splitting Models and Data",
+  "subject": "Distributed Machine Learning",
+  "gradeLevel": "postgraduate",
+  "datePublished": "2026-09-10",
+  "targetAudience": "Postgraduate students in Distributed Machine Learning",
+  "sections": [
+    {
+      "title": "Why Split Models and Data — Parallel and Distributed Computing",
+      "description": "Distributed learning splits models and data across independent machines to fix fit limits and gain parallel speed."
+    },
+    {
+      "title": "Model Splitting Across Machines — CNN Example and Code Walkthrough",
+      "description": "Model parallelism places CNN layers on different machines with feature maps moving forward and errors moving back."
+    },
+    {
+      "title": "Data Parallelism with Synchronous Replicas",
+      "description": "Data parallelism clones the model to replicas that train shards in parallel with per-step sync."
+    },
+    {
+      "title": "Pipeline Parallelism with Mini-Batches and Stages",
+      "description": "Pipeline parallelism splits batches into mini-batches so stages work on different shards each tick."
+    },
+    {
+      "title": "Horizontal and Vertical Partitioning — Rows Versus Columns",
+      "description": "Horizontal partitioning cuts rows with shared schema for averaging; vertical cuts columns for fusion."
+    },
+    {
+      "title": "Hospitals, Non-IID Data and When Vertical Partitioning Appears",
+      "description": "Hospital splits show natural vertical and horizontal cases with aggregation as the research core."
+    },
+    {
+      "title": "Partitioning Code, Fusion Models and What the Numbers Showed",
+      "description": "Row-split code averages matching shapes while column-split code fuses branches for joint gains."
+    },
+    {
+      "title": "Exam Guidance Summary",
+      "description": "Exam lines collect likely prompts with shard ranges widths and demo accuracies."
+    },
+    {
+      "title": "Key Industry Applications",
+      "description": "Field uses map TGB splits giant-model splits mirrored replicas pipes hospital fusion and table fusion."
+    }
+  ],
+  "examRevisionNotes": [
+    {
+      "topic": "Why Split Models and Data — Parallel and Distributed Computing",
+      "mustKnow": "Distributed means independent machines with private memory; splitting gives parallelism and fixes fit",
+      "keyFormula": "\\[ D = D_{1} \\cup D_{2} \\cup D_{3} \\]",
+      "commonPitfall": "Mixing shared-memory parallel with independent-machine distributed design",
+      "quickCheck": "State the difference between shared-memory parallel and distributed designs in one line each.",
+      "connections": [
+        "1.2",
+        "1.3"
+      ]
+    },
+    {
+      "topic": "Model Splitting Across Machines — CNN Example and Code Walkthrough",
+      "mustKnow": "Layer splits place early weights on one card and later weights on the next with feature-map hand-off",
+      "keyFormula": "\\[ y = f_{2}(f_{1}(x; W_{1}); W_{2}) \\]",
+      "commonPitfall": "Thinking the decision head splits for free in a layer chain",
+      "quickCheck": "What crosses the card boundary forward and what crosses back?",
+      "connections": [
+        "1.1",
+        "1.4"
+      ]
+    },
+    {
+      "topic": "Data Parallelism with Synchronous Replicas",
+      "mustKnow": "Each replica trains its shard in parallel then syncs by averaging or all-reduce plus broadcast",
+      "keyFormula": "\\[ w_{new} = Sync(w_{1}, w_{2}, \\dots, w_{R}) \\]",
+      "commonPitfall": "Growing the global batch without retuning learning rate",
+      "quickCheck": "What is the global batch with R replicas at local batch B?",
+      "connections": [
+        "1.1",
+        "1.4"
+      ]
+    },
+    {
+      "topic": "Pipeline Parallelism with Mini-Batches and Stages",
+      "mustKnow": "Pipeline parallelism overlaps stages across mini-batches so all GPUs work after a short fill",
+      "keyFormula": "\\[ h = Stage_{1}(x; V_{1}), \\hat{y} = Stage_{2}(h; V_{2}), L = Loss(\\hat{y}, y) \\]",
+      "commonPitfall": "Counting only forward flow and ignoring backward pipelining",
+      "quickCheck": "Why does stage 1 look free for one mini-batch but busy across mini-batches?",
+      "connections": [
+        "1.2",
+        "1.3"
+      ]
+    },
+    {
+      "topic": "Horizontal and Vertical Partitioning — Rows Versus Columns",
+      "mustKnow": "Horizontal cuts rows and averages; vertical cuts columns and fuses embeddings with concatenation",
+      "keyFormula": "\\[ w_{global} = \\frac{1}{K} \\sum_{k=1}^{K} w_{k} \\]",
+      "commonPitfall": "Averaging vertical branches whose shapes do not line up",
+      "quickCheck": "Which cut keeps the schema same and which changes it?",
+      "connections": [
+        "1.6",
+        "1.7"
+      ]
+    },
+    {
+      "topic": "Hospitals, Non-IID Data and When Vertical Partitioning Appears",
+      "mustKnow": "Same patients with different features need vertical fusion; overlap anchors the join",
+      "keyFormula": "\\[ W = Aggregate(W_{1}, W_{2}, W_{3}) \\]",
+      "commonPitfall": "Adding weight files slot-wise when shapes differ",
+      "quickCheck": "What overlap test decides between joint fusion and separate models?",
+      "connections": [
+        "1.5",
+        "1.7"
+      ]
+    },
+    {
+      "topic": "Partitioning Code, Fusion Models and What the Numbers Showed",
+      "mustKnow": "Row splits start from averaging; column splits need two branches plus concatenation and joint fit",
+      "keyFormula": "\\[ h_{1} = Branch_{1}(x_{p1}), h_{2} = Branch_{2}(x_{p2}), h = Concat(h_{1}, h_{2}) \\]",
+      "commonPitfall": "Using plain averaging for column splits with mismatched widths",
+      "quickCheck": "Why did 0.70 plus 0.70 rise to 0.79 only after fusion?",
+      "connections": [
+        "1.5",
+        "1.6"
+      ]
+    }
+  ]
+}
+</script>
+</head>
+<body>
+  <div class="container">
+    <!-- ============================================================
+    HERO HEADER
+    ============================================================ -->
+    <header class="hero-header">
+      <span class="subject-badge">Distributed Machine Learning</span>
+      <h1 class="lecture-title">Splitting Models and Data</h1>
+      <div class="meta-info">
+        <div class="meta-item"><strong>Published:</strong> 2026-09-10</div>
+        <div class="meta-item"><strong>Level:</strong> postgraduate</div>
+        <div class="meta-item"><strong>Audience:</strong> Postgraduate students in Distributed Machine Learning</div>
+      </div>
+    </header>
+
+    <!-- ============================================================
+    PREREQUISITE KNOWLEDGE
+    Optional section listing concepts from previous lectures that this
+    lecture builds on. Populated by Agent 3 from topic_mappings/*.yaml.
+    If no prerequisites exist, this section is omitted entirely.
+    ============================================================ -->
+    
+
+    <!-- ============================================================
+    MAIN LECTURE-FAITHFUL CONTENT
+    Page title = one h1.lecture-title
+    Each section = one h2.section-title
+    Each subsection = one h3.subsection-title
+    Callout boxes: .key-concept (blue), .important-note (violet),
+      .example-box (green), .warning-box (red), .key-takeaway (amber)
+    Display math: auto-scrolls via mjx-container CSS; .eqbox wrapper optional
+    ============================================================ -->
+    <main>
+<h2 id="1.1-why-split-models-and-data-parallel-and-distributed-computing">1.1 Why Split Models and Data — Parallel and Distributed Computing</h2>
+<h3 id="1.1.1-core-idea-and-definitions">1.1.1 Core Idea and Definitions</h3>
+<div class="important-note">
+  <p>What happens when your model and your data no longer fit on one machine — do you buy a bigger machine, or do you learn to split the work?</p>
+</div>
+<p>Splitting gives speed and fixes the fit problem. That single sentence carries the whole lecture. When the model is too large for one memory, or the dataset is too large for one disk and one processor, we cut the load into parts, run the parts at the same time on different machines, and then bring the results together. The speed gain comes from overlap: while machine one works on its shard, machine two works on its own shard.</p>
+<p>A <em>model</em> (the set of learned weights plus the rules that turn input into output), for example a convolution stack with weights \(w\), might hold millions of numbers. A <em>dataset</em> (the collection of input samples plus targets used to train and test that model), for example 30 GB of graph rows, might hold far more rows than one card can stream in good time. A single machine has hard limits on memory size and compute throughput. Splitting is both a fix for those limits and a gain in throughput.</p>
+<div class="important-note">
+  <p>Think of a library that has grown too large for one room. You do not throw books away. You open two more rooms, move shelves into each room, and let readers use all three rooms at once. Each room holds a subset of books, each reader works in one room, and the catalog ties the rooms together. The analogy breaks at one point: in a library the books sit still, while in machine learning the machines must also talk to each other to merge what they learned.</p>
+</div>
+<p>Here the split library is the distributed design. A <em>distributed system</em> (a set of independent machines, each with its own processor and its own memory), such as three GPU workers each with 16 GB, holds a subset of the model and a subset of the data on each machine. Each machine processes its part and passes results to the next machine or to a merger. A <em>parallel system</em> with shared memory is different. There all workers read and write the same memory store. They cannot each hold a large private split in the same way because memory stays common, so the design must work around that shared store with locks and shared buffers.</p>
+<p>In this subject every machine has its own processor and memory. The task is to learn how to assign model parts and data parts, which algorithms to use for training, and how to link stages into a working pipeline. That assignment depends on three resource numbers: how much memory each machine has, how large the model is in parameters, and how large the data is in bytes and rows.</p>
+<h3 id="1.1.2-splitting-patterns-and-resource-choices">1.1.2 Splitting Patterns and Resource Choices</h3>
+<div class="key-concept">
+  <p>A dataset union split into disjoint row partitions is written as a set union. Let \(D\) be the full dataset, and let \(D_{1}, D_{2}, D_{3}\) be disjoint partitions held on different machines:</p>
+  <p>\[ D = D_{1} \cup D_{2} \cup D_{3}, \quad D_{i} \cap D_{j} = \emptyset \; \text{for} \; i \neq j \]</p>
+  <p>Here \(D\) is the full row set with size measured in GB, each \(D_{k}\) is one shard stored on machine \(k\), \(\cup\) means set union, and \(\cap = \emptyset\) means no row appears in two shards unless overlap is planned on purpose. For disjoint shards, sizes add:</p>
+  <p>\[ |D| = |D_{1}| + |D_{2}| + |D_{3}| \]</p>
+  <p>where \(|D|\) is the size in GB or row count. Think of \(D\) as all rows, and each \(D_{k}\) as one shard. In the lecture the total was named as 30 GB and the parts were named as 10, 10, and 3 with partition labels partition 1, partition 2, and partition 5. Those part sizes sum to 23, not 30, so the numbers are best read as illustrative labels from the talk: a 30 GB-scale total cut into shards on the order of 10 GB each, with non-contiguous partition IDs as seen in graph-partitioned stores. The math form above stays exact even when the spoken numbers are rounded.</p>
+</div>
+<p>Four patterns cover most cases. First, keep one full model copy and split only the data. Each machine runs the same model on its own shard. This is data parallelism and fits when the model fits but the data does not. Second, split only the model and keep the full data in one place. Data flows from one model shard to the next. This is model parallelism and fits when the model does not fit but the data stream can pass through. Third, split both model and data. This is the hard case for very large jobs where neither fits alone, and it needs both a shard plan and a join plan. Fourth, keep both whole, which only works for small jobs that fit on one card. The choice depends on resources: per-machine memory, total model size, and total data size. When model training bandwidth lags behind data loading bandwidth, adding workers and splitting the load raises the joint training bandwidth.</p>
+<div class="example-box">
+  <p><strong>Worked example — TGB partitions on machines with model aggregate.</strong> Take the TGB dataset as a running example of large graph data that cannot sit on one card. Cut it into partitions such as partition 1, partition 2, and partition 5. Place partition 1 on machine one with a model copy, partition 2 on machine two with a second copy, and partition 5 on machine three with a third copy. Each copy runs forward passes on its own rows only. Suppose partition 1 holds 10 GB, partition 2 holds 10 GB, and partition 5 holds 3 GB in the spoken example. The disjoint union is:</p>
+  <p>\[ |D| = 10 + 10 + 3 = 23 \; \text{GB in named parts} \]</p>
+  <p>Each machine gives a local output or local update. Then we face the join question: how do we aggregate the parts into one useful result? For same-model copies the first try is to average updates and broadcast back. For different-model shards the join is a hand-off or a fusion step. <strong>Answer: three shards train or infer in parallel, then a sync or aggregate step merges them.</strong> Sense-check: no machine ever held the full 30 GB-scale set, yet the group covered all named rows once each.</p>
+</div>
+<div class="warning-box">
+  <p><strong>Scope:</strong> The disjoint-union form applies when shards are cut by rows with no duplication. <strong>Assumption:</strong> Each shard is stored once and sampled in a balanced way. When shards share rows on purpose for robustness, sizes no longer add and the join must weight by sample counts to avoid double counting.</p>
+</div>
+<p>Picture a simple chart to fix the idea. The horizontal axis lists machines one, two, and three. The vertical axis shows GB held, from 0 to about 12. Three bars rise to 10, 10, and 3. A dashed line near 30 marks the full-set scale. The takeaway in one sentence: each bar stays short enough to fit, while the three bars together cover the load.</p>
+<div class="warning-box">
+  <p>A common trap is to mix up shared-memory parallel work with independent-machine distributed work. In shared memory, workers contend for the same store and cannot each keep a large private shard. In distributed work, each worker owns its memory and its shard, and the cost moves to messages between machines. Another trap is to pick a split from habit: splitting only data when the model itself is the part that does not fit still leaves out-of-memory errors in place.</p>
+</div>
+<div class="key-takeaway">
+  <p><strong>Recap:</strong> A distributed job cuts the model, the data, or both into disjoint parts, runs the parts at the same time, and merges. <strong>Bridge:</strong> The next step is to see the model-split case in concrete form, where convolution output from machine one becomes the input to machine two.</p>
+</div>
+<p>In production this pattern shows up wherever a single card is too small. Civil mapping teams split city-scale image tiles across cards so each card fits its tile. Graph teams split TGB-scale edge lists into row partitions so each machine fits its shard and the group trains in parallel. The shared idea is the same: split the work, run in parallel, then aggregate.</p>
+<div class="important-note">
+  <p><strong>Q:</strong> How do we split the data in practice? <strong>A:</strong> We cut either rows or columns into partitions, place each partition on its own machine, run the assigned model part on it, and then aggregate. Row cuts keep all features and change only which rows each machine sees. Column cuts keep all rows and change which features each machine sees. The join method must match the cut: row shards with the same shape can start from averaging, while column shards with different shapes need fusion.</p>
+</div>
+<div class="key-takeaway">
+  <p><strong>Exam note:</strong> State shared-memory parallel versus independent-machine distributed design and why splitting gives parallelism. Shared memory means one common store with many workers. Distributed means each machine has its own processor and its own memory with private shards. Splitting gives parallelism because each machine works on its own shard at the same time, so joint throughput rises with the count of workers.</p>
+</div>
+
+<h2 id="1.2-model-splitting-across-machines-cnn-example-and-code-walkthrough">1.2 Model Splitting Across Machines — CNN Example and Code Walkthrough</h2>
+<h3 id="1.2.1-how-layers-move-across-machines">1.2.1 How Layers Move Across Machines</h3>
+<div class="important-note">
+  <p>If a network is too large for one card, which layers would you move to a second card so the job still runs as one model?</p>
+</div>
+<p>A <em>weight</em> (one learned number), for example \(w = 0.37\), is the smallest unit. A <em>filter</em> (a small set of weights that scans an image for a pattern such as an edge), for example 9 numbers in a 3 by 3 kernel, slides across the image. A <em>convolution layer</em> (a stage that applies many filters at once) turns pixels into feature maps. A <em>pooling layer</em> (a stage that shrinks each map by keeping the strongest value in each patch), for example 2 by 2 max pooling, halves height and width while keeping depth.</p>
+<p>Model splitting means placing different layers on different machines. Picture a convolution network with four blocks. Block 1 with the first convolution goes to machine one. Block 2 with the next convolution and pooling goes to machine two. Block 3 goes to machine three. The last block with flattening and the final decision layer goes to machine four. Data enters at machine one. The convolution output of machine one becomes the input of machine two. The same hand-off repeats down the chain. The last machine gives the final output.</p>
+<div class="key-concept">
+  <p>A split model chain with early weights and later weights is written as nested maps. Let \(x \in \mathbb{R}^{h \times w \times c}\) be the input image with height \(h\), width \(w\), and channels \(c\). Let \(W_{1}\) hold the early convolution weights on device one and \(W_{2}\) hold the later dense weights on device two. Let \(f_{1}\) be early feature extraction and \(f_{2}\) map features to outputs:</p>
+  <p>\[ y = f_{2}(f_{1}(x; W_{1}); W_{2}) \]</p>
+  <p>Here \(;\) separates inputs from parameters, \(f_{1}(x; W_{1})\) is the feature map handed from machine one to machine two, and \(y\) is the prediction. For MNIST-style digits with 10 classes, \(y \in \mathbb{R}^{10}\) holds class scores that sum to one after softmax. For regression, \(y \in \mathbb{R}\) is a single number. The only change between the two tasks is the last layer and its loss. Early convolution blocks do not care about the task. They only build features. In words: data comes in, convolution output goes into machine two, then flatten, then the classifier gives a probabilistic output.</p>
+</div>
+<p>Think of it like an assembly line for images. Early stations find edges and shapes. Later stations decide what the shapes mean. The belt between stations carries feature maps, not raw pixels. Assembly line stations find edges then decide meaning, and that order matters: you cannot decide before the features arrive. The picture breaks if the belt is too narrow — when feature maps are large, the hand-off itself becomes the bottleneck.</p>
+<p>A quick shape pass makes the hand-off concrete. Start with \(x\) of shape 28 by 28 by 1. After Conv2D with 32 filters and 2 by 2 pooling, height and width shrink while depth grows to 32. The tensor handed to machine two is so much smaller in space but richer in channels. Machine two flattens it to a vector, scores it, and returns \(y\).</p>
+<div class="warning-box">
+  <p><strong>Scope:</strong> Layer-wise splitting fits when the model has enough layers to spread and each layer block fits its card. <strong>Assumption:</strong> Links between cards are fast enough for feature maps and gradients. If the hand-off is slow or a middle machine stalls, the whole chain waits, so vanilla layer splits reach only about \(1/N\) use per card with \(N\) cards unless pipelining is added.</p>
+</div>
+<p>Sketch the visual. The horizontal axis is depth through the network from input to output. The vertical axis is activation size. The curve starts tall and thin at raw pixels, gets shorter and deeper through convolutions, drops sharply at pooling, then collapses to a flat vector at flatten before rising to 10 bars at the softmax. The one-sentence takeaway: space shrinks while meaning builds.</p>
+<div class="warning-box">
+  <p>Two traps show up here. First, learners think splitting changes what the network learns. It does not: the same \(W_{1}\) and \(W_{2}\) learn the same maps, only the street address of each weight changes. Second, learners expect the final decision layer to split for free. In this chain the decision block stays in one place, so the head is still a single point of load while feature extraction spreads.</p>
+</div>
+<div class="key-takeaway">
+  <p><strong>Recap:</strong> Early layers live on machine one, later layers live on machine two, and feature maps move forward while errors move back. <strong>Bridge:</strong> The code version of this chain places Conv2D plus pooling under one device scope and flatten plus dense under a second scope, then trains the linked graph as one model.</p>
+</div>
+<p>Large language models with 80-billion to 100-billion parameters cannot sit on one card, so teams split layers across cards in this same way. The size figures are the lecture's illustrative scale for giant models that exceed single-card memory; standard textbook cases are BERT and GPT-2/3, which already overflow a 16 GB card and are so trained with model parallelism spread over many cards.</p>
+<h3 id="1.2.2-code-structure-for-two-devices">1.2.2 Code Structure for Two Devices</h3>
+<p>The demo used image input, Conv2D plus max pooling on device zero, then flatten plus dense plus a 10-node output on device one. In words: build a sample image batch, place the first two layers under device zero scope, place flatten and dense layers under device one scope, link output of the first part as input to the second part, compile once, then fit and evaluate as one linked model.</p>
+<pre><code># device 0 holds early convolutions
+with device_scope("gpu:0"):
+    x_in = Input(shape=(28, 28, 1))
+    h = Conv2D(filters=32, kernel_size=3, activation="relu")(x_in)
+    h = MaxPooling2D()(h)
+    part1_out = h
+# device 1 holds flatten plus decision layers
+with device_scope("gpu:1"):
+    h2 = Flatten()(part1_out)  # 1600 values after flatten in lecture demo
+    h2 = Dense(128, activation="relu")(h2)
+    y_hat = Dense(10, activation="softmax")(h2)
+model = Model(inputs=x_in, outputs=y_hat)
+model.compile(optimizer="adam",
+              loss="sparse_categorical_crossentropy",
+              metrics=["accuracy"])
+model.fit(x_train, y_train, batch_size=64, epochs=5)
+model.evaluate(x_test, y_test)</code></pre>
+<div class="example-box">
+  <p><strong>Worked example — CNN two-device split with Conv2D pooling flatten dense softmax.</strong> Follow the code line by line with shapes. Input \(x\_in\) has shape 28 by 28 by 1. Conv2D with 32 filters of size 3 keeps space near 28 by 28 (with same padding) and lifts depth to 32. MaxPooling2D with pool 2 halves space to 14 by 14 by 32. Flatten turns that grid into a vector with \(14 \times 14 \times 32 = 6272\) entries under same padding, or \(13 \times 13 \times 32 = 5408\) entries under valid padding. The lecture demo names 1600 values after flatten. That 1600 is kept as the demo's named flatten size; the exact flatten size depends on padding and pool settings, filter count, and stride. The rule to use on any variant is:</p>
+  <p>\[ \text{flatten length} = H_{out} \times W_{out} \times C_{out} \]</p>
+  <p>where \(H_{out}\) is output height, \(W_{out}\) is output width, and \(C_{out}\) is channel count. Next, Dense 128 maps the flatten vector to 128 scores with relu, then Dense 10 with softmax maps 128 to 10 class scores. Here \(x\_train\) holds training images, \(y\_train\) holds integer labels 0 to 9, <code>sparse_categorical_crossentropy</code> compares predicted class scores with the true integer label, and <code>accuracy</code> counts how often the top score matches the label. For regression the last line would use one neuron with linear output and a squared-error loss. <strong>Answer: one linked model trains across two cards with a single compile, fit, and evaluate.</strong> Sense-check: forward flow crosses the card boundary once, and gradients cross back once, so the user sees one input and one output.</p>
+</div>
+<p>The key point is that after linking, training looks like normal training. Input flows forward through both devices. Error flows back through both devices. From the user side there is one input and one output. Internally the framework tracks ops across scopes so gradients reach both \(W_{1}\) and \(W_{2}\).</p>
+<h3 id="1.2.3-student-questions-and-answers">1.2.3 Student Questions and Answers</h3>
+<div class="important-note">
+  <p><strong>Q:</strong> A model is just learned parameters, so what does splitting a model mean? Can you give an example? <strong>A:</strong> It means placing different weights on different machines. In a convolution network, put early Conv2D plus pooling on machine one and later flatten plus dense on machine two. Feed data to machine one, send its convolution output maps to machine two, and let machine two finish the job. That chain with a hand-off is the split model. Learned parameters stay the same in value; only their home card changes.</p>
+</div>
+<p>The next two doubts refine the same chain, so they are grouped here rather than repeated.</p>
+<div class="important-note">
+  <p><strong>Q:</strong> This example parallelizes feature extraction, but the final decision layer is not parallelized. Is that right? <strong>A:</strong> Yes for this chain. The split spreads feature extraction across machines while the decision block stays single. The same extracted features can feed a classifier head with 10 softmax outputs or a regression head with one plain output. Only the head and loss change, while early blocks keep building the same features.</p>
+</div>
+<div class="important-note">
+  <p><strong>Q:</strong> Does the same split work for a regression model with no classes? <strong>A:</strong> Yes. Convolution blocks still extract features in the same way. The last layer changes from 10 softmax outputs to one plain output with a squared-error loss. Data keeps moving through the same pipe from convolution output to flatten to dense. The head decides the task, not the early pipe.</p>
+</div>
+<div class="key-takeaway">
+  <p><strong>Recap:</strong> A split CNN is one logical model with weights housed on two cards, joined by a feature-map hand-off. <strong>Bridge:</strong> Data parallelism takes the opposite route: it keeps full model copies everywhere and instead splits the data, with replicas that train in parallel and sync.</p>
+</div>
+
+<h2 id="1.3-data-parallelism-with-synchronous-replicas">1.3 Data Parallelism with Synchronous Replicas</h2>
+<h3 id="1.3.1-how-replica-training-works">1.3.1 How Replica Training Works</h3>
+<div class="important-note">
+  <p>What if every card could hold the whole model — how would you still use four cards to finish sooner?</p>
+</div>
+<p>A <em>replica</em> (a full copy of the model placed on its own device), for example copy two of four on GPU two, lets each device work alone. <em>Data parallelism</em> (a plan where each replica sees a different shard of data at the same time) means no card sees all rows. Each replica computes its own updates from its shard. The system then syncs the updates so all copies stay close and the next round starts from one shared state.</p>
+<p>Think of several cooks with the same recipe. Each cook tastes a different dish sample and suggests a small fix to the recipe. The head cook merges the fixes into one new recipe and hands it back. All cooks start the next round from the same merged recipe. Cooks taste samples then head cook merges recipe fixes, and no cook is allowed to drift off with a private recipe for long.</p>
+<div class="key-concept">
+  <p>Synchronous replica weights merged with a sync rule are written as a merge over copies. Let \(w_{r}\) be the weights from replica \(r\), let \(R\) be the count of replicas, and let \(w_{new}\) be the shared result after sync:</p>
+  <p>\[ w_{new} = Sync(w_{1}, w_{2}, \dots, w_{R}) \]</p>
+  <p>Here \(Sync\) means the mirrored averaging or all-reduce used by the strategy. In the gradient form used in practice, each card builds a local gradient \(\nabla W_{r}\) on its shard, the group sums them as \(\nabla W = \nabla W_{1} + \nabla W_{2} + \dots + \nabla W_{R}\), broadcasts the sum back, and then each card applies the same update \(w \leftarrow w - a \nabla W\) with step size \(a\). In words: train copies in parallel, merge, broadcast back, repeat. Replicas train and sync each step so weights never drift far apart.</p>
+</div>
+<p>A <em>batch</em> (the group of samples used in one update), for example 64 images, sets the unit of work. <em>Batch size</em> (how many samples each step sees) grows in effect with replicas. With \(R\) replicas each taking \(B\) local samples, the global batch is:</p>
+<p>\[ B_{global} = R \times B_{local} \]</p>
+<p>With 4 replicas at 64 each, the step sees 256 samples at once. That larger joint batch is why learning rates often need retuning when \(R\) grows: the same step now jumps on more evidence.</p>
+<p>Picture throughput against card count. The horizontal axis is card count from 1 to 16. The vertical axis is speedup over one card. An ideal line rises diagonally with slope one. The measured curve rises fast to about 6 times on 8 cards and about 12 times on 16 cards, then bends below ideal as sync overhead grows. The one-sentence takeaway: more replicas raise joint bandwidth, but messages take a cut.</p>
+<div class="warning-box">
+  <p><strong>Scope:</strong> Replica sync fits when the full model fits on each card and shards are disjoint. <strong>Assumption:</strong> Cards start from the same seed and sync after each step. If sync is skipped, copies drift toward their local shard optima and the group no longer acts as one model.</p>
+</div>
+<div class="example-box">
+  <p><strong>Worked example — Mirrored replicas train shards with sync and batch size.</strong> Take one machine with 4 GPUs and 256 training images in a step. Split the step into 4 shards of 64. Replica 1 sees rows 1 to 64, replica 2 sees rows 65 to 128, replica 3 sees rows 129 to 192, replica 4 sees rows 193 to 256. Each replica runs forward and backward on its 64 and builds \(\nabla W_{r}\). Sync sums the four gradients, divides or keeps the sum per the optimizer rule, broadcasts back, and each replica applies the same update. <strong>Answer: four shards train at once with one shared update per step.</strong> Sense-check: each card touched only one fourth of the rows, yet all four cards hold the same \(w_{new}\) after sync.</p>
+</div>
+<div class="warning-box">
+  <p>A frequent trap is to think replicas can use plain gradient descent over all rows. They cannot, because no replica sees all rows. Stochastic updates on shards plus a sync are required. A second trap is to grow the global batch without touching the learning rate or warmup, which can stall convergence even though throughput looks good.</p>
+</div>
+<div class="key-takeaway">
+  <p><strong>Recap:</strong> Data parallelism clones the model, shards the data, and merges updates each step so copies stay matched. <strong>Bridge:</strong> Layer splits leave cards idle in turn; the fix is to pipeline mini-batches so every stage works on a different shard at the same tick.</p>
+</div>
+<p>Teams use this pattern to speed MNIST-style training on a single workstation with two or more GPUs before moving to multi-machine setups. The same idea scales to ImageNet-scale jobs where one card would need weeks but a group of cards finishes in days.</p>
+<h3 id="1.3.2-code-pattern-with-mirrored-strategy">1.3.2 Code Pattern with Mirrored Strategy</h3>
+<p>The demo used a mirrored strategy for one machine with several GPUs. The pattern is: create the strategy, open its scope, build and compile the model inside that scope, then fit as usual. The strategy clones the model once per GPU and splits each batch across clones.</p>
+<pre><code>strategy = MirroredStrategy()
+with strategy.scope():
+    m = build_small_conv_model(input_shape=(28, 28, 1), num_classes=10)
+    m.compile(optimizer="adam",
+              loss="sparse_categorical_crossentropy",
+              metrics=["accuracy"])
+m.fit(x_train, y_train, batch_size=64, epochs=5)
+m.evaluate(x_test, y_test)</code></pre>
+<p>Here <code>build_small_conv_model</code> stands for the same Conv2D plus pooling plus dense stack used before. Inside <code>strategy.scope</code> the variables become mirrored variables. Outside, fit and evaluate look normal. The number of replicas equals the number of GPUs seen. Each replica trains on its shard. Sync keeps them matched through all-reduce and broadcast.</p>
+<p>A line-by-line read helps. Line one finds the GPUs. The <code>with</code> block marks every variable created inside as shared across replicas. Compile inside the scope matters: the optimizer state is also mirrored, so updates apply uniformly. Fit outside the scope still splits each batch of 64 across replicas behind the scenes. Evaluate runs the same split for scoring.</p>
+<div class="key-takeaway">
+  <p><strong>Exam note:</strong> Expect a code-tracing question where the model is built inside the strategy scope. State that each replica trains on its own data shard with sync after each step, that mirrored variables stay matched by all-reduce plus broadcast, and that the global batch equals replicas times local batch.</p>
+</div>
+
+<h2 id="1.4-pipeline-parallelism-with-mini-batches-and-stages">1.4 Pipeline Parallelism with Mini-Batches and Stages</h2>
+<h3 id="1.4.1-mini-batches-flowing-through-gpus">1.4.1 Mini-Batches Flowing Through GPUs</h3>
+<div class="important-note">
+  <p>If stage two must wait for stage one, where does any speedup come from?</p>
+</div>
+<p>A <em>stage</em> (one step of a longer pipe, such as clean, prepare, train, or test), for example cleaning on GPU zero, owns one job and one set of weights. <em>Pipeline parallelism</em> (a plan that splits a batch into smaller mini-batches and lets stages work on different mini-batches at the same time) turns a serial chain into an overlapped flow. Throughput rises because no stage sits idle for long once the pipe fills.</p>
+<p>Picture GPU 0, GPU 1, and GPU 2 in a line. Mini-batch 1 starts on GPU 0. Then it moves to GPU 1 while mini-batch 2 starts on GPU 0. Next, mini-batch 1 moves to GPU 2, mini-batch 2 moves to GPU 1, and mini-batch 3 starts on GPU 0. At the start some GPUs wait. That idle fill time is short. Once the pipe is full, all three GPUs work together. Each tick moves every mini-batch one step forward. Mini-batch moves stage by stage, and after fill every stage works on a different mini-batch at the same tick.</p>
+<p>The same idea maps to full workflows. Put data cleaning on one GPU, preprocessing on the next, training on the next, and testing on the last. Samples flow forward. Each GPU owns one job. New samples keep entering while old samples keep leaving.</p>
+<div class="important-note">
+  <p>Think of a car wash with wash, rinse, and dry bays. The first car waits at first while empty bays fill, then all bays stay busy as new cars keep arriving. Car wash rinse dry bays stay busy with arriving cars. The mapping is direct: cars are mini-batches, bays are stages, and the wash line is the GPU chain. The analogy breaks when cars need to loop back — in training, gradients must flow backward too, which a car wash never does.</p>
+</div>
+<p>A timing sketch fixes the gain. Without overlap, three inputs through three stages take 9 slots forward. With pipelining, the same work takes 5 slots forward because stage one starts input two while stage two handles input one. The same saving repeats backward. The one-sentence takeaway: overlap turns idle waits into useful work.</p>
+<div class="example-box">
+  <p><strong>Worked example — Three GPUs process mini-batch stages with fill then steady work.</strong> Label stages S0, S1, S2 and mini-batches m1, m2, m3. Tick 1: S0 does m1. Tick 2: S0 does m2, S1 does m1. Tick 3: S0 does m3, S1 does m2, S2 does m1. Tick 4 onward the pipe is full with three active stages. Count active slots: ticks 1 to 2 are fill with 1 then 2 active, ticks 3 onward have 3 active. <strong>Answer: after a 2-tick fill, throughput is about 3 times the serial rate for forward flow.</strong> Sense-check: total work did not shrink, but idle gaps did, so wall time fell from 9 to 5 slots in the textbook 3-by-3 case.</p>
+</div>
+<div class="warning-box">
+  <p><strong>Scope:</strong> Pipelining fits when a batch can be cut into micro-batches with the same shapes and each stage fits its card. <strong>Assumption:</strong> Stage times are balanced. If one stage is much slower, it sets the tick and the other stages still wait at its pace.</p>
+</div>
+<div class="warning-box">
+  <p>A common trap is to count only forward flow. Backward flow must also pipeline or the same idle pattern returns in reverse. Another trap is to cut micro-batches so small that messages dominate: the CPU sends more instructions and small transfers waste link bandwidth, so end-to-end time can rise even though use looks high.</p>
+</div>
+<div class="key-takeaway">
+  <p><strong>Recap:</strong> Pipeline parallelism splits input, not just the model, and overlaps stages across mini-batches for higher throughput. <strong>Bridge:</strong> The same stage idea carries gradients too, where each stage owns trainable weights fed by one joint loss.</p>
+</div>
+<h3 id="1.4.2-stages-loss-and-trainable-variables">1.4.2 Stages, Loss and Trainable Variables</h3>
+<p>A <em>trainable variable</em> (any weight or bias updated by training), for example a 3 by 3 filter value or a dense bias, lives inside exactly one stage. Each stage owns its own set. The pipe output feeds the loss. The loss drives updates for all stages.</p>
+<div class="key-concept">
+  <p>Pipeline stages with loss over trainable variables are written as a short chain. Let \(x\) be stage input, let \(V_{1}\) hold stage 1 weights such as filters, let \(h\) be the passed feature or flattened vector, let \(V_{2}\) hold stage 2 weights such as dense weights, let \(\hat{y}\) be the predicted output, let \(y\) be the true target, and let \(L \in \mathbb{R}\) be the scalar loss:</p>
+  <p>\[ h = Stage_{1}(x; V_{1}) \]</p>
+  <p>\[ \hat{y} = Stage_{2}(h; V_{2}) \]</p>
+  <p>\[ L = Loss(\hat{y}, y) \]</p>
+  <p>Training uses the loss to update \(V_{1} \cup V_{2}\), where \(\cup\) means the joint set of both stages. In the demo \(h\) was the flatten output with 1600 values as named in the lecture, and \(\hat{y} \in \mathbb{R}^{10}\) came from a 10-way softmax. The demo used gradient tape to track ops through both stages so gradients reach both \(V_{1}\) and \(V_{2}\). In words: stage 1 takes \(x\), output \(h\) goes to stage 2, stage 2 gives predictions, compare with truth to get loss, then update both stages.</p>
+</div>
+<p>You can chain more than two stages. Common splits are feature extraction, then shaping, then decision. Each new stage adds its own weights to the joint update set. Forward order is \(Stage_{1} \rightarrow Stage_{2} \rightarrow Loss\). Backward order is the reverse: loss gradients enter \(Stage_{2}\), then flow into \(Stage_{1}}\).</p>
+<p>A tiny numeric pass shows the hand-off. Let \(x\) be one 28 by 28 image. Stage 1 with \(V_{1}\) maps it to \(h\) with 1600 entries as named. Stage 2 with \(V_{2}\) maps those 1600 entries through Dense 128 to 10 logits, then softmax to \(\hat{y}\). Loss compares \(\hat{y}\) with integer \(y\) and returns one scalar \(L\), for example \(L = 0.42\). Tape then yields \(\partial L / \partial V_{2}\) and \(\partial L / \partial V_{1}\) in turn.</p>
+<h3 id="1.4.3-student-questions-and-answers">1.4.3 Student Questions and Answers</h3>
+<div class="important-note">
+  <p><strong>Q:</strong> Stage 1 feeds stage 2 in order, so where is the parallelism? When stage 2 runs, stage 1 looks free. <strong>A:</strong> It looks serial for one mini-batch, but the gain comes across mini-batches. While stage 2 works on mini-batch 1, stage 1 starts mini-batch 2. After the short fill phase, every stage works on a different mini-batch at the same tick. Stage works on mini-batch flow in overlap, and that overlap is the speed gain.</p>
+</div>
+<div class="key-takeaway">
+  <p><strong>Recap:</strong> One mini-batch still moves serially, but many mini-batches move in overlap so the pipe stays full. <strong>Bridge:</strong> Row and column cuts apply the same idea to data tables, where the join rule depends on whether rows or columns were split.</p>
+</div>
+
+<h2 id="1.5-horizontal-and-vertical-partitioning-rows-versus-columns">1.5 Horizontal and Vertical Partitioning — Rows Versus Columns</h2>
+<h3 id="1.5.1-horizontal-partitioning-by-rows">1.5.1 Horizontal Partitioning by Rows</h3>
+<div class="important-note">
+  <p>If every site collects the same fields but sees different people, how do you build one model without moving all rows together?</p>
+</div>
+<p>A <em>row</em> (one sample with all its features), for example one image plus its label, is the unit that moves in a horizontal cut. A <em>column</em> (one feature across all samples), for example pixel 100 across all images, stays whole here. A <em>schema</em> (the list of columns and their types), for example 784 pixel columns plus one label column, stays the same on every shard.</p>
+<p><em>Horizontal partitioning</em> (a cut by rows where all partitions keep the same columns) means only the row sets differ. Example used in the lecture: rows 1 to 10 in partition A and rows 11 to 20 in partition B. Horizontal rows share the schema, so each partition trains its own model copy with the same shapes. Each partition trains its own model copy. Then the weights must join because each copy saw only part of the patterns. The goal is a combined model that acts like a model trained on all rows.</p>
+<div class="key-concept">
+  <p>Horizontal weight averaging across row partitions is a slot-wise mean. Let \(w_{k}\) hold the weights from partition \(k\), let \(K\) be the count of row partitions, and let \(w_{global}\) be the averaged model:</p>
+  <p>\[ w_{global} = \frac{1}{K} \sum_{k=1}^{K} w_{k} \]</p>
+  <p>Here \(\sum_{k=1}^{K}\) means add the \(K\) matching tensors element by element, and \(\frac{1}{K}\) divides each sum by \(K\). With sample counts \(n_{k}\) and total \(N = \sum_{k} n_{k}\), the weighted form is \(w_{global} = \sum_{k} (n_{k}/N) w_{k}\). In words: same features, missing rows, train each part, then average the parameters. Add matching weights and divide by the count. This works when all copies share the same shape because they share the same columns.</p>
+</div>
+<div class="example-box">
+  <p><strong>Worked example — Rows 1 to 10 and 11 to 20 with same columns then average.</strong> Build two copies of one small Conv2D plus dense net. Train copy A on rows 1 to 10, copy B on rows 11 to 20. Suppose a single dense weight learns to \(w_{A} = 0.50\) on A and \(w_{B} = 0.70\) on B. The plain average is:</p>
+  <p>\[ w_{global} = \frac{1}{2}(0.50 + 0.70) = 0.60 \]</p>
+  <p>Do the same slot-wise mean for every weight and bias. <strong>Answer: one averaged model with the same shape stands in for the joint rows.</strong> Sense-check: shapes line up exactly, so every slot has two values to average and none are missing.</p>
+</div>
+<p>Row splits need care. Each shard needs enough rows to learn without underfit. <em>Underfit</em> (a model too weak for the patterns because it saw too little data), for example 60 percent train accuracy on a task where 90 is reachable, appears when shards are tiny. Class balance also matters. If shard A sees only class S and shard B sees only class C, each copy learns a skewed view. Underfit warning when shard sees too little data or single class must be taken seriously. The join then has to repair that skew. Good splits keep enough samples and a fair mix of classes in each shard. In federated terms this is the IID versus non-IID gap: matched mixes average well, skewed mixes drift apart.</p>
+<div class="warning-box">
+  <p><strong>Scope:</strong> Averaging fits row shards with matched shapes and near-matched mixes. <strong>Assumption:</strong> Each shard holds enough rows and a fair class share. When shards are skewed or tiny, plain averaging loses skill and needs weighting by counts plus extra joint tuning.</p>
+</div>
+<div class="key-takeaway">
+  <p><strong>Exam note:</strong> Expect a sketch where rows 1 to 10 and 11 to 20 go to two models. State that averaging joins them and that skewed class splits hurt each local model. Show the formula, the slot-wise mean, and one line on why single-class shards learn narrow views.</p>
+</div>
+<h3 id="1.5.2-vertical-partitioning-by-features">1.5.2 Vertical Partitioning by Features</h3>
+<p><em>Vertical partitioning</em> (a cut by columns where all partitions keep the same rows) means only the feature sets differ. Vertical columns split the schema while row IDs stay matched. Example used in the lecture: first 392 features in part 1 and the rest from 392 onward in part 2, with labels left whole. Each part trains a model that sees only its own columns. At test time the client sends full rows, so the parts must join into one path that accepts all features.</p>
+<div class="key-concept">
+  <p>Vertical branch embeddings stacked with concatenation end in one head. Let \(h_{1}\) be the learned embedding from feature set one, let \(h_{2}\) be the learned embedding from feature set two, let \(Concat\) stack them side by side, and let \(W\) and \(b\) be the final layer weights and bias:</p>
+  <p>\[ h = Concat(h_{1}, h_{2}) \]</p>
+  <p>\[ \hat{y} = Softmax(W h + b) \]</p>
+  <p>Here \(h\) is the joint view, \(W \in \mathbb{R}^{C \times d}\) maps \(d\) stacked values to \(C\) class logits, \(b \in \mathbb{R}^{C}\) shifts them, and \(\hat{y}\) is the predicted class score vector. In words: split columns, train each column set, then fuse embeddings and classify. Let each branch learn from its own columns, stack the two learned vectors, then decide once from the stacked vector. If each branch gives 50 useful values, the stack gives about 100 values to the final layer. The result is not perfect, but it lets the joint model use both views.</p>
+</div>
+<p>Picture the shapes. The horizontal axis is feature index from 0 to 784. A cut line sits at 392. The left block feeds branch one, the right block feeds branch two. Two arrows rise to \(h_{1}\) and \(h_{2}}\), then merge into one wider bar \(h\) before the final head. The one-sentence takeaway: two narrow views stack into one wide view before deciding.</p>
+<div class="example-box">
+  <p><strong>Worked example — First 392 features versus rest with labels whole then fuse.</strong> Keep all rows. Give branch one columns 0 to 392 and branch two columns 392 onward. Labels stay whole on both sides. Train branch one to \(h_{1} \in \mathbb{R}^{50}\) and branch two to \(h_{2} \in \mathbb{R}^{50}\) — in plain form each branch outputs 50 values. Stack to \(h \in \mathbb{R}^{100}\) by:</p>
+  <p>\[ h = [h_{1,1}, \dots, h_{1,50}, h_{2,1}, \dots, h_{2,50}] \]</p>
+  <p>Then \(W \in \mathbb{R}^{10 \times 100}\) plus \(b \in \mathbb{R}^{10}\) score 10 classes. <strong>Answer: a two-input joint path accepts full rows at test time.</strong> Sense-check: neither branch alone sees all 784 pixels, but the stack does, so joint skill beats either branch alone.</p>
+</div>
+<p>Vertical joins are harder than row joins. Simple weight averaging fails because input sizes differ and layers do not line up one to one. A fusion layer plus joint training is the normal fix. Train with both slices together and test with both slices together.</p>
+<div class="warning-box">
+  <p><strong>Scope:</strong> Fusion fits column shards with matched row IDs and a shared label column. <strong>Assumption:</strong> Row linkage is exact across sites. When IDs do not match, the task drifts toward separate problems and needs overlap plus fill-in before fusion can help.</p>
+</div>
+<h3 id="1.5.3-student-questions-and-answers">1.5.3 Student Questions and Answers</h3>
+<div class="important-note">
+  <p><strong>Q:</strong> What is the core difference between horizontal and vertical partitioning from a data view? <strong>A:</strong> Horizontal cuts rows and keeps the schema the same in each shard. Vertical cuts columns and gives each shard a different schema. One student put it as rows 1 to 10 versus columns for features, which matches this rule. Row cuts change who is seen; column cuts change what is seen about the same who.</p>
+</div>
+<div class="important-note">
+  <p><strong>Q:</strong> Which is more complex to join? <strong>A:</strong> Vertical is more complex. Each branch learns from different features, so plain averaging does not line up. You need a fusion step such as concatenation plus joint training. Horizontal can often start with averaging because shapes match slot by slot.</p>
+</div>
+<div class="important-note">
+  <p><strong>Q:</strong> For a horizontal row split, must each shard mirror the full mix or can we just take rows in order? <strong>A:</strong> You must plan the mix. Each shard needs enough rows to avoid underfit and a fair share of each class. If one shard sees only one class, its local model learns a narrow view and the join suffers. Design shard size and class mix with care, and prefer shuffled or stratified cuts over blind ordered cuts.</p>
+</div>
+<table>
+  <thead>
+    <tr>
+      <th>Dimension</th>
+      <th>Horizontal (rows)</th>
+      <th>Vertical (columns)</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td>What moves</td>
+      <td>Row sets differ, columns stay same</td>
+      <td>Column sets differ, rows stay same</td>
+    </tr>
+    <tr>
+      <td>Schema per shard</td>
+      <td>Same schema everywhere</td>
+      <td>Different schema per shard</td>
+    </tr>
+    <tr>
+      <td>Shape match</td>
+      <td>Yes, so averaging lines up</td>
+      <td>No, so averaging has no slots</td>
+    </tr>
+    <tr>
+      <td>First join try</td>
+      <td>Average weights, optionally by counts</td>
+      <td>Concatenate embeddings, then joint head</td>
+    </tr>
+    <tr>
+      <td>When to pick</td>
+      <td>Same fields, different people</td>
+      <td>Same people, different fields</td>
+    </tr>
+  </tbody>
+</table>
+<p>Pick horizontal when sites share fields but serve different samples. Pick vertical when sites share IDs but hold different views. That one-line rule selects the join.</p>
+<div class="key-takeaway">
+  <p><strong>Recap:</strong> Rows split who, columns split what; averaging starts row joins while fusion starts column joins. <strong>Bridge:</strong> Hospitals show both patterns at once — same patients with different features call for vertical fusion, while same features with different patients call for row averaging.</p>
+</div>
+
+<h2 id="1.6-hospitals-non-iid-data-and-when-vertical-partitioning-appears">1.6 Hospitals, Non-IID Data and When Vertical Partitioning Appears</h2>
+<h3 id="1.6.1-same-patients-different-features-versus-same-features-different-patients">1.6.1 Same Patients Different Features Versus Same Features Different Patients</h3>
+<div class="important-note">
+  <p>Why would hospitals that never share raw records still need one shared model?</p>
+</div>
+<p><em>IID</em> (independent and identically distributed, in plain words samples drawn from the same mix in the same way), for example shuffled MNIST digits dealt evenly to two cards, lets averaging work well. <em>Non-IID</em> (shards drawn from different mixes), for example one hospital seeing mostly cardiac cases and another seeing mostly eye cases, pulls local optima apart and makes naive merges weak.</p>
+<p>Vertical case: the same patient visits three sites. Hospital 1 stores cardiac signals. Hospital 2 stores eye signs. Hospital 3 stores skin signs. Rows line up by patient, columns differ by site. No site wants to share raw columns. Yet the task needs all three views to score health, such as a health quotient in percent. That is vertical by nature. Cardiac eye skin views belong to the same IDs, so column joins make sense.</p>
+<p>Horizontal case: two hospitals store the same columns but serve different patients. Patient sets do not cross. Each site can train on its own rows. The join must still give one model that works for new patients from either mix.</p>
+<div class="important-note">
+  <p>Think of report cards from three teachers for the same child versus report cards from two schools for different children. The first needs a merge across subjects for one child. The second needs a merge across groups. Report cards across subjects need merge across teachers, while report cards across schools need merge across populations. The analogy breaks when grading scales differ — in hospitals the feature scales also differ, so fusion must also normalize views.</p>
+</div>
+<p>A useful test is overlap. If patients cross sites, row IDs match and column joins make sense. If no patients cross, the shards are separate tasks and a joint model has little to stand on. The working guess used here is that at least 20 to 30 percent overlap lets us learn the link between views. Below that the task drifts toward separate models. Overlap is the bridge: linked rows teach cross-view links, then those links fill missing views for the rest.</p>
+<div class="example-box">
+  <p><strong>Worked example — Same IDs enable vertical fusion.</strong> Take 100 patients seen at all three sites. Hospital 1 holds 20 cardiac columns, hospital 2 holds 15 eye columns, hospital 3 holds 10 skin columns. Row 7 at all three sites refers to patient 7. Each site builds an embedding: \(h_{cardiac} \in \mathbb{R}^{20}\), \(h_{eye} \in \mathbb{R}^{15}\), \(h_{skin} \in \mathbb{R}^{10}\) in a tiny illustrative sizing. Stack to \(h \in \mathbb{R}^{45}\) and score one health quotient in percent. <strong>Answer: matched IDs turn three private views into one joint score without moving raw columns.</strong> Sense-check: remove ID matching and the stack has no row to align, so fusion loses its key.</p>
+</div>
+<div class="warning-box">
+  <p><strong>Scope:</strong> Natural vertical splits fit when IDs overlap enough to learn links. <strong>Assumption:</strong> At least a fifth to a third of rows link across sites in the lecture's working guess. With thinner overlap, borrow-and-fill becomes noisy and separate models may serve better.</p>
+</div>
+<p>In production this shows up as cardiac, eye, and skin feature stores kept at different hospitals that must score a shared health output without moving raw records. Sensitive columns kept apart are a second trigger: even when rows could move legally, policy keeps them local and only weights, gradients, or parameters travel.</p>
+<div class="warning-box">
+  <p>A common trap is to treat a natural split as a free choice. Here the split is already there: different sites collected different views and will not pool them. The job is to learn across the natural split with model sharing and smart aggregation, not to re-cut the tables from scratch.</p>
+</div>
+<div class="key-takeaway">
+  <p><strong>Recap:</strong> Same patients with different features call for vertical fusion; same features with different patients call for horizontal merging. <strong>Bridge:</strong> Both routes end at one hard question — how to combine weight sets without the raw rows.</p>
+</div>
+<h3 id="1.6.2-model-aggregation-as-a-research-problem">1.6.2 Model Aggregation as a Research Problem</h3>
+<p><em>Model aggregation</em> (building one usable model from several trained models without moving raw data), for example merging three hospital nets into one health scorer, is the center of this lecture. Each site trains locally and shares only weights, gradients, or weight files such as H5 files with parameters plus sample counts. The center must fuse them. Weights gradients parameters are the only travelers; raw rows stay local.</p>
+<div class="key-concept">
+  <p>Aggregation of hospital weight sets into a shared model is written as a fusion map. Let \(W_{1}, W_{2}, W_{3}\) be weight sets from three sites and let \(Aggregate\) be the fusion rule to be designed:</p>
+  <p>\[ W = Aggregate(W_{1}, W_{2}, W_{3}) \]</p>
+  <p>Here each \(W_{k}\) is a full parameter list for site \(k\), and \(W\) is the shared model meant to work on new rows from any site. In words: find a math rule that keeps shared patterns and drops site noise. For row splits with the same shape, plain averaging is a first try with \(W = (W_{1} + W_{2} + W_{3})/3\) or a count-weighted mean. For column splits with different shapes, averaging has no matching slots, so fusion plus retraining is needed. Recent work studies similarity-aware updates, composite rules, and personalized mixes that keep per-site skill while building a shared core.</p>
+</div>
+<p>A common trap is to think weight files can just be added. They can only be added when layers line up. When features differ, the early layers learn different views, so slot-by-slot addition mixes unlike things. Imagine adding a cardiac-filter weight to an eye-filter weight because both sit at index 5 — the sum has no meaning. Shape checks catch this fast: if \(W_{1} \in \mathbb{R}^{392 \times 64}\) and \(W_{2} \in \mathbb{R}^{392 \times 64}\) they can average, but if one is \(\mathbb{R}^{392 \times 64}\) and the other is \(\mathbb{R}^{400 \times 64}\) they cannot.</p>
+<p>Research directions follow the failure modes. For skewed mixes, methods weight by sample counts or add proximal terms that keep local models near the shared core. For heterogeneous cards, methods let fast cards do more steps while still counting slow cards through delayed or compensated updates. For faulty or hostile updates, robust means such as medians or trimmed means replace the plain mean. The shared theme is the same: keep useful signals, down-weight noise, and handle shape mismatch by design rather than by blind addition.</p>
+<h3 id="1.6.3-student-questions-and-answers">1.6.3 Student Questions and Answers</h3>
+<div class="important-note">
+  <p><strong>Q:</strong> When would we ever need vertical partitioning in real work? Wide feature sets with few rows seem rare. <strong>A:</strong> The strong case is privacy plus split views. One site holds cardiac features, another holds eye features, another holds skin features for the same people. No site shares raw columns. To score health from all views you must fuse models, not rows. Sensitive columns kept apart are another trigger, even when the table looks narrow at any one site.</p>
+</div>
+<div class="important-note">
+  <p><strong>Q:</strong> In your hospital story the split is already there. We are not choosing to partition, right? <strong>A:</strong> Right. The data arrive split. Different sites collected different views and will not pool them. The job is to learn across the natural split with model sharing and smart aggregation. Design effort goes into the join, not into re-cutting.</p>
+</div>
+<div class="important-note">
+  <p><strong>Q:</strong> Combining three weight files sounds simple. Is it simple or complex? <strong>A:</strong> It is complex when features differ. Each file learned a different view with different shapes. There is no clean one-to-one slot match. Weights gradients parameters can travel, but you must design a fusion rule that keeps useful signals and handles shape mismatch. That design is active research, from weighted means to robust and personalized mixes.</p>
+</div>
+<div class="important-note">
+  <p><strong>Q:</strong> If hospitals have different patients, not the same IDs, how do we proceed? Your code kept the same IDs across column splits. <strong>A:</strong> Same IDs is the easy vertical case. With disjoint IDs plus disjoint columns, there is no link to learn and you have two separate tasks. With partial overlap, use the linked rows to learn cross-view links, then fill missing views for the rest by nearest-neighbor borrowing. Example: if patient P_n without cardiac data looks closest to linked patient P_3 on shared views, borrow P_3 style cardiac values as a fill, then train on the filled table. This needs enough overlap to be safe, on the order of 20 to 30 percent in the lecture's working guess.</p>
+</div>
+<div class="key-takeaway">
+  <p><strong>Recap:</strong> Natural splits force model-level joins, and the join must respect IDs, shapes, and overlap. <strong>Bridge:</strong> Code makes the rules concrete: row cuts average while column cuts fuse, and the numbers show why.</p>
+</div>
+
+<h2 id="1.7-partitioning-code-fusion-models-and-what-the-numbers-showed">1.7 Partitioning Code, Fusion Models and What the Numbers Showed</h2>
+<h3 id="1.7.1-horizontal-split-code-and-evaluation">1.7.1 Horizontal Split Code and Evaluation</h3>
+<div class="important-note">
+  <p>Can two models that never saw each other's rows still become one model?</p>
+</div>
+<p>The horizontal demo used row cuts. Take training rows up to 30000 as shard A and the rest from 30000 onward as shard B, with matching label cuts. Rows labels accuracy are tracked together so the join can be judged. Keep columns whole. Build the same model twice, train each on its own shard, and test each on its own test shard. This shows what each local model learned alone before any join.</p>
+<pre><code>x_train_a, y_train_a = x_train[:30000], y_train[:30000]
+x_train_b, y_train_b = x_train[30000:], y_train[30000:]
+model_a = build_model(num_classes=10)
+model_b = build_model(num_classes=10)
+model_a.fit(x_train_a, y_train_a, epochs=5, batch_size=64)
+model_b.fit(x_train_b, y_train_b, epochs=5, batch_size=64)
+model_a.evaluate(x_test, y_test)
+model_b.evaluate(x_test, y_test)</code></pre>
+<p>Here <code>build_model</code> makes the same Conv2D plus dense stack for both shards. Labels stay as full class IDs because row cuts do not touch the target column. The join step for rows can start with weight averaging across <code>model_a</code> and <code>model_b</code> because shapes match.</p>
+<div class="example-box">
+  <p><strong>Worked example — Row shards to 30000 and onward with local accuracy then average.</strong> Suppose the full train set holds 60000 rows. Shard A holds rows 0 to 30000, shard B holds rows 30000 onward. Train copy A only on A and copy B only on B for 5 epochs at batch 64. Score each on the shared test set. A later horizontal demo with three shards reported local accuracies near 0.79, 0.81, and 0.81, while the plain averaged model scored about 0.73. In words: local models looked strong alone, but naive averaging lost skill on the joint test. The numbers named were 79 percent, 81 percent, 81.01 percent, and 73.18 percent for the combined model, kept here as the lecture demo's observed values. The likely cause named was a small dummy set with few classes where extra rows added noise rather than signal, plus need for tuning after averaging. <strong>Answer: averaging alone is only the start; weighting by sample counts plus extra joint steps often follow.</strong> Sense-check: shapes matched so averaging ran, yet joint skill fell, which points to mix skew and under-tuning rather than a shape bug.</p>
+</div>
+<div class="warning-box">
+  <p><strong>Scope:</strong> Row-split code fits when both shards share input widths and label sets. <strong>Assumption:</strong> Test rows come from the same joint mix. When shards are skewed by class, local accuracy flatters each copy and the averaged model needs re-weighting and a short joint tune.</p>
+</div>
+<h3 id="1.7.2-vertical-split-code-and-two-branch-fusion">1.7.2 Vertical Split Code and Two-Branch Fusion</h3>
+<p>The vertical demo used column cuts. Keep all rows. Take columns 0 to 392 as part 1 and columns 392 onward as part 2, with the same cut for train and test. Branches concatenation accuracy are tracked together to judge the fusion. Labels stay whole. Build one branch per part with input size set to its own column count. Each branch learns its own embedding. Then stack the embeddings and add a joint head.</p>
+<pre><code>x_train_p1, x_test_p1 = x_train[:, :392], x_test[:, :392]
+x_train_p2, x_test_p2 = x_train[:, 392:], x_test[:, 392:]
+in1 = Input(shape=(392,))
+h1 = Dense(64, activation="relu")(in1)
+in2 = Input(shape=(x_train.shape[1]-392,))
+h2 = Dense(64, activation="relu")(in2)
+h = Concatenate()([h1, h2])
+y_hat = Dense(10, activation="softmax")(h)
+joint = Model(inputs=[in1, in2], outputs=y_hat)
+joint.compile(optimizer="adam",
+              loss="sparse_categorical_crossentropy",
+              metrics=["accuracy"])
+joint.fit([x_train_p1, x_train_p2], y_train, epochs=5, batch_size=64)
+joint.evaluate([x_test_p1, x_test_p2], y_test)</code></pre>
+<p>A second vertical demo used a small table with survival as target. Steps were: fill age gaps with median, fill categorical gaps with mode, drop the target column from inputs, shuffle, split train and test, scale numbers, then cut columns into group one with indices 0, 5, 1 and group two with indices 2, 3, 4, 6, 7. Group one held 3 columns such as class plus sex plus age. Group two held 5 columns such as sibling count plus parch plus ticket plus fare plus embark point, kept here as the column-to-index map named in the lecture. Each branch used input size 3 or 5 to match its group. The joint model took both inputs, passed each through dense layers, stacked the branch outputs, added more dense layers, and ended with one output for survived or not. Labels stayed single because the target column is never split.</p>
+<div class="example-box">
+  <p><strong>Worked example — Table branches with 3 and 5 columns stacked to 0.7933 accuracy.</strong> Give branch one a 3-wide input and branch two a 5-wide input. Pass each through Dense relu to 16 values, stack to 32, pass through one more Dense relu to 16, then score survival with one sigmoid unit. Train on both slices together, test on both slices together. Branch one alone scored about 0.70, branch two alone scored about 0.70, and the fused joint model scored about 0.7933 in the lecture demo, a gain near nine points from fusion kept here as observed demo values. <strong>Answer: stacked views beat either view alone because the head sees both column groups at decision time.</strong> Sense-check: each branch misses whole features, so single-branch skill stays weak while joint skill rises.</p>
+</div>
+<h3 id="1.7.3-accuracy-numbers-and-why-averaging-fails-for-vertical-splits">1.7.3 Accuracy Numbers and Why Averaging Fails for Vertical Splits</h3>
+<p>Numbers named for the table demo were about 0.70 for branch one alone, about 0.70 for branch two alone, and about 0.7933 for the fused joint model. That is a gain near nine points from fusion. In words: each view alone gives weak skill, the stacked view gives stronger skill because it sees both column groups at decision time. More layers or wider branches could lift skill further with tuning. The decimals are kept as the demo's observed values, not as universal constants.</p>
+<div class="key-concept">
+  <p>The join rule differs by cut. For row cuts with shared shapes, weight averaging has matching slots:</p>
+  <p>\[ w_{global} = \frac{1}{K} \sum_{k=1}^{K} w_{k} \]</p>
+  <p>For column cuts the branches have different input widths and different learned views, so there is no matching slot. Plain averaging is not allowed. The working rule is fusion plus joint training:</p>
+  <p>\[ h_{1} = Branch_{1}(x_{p1}), \quad h_{2} = Branch_{2}(x_{p2}), \quad h = Concat(h_{1}, h_{2}) \]</p>
+  <p>Here \(x_{p1}\) is the row slice with part-one columns, \(x_{p2}\) is the same row slice with part-two columns, \(Branch_{1}\) and \(Branch_{2}\) are the per-view dense stacks, and \(h\) feeds the final decision layers. Train with both slices together and test with both slices together. Labels stay single because the target column is never split. Weights gradients parameters travel in field setups while raw rows stay local; the classroom joint fit sees both slices together for teaching, and field setups aggregate shared values instead.</p>
+</div>
+<p>Picture two joins side by side. On the left, two identical grids average slot by slot into one grid of the same size. On the right, two different-width strips feed two towers that merge into one wider bar before one head. The one-sentence takeaway: same shapes average, different shapes fuse.</p>
+<div class="warning-box">
+  <p><strong>Scope:</strong> Use averaging only when every \(w_{k}\) shares shapes and label sets. <strong>Assumption:</strong> Branches share row IDs for fusion. When IDs mismatch and overlap is thin, fusion has no anchor and the task splits into separate problems.</p>
+</div>
+<div class="key-takeaway">
+  <p><strong>Exam note:</strong> Expect a compare task where you must state that row-split models can start from averaging while column-split models need two inputs, two branches, concatenation, and joint fit. Quote the gain from about 0.70 to about 0.79 as evidence from the lecture demo, and show shape checks for every formula with premises, steps, and final values in order.</p>
+</div>
+<h3 id="1.7.4-student-questions-and-answers">1.7.4 Student Questions and Answers</h3>
+<div class="important-note">
+  <p><strong>Q:</strong> If we skip the joint model, which cut still works alone, row cuts or column cuts? <strong>A:</strong> Row cuts can still act like full models because each shard keeps all features. Rows labels accuracy can be scored per copy, though skill may sit below the joint model. Column cuts cannot. Each branch misses whole features, so single-branch skill stays weak near 0.70 in the demo. You must fuse with branches concatenation accuracy to get a usable full-input model near 0.79.</p>
+</div>
+<div class="important-note">
+  <p><strong>Q:</strong> What books or theory should we read for the test? <strong>A:</strong> Use the class decks plus what was worked through in the sessions. Questions come from those decks and the ideas discussed around them. No extra book theory is needed beyond that. State shard ranges, index groups, and input widths 3 and 5 in the table demo and 392 splits in the image demo when asked.</p>
+</div>
+<div class="important-note">
+  <p><strong>Q:</strong> When you fuse and retrain, which data trains the joint model if sites will not share raw data? <strong>A:</strong> In the classroom demo the joint model sees both slices because the data are in one place for teaching. In field setups with privacy, raw rows stay on local devices or sensors. Sites share weights, gradients, or parameters, and the center aggregates those shared values. Weights gradients parameters travel while rows stay local. The full gradient-aggregation method comes later in the course.</p>
+</div>
+<div class="key-takeaway">
+  <p><strong>Recap:</strong> Row code splits to 30000 and onward then averages, while column code splits at 392 then fuses with concatenation and joint fit. <strong>Bridge:</strong> The closing summaries collect the exam lines and the field uses in one place.</p>
+</div>
+
+<h2 id="exam-guidance-summary">Exam Guidance Summary</h2>
+<p>Use the class decks plus session work as the base. Questions come from those sources. Likely prompts: shared-memory parallel versus independent-machine distributed design, row versus column partitioning with a small row sketch, why vertical joins need fusion not averaging, pipeline fill versus steady state with three GPUs, and code traces for mirrored scope plus two-branch concatenation.</p>
+<p>For row-split code, state shard ranges and that labels stay whole: rows up to 30000 as shard A and the rest from 30000 onward as shard B in the image demo, and rows 1 to 10 versus 11 to 20 in the sketch task. For column-split code, state index groups and input widths 3 and 5 in the table demo and 392 splits in the image demo: columns 0 to 392 as part one and 392 onward as part two, with group one on indices 0, 5, 1 and group two on indices 2, 3, 4, 6, 7.</p>
+<p>Quote local versus joint accuracies where asked: near 0.79 and 0.81 locally with about 0.73 after naive row averaging in the small demo, and about 0.70 each rising to about 0.7933 after column fusion. Those decimals are the lecture demo's observed values. Show shape checks for every formula. Write premises, steps, and final values in order.</p>
+<div class="key-takeaway">
+  <p><strong>Exam note:</strong> When asked to compare joins, state that row-split models start from averaging because shapes match, while column-split models need two inputs, two branches, concatenation, and joint fit because shapes differ. Support the claim with the 0.70 to 0.79 fusion gain and the 0.79 to 0.73 averaging drop from the demos.</p>
+</div>
+
+<h2 id="key-industry-applications">Key Industry Applications</h2>
+<p>Large-scale training and serving reuse the same four joins from the lecture. Each item below names a concrete use plus the lecture rule it exercises.</p>
+<p>TGB-scale data split into row partitions so each machine fits its shard. Each worker holds one graph partition such as partition 1, 2, or 5, trains or scores on its rows, and merges through sync or aggregation. This is horizontal partitioning at scale.</p>
+<p>80-billion to 100-billion parameter language models split by layers across cards. Early blocks live on early cards, later blocks live on later cards, and feature maps move forward while gradients move back. This is model parallelism for giant models that exceed single-card memory.</p>
+<p>MNIST training sped with mirrored replicas on a multi-GPU workstation. Each replica holds a full copy, trains on its shard inside the strategy scope, and syncs by all-reduce plus broadcast. This is data parallelism with synchronous replicas.</p>
+<p>Cleaning plus prepare plus train plus test placed as pipe stages on separate GPUs for steady throughput. Mini-batches flow stage to stage so all cards stay busy after a short fill. This is pipeline parallelism with mini-batches and stages.</p>
+<p>Cardiac plus eye plus skin stores kept at separate hospitals fused into one health score without moving raw columns. Matched patient IDs anchor concatenation plus joint scoring, with 20 to 30 percent overlap as the working floor for learning links. This is vertical partitioning for privacy-split views.</p>
+<p>H5 weight files plus sample counts shared for aggregation while rows stay local. The center averages matching shapes or fuses mismatched branches, weighting by counts where shards differ in size. This is model aggregation without raw-data movement.</p>
+<p>Keras plus MirroredStrategy plus Concatenate layers used to build row-average and column-fusion paths. Device scopes place layers, strategy scopes mirror copies, and Concatenate stacks branch views before one head. This is the code surface for the three joins.</p>
+<p>Titanic-style survival table with median fills for age and mode fills for categorical fields used to show column fusion gains. Three-column and five-column branches score about 0.70 alone and about 0.7933 fused, showing why column cuts need joint heads. This is the table demo's evidence for fusion over averaging.</p>
+    </main>
+
+    <!-- ============================================================
+    EXAM REVISION NOTES
+    Generated AFTER the main lecture-faithful content is complete. Each entry
+    distills one major concept into its most examinable elements.
+    Built FROM the core — never invented independently.
+
+    Each entry is a <div class="exam-revision-entry"> containing:
+      - .revision-topic (h3) — concept name
+      - .revision-mustknow — the single most examinable takeaway
+      - .revision-formula — central formula(s) in \[ ... \] MathJax
+      - .revision-pitfall — the #1 exam mistake
+      - .revision-check — one self-check question (no options)
+      - .revision-connections — linked concepts within this lecture
+    ============================================================ -->
+    <section class="exam-revision-section">
+      <h2>Exam Revision Notes</h2>
+      <p class="revision-intro">Below is the distilled, exam-ready core.
+      Every entry comes from the full explanation above. Use this section
+      for rapid review; return to the main notes when a point needs more context.</p>
+      <div class="exam-revision-entry">
+        <h3 class="revision-topic">Why Split Models and Data — Parallel and Distributed Computing</h3>
+        <p class="revision-mustknow"><strong>Must-know:</strong> Distributed means independent machines with private memory; splitting gives parallelism and fixes fit</p>
+        <p class="revision-formula">\[ D = D_{1} \cup D_{2} \cup D_{3} \]</p>
+        <p class="revision-pitfall"><strong>Top pitfall:</strong> Mixing shared-memory parallel with independent-machine distributed design</p>
+        <p class="revision-check"><strong>Self-check:</strong> State the difference between shared-memory parallel and distributed designs in one line each.</p>
+        <p class="revision-connections"><strong>Connects to:</strong> 1.2, 1.3</p>
+      </div>
+      <div class="exam-revision-entry">
+        <h3 class="revision-topic">Model Splitting Across Machines — CNN Example and Code Walkthrough</h3>
+        <p class="revision-mustknow"><strong>Must-know:</strong> Layer splits place early weights on one card and later weights on the next with feature-map hand-off</p>
+        <p class="revision-formula">\[ y = f_{2}(f_{1}(x; W_{1}); W_{2}) \]</p>
+        <p class="revision-pitfall"><strong>Top pitfall:</strong> Thinking the decision head splits for free in a layer chain</p>
+        <p class="revision-check"><strong>Self-check:</strong> What crosses the card boundary forward and what crosses back?</p>
+        <p class="revision-connections"><strong>Connects to:</strong> 1.1, 1.4</p>
+      </div>
+      <div class="exam-revision-entry">
+        <h3 class="revision-topic">Data Parallelism with Synchronous Replicas</h3>
+        <p class="revision-mustknow"><strong>Must-know:</strong> Each replica trains its shard in parallel then syncs by averaging or all-reduce plus broadcast</p>
+        <p class="revision-formula">\[ w_{new} = Sync(w_{1}, w_{2}, \dots, w_{R}) \]</p>
+        <p class="revision-pitfall"><strong>Top pitfall:</strong> Growing the global batch without retuning learning rate</p>
+        <p class="revision-check"><strong>Self-check:</strong> What is the global batch with R replicas at local batch B?</p>
+        <p class="revision-connections"><strong>Connects to:</strong> 1.1, 1.4</p>
+      </div>
+      <div class="exam-revision-entry">
+        <h3 class="revision-topic">Pipeline Parallelism with Mini-Batches and Stages</h3>
+        <p class="revision-mustknow"><strong>Must-know:</strong> Pipeline parallelism overlaps stages across mini-batches so all GPUs work after a short fill</p>
+        <p class="revision-formula">\[ h = Stage_{1}(x; V_{1}), \hat{y} = Stage_{2}(h; V_{2}), L = Loss(\hat{y}, y) \]</p>
+        <p class="revision-pitfall"><strong>Top pitfall:</strong> Counting only forward flow and ignoring backward pipelining</p>
+        <p class="revision-check"><strong>Self-check:</strong> Why does stage 1 look free for one mini-batch but busy across mini-batches?</p>
+        <p class="revision-connections"><strong>Connects to:</strong> 1.2, 1.3</p>
+      </div>
+      <div class="exam-revision-entry">
+        <h3 class="revision-topic">Horizontal and Vertical Partitioning — Rows Versus Columns</h3>
+        <p class="revision-mustknow"><strong>Must-know:</strong> Horizontal cuts rows and averages; vertical cuts columns and fuses embeddings with concatenation</p>
+        <p class="revision-formula">\[ w_{global} = \frac{1}{K} \sum_{k=1}^{K} w_{k} \]</p>
+        <p class="revision-pitfall"><strong>Top pitfall:</strong> Averaging vertical branches whose shapes do not line up</p>
+        <p class="revision-check"><strong>Self-check:</strong> Which cut keeps the schema same and which changes it?</p>
+        <p class="revision-connections"><strong>Connects to:</strong> 1.6, 1.7</p>
+      </div>
+      <div class="exam-revision-entry">
+        <h3 class="revision-topic">Hospitals, Non-IID Data and When Vertical Partitioning Appears</h3>
+        <p class="revision-mustknow"><strong>Must-know:</strong> Same patients with different features need vertical fusion; overlap anchors the join</p>
+        <p class="revision-formula">\[ W = Aggregate(W_{1}, W_{2}, W_{3}) \]</p>
+        <p class="revision-pitfall"><strong>Top pitfall:</strong> Adding weight files slot-wise when shapes differ</p>
+        <p class="revision-check"><strong>Self-check:</strong> What overlap test decides between joint fusion and separate models?</p>
+        <p class="revision-connections"><strong>Connects to:</strong> 1.5, 1.7</p>
+      </div>
+      <div class="exam-revision-entry">
+        <h3 class="revision-topic">Partitioning Code, Fusion Models and What the Numbers Showed</h3>
+        <p class="revision-mustknow"><strong>Must-know:</strong> Row splits start from averaging; column splits need two branches plus concatenation and joint fit</p>
+        <p class="revision-formula">\[ h_{1} = Branch_{1}(x_{p1}), h_{2} = Branch_{2}(x_{p2}), h = Concat(h_{1}, h_{2}) \]</p>
+        <p class="revision-pitfall"><strong>Top pitfall:</strong> Using plain averaging for column splits with mismatched widths</p>
+        <p class="revision-check"><strong>Self-check:</strong> Why did 0.70 plus 0.70 rise to 0.79 only after fusion?</p>
+        <p class="revision-connections"><strong>Connects to:</strong> 1.5, 1.6</p>
+      </div>
+    </section>
+  </div>
+</body>
+</html>

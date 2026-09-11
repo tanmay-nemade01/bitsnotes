@@ -1,0 +1,897 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+  <!-- Primary SEO -->
+  <title>Quantization, Fine-Tuning, and Low-Rank Adaptation | Distributed Machine Learning | BitsNotes</title>
+  <meta name="description" content="Distributed Machine Learning notes on quantization, LoRA, FP32 encodings, gradient compression, and pruning after slicing.">
+  <meta name="keywords" content="Distributed Machine Learning, quantization, fine-tuning, LoRA, PEFT, FP32, FP16, BF16, TF32, INT8, pruning, RAG, gradient compression, communication bottleneck">
+  <meta name="author" content="BitsNotes">
+  <meta name="robots" content="index, follow">
+  <link rel="canonical" href="https://bitsnotes.com/view/distributed-machine-learning/quantization-fine-tuning-and-low-rank-adaptation">
+
+  <!-- Open Graph / Facebook -->
+  <meta property="og:type" content="article">
+  <meta property="og:title" content="Quantization, Fine-Tuning, and Low-Rank Adaptation | Distributed Machine Learning">
+  <meta property="og:description" content="Distributed Machine Learning notes on quantization, LoRA, FP32 encodings, gradient compression, and pruning after slicing.">
+  <meta property="og:url" content="https://bitsnotes.com/view/distributed-machine-learning/quantization-fine-tuning-and-low-rank-adaptation">
+  <meta property="og:image" content="https://bitsnotes.com/og-default.png">
+  <meta property="og:image:width" content="1200">
+  <meta property="og:image:height" content="630">
+  <meta property="og:site_name" content="BitsNotes">
+
+  <!-- Twitter Card -->
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="Quantization, Fine-Tuning, and Low-Rank Adaptation | Distributed Machine Learning">
+  <meta name="twitter:description" content="Distributed Machine Learning notes on quantization, LoRA, FP32 encodings, gradient compression, and pruning after slicing.">
+  <meta name="twitter:image" content="https://bitsnotes.com/og-default.png">
+  <meta name="twitter:site" content="@BitsNotes">
+
+  <!-- Stylesheet -->
+  <link rel="stylesheet" href="/lecture-notes.css">
+
+  <!-- Structured Data: JSON-LD -->
+  <script type="application/ld+json">
+{"@context":"https://schema.org","@type":"LearningResource","name":"Quantization, Fine-Tuning, and Low-Rank Adaptation","headline":"Quantization, Fine-Tuning, and Low-Rank Adaptation | Distributed Machine Learning","description":"Distributed Machine Learning notes on quantization, LoRA, FP32 encodings, gradient compression, and pruning after slicing.","datePublished":"2026-09-11","author":{"@type":"Organization","name":"BitsNotes"},"publisher":{"@type":"Organization","name":"BitsNotes"},"url":"https://bitsnotes.com/view/distributed-machine-learning/dml-lecture-6","image":"https://bitsnotes.com/og-default.png","inLanguage":"en","learningResourceType":"lecture notes","educationalLevel":"postgraduate","isAccessibleForFree":true,"about":["Quantization","Fine-tuning","Low-rank adaptation","Floating-point encodings","Gradient compression","Pruning","Retrieval-augmented generation"]}
+</script>
+
+  <!-- Lecture Metadata (for the BitsNotes platform viewer) -->
+  <!-- IMPORTANT: This is the ONLY metadata source. No companion .json file
+       is created. The viewer reads everything from this embedded script.
+       Required fields: title, subject, gradeLevel, datePublished,
+       targetAudience, sections (array), examRevisionNotes (array).
+       Optional fields: prerequisites (array of {subject, lecture, topics}).
+       NOT included (removed): summary, keyConcepts, quiz. -->
+  <script type="application/json" id="lecture-metadata">
+{
+  "title": "Quantization, Fine-Tuning, and Low-Rank Adaptation",
+  "subject": "Distributed Machine Learning",
+  "gradeLevel": "postgraduate",
+  "datePublished": "2026-09-11",
+  "targetAudience": "Postgraduate students in Distributed Machine Learning",
+  "sections": [
+    {
+      "title": "6.1 Communication Bottlenecks After Model and Data Slicing",
+      "description": "Why leftover weight and gradient traffic still dominates after slicing."
+    },
+    {
+      "title": "6.2 Floating-Point Layouts and Integer Encodings",
+      "description": "Sign, exponent, and mantissa layouts from FP32 down to small integers."
+    },
+    {
+      "title": "6.3 Quantization of Weights and Gradients",
+      "description": "Bit-width cuts, the 7B memory ladder, and the INT8 0.65 worked map."
+    },
+    {
+      "title": "6.4 Fine-Tuning and Transfer Learning",
+      "description": "How company data updates a pretrained model without a full retrain."
+    },
+    {
+      "title": "6.5 Parameter-Efficient Fine-Tuning and LoRA",
+      "description": "Freeze W, train rank-r factors A and B, and count the saved parameters."
+    },
+    {
+      "title": "6.6 Fine-Tuning Versus RAG and Prompting",
+      "description": "When retrieval helps document QA and when visual tasks need adapters."
+    },
+    {
+      "title": "6.7 Preview of Pruning",
+      "description": "Zero redundant weights or filters; do not delete whole CNN layers."
+    },
+    {
+      "title": "Exam Guidance Summary",
+      "description": "The numerical templates and contrasts most likely to appear on an exam."
+    },
+    {
+      "title": "Key Industry Applications",
+      "description": "Where quantization, LoRA, RAG, and pruning show up in production stacks."
+    }
+  ],
+  "examRevisionNotes": [
+    {
+      "topic": "Communication Bottlenecks After Model and Data Slicing",
+      "mustKnow": "Slicing is not enough; you still pay for every bit you store and send on the reverse pipeline path.",
+      "keyFormula": "\\[g_{w} = \\frac{\\partial L}{\\partial w}\\]",
+      "commonPitfall": "Naming differentiability as the leftover bottleneck instead of representation and communication of gradients.",
+      "quickCheck": "After GPipe-style slicing, what payload still dominates interconnect time?",
+      "connections": [
+        "6.2",
+        "6.3"
+      ]
+    },
+    {
+      "topic": "Floating-Point Layouts and Integer Encodings",
+      "mustKnow": "FP32 is 1 sign, 8 exponent, 23 mantissa bits with bias 127; replay -3.14 through exponent 128 and 2^{128-127}.",
+      "keyFormula": "\\[x = (-1)^{s} \\cdot 2^{E - 127} \\cdot \\left(1 + \\frac{M}{2^{23}}\\right)\\]",
+      "commonPitfall": "Reading sign 0 as negative, or dividing the FP32 fraction by 2 instead of 2^{23}.",
+      "quickCheck": "Decode -3.14 given s=1, E=128, M=4781507.",
+      "connections": [
+        "6.3"
+      ]
+    },
+    {
+      "topic": "Quantization of Weights and Gradients",
+      "mustKnow": "INT8: q = round(x * 127) maps 0.65 to 83; dequantize as 83/127 with error 0.003543. Dequantization cannot restore deleted bits.",
+      "keyFormula": "\\[q = \\mathrm{round}(x \\cdot 127), \\quad \\hat{x} = q / 127\\]",
+      "commonPitfall": "Believing dequantization recreates the original float, or quoting an 8x saving for INT8 instead of 4x.",
+      "quickCheck": "Quantize 0.65 with scale 127, dequantize, and state the residual.",
+      "connections": [
+        "6.2",
+        "6.4"
+      ]
+    },
+    {
+      "topic": "Fine-Tuning and Transfer Learning",
+      "mustKnow": "Quantization changes bit-width; fine-tuning changes which weights learn your data. Full updates are for ResNet-scale nets, not ChatGPT-scale nets.",
+      "keyFormula": "",
+      "commonPitfall": "Treating quantization as a substitute for fine-tuning, or planning a full update of a chat-scale LLM.",
+      "quickCheck": "You have 100 tire images and a pretrained VLM. Do you quantize or fine-tune, and which layers move?",
+      "connections": [
+        "6.3",
+        "6.5"
+      ]
+    },
+    {
+      "topic": "Parameter-Efficient Fine-Tuning and LoRA",
+      "mustKnow": "W' = W + BA with r << d; train A and B only; optional scale alpha/r. Replay 100x100 to 400.",
+      "keyFormula": "\\[W' = W + BA, \\quad y = Wx + \\frac{\\alpha}{r}(BA)x\\]",
+      "commonPitfall": "Using PCA to crush frozen features, or thinking predictions use only Delta W and not Wx.",
+      "quickCheck": "How many numbers does LoRA train for a 100 by 100 matrix with rank 2?",
+      "connections": [
+        "6.4",
+        "6.6"
+      ]
+    },
+    {
+      "topic": "Fine-Tuning Versus RAG and Prompting",
+      "mustKnow": "RAG cannot cover pixel localization or bounding boxes; PDF question answering can use RAG. LoRA is not RAG.",
+      "keyFormula": "\\[\\hat{y}_{\\mathrm{RAG}} = f_{W}(q, \\mathrm{retrieve}(q))\\]",
+      "commonPitfall": "Treating LoRA as the same technique RAG uses, or expecting few-shot image prompts to draw tire boxes.",
+      "quickCheck": "Should MRF scratch boxes live in a RAG store or in a LoRA adapter?",
+      "connections": [
+        "6.5",
+        "6.7"
+      ]
+    },
+    {
+      "topic": "Preview of Pruning",
+      "mustKnow": "Quantization changes bits, LoRA changes extra matrices, pruning zeros redundant weights or filters. Do not delete CNN layers.",
+      "keyFormula": "\\[9 \\times 34 = 306\\]",
+      "commonPitfall": "Removing a convolutional layer and calling it pruning.",
+      "quickCheck": "A layer is 34 comma 3. What learns, the layer or the filters, and how many 3 by 3 weights are in that picture?",
+      "connections": [
+        "6.3",
+        "6.5"
+      ]
+    }
+  ],
+  "prerequisites": [
+    {
+      "subject": "Distributed Machine Learning",
+      "lecture": "1",
+      "topics": [
+        "Pipeline parallelism with mini-batches and stages",
+        "Mini-batches flowing through GPUs"
+      ]
+    },
+    {
+      "subject": "Distributed Machine Learning",
+      "lecture": "2",
+      "topics": [
+        "Model parallelism by pipeline split"
+      ]
+    }
+  ]
+}
+</script>
+</head>
+<body>
+  <div class="container">
+    <!-- ============================================================
+    HERO HEADER
+    ============================================================ -->
+    <header class="hero-header">
+      <span class="subject-badge">Distributed Machine Learning</span>
+      <h1 class="lecture-title">Quantization, Fine-Tuning, and Low-Rank Adaptation</h1>
+      <div class="meta-info">
+        <div class="meta-item"><strong>Published:</strong> 2026-09-11</div>
+        <div class="meta-item"><strong>Level:</strong> postgraduate</div>
+        <div class="meta-item"><strong>Audience:</strong> Postgraduate students in Distributed Machine Learning</div>
+      </div>
+    </header>
+
+    <!-- ============================================================
+    PREREQUISITE KNOWLEDGE
+    Optional section listing concepts from previous lectures that this
+    lecture builds on. Populated by Agent 3 from topic_mappings/*.yaml.
+    If no prerequisites exist, this section is omitted entirely.
+    ============================================================ -->
+        <section class="prerequisite-section">
+      <h2>Prerequisite Knowledge</h2>
+      <p class="prerequisite-intro">This lecture builds on the following
+      concepts from earlier lectures. If any feel unfamiliar, review the
+      linked notes before proceeding.</p>
+
+      <div class="prerequisite-entry">
+        <h3>Previously Covered in This Subject</h3>
+        <ul>
+          <li><strong>Pipeline parallelism with mini-batches and stages</strong> — covered in Lecture 1</li>
+          <li><strong>Mini-batches flowing through GPUs</strong> — covered in Lecture 1</li>
+          <li><strong>Model parallelism by pipeline split</strong> — covered in Lecture 2</li>
+        </ul>
+      </div>
+    </section>
+
+    <!-- ============================================================
+    MAIN LECTURE-FAITHFUL CONTENT
+    Page title = one h1.lecture-title
+    Each section = one h2.section-title
+    Each subsection = one h3.subsection-title
+    Callout boxes: .key-concept (blue), .important-note (violet),
+      .example-box (green), .warning-box (red), .key-takeaway (amber)
+    Display math: auto-scrolls via mjx-container CSS; .eqbox wrapper optional
+    ============================================================ -->
+    <main>
+      <p>Slicing a network across devices does not finish the cost story. Every remaining weight and gradient still occupies bits, and those bits still travel on a slow link. This lecture treats three families of cuts: quantization (fewer bits per number), fine-tuning and low-rank adapters (fewer trained numbers), and a short preview of pruning (fewer live weights).</p>
+
+      <h2 id="6.1-communication-bottlenecks-after-model-and-data-slicing">6.1 Communication Bottlenecks After Model and Data Slicing</h2>
+      <div class="important-note">
+        <p>After you already split the model and split the data, what still dominates time and memory? The leftover payload: every weight and every gradient that you store and ship.</p>
+      </div>
+      <p>Distributed training solved two placement problems. It did not make the numbers themselves cheap. The rest of the session attacks that leftover cost.</p>
+      <h3 id="6.1.1-recap-of-slicing-mini-batches-and-pipeline-handoffs">6.1.1 Recap of Slicing, Mini-Batches, and Pipeline Handoffs</h3>
+      <p><em>Model slicing</em> (placing different layers, or stage blocks, on different devices) puts stage 1 on GPU 0, stage 2 on GPU 1, and later stages on later GPUs. <em>Data slicing</em> (splitting the training set into batches and then into <em>mini-batches</em>) feeds those stages a stream of small frames rather than one giant tensor. Call a mini-batch a successive data frame if that picture helps: frame 1, then frame 2, then frame 3.</p>
+      <p>A first mini-batch is processed on the first GPU. That GPU emits <em>activations</em>, the layer outputs. Those activations travel to the next GPU. The next GPU continues the forward pass. The chain repeats until the last stage produces a prediction.</p>
+      <p>After the last stage, the system computes a <em>loss</em>, a scalar that says how wrong the prediction is. Write \(L\) for that scalar. <em>Back propagation</em> then attributes \(L\) to each trainable weight. For every mini-batch and every layer, the system computes <em>gradients</em>, the partial derivatives of the loss with respect to the weights.</p>
+      <div class="key-concept">
+        <p>For a local weight \(w\) on one pipeline stage, the gradient that must move is</p>
+        <p>\[ g_{w} = \frac{\partial L}{\partial w} \]</p>
+        <p>Here \(L\) is the loss after the last stage, \(w\) is a trainable parameter that lives on this GPU, and \(g_{w}\) is the number (or tensor of numbers) that earlier stages need in order to update \(w\). In a convolutional network the learnable objects are filters. In a fully connected network they are the link weights between nodes.</p>
+      </div>
+      <p>Those gradients must travel backward along the pipeline so earlier stages can update their weights. Picture a server plus a set of client devices. Each client holds part of the model. After a mini-batch, millions or billions of gradient numbers must move across the interconnect.</p>
+      <p>Pipeline patterns such as GPipe already showed this handoff: send a mini-batch forward, compute \(\partial L / \partial w\) for the local parameters, then send those values back so earlier layers can adjust. GPU 0 processes batch one and sends the output onward. Later, the loss-driven gradients must return.</p>
+      <p>Think of a bucket brigade at a fire. Water (activations) moves forward from person to person. Empty buckets (gradients) must come back, or the front of the line cannot refill. The analogy breaks because empty buckets are light, while gradients are often as large as the weights themselves.</p>
+      <p>Two compression targets sit in that picture. You can compress the <em>data representation</em>, how each number is stored. You can compress the <em>model</em>, how many weights you store or update. Both attacks cut storage, arithmetic, and wire traffic.</p>
+      <h3 id="6.1.2-what-must-be-stored-and-moved">6.1.2 What Must Be Stored and Moved</h3>
+      <p>A modern network may have millions or billions of parameters. For each parameter you store a weight and you compute a gradient. Every GPU that shares work must exchange those gradients. After mini-batch one finishes on one GPU, the values go across the network to another GPU. That is where a <em>network bottleneck</em> appears: the interconnect is slower than on-device math, and the payload is huge.</p>
+      <p>The same numbers also occupy GPU memory. A 7 billion parameter model, an 8 billion parameter model, or a 120 billion parameter model makes the problem worse. Pre-trained large language models (LLMs) move enormous tensors during training and during serving. If you work with those models, gradient and weight traffic dominate cost.</p>
+      <p>A motivating question frames the rest of the material: after slicing, what is the main computational and communication factor you still have to address?</p>
+      <p>Imagine plotting two curves against model size. The horizontal axis is parameter count, from millions to hundreds of billions. The vertical axis is time per step. On-device multiply time grows, but interconnect time grows at least as fast, because the message is a full gradient tensor. The landmark is the crossing where wire time exceeds math time. Past that landmark, a faster GPU without a smaller message barely helps.</p>
+      <h3 id="6.1.3-student-questions-and-answers">6.1.3 Student Questions and Answers</h3>
+      <p>A natural first guess is that the hard part is still calculus: can we even form \(\partial L / \partial w\)? That guess is understandable, because back propagation is the engine. It is not the remaining bottleneck.</p>
+      <div class="important-note">
+        <p><strong>Q:</strong> Should the main issue be that back propagation must be differentiable?</p>
+        <p><strong>A:</strong> Treat differentiability as already true. The pipeline assumes you can form gradients. The remaining bottleneck is how you <em>represent</em> those gradients and store encodings, and how you ship them between GPUs. You can store a number in FP32, FP16, integer-8, 4-bit, or even 1-bit form. The encoding choice changes memory and communication volume.</p>
+      </div>
+      <p>The correction is sharp. Differentiability is a prerequisite that the training stack already assumes. The new lever is the bit layout of each stored and sent number.</p>
+      <h3 id="6.1.4-representation-as-the-lever-and-today-s-map">6.1.4 Representation as the Lever, and Today's Map</h3>
+      <p>Computer-architecture courses already show number encodings. <em>FP32</em> uses 32 bits per value. <em>FP16</em> uses 16 bits. Integer formats use 8 bits, 4 bits, or 1 bit. The goal is to cut storage and communication overhead without destroying learning.</p>
+      <div class="warning-box">
+        <p><strong>Scope:</strong> These encoding cuts assume that the optimizer still sees a usable update, and that the task can tolerate a small grid of representable numbers. If a detection task needs tiny mantissa changes, a 4-bit or 1-bit gradient can stall learning. If the interconnect is already faster than compute, shrinking bits saves memory but not wall-clock time.</p>
+      </div>
+      <p>On a sketch of one 32-bit word, the bits are not equal. Later sections split sign, exponent, and fraction. For now, hold the idea that "a number" is a labeled packet of bits, not a magic real value.</p>
+      <div class="warning-box">
+        <p><strong>Pitfall:</strong> Treating slicing as the full solution. Pipeline stages still exchange full tensors. <strong>Pitfall:</strong> Counting only weights and forgetting that each training step also stores and ships gradients, and often optimizer buffers. <strong>Pitfall:</strong> Assuming a smaller encoding is free accuracy. Fewer bits delete information. You must measure whether the model still learns.</p>
+      </div>
+      <p>Three families of methods attack that overhead:</p>
+      <ol>
+        <li><em>Quantization</em> changes how each number is encoded, so the same tensor uses fewer bits.</li>
+        <li><em>Fine-tuning</em> (and later <em>parameter-efficient fine-tuning</em>) changes which weights you update, so you do not train every parameter of a giant model.</li>
+        <li><em>Pruning</em> later removes or zeros redundant weights and filters. That family is only previewed here.</li>
+      </ol>
+      <div class="key-takeaway">
+        <p><strong>Exam note:</strong> The core distributed-training idea is that slicing is not enough. You still pay for every bit you store and every bit you send. Be ready to name the leftover payload as weights plus gradients on the reverse pipeline path.</p>
+      </div>
+      <p>GPU-to-GPU gradient exchange in pipeline-parallel training is the practical setting. The same bit-width choices also matter when a fine-tuned model must run on an edge device. NVIDIA mixed-precision training, which can keep some values in a 32-bit training format and shrink others to FP16, is the daily form of this lever in large-model stacks.</p>
+      <div class="key-takeaway">
+        <p>Slicing placed layers and mini-batches. The leftover problem is representation: how many bits each gradient and weight uses on the wire and in GPU memory. Next we open a 32-bit word and name its fields.</p>
+      </div>
+
+      <h2 id="6.2-floating-point-layouts-and-integer-encodings">6.2 Floating-Point Layouts and Integer Encodings</h2>
+      <p>Quantization only makes sense if you know what a "32-bit number" contains. This section opens the packet: sign, exponent, and fraction, then walks the same real value down to 16-bit and integer grids.</p>
+      <div class="important-note">
+        <p>A 32-bit float is not 32 equal votes. One bit chooses the sign, a block of bits chooses the scale, and the rest choose the extra fraction. Change the block sizes and you change both range and precision.</p>
+      </div>
+      <h3 id="6.2.1-why-bit-layout-matters">6.2.1 Why Bit Layout Matters</h3>
+      <p>A floating-point value is a <em>sign</em> bit, an <em>exponent</em> field, and a <em>mantissa</em> (fraction) field. The sign chooses positive versus negative. The exponent chooses the scale, a power of two. The mantissa chooses the extra fraction bits that sit after an implicit leading 1 in normal numbers.</p>
+      <p>Think of the layout as a labeled strip of bits. One bit is rose-colored for the sign. Eight bits are green for the exponent in FP32. The remaining yellow bits are the mantissa. Change how many bits each field gets, and you change both the range and the precision.</p>
+      <p>A postal address is a useful everyday map. The sign is the side of the street. The exponent is the city block (a power-of-two zoom). The mantissa is the house number on that block. The analogy breaks for subnormal numbers and infinities, which use reserved exponent patterns. For normal values the three-field picture is enough.</p>
+      <p>A first verbal slip in the walkthrough said that a sign bit of 0 means negative. The worked number \(-3.14\) then used sign \(= 1\). Standard IEEE-style encoding uses \(s = 1\) for negative and \(s = 0\) for positive. Keep the worked example. Treat the "0 means negative" line as a slip.</p>
+      <h3 id="6.2.2-mathematical-formulation-of-fp32">6.2.2 Mathematical Formulation of FP32</h3>
+      <p>Let \(s \in \{0,1\}\) be the sign bit, \(E \in \{0,1,\dots,255\}\) the 8-bit exponent field read as an unsigned integer, and \(M \in \{0,1,\dots,2^{23}-1\}\) the 23-bit mantissa field read as an unsigned integer. For a <em>normal</em> FP32 value the decoded number is</p>
+      <div class="key-concept">
+        <p>\[ x = (-1)^{s} \cdot 2^{E - 127} \cdot \left(1 + \frac{M}{2^{23}}\right) \]</p>
+        <p>The constant \(127\) is the <em>exponent bias</em> for binary32 (IEEE FP32). The term \(1 + M / 2^{23}\) rebuilds the significand with the hidden 1. The unbiased scale is \(2^{E-127}\).</p>
+      </div>
+      <p>The spoken formula was: minus one to the power of the sign, times two to the power of (the exponent value minus 127), times one plus the mantissa's decimal value divided by a power of two. One pass said "divided by 2" without the 23. The IEEE layout uses \(2^{23}\) because there are 23 stored fraction bits. A denominator of \(2\) would only be correct for a 1-bit fraction.</p>
+      <p>If every exponent bit is 0 except the highest, the 8-bit field is \(10000000_{2}\). Converting bit by bit, each position \(k = 0,\dots,7\) contributes \(b_{k} \cdot 2^{k}\). All zeros cancel. The remaining 1 at position 7 gives \(2^{7} = 128\). Then the unbiased scale is</p>
+      <p>\[ \begin{aligned} E &= 128 \\ E - 127 &= 1 \\ 2^{E-127} &= 2^{1} = 2 \end{aligned} \]</p>
+      <p>The verbal cue was "this is fixed": you always subtract 127 from the stored exponent in FP32 for normal numbers.</p>
+      <div class="warning-box">
+        <p><strong>Assumption:</strong> The formula above is for <em>normal</em> numbers, where \(E\) is not 0 and not 255. If \(E = 0\), IEEE uses subnormals with no hidden 1 and scale \(2^{-126}\). If \(E = 255\), the encoding is infinity or NaN, not a finite weight. Training encodings usually stay in the normal range; a zero gradient is an all-zero bit pattern, which is a subnormal/zero case, not the hidden-1 formula.</p>
+      </div>
+      <p>Plot range against fraction bits. The horizontal axis is exponent-field width. The vertical axis is the largest finite \(|x|\). FP32 with 8 exponent bits reaches about \(2^{127}\). A 5-bit exponent (FP16) reaches only about \(2^{15}\). The landmark is overflow: values that fit in FP32 become inf in FP16. That is why some 16-bit formats keep eight exponent bits.</p>
+      <h3 id="6.2.3-worked-example-encoding-3.14-in-fp32">6.2.3 Worked Example: Encoding \(-3.14\) in FP32</h3>
+      <p><strong>Setup.</strong> Represent \(-3.14\). The walkthrough filled three fields and then mixed them with the decode formula.</p>
+      <div class="example-box">
+        <p><strong>Step 1 — Sign.</strong> The number is negative, so \(s = 1\). Then \((-1)^{s} = -1\).</p>
+        <p><strong>Step 2 — Exponent field as an integer.</strong> The green bits converted from binary to decimal as \(128\). A classroom prompt asked for \(2^{7}\). The answer is \(128\), which matches an exponent field with only the \(2^{7}\) bit set.</p>
+        <p><strong>Step 3 — Mantissa as an integer.</strong> The yellow bits converted to the decimal integer \(4{,}781{,}507\).</p>
+        <p><strong>Step 4 — Combine.</strong> Using the FP32 rule with bias 127 and 23 fraction bits:</p>
+        <p>\[ x = (-1)^{1} \cdot 2^{128-127} \cdot \left(1 + \frac{4{,}781{,}507}{2^{23}}\right) \]</p>
+        <p>Now \(2^{23} = 8{,}388{,}608\), so</p>
+        <p>\[ \begin{aligned} \frac{M}{2^{23}} &= \frac{4{,}781{,}507}{8{,}388{,}608} = 0.5700000524520874 \\ 1 + \frac{M}{2^{23}} &= 1.5700000524520874 \\ 2 \cdot \left(1 + \frac{M}{2^{23}}\right) &= 3.140000104904175 \\ x &= -3.140000104904175 \end{aligned} \]</p>
+        <p>The working value is <strong>\(\boldsymbol{-3.140000104904175}\)</strong>, which is the IEEE binary32 encoding of \(-3.14\). A rounded board figure \(1.570238\) was a display rounding of the significand; the three stored integers already decode exactly to this float.</p>
+      </div>
+      <p>Sense-check: the result is negative, near \(3.14\), and slightly coarse because only 23 fraction bits are stored. That is what you want from a real FP32 decode.</p>
+      <p>A binary-to-decimal converter is a valid check, but the formula above is the actual decode rule. You do not need to memorize converter websites. You do need the three fields and the bias.</p>
+      <h3 id="6.2.4-fp16-bf16-and-tf32-variants">6.2.4 FP16, BF16, and TF32 Variants</h3>
+      <p><em>FP16</em> (IEEE binary16) uses 16 bits in total: 1 sign bit, 5 exponent bits, and 10 mantissa bits. The bias is 15, one less than \(2^{4}\) in the same way 127 is one less than \(2^{7}\).</p>
+      <div class="key-concept">
+        <p>\[ x_{16} = (-1)^{s} \cdot 2^{E_{16} - 15} \cdot \left(1 + \frac{M_{16}}{2^{10}}\right) \]</p>
+        <p>Here \(s\) is still the sign bit, \(E_{16}\) is the 5-bit exponent field as an integer, and \(M_{16}\) is the 10-bit fraction as an integer. The hidden 1 is the same idea as FP32. Only the field widths changed.</p>
+      </div>
+      <p>The spoken decode for a 16-bit try on the same \(-3.14\) was: minus one to the power of the sign, times two to the power of (the stored exponent minus 15), times one plus \(583\) divided by \(2^{10}\).</p>
+      <div class="example-box">
+        <p>For that 16-bit packet, \(s = 1\), \(M_{16} = 583\), and the stored exponent is \(16\):</p>
+        <p>\[ \begin{aligned} 2^{10} &= 1024 \\ \frac{583}{1024} &= 0.5693359375 \\ 1 + \frac{583}{1024} &= 1.5693359375 \\ 2^{16-15} &= 2 \\ x_{16} &= -2 \cdot 1.5693359375 = -3.138671875 \end{aligned} \]</p>
+        <p>The same real value \(-3.14\) became about <strong>\(\boldsymbol{-3.13}\)</strong> after the 16-bit encoding (\(-3.138671875\)). That is already a representation error, even before any extra rounding in later integer formats.</p>
+      </div>
+      <p>Sense-check: FP16 kept the exponent \(2^{1} = 2\), so the value stayed near \(3\), but the shorter fraction drifted from \(3.140000\) to \(3.138672\).</p>
+      <p><em>BF16</em> (bfloat16, spoken as "brain float 16") keeps a 16-bit total but spends the bits differently: 1 sign bit, 8 exponent bits, and 7 mantissa bits. The extra exponent bits keep FP32-like range. The shorter mantissa loses fraction detail.</p>
+      <div class="key-concept">
+        <p>For a normal bfloat16 value,</p>
+        <p>\[ x_{\mathrm{BF16}} = (-1)^{s} \cdot 2^{E_{8} - 127} \cdot \left(1 + \frac{M_{7}}{2^{7}}\right) \]</p>
+        <p>The exponent field \(E_{8}\) is 8 bits with the same bias \(127\) as FP32. The fraction \(M_{7}\) has only 7 stored bits, so the divisor is \(2^{7} = 128\), not \(2^{10}\).</p>
+      </div>
+      <p>One cross-check mixed a mantissa integer \(72\) with a \(2^{10}\) divisor and an 8-bit exponent. That mix collides FP16's 10-bit fraction with BF16's 8-bit exponent. If the integer \(72\) is a 7-bit fraction, the correct divisor is \(128\):</p>
+      <p>\[ 1 + \frac{72}{2^{7}} = 1 + \frac{72}{128} = 1.5625 \]</p>
+      <p>Using \(72/2^{10}\) would be the FP16 fraction rule applied to the wrong format.</p>
+      <p><em>TF32</em> (spoken as "TensorFlow 32") was listed as a 19-bit training format used on some GPU and TPU paths. A common industry layout for TF32 is 1 sign bit, 8 exponent bits, and 10 mantissa bits, which sums to 19. NVIDIA's name for that layout is TensorFloat-32. The class label "TensorFlow 32" is the same 19-bit idea: keep FP32's exponent width and FP16's fraction width.</p>
+      <p>\[ x_{\mathrm{TF32}} = (-1)^{s} \cdot 2^{E_{8} - 127} \cdot \left(1 + \frac{M_{10}}{2^{10}}\right) \]</p>
+      <p>Different vendors pick different default formats for GPU versus TPU training. Conversion among those formats is why quantization is not a side trick. It is the daily number-format layer of large-model training.</p>
+      <h3 id="6.2.5-integer-eight-bit-range-and-four-bit-collapse">6.2.5 Integer Eight-Bit Range and Four-Bit Collapse</h3>
+      <p>Signed <em>INT8</em> does not store a hidden-1 fraction. It stores an integer in about 8 bits. One teaching picture uses 1 sign bit and 7 magnitude bits. The positive magnitudes \(1, 2, 4, 8, 16, 32, 64\) sum to \(127\). The stated integer range to map into is \([-128, +127]\).</p>
+      <div class="key-concept">
+        <p>\[ \sum_{k=0}^{6} 2^{k} = 1 + 2 + 4 + 8 + 16 + 32 + 64 = 127 \]</p>
+        <p>Two's-complement INT8 still uses the range \([-128, +127]\). The extra negative value \(-128\) is the extra code you get by not mirroring \(+128\).</p>
+      </div>
+      <p>Integer values such as \(127\) can land exactly. The pain starts when you force a float with a rich mantissa into a small integer grid.</p>
+      <p>A 4-bit signed picture uses 1 sign bit and 3 data bits. The maximum positive magnitude is \(7\).</p>
+      <div class="example-box">
+        <p>A sample float \(-8.978\) (spoken as minus 8.978) cannot fit in a signed 4-bit grid whose positive cap is \(7\). The encoding snaps to magnitude \(7\) with a negative sign, which is \(-7\).</p>
+        <p>\[ \begin{aligned} x &= -8.978 \\ q_{4} &= -7 \\ x - q_{4} &= -8.978 - (-7) = -1.978 \end{aligned} \]</p>
+        <p>The error is already about \(2\), not a rounding dust. Other spoken samples included \(127.987\) and \(127.93\) collapsing toward \(127\) once the format is integer. A comment "5 means you are losing 0.4" was a quick error sketch, not a full table: if the true value is \(4.6\) and the integer is \(5\), the gap is \(0.4\).</p>
+      </div>
+      <p>Sense-check: 4-bit signed integers cannot represent \(8.978\) at all, so the collapse toward \(7\) is not a small mantissa trim. It is a range failure.</p>
+      <p>As you walk from 32 bits toward 1 bit, representation error grows. If the true value is \(-3.14\) and INT8 stores \(-3\), the gap is already \(0.14\). If that gap is tiny next to the task, you may accept it. If you are updating weights, even a small mantissa can matter, because convergence depends on precise increments.</p>
+      <div class="warning-box">
+        <p><strong>Pitfall:</strong> Reading the sign bit backwards (\(0\) as negative). IEEE uses \(s = 1\) for negative. <strong>Pitfall:</strong> Using \(2^{1}\) as the FP32 fraction divisor. The stored fraction has 23 bits, so divide by \(2^{23}\). <strong>Pitfall:</strong> Mixing BF16's 8-bit exponent with FP16's \(2^{10}\) fraction. Match divisor to fraction width. <strong>Pitfall:</strong> Treating integer 4-bit as "a bit less precise FP32." If the value is outside \([-7,7]\) in that toy signed picture, you overflow, you do not just round.</p>
+      </div>
+      <h3 id="6.2.6-student-questions-and-answers">6.2.6 Student Questions and Answers</h3>
+      <p>The \(2^{7}\) prompt is the exponent-field conversion used in the \(-3.14\) decode.</p>
+      <div class="important-note">
+        <p><strong>Q:</strong> What is \(2^{7}\), the decimal reading of an exponent field that has only its highest bits set?</p>
+        <p><strong>A:</strong> \(128\). That value is the decimal reading of the exponent field with only the highest of eight bits set, and it is the number that then enters \(2^{128-127}\) in the FP32 decode.</p>
+      </div>
+      <div class="key-takeaway">
+        <p><strong>Exam note:</strong> Know the FP32 split: 1 sign bit, 8 exponent bits, 23 mantissa bits, bias 127. Replay \(-3.14\) at least through sign, exponent integer 128, and \(2^{128-127}\). Know that FP16 uses bias 15 and 10 mantissa bits, and that the same \(-3.14\) became about \(-3.13\) in the 16-bit try. Know signed INT8 range \([-128, +127]\) and why 7 magnitude bits top out at 127.</p>
+      </div>
+      <p>GPU and TPU vendors expose these layouts as native types. Tensor cores prefer FP16, BF16, or TF32 packets. A weight that looks like "3.14" in Python is already one of these bit strips in hardware.</p>
+      <div class="key-takeaway">
+        <p>FP32, FP16, BF16, TF32, and small integers are different packets of the same real idea. Next we use that idea as a training tool: quantize a gradient, send the short packet, and optionally expand it again.</p>
+      </div>
+
+      <h2 id="6.3-quantization-of-weights-and-gradients">6.3 Quantization of Weights and Gradients</h2>
+      <div class="important-note">
+        <p>If a gradient tensor is already the right shape, why is it still expensive? Because each entry is a fat number. Shorten the encoding and the same tensor becomes a smaller packet.</p>
+      </div>
+      <p><em>Quantization</em> means rewriting a number in a smaller encoding. This section defines the send path first: quantize, ship, and optionally dequantize. Memory counts and the INT8 integer map come after that path.</p>
+      <h3 id="6.3.1-definition-pipeline-and-trade-off">6.3.1 Definition, Pipeline, and Trade-Off</h3>
+      <p>A gradient may start in FP32 or FP16. You quantize it, send the short packet over the network, and, if you still want a floating value for the optimizer, you <em>dequantize</em> on the far side.</p>
+      <p>The pipeline in words is: take the gradient in some format such as 32 or 16, make a lesser-size representation, send it, then optionally expand it again so you can update weights. Dequantization tries to recover a usable float. It cannot invent bits that were never sent.</p>
+      <p>Think of a photo sent as a tiny JPEG. The file is light. The far side can expand it to a full-size image. The expansion cannot restore faces that the JPEG already smeared. The analogy breaks because JPEG is nonlinear, while the class INT8 map is a multiply, a round, and a divide.</p>
+      <div class="key-concept">
+        <p>Quantization is encode-and-send. Dequantization is decode-on-arrival. The pair is lossy: the integer grid is coarser than the original float grid. T1 describes the same idea as using fewer physical bits to represent a value, and notes that mixed-precision libraries may keep some tensors in a 32-bit training format while shrinking others to FP16.</p>
+      </div>
+      <p>Benefits named in class:</p>
+      <ul>
+        <li>lower communication cost</li>
+        <li>less GPU memory</li>
+        <li>faster processing of each tensor</li>
+        <li>lower network bandwidth</li>
+        <li>quicker training in wall-clock time</li>
+      </ul>
+      <p>The cost is information loss. Moving from 32 bits toward 1 bit, or toward 4 bits, throws away fraction bits. Weight updates that needed a mantissa like the fractional part of \(32.6\) will not see that extra precision. The result is a <em>trade-off</em>: smaller storage and smaller messages, versus weaker updates and possible harm to convergence. You must measure whether the lost bits still let the model learn.</p>
+      <h3 id="6.3.2-memory-and-bandwidth-for-a-7-billion-parameter-model">6.3.2 Memory and Bandwidth for a 7 Billion Parameter Model</h3>
+      <p>A concrete memory picture used a 7 billion parameter model during a training step that holds FP32 weights. The spoken phrase was that you need 28 GB if you want the weight update in that representation.</p>
+      <p>Each FP32 value uses 4 bytes. Then</p>
+      <div class="example-box">
+        <p>\[ \begin{aligned} N &= 7 \times 10^{9} \\ M_{\mathrm{FP32}} &= N \times 4\ \mathrm{bytes} \\ &= 28 \times 10^{9}\ \mathrm{bytes} \\ &= 28\ \mathrm{GB} \end{aligned} \]</p>
+        <p>The verbal claim matches that product: <strong>28 GB</strong> for the 7 billion parameter step in FP32. FP32 is treated as the richest common format, so accuracy loss from encoding is treated as none, while bandwidth cost is the worst.</p>
+      </div>
+      <p>Sense-check: 7 times 4 is 28, and "billion parameters times bytes" is "gigabytes" in the decimal GB used in class.</p>
+      <p>FP16 cuts the payload in half. The 16-bit layout was described as 1 sign bit, then 5 exponent bits, then 10 mantissa bits. Bandwidth saving is \(2\times\). Memory for the same 7 billion weights is 14 GB. The INT8 footprint is the next rung.</p>
+      <p>INT8 uses 8 bits per value, spoken as 1 sign bit plus 7 remaining bits. Relative to 32 bits you keep \(8/32 = 1/4\) of the bits, so you save a factor of 4. One sentence also said "8 times you saved." The bit ratio \(32/8 = 4\) is the consistent memory ratio, and 7 GB was the stated INT8 footprint. The "8 times" line matches a 32-to-4-bit cut (INT4), not INT8. Keep <strong>7 GB</strong> as the INT8 figure.</p>
+      <p>\[ M_{\mathrm{FP16}} = 14\ \mathrm{GB}, \qquad M_{\mathrm{INT8}} = 7\ \mathrm{GB} \]</p>
+      <p>INT4 and 1-bit encodings were listed on the same ladder. Each further cut saves more memory and more wire time, and each further cut grows error. You cannot look only at the saving column.</p>
+      <p>Accuracy comments, given as rules of thumb rather than a named benchmark:</p>
+      <ul>
+        <li>FP32: no accuracy loss from format, maximum bandwidth</li>
+        <li>FP16: accuracy change called negligible, bandwidth saving \(2\times\)</li>
+        <li>INT8: a drop "less than one percent" in a generic story, with an immediate warning that 1% can be huge for a hard target</li>
+        <li>INT4: used when you must deploy to edge devices or ship a fine-tuned model in a federated setting; a 1% to 2% drop may be acceptable</li>
+      </ul>
+      <p>T1 reports the same qualitative trade: mixed precision often still converges, but it can land in a worse local minimum than full precision, because values such as \(1\) and \(1.01\) can collapse to the same code.</p>
+      <p>A GPU face detector at 99% accuracy may still be valid on a Raspberry Pi after INT4 if the drop is about 2% and the bandwidth saving is large. One spoken saving figure was "eight percent," which does not match an 8-times bit cut. Treat the Pi story as "small accuracy drop, large resource saving." The reliable bit-ratio for INT4 versus FP32 is \(32/4 = 8\), not an 8% bandwidth cut.</p>
+      <div class="key-takeaway">
+        <p><strong>Exam note:</strong> Be ready to pair each bit-width with both a memory ratio and an accuracy warning, not only with a compression factor. The 7 billion parameter ladder is 28 GB FP32, 14 GB FP16, 7 GB INT8, then INT4 and 1-bit with growing error.</p>
+      </div>
+      <h3 id="6.3.3-where-quantization-sits-in-the-training-loop">6.3.3 Where Quantization Sits in the Training Loop</h3>
+      <p>The painful moment is back propagation, not a quiet forward pass on a laptop. Workers hold FP32 data and FP32 gradients. For each weight they compute a gradient. Those tensors are quantized. The compressed values travel through the network to the destination GPU. On arrival you may dequantize if you want more numeric range inside the optimizer. You may also keep the quantized values if the optimizer can use them.</p>
+      <p>In distributed training the exchange is staged. GPU 1 sends gradients to GPU 2, GPU 2 to GPU 3, GPU 3 to GPU 4, in the reverse direction of the forward pipeline. After the forward pass you compute gradients and exchange them so each stage can adjust its weights. Using 8-bit values instead of 32-bit values shrinks that reverse traffic to one fourth, so communication becomes faster. Storage falls. Arithmetic can fall. Precision also falls. That is the same trade-off again.</p>
+      <p>GPipe-style mini-batching still applies. Data is divided into mini-frames. Mini-batch one enters the first stage, activations flow forward, the last stage computes loss, and \(\partial L / \partial w\) for each block must go back. Those returning tensors are the values you consider for quantization.</p>
+      <div class="warning-box">
+        <p><strong>Scope:</strong> Quantizing the reverse traffic helps when the interconnect is the limiter. If a stage is compute-bound, shorter gradients save memory but may not shorten the step. Integer paths also assume hardware that can pack and unpack INT8 or INT4 without a costly unpack loop on the CPU.</p>
+      </div>
+      <p>Sketch the pipeline on a page. The horizontal axis is stage index (GPU 0 to GPU 3). The vertical axis is time. Forward activations step down-right. Backward gradients step down-left. The landmark is the backward diagonal: that is the fat payload quantization tries to thin.</p>
+      <h3 id="6.3.4-int8-scaling-formula-and-worked-example-for-0.65">6.3.4 INT8 Scaling Formula and Worked Example for \(0.65\)</h3>
+      <p>Floating formats had a field-wise IEEE-style formula. Integer quantization uses a <em>scale</em> that maps a real range onto the integer grid.</p>
+      <p><strong>Setup.</strong> Take the real value \(x = 0.65\). Choose the signed INT8 grid \([-128, +127]\). Use the maximum positive integer \(127\) as the scale, the "maximum possible one" in the spoken walkthrough.</p>
+      <div class="key-concept">
+        <p>The class formula is: the INT8 value equals the round of \(x\) times the scale.</p>
+        <p>\[ q = \mathrm{round}(x \cdot s), \qquad s = 127 \]</p>
+        <p>Here \(x\) is the real gradient or weight, \(s\) is the scale sent with the packet, and \(q\) is the integer on the wire. This is a simplified affine map that treats \(x\) as living near \([-1,1]\). Standard libraries often store a per-tensor scale as \(\max(|x|)/127\) so values outside \([-1,1]\) still land in \([-127,127]\). The exam walkthrough uses \(s = 127\) on \(x = 0.65\).</p>
+      </div>
+      <div class="example-box">
+        <p><strong>Quantize.</strong> Substitute:</p>
+        <p>\[ x \cdot s = 0.65 \times 127 = 82.55 \]</p>
+        <p>Round (spoken as "you can apply the ceil value; after 5 it is 83"):</p>
+        <p>\[ q = \mathrm{round}(82.55) = 83 \]</p>
+        <p>You have replaced the float \(0.65\) with the integer \(83\). That integer is what you send.</p>
+        <p><strong>Dequantize.</strong> Send \(q\) and also send the same scale \(s\). On the far side, divide:</p>
+        <p>\[ \hat{x} = \frac{q}{s} = \frac{83}{127} \]</p>
+        <p>\[ \frac{83}{127} = 0.6535433070866141 \]</p>
+        <p>The recovered quotient is \(83/127\). The walkthrough first said the recovered value is \(0.65\), then named the residual error \(0.003543\). That error is</p>
+        <p>\[ \hat{x} - x = 0.6535433070866141 - 0.65 = 0.0035433070866141 \]</p>
+        <p>So the "got 0.65 back" line is the intended real, and <strong>\(0.003543\)</strong> is the actual gap after integer rounding.</p>
+      </div>
+      <p>Sense-check: \(83/127\) is a hair above \(0.65\), because \(82.55\) rounded up. Rounding down to \(82\) would have sat a hair below. The grid cannot hit \(0.65\) exactly.</p>
+      <p>The verbal pair is: quantization is multiply-by-scale-and-round; dequantization is divide-the-integer-by-the-same-scale. You "apply the reverse" of the formula.</p>
+      <p>You must then ask whether \(0.003543\) per value disturbs learning and convergence. For one weight it looks tiny. Across a billion weights, the same class of error can pile up. The residual will accumulate: each step adds a small grid error, and billions of weights multiply the chance that those errors push updates the wrong way.</p>
+      <div class="warning-box">
+        <p><strong>Pitfall:</strong> Believing dequantization restores the original float. It only returns a nearby grid point. <strong>Pitfall:</strong> Using the memory slogan "8 times" for INT8. INT8 versus FP32 is a \(4\times\) cut (7 GB versus 28 GB). <strong>Pitfall:</strong> Reading a Raspberry Pi "eight percent" saving as the bit-ratio. Treat that spoken percent as unreliable. <strong>Pitfall:</strong> Ignoring accumulation. A \(0.003543\) gap on one scalar is not the story of a 7 billion parameter step.</p>
+      </div>
+      <h3 id="6.3.5-student-questions-and-answers">6.3.5 Student Questions and Answers</h3>
+      <p>The first question is the decode step itself.</p>
+      <div class="important-note">
+        <p><strong>Q:</strong> How do you dequantize?</p>
+        <p><strong>A:</strong> Apply the reverse arithmetic. If you quantized by rounding \(x \cdot s\), recover \(\hat{x} = q / s\) with the same scale that you send along with the integer.</p>
+      </div>
+      <p>Lost bits are a separate confusion. Expanding an integer does not recreate a deleted fraction.</p>
+      <div class="important-note">
+        <p><strong>Q:</strong> Even if you dequantize, the precision lost during quantization is still lost, right? The original bits were not even transferred.</p>
+        <p><strong>A:</strong> Yes. You try to return toward a real value, but you cannot get the exact original. You generalize to some nearby grid point. You reduce error relative to living forever in a tiny integer, but you do not recreate deleted mantissa bits. For weight updates even a smaller value can matter, so you should not throw those bits away blindly.</p>
+      </div>
+      <p>A third instinct is to stay in integers inside the original network math.</p>
+      <div class="important-note">
+        <p><strong>Q:</strong> Can we convert weights to the 127-scale integers inside the original network calculation itself, and then do integer-only math instead of sending floats?</p>
+        <p><strong>A:</strong> The weights start as floats. Learning still uses back propagation of a real-valued gradient. You may quantize that gradient, for example turning a value such as \(-6.89\) into an INT8 code, send the code, and dequantize on the far side, as in the \(0.65 \rightarrow 83\) story. Integer-only arithmetic is possible in that send-and-update path. The obstacle is error. The received value is already high by \(0.003543\) in the worked example. That error accumulates very quickly across billion weights. The example is one weight. A billion weights later, learning can drift. So yes, you can pass integers. You must still watch accumulation.</p>
+      </div>
+      <h3 id="6.3.6-when-to-insist-on-dequantization">6.3.6 When to Insist on Dequantization</h3>
+      <p>Quantize-then-dequantize is not mandatory for every net. For complex detection, including object detection and real-time accident detection, keep the extra care: quantize for the wire, dequantize for the update, and test whether the task still converges. For simpler CNN detection, you may not need that extra expand step.</p>
+      <p>Edge and federated deployments often force a small integer format such as INT4. A 1% to 2% drop can be acceptable if the device constraint is real. A GPU at 99% face-detection accuracy versus a Raspberry Pi with about a 2% drop is the concrete "still valid" story.</p>
+      <h3 id="6.3.7-industry-applications-and-practical-checks">6.3.7 Industry Applications and Practical Checks</h3>
+      <p>GPU and TPU vendors expose FP32, TF32, BF16, FP16, and integer paths. Conversion among those encodings is daily work in large-model training, not a homework toy. NVIDIA Automatic Mixed Precision is one library form of the same ladder: wrap an optimizer and let the runtime pick FP16 where it dares.</p>
+      <p>Interactive converters let you type any number and watch FP32, FP16, BF16, and integer reconstructions. Integer inputs are the easy case. The hard case is a float whose mantissa does not survive the smaller grid.</p>
+      <div class="key-takeaway">
+        <p><strong>Exam note:</strong> The INT8 worked pair \(0.65 \rightarrow 83 \rightarrow 83/127\) with error \(0.003543\) is the numerical template to replay. Write the scale, the round, the reverse divide, and the residual. Dequantization does not restore deleted bits. Integer-only sends are legal and error accumulates across billions of weights.</p>
+      </div>
+
+      <h2 id="6.4-fine-tuning-and-transfer-learning">6.4 Fine-Tuning and Transfer Learning</h2>
+      <p>Quantization left trained weights in place and only shortened their encoding. This section asks a different question: how do you teach a giant pretrained model a company task when you cannot retrain billions of entries?</p>
+      <div class="important-note">
+        <p>If a vision-language model never saw your factory photos, why would a shorter bit-width help? It would not. You need new training on your labels, but you cannot afford a full pretraining run.</p>
+      </div>
+      <h3 id="6.4.1-fine-tuning-is-not-quantization">6.4.1 Fine-Tuning Is Not Quantization</h3>
+      <p>A prompt asked how fine-tuning differs from quantization.</p>
+      <p>Quantization leaves the trained weights in place and only shortens their encoding. You do not retrain just to quantize. <em>Fine-tuning</em> updates model weights by training on your own data. The aim is to turn a generic model into a specialist for your task and your company data. A large language model never saw that private corpus, so you must introduce the corpus if you want outputs that match it.</p>
+      <p>Fine-tuning a 120 billion or 8 billion parameter net from scratch is not realistic. Those models were trained by labs such as Meta and Google on terabytes of general text and images. You still want to inject custom images, for example defective MRF tires, into a vision-language model (VLM). Named VLMs in the discussion included Qwen (spoken as QUN / Kwan), Mistral (spoken as mystical), and a Llama-family model (spoken as polygama / polygamma). The three product families are the intended set.</p>
+      <p>Without a parameter-saving trick, "fine-tune from scratch" would mean retraining billions of weights. That path is closed.</p>
+      <div class="key-concept">
+        <p><strong>Purpose.</strong> Fine-tuning exists to inject a small labeled set into a model that already knows generic vision or language. <strong>Inputs.</strong> A pretrained weight tensor \(W\), a small company dataset (images plus labels, or text plus answers), and a choice of which tensors may change. <strong>Outputs.</strong> Updated weights (or a small adapter, in the next section) that mark defects, answer domain questions, or otherwise match the company task.</p>
+      </div>
+      <h3 id="6.4.2-domain-adaptation-with-few-company-images">6.4.2 Domain Adaptation With Few Company Images</h3>
+      <p>A VLM is a <em>vision-language model</em>: it jointly handles images and text. It can caption an image, or generate an image from a caption, and it can act as a visual agent on mixed inputs including video. Those models are strong generalists because they were trained on huge multimodal corpora.</p>
+      <p>They are not born as MRF tire inspectors. Defects may be a vertical scratch, a horizontal scratch, or other marks on the tread or sidewall. You may have only about 100 labeled company images, not millions. Training a detector from zero on 100 images will not match a foundation VLM. So you <em>adapt</em> the pretrained model.</p>
+      <p><em>Domain adaptation</em> here means: keep the general knowledge already baked into billions of parameters, and add a small amount of company-specific knowledge so the model becomes a task specialist. After adaptation, the same VLM becomes an MRF tire defect expert. It can mark defects on new images and it can run faster because the serving path is specialized, not a giant general chat model doing a side job.</p>
+      <p>The data scale named for the company trial was hundreds of samples, not millions. With that small set, Qwen, Llama-family, and Mistral-style models were trained until a new image produced a defect decision.</p>
+      <p>Think of the pretrained weights as a world encyclopedia. You do not rewrite the encyclopedia. You add a thin company pamphlet and staple it on. The analogy breaks if the pamphlet contradicts the encyclopedia on facts that must stay frozen; then you are in catastrophic forgetting, which is flagged later, not solved here.</p>
+      <h3 id="6.4.3-layer-freezing-feature-extraction-partial-and-full-fine-tuning">6.4.3 Layer Freezing, Feature Extraction, Partial and Full Fine-Tuning</h3>
+      <p>A first family of tricks is old transfer learning.</p>
+      <div class="key-concept">
+        <p><strong>Steps.</strong></p>
+        <ol>
+          <li>Start from a pretrained backbone (ResNet, BERT-base, or a VLM trunk).</li>
+          <li><em>Feature extraction / frozen backbone.</em> Freeze most layers so their weights do not change. Feed your images through those frozen layers. Train only a new <em>task head</em>, the last classifier (or a few last layers) that maps features to your labels.</li>
+          <li><em>Partial fine-tuning.</em> Freeze the early layers and unfreeze one, two, or three layers in front of the head. Inputs still pass through the frozen stack. Loss is computed at the head. Gradients update only the unfrozen block plus the head. You can grow that trainable window slowly.</li>
+          <li><em>Full fine-tuning.</em> Every weight is trainable, after you swap the classifier.</li>
+        </ol>
+        <p>If the head used to score 1,000 ImageNet classes and you have a 3-class, 4-class, or 10-class tire problem, you must replace that head.</p>
+      </div>
+      <p>T1's layer-freezing chapter adds a systems reading of the same freeze: once a pipeline stage has converged, you can drop its activations and skip its gradient work, which frees GPU memory during model-parallel training. That is freeze-for-memory. The class story here is freeze-for-adaptation: keep generic features, train the task head.</p>
+      <div class="example-box">
+        <p><strong>Trace, tiny tire head.</strong> Suppose the frozen backbone emits a 512-dimensional feature \(h\). The old ImageNet head mapped \(h\) to 1000 logits. You throw that head away. You attach a new matrix \(W_{\mathrm{head}} \in \mathbb{R}^{3 \times 512}\) and bias \(b \in \mathbb{R}^{3}\) for three tire labels: scratch, bulge, good.</p>
+        <p>Forward: \(\hat{y} = \mathrm{softmax}(W_{\mathrm{head}} h + b)\). Loss is cross-entropy on the company label. Backward: \(\partial L / \partial W_{\mathrm{head}}\) and \(\partial L / \partial b\) update. \(\partial L / \partial W_{\mathrm{backbone}} = 0\) because those weights are frozen.</p>
+        <p>With 100 images and a few epochs, only the \(3 \times 512 + 3 = 1{,}539\) head numbers move. The encyclopedia stays put. The pamphlet is the new head.</p>
+      </div>
+      <p>Sense-check: 1539 is a tiny trainable set next to a ResNet or a VLM. That is the point of freezing.</p>
+      <p>The verbal contrast is sharp. On ResNet-scale models, partial or even full fine-tuning can be fine. BERT-base fine-tuning on a single GPU is the same size class. On ChatGPT-scale models, updating all layers or even a large last block is not possible in this setting. That is why the discussion turns to PEFT and LoRA.</p>
+      <div class="warning-box">
+        <p><strong>When to use which.</strong> Use a frozen backbone plus a new head when the company set is tiny and the backbone already sees related images. Use partial unfreezing when the head alone underfits. Use full updates only when the pretrained net is small enough (ResNet, BERT-base). Do not plan a full update of a chat-scale LLM. <strong>Complexity.</strong> Full fine-tuning stores gradients and optimizer states for every parameter. Frozen-backbone training stores them only for the head. The wall is memory and wall-clock, not a missing derivative.</p>
+      </div>
+      <p>So the simple stack is: freeze a lot, train a little, maybe walk the trainable window deeper. For giant LLMs and VLMs you still need a more extreme cut: <em>parameter-efficient fine-tuning</em> (PEFT), including LoRA.</p>
+      <h3 id="6.4.4-student-questions-and-answers">6.4.4 Student Questions and Answers</h3>
+      <p>The opening contrast is the one to keep in exam language.</p>
+      <div class="important-note">
+        <p><strong>Q:</strong> What is fine-tuning, and how is it different from quantization?</p>
+        <p><strong>A:</strong> In fine-tuning you update weights by training on your own data, turning a generic model into a task-specific model, without retraining just to change bit-width. In quantization you only reduce the precision of existing weights, without that retraining step.</p>
+      </div>
+      <p>A second instinct already points at PEFT.</p>
+      <div class="important-note">
+        <p><strong>Q:</strong> Could we first quantize to shrink the model, freeze some layers, and fine-tune only the rest, so we never touch the entire net?</p>
+        <p><strong>A:</strong> Yes. That is the right instinct. Freeze a large body of weights that already hold general knowledge. Train only some layers, or, in the PEFT view, only a small extra adapter. You do not retrain the whole giant.</p>
+      </div>
+      <div class="key-takeaway">
+        <p><strong>Exam note:</strong> If a question contrasts the three compression families, quantization changes bit-width, fine-tuning changes which weights learn your data, and pruning (next topic) zeros or drops redundant weights. Freeze-and-train-a-head is the simple path. Full updates are for ResNet-scale nets, not ChatGPT-scale nets.</p>
+      </div>
+      <p>Company defect inspection with a handful of images is the reason PEFT exists. You cannot collect ImageNet-scale labels inside one factory.</p>
+      <div class="key-takeaway">
+        <p>Fine-tuning staples a pamphlet onto an encyclopedia. For chat-scale models even the last layers are too large to update. The next section splits one giant matrix into two thin factors and trains only those.</p>
+      </div>
+
+      <h2 id="6.5-parameter-efficient-fine-tuning-and-lora">6.5 Parameter-Efficient Fine-Tuning and LoRA</h2>
+      <p>Chat-scale models made full updates impossible. <em>Parameter-efficient fine-tuning</em> (PEFT) attacks that wall. <em>Low-rank adaptation</em> (LoRA) is the PEFT method developed in detail: freeze \(W\), train two thin factors, add their product.</p>
+      <div class="important-note">
+        <p>How do you add company knowledge to a million-entry matrix without touching a million entries? Split the update into two thin factors whose inner size is a tiny rank \(r\).</p>
+      </div>
+      <h3 id="6.5.1-split-a-giant-matrix-into-two-thin-matrices">6.5.1 Split a Giant Matrix Into Two Thin Matrices</h3>
+      <p>Start with a square weight matrix of size \(n \times n\). For a mental picture, take \(n = 1000\). Then</p>
+      <p>\[ n \times n = 1000 \times 1000 = 1{,}000{,}000 \]</p>
+      <p>which is 10 lakh parameters in one matrix. LoRA does not update that full grid. It writes the grid as a product of two much thinner matrices whose inner dimension is a small <em>rank</em> \(r\).</p>
+      <p>Keep the row count \(n\). Choose a tiny column count \(r\), such as \(2\), \(4\), or \(8\). One factor is \(n \times r\). The other is \(r \times n\). Their product is again \(n \times n\):</p>
+      <div class="key-concept">
+        <p>\[ (n \times r)\,(r \times n) = n \times n \]</p>
+        <p>The stored learnable count is \(nr + rn = 2nr\), not \(n^{2}\). The output size matches the original multiply. The trainable set is the two thin factors. Keep the multiply shape of \(n \times n\) while training only those factors.</p>
+      </div>
+      <p>Forget a long linear-algebra sermon about rank if you need to. The working picture is: pick a small \(r\), split, multiply back to the old shape, and train only the split pieces.</p>
+      <p>A sliding door on a wide wall is a fair everyday map. The wall (frozen \(W\)) already stands. You add a thin pair of rails (the two factors) that let the door move a little. The analogy breaks if \(r\) is so small that the door can only slide in one direction; then the adapter cannot express a rich task.</p>
+      <h3 id="6.5.2-mathematical-formulation">6.5.2 Mathematical Formulation</h3>
+      <p>Let \(W \in \mathbb{R}^{d \times d}\) be a frozen pretrained weight matrix. Let \(r \ll d\) be the LoRA rank. Introduce two learnable matrices. One spoken assignment was \(A \in \mathbb{R}^{d \times r}\) and \(B \in \mathbb{R}^{r \times d}\). Another later line swapped the names and said \(A\) is \(r \times d\) and \(B\) is \(d \times r\). The product must be \(d \times d\) either way.</p>
+      <p>This write-up fixes the names so that \(BA\) is \(d \times d\): \(B \in \mathbb{R}^{d \times r}\) and \(A \in \mathbb{R}^{r \times d}\). If you swap the letters, swap the product order too. Do not mix the two conventions in one line.</p>
+      <div class="key-concept">
+        <p>The adapter is</p>
+        <p>\[ \Delta W = BA \]</p>
+        <p>and the used weight is</p>
+        <p>\[ W' = W + \Delta W = W + BA \]</p>
+        <p>where \(W\) stays frozen and only \(A\) and \(B\) receive gradient steps. You are not touching \(W\); you learn two small matrices that represent the new task, then you add that product onto \(W\).</p>
+      </div>
+      <p>Forward pass, including a <em>scaling factor</em> \(\alpha / r\) (spoken both as "alpha by R" and, in one pass, as if it were a learning-rate term):</p>
+      <p>\[ y = Wx + \frac{\alpha}{r} (BA)x \]</p>
+      <p>Here \(x \in \mathbb{R}^{d}\) is the layer input, \(y \in \mathbb{R}^{d}\) is the layer output, \(\alpha\) is a positive scale hyperparameter, and \(r\) is the rank. The frozen path \(Wx\) stays. The adapter path is the only path you update. \(\alpha / r\) is not the optimizer learning rate. It is a separate knob that keeps adapter updates a similar size when you change \(r\).</p>
+      <p>Before training, \(A\) and \(B\) are initialized to small random values so that \(\Delta W\) starts as a small change to \(W\). A common library default sets \(B\) to zero and \(A\) to a small Gaussian, which makes \(\Delta W = 0\) at step 0. The class version (both factors small and random) is the same idea: start with a tiny pamphlet, not a second encyclopedia.</p>
+      <p>After training, \(\Delta W\) encodes domain-specific patterns: legal phrasing, tire-scratch textures, or whatever the new task is.</p>
+      <p>One wording said predictions use only \(\Delta W\) and not \(W\). The forward formula above still includes \(Wx\). The intended claim is that <em>updates</em> use only \(A\) and \(B\), while the frozen \(W\) still contributes to the forward pass.</p>
+      <h3 id="6.5.3-worked-examples-of-parameter-counts">6.5.3 Worked Examples of Parameter Counts</h3>
+      <p>Train skinny factors, then multiply back to \(n \times n\). The counts below are the exam arithmetic.</p>
+      <div class="example-box">
+        <p><strong>Example A — \(100 \times 100\) with rank \(2\).</strong> Original count:</p>
+        <p>\[ 100 \times 100 = 10{,}000 \]</p>
+        <p>LoRA factors \(100 \times 2\) and \(2 \times 100\):</p>
+        <p>\[ 100 \times 2 + 2 \times 100 = 200 + 200 = 400 \]</p>
+        <p>You train <strong>400</strong> numbers instead of 10,000. Those 400 numbers are the MRF-task knowledge in this toy. After you form the product you again have a \(100 \times 100\) grid to add onto \(W\). Most of that grid can be near zero. The product still has the right shape.</p>
+        <p>One spoken addition said "100 into 2 is 200, plus 2 into 100 is 400," which double-counts if you treat the second term as already 400. The consistent total is \(200+200=400\).</p>
+      </div>
+      <p>Sense-check: \(400 / 10{,}000 = 0.04\), so you train 4% of that matrix. The multiply shape is unchanged.</p>
+      <p>The \(4 \times 4\) toy is the same pattern with numbers you can write on one board.</p>
+      <div class="example-box">
+        <p><strong>Example B — \(4 \times 4\) toy with rank \(2\).</strong> Factors \(4 \times 2\) and \(2 \times 4\) give</p>
+        <p>\[ 8 + 8 = 16 \]</p>
+        <p>learnable values. The product is \(4 \times 4\). You still only train 16 adapter entries. The walkthrough counted "4 plus 4 plus 8" on the way to 16. The clean count is \(2dr = 2 \cdot 4 \cdot 2 = 16\).</p>
+      </div>
+      <p>Sense-check: a full \(4 \times 4\) has 16 entries too, so rank \(2\) on a \(4 \times 4\) is not a saving. The toy is for shape, not for compression. Compression appears when \(r \ll d\).</p>
+      <div class="example-box">
+        <p><strong>Example C — \(512 \times 512\) with a rank-1 split.</strong> The original matrix is \(512 \times 512\). The adapter is \(512 \times 1\) and \(1 \times 512\). A spoken arithmetic said each thin factor is \(16{,}384\), and the two sides sum to \(32{,}768\) "parameters." Note that</p>
+        <p>\[ 512 \times 32 = 16{,}384 \]</p>
+        <p>so \(16{,}384\) is 512 FP32 <em>bits in one vector</em>, not 512 parameters. Parameter counts would be \(512 + 512 = 1{,}024\) learnable values versus \(512^{2} = 262{,}144\) full values. Keep both readings: <strong>1,024 parameters</strong>, or <strong>32,768 bits</strong> if each of the two vectors is stored as 512 FP32 bits.</p>
+      </div>
+      <p><strong>Example D — million-scale motivation.</strong> A \(1000 \times 1000\) matrix is 10 lakh entries. LoRA replaces that with two skinny factors whose inner size is a small \(r\). That is the point of the method: keep the multiply shape, drop the trainable count.</p>
+      <p>The small numbers inside \(A\) and \(B\) are the task-specific weights. After they learn, you "assign back": add \(BA\) into the working model so the fine-tuned net contains the new knowledge.</p>
+      <h3 id="6.5.4-back-propagation-through-a-and-b">6.5.4 Back Propagation Through \(A\) and \(B\)</h3>
+      <p>For each training example the model predicts, you compute a loss against the ground truth, then back propagate. You do <em>not</em> update \(W\). Gradients flow into \(B\) and \(A\), which together form \(\Delta W\).</p>
+      <p>Let \(L\) be the loss and let \(h\) be the layer output after the adapted multiply,</p>
+      <p>\[ h = Wx + \frac{\alpha}{r} BAx \]</p>
+      <p>Let \(g = \partial L / \partial h \in \mathbb{R}^{d}\), a column. Chain rule in the spoken sketch was "dL by dH, times dH by the next factor," then a gradient involving the transpose of \(A\).</p>
+      <div class="key-concept">
+        <p>Write \(z = Ax \in \mathbb{R}^{r}\). Then the adapter contribution is \((\alpha / r) Bz\). Differentiating through that product gives</p>
+        <p>\[ \begin{aligned} \frac{\partial L}{\partial B} &= \frac{\alpha}{r}\, g z^{\top} = \frac{\alpha}{r}\, g x^{\top} A^{\top} \\ \frac{\partial L}{\partial A} &= \frac{\alpha}{r}\, B^{\top} g x^{\top} \end{aligned} \]</p>
+        <p>A reconstructed pair from the walkthrough omitted \(\alpha / r\):</p>
+        <p>\[ \frac{\partial L}{\partial B} = \frac{\partial L}{\partial h}\, x^{\top} A^{\top}, \qquad \frac{\partial L}{\partial A} = B^{\top} \frac{\partial L}{\partial h}\, x^{\top} \]</p>
+        <p>That pair is the same transpose structure with the scale folded into the optimizer step. Standard LoRA sends updates only into \(A\) and \(B\). The audio mixed \(W\) with \(A\) transpose; that \(W\) is a slip for the incoming gradient, not an update of \(W\).</p>
+      </div>
+      <p>After many examples, \(A\) and \(B\) settle. Their product encodes the task. Adding that product to \(W\) yields the fine-tuned matrix. The values you add are small. A spoken numeric cartoon was: if a frozen entry is \(20\) and the adapter entry is \(0.03\), the sum is \(20.03\). Some adapter entries stay 0.</p>
+      <p>Loss may be classification or regression. The model predicts \(\hat{y}\) as a function of the adapted weights. You compare to the label, form \(L\), and send \(\partial L / \partial A\) and \(\partial L / \partial B\). Repeat. That is ordinary back propagation on a tiny variable set, with the giant \(W\) frozen.</p>
+      <h3 id="6.5.5-how-many-parameters-you-train-and-optimizer-state-saving">6.5.5 How Many Parameters You Train, and Optimizer-State Saving</h3>
+      <p>You can vary \(d\), \(r\), and how many layers get LoRA. Full fine-tuning trains the whole matrix. LoRA trains \(2dr\) per adapted matrix. One comparison said that after LoRA you might train only "93 lakh" parameters against a much larger full count. The matching full-model denominator was not given, so treat 93 lakh (9.3 million) as a named worksheet figure, not a universal ratio.</p>
+      <p>A per-layer worksheet used:</p>
+      <ul>
+        <li>full matrix parameter count on the order of \(3.07 \times 10^{x}\) in a display that repeated 3.07 (the exact power was not clean)</li>
+        <li>LoRA \(A\) with shape involving \(r \times d\)</li>
+        <li>LoRA \(B\) with shape involving \(d \times r\)</li>
+        <li>LoRA total per layer = both factors, times the number of adapted layers</li>
+        <li>compression ratio from those counts</li>
+        <li>scale \(\alpha / r\)</li>
+      </ul>
+      <p>A named saving was <strong>95.3% of optimizer states</strong> relative to the dense baseline. Optimizer states (moment buffers in Adam-style methods) track each trainable tensor. If you train 400 numbers instead of 10,000, those extra buffers shrink with the trainable set.</p>
+      <p>A training simulator compared <em>feature extraction</em> against LoRA. Feature extraction showed a wide gap between training loss and validation loss, read as "it will not learn much" and as overfit. LoRA reduced that gap and moved more useful information into the updated adapter weights. The simulator is a way to <em>see</em> that a small trainable set can still fit the new task.</p>
+      <p>Transfer learning with a frozen backbone is "very simple" next to LoRA. The piece to learn deeply is PEFT/LoRA: choose two low-rank matrices, train them, freeze \(W\), add the product.</p>
+      <p>Catastrophic forgetting, the risk that new training erases old skills, is flagged as a later topic, not derived here.</p>
+      <div class="warning-box">
+        <p><strong>When to use LoRA.</strong> Use it when \(W\) is too large to update and you have a small specialized set. Alternatives: a new task head (cheaper, weaker), full fine-tuning (stronger, often impossible), or external retrieval (next section). <strong>Pitfall:</strong> Treating \(\alpha / r\) as the Adam learning rate. <strong>Pitfall:</strong> Updating \(W\) "a little" and calling it LoRA. LoRA freezes \(W\). <strong>Pitfall:</strong> Picking \(r\) so large that \(2dr \approx d^{2}\). Then you paid LoRA complexity without the saving.</p>
+      </div>
+      <h3 id="6.5.6-student-questions-and-answers">6.5.6 Student Questions and Answers</h3>
+      <p>Fine-tuning is not a distributed-only trick.</p>
+      <div class="important-note">
+        <p><strong>Q:</strong> Fine-tuning is a generic mechanism, right? It is not specific to distributed training?</p>
+        <p><strong>A:</strong> Yes. It is adaptation. Whenever you want an LLM or VLM that was trained on a huge corpus to serve a new task, you can fine-tune. Distributed training is one place you meet the memory wall, not the only place you use LoRA.</p>
+      </div>
+      <p>A compression instinct from linear algebra does not replace LoRA.</p>
+      <div class="important-note">
+        <p><strong>Q:</strong> Is there another optimization, for example PCA as an initialization, to shrink the matrix?</p>
+        <p><strong>A:</strong> No. The pretrained matrix may have thousands of features, a spoken width of 2752 among them, learned for a generic task. If you crush that to two or three PCA features, you lose the generalization of generic features you were trying to keep. If you keep a large PCA rank, you still perturb the generic basis and you lose the point of freezing \(W\). LoRA adds a thin increment instead of rotating away the original features. PCA is the wrong tool here.</p>
+      </div>
+      <div class="key-takeaway">
+        <p><strong>Exam note:</strong> LoRA questions want the shape story \(n \times r\) times \(r \times n\), the freeze-and-add rule \(W' = W + BA\) with \(r \ll d\), optional scale \(\alpha / r\), and the fact that back prop updates \(A\) and \(B\) only. Replay the \(100 \times 100 \rightarrow 400\) count.</p>
+      </div>
+      <p>LoRA is how teams attach legal, medical, or factory knowledge to a frozen foundation model without renting a full pretraining cluster.</p>
+      <div class="key-takeaway">
+        <p>LoRA keeps \(W\) frozen and trains two thin factors. The next contrast is a tool that never touches weights at all: retrieval-augmented generation.</p>
+      </div>
+
+      <h2 id="6.6-fine-tuning-versus-rag-and-prompting">6.6 Fine-Tuning Versus RAG and Prompting</h2>
+      <p>LoRA changed weights. A common confusion is to treat that change as the same trick as <em>retrieval-augmented generation</em> (RAG). This section splits the tools: external lookup versus baked-in skill.</p>
+      <div class="important-note">
+        <p>If the answer already lives in a PDF, do you need new weights? Often no. If the answer is a pixel box on a tire, a retrieved paragraph will not draw the box.</p>
+      </div>
+      <h3 id="6.6.1-retrieval-augmented-generation-is-external-memory">6.6.1 Retrieval-Augmented Generation Is External Memory</h3>
+      <p>RAG is a storage and retrieval process. It sits <em>outside</em> the model. Documents live in a database. A user question arrives. The language model receives that question and checks whether matching data lives in the RAG store. If a match exists, the system pulls the corresponding context. Now the model holds two pieces: the user question and the retrieved context. It writes an answer from both.</p>
+      <div class="key-concept">
+        <p>Let \(q\) be the user question and let \(W\) be frozen generator weights. RAG answers</p>
+        <p>\[ \hat{y}_{\mathrm{RAG}} = f_{W}\big(q,\ \mathrm{retrieve}(q)\big) \]</p>
+        <p>Fine-tuning answers with adapted weights and no fetch of that task skill:</p>
+        <p>\[ \hat{y}_{\mathrm{FT}} = f_{W+BA}(x) \]</p>
+        <p>Here \(f_{W}\) is the frozen generator, \(\mathrm{retrieve}(q)\) is the external context, \(x\) is the task input (text or image), and \(BA\) is the LoRA adapter. RAG never writes \(BA\). Fine-tuning imbibes task knowledge into \(A\) and \(B\), then into \(W + BA\).</p>
+      </div>
+      <p>You can dump PDFs, presentation decks, Jira tickets, Confluence pages, or medical notes into that store. Text question-answering is the sweet spot.</p>
+      <p>Fine-tuning <em>changes the model</em>. Task knowledge is inside \(A\) and \(B\), then inside \(W + BA\). There is no extra fetch step at inference for that knowledge. You imbibe the new skill into the weights themselves.</p>
+      <p>You can also stay outside the weights with prompts only: a <em>zero-shot</em> prompt or a <em>few-shot</em> prompt (spoken as "few short" / "zero short"). That path never updates \(W\). It only shows extra text or extra example images in the request.</p>
+      <table>
+        <thead>
+          <tr>
+            <th>Tool</th>
+            <th>Where knowledge lives</th>
+            <th>Typical job</th>
+            <th>Weight update</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>Prompting</td>
+            <td>Inside the request text</td>
+            <td>Easy few-example tasks</td>
+            <td>None</td>
+          </tr>
+          <tr>
+            <td>RAG</td>
+            <td>External database</td>
+            <td>PDF / Jira / Confluence QA</td>
+            <td>None</td>
+          </tr>
+          <tr>
+            <td>LoRA / fine-tuning</td>
+            <td>Adapter \(BA\) plus frozen \(W\)</td>
+            <td>Skills the model must perform</td>
+            <td>\(A,B\) only</td>
+          </tr>
+        </tbody>
+      </table>
+      <p>When to pick which: retrieve text that already exists; train when the model must <em>do</em> a new perceptual or stylistic skill.</p>
+      <h3 id="6.6.2-why-tire-bounding-boxes-do-not-belong-in-rag">6.6.2 Why Tire Bounding Boxes Do Not Belong in RAG</h3>
+      <p>Suppose the task is: given a tire image, draw a <em>bounding box</em> on a scratch. The expectation is a box on the damaged region, not a paragraph of advice. RAG will not match that job. You cannot store a few defect photos in a text database and expect a retrieved paragraph to localize pixels. Storing the image in RAG and hoping a match appears does not give you coordinates.</p>
+      <p>Prompting was tried without touching weights: show an "upper line defect," a "vertical defect," and then a new photo. It did not work for this complexity. The team had to show images during training so the model became an expert. For complex problems the model may not understand the prompt exemplars. For simple fetch-and-read jobs, such as reading PDF documents, prompts may help.</p>
+      <p>The split in one sentence: RAG is for textual documents you insert and retrieve. Fine-tuning is for skills you must bake into weights, such as drawing boxes on factory images. Object detection for a specific company, such as MRF tires, is the fine-tuning side. Document QA is the RAG side.</p>
+      <div class="warning-box">
+        <p><strong>Scope:</strong> RAG helps when the fact is already written down and can be fetched as text. It breaks for dense visual localization, for skills that are not a lookup, and for private images that have no useful text neighbor in the store. Few-shot image prompts failed here, so the team had to train.</p>
+      </div>
+      <h3 id="6.6.3-generic-answers-versus-a-domain-model">6.6.3 Generic Answers Versus a Domain Model</h3>
+      <p>A generic model, asked whether a California employer may fire a worker for a social-media post made outside work hours, tends to hedge: employment law varies by state, exceptions apply, here is a vague pointer. A domain-tuned model can cite a labor code, name exceptions, and give a tighter reason. The same pattern is the MRF detector: general VLM versus tire expert.</p>
+      <p>Picture two desks. On the left, a generalist reads a question and hedges. On the right, a specialist has already studied the code and answers with a citation. RAG can slide a statute onto the generalist's desk at ask-time. Fine-tuning is sending the specialist to school before the question arrives.</p>
+      <h3 id="6.6.4-student-questions-and-answers">6.6.4 Student Questions and Answers</h3>
+      <p>The mix-up is to treat LoRA as another name for RAG.</p>
+      <div class="important-note">
+        <p><strong>Q:</strong> Is LoRA the same technique that RAG uses?</p>
+        <p><strong>A:</strong> No. RAG is a storage mechanism and a retrieval process, external to the model. Fine-tuning imbibes knowledge into the weights. RAG helps when you can fetch text. It does not replace training for object detection with bounding boxes on company images.</p>
+      </div>
+      <div class="key-takeaway">
+        <p><strong>Exam note:</strong> A comparison item should mention at least one task that RAG cannot cover (pixel localization / bounding boxes) and one task it can cover (PDF question answering). Few-shot prompts failed on the hard visual task.</p>
+      </div>
+      <p>Jira and Confluence dumps are RAG workloads. Factory camera inspection is a fine-tuning workload. Mixing the two tools without that split is a design error.</p>
+      <div class="key-takeaway">
+        <p>RAG fetches. LoRA bakes. The last family, pruning, neither fetches nor adds adapters: it zeros redundant weights.</p>
+      </div>
+
+      <h2 id="6.7-preview-of-pruning">6.7 Preview of Pruning</h2>
+      <p>Quantization shortened bits. LoRA shrank the trainable set. <em>Pruning</em> is the third compression family, scheduled for a later session. The preview is enough to separate it from quantization and LoRA.</p>
+      <div class="important-note">
+        <p>If two filters learned the same scratch detector, do you need both? No. You keep one copy and zero or drop the extra kernel. You do not delete the whole convolutional stage.</p>
+      </div>
+      <h3 id="6.7.1-zeroing-weights-instead-of-retraining-everything">6.7.1 Zeroing Weights Instead of Retraining Everything</h3>
+      <p>Pruning adjusts the weight tensor by forcing some values to zero, as if you snipped branches. If a weight is \(18.3\) and it fails a keep-test, you store \(0\). You can also drop filters, which cuts the number of live kernels in a convolutional layer. The aim is fewer effective weights, less storage, and less training and serving cost.</p>
+      <p>T1 describes a related serving cut as model distillation via pruning: define a keep-test, drop neurons that fail it, and keep a smaller net with the same job. That full recipe is later. Here the picture is already enough: zero what you do not need.</p>
+      <p><em>Dropout</em> is named as one pruning-style technique: it reduces the number of active weights, though classical dropout is stochastic at training time. The later session goes deeper.</p>
+      <div class="key-concept">
+        <p><strong>Purpose.</strong> Cut live parameters without inventing a new architecture. <strong>Inputs.</strong> A trained (or nearly trained) tensor \(W\), and a keep-test (magnitude, similarity, or a dropout mask). <strong>Outputs.</strong> A sparser \(W\) with some entries zero, or a convolutional layer with fewer filters.</p>
+      </div>
+      <h3 id="6.7.2-do-not-delete-layers-collapse-redundant-filters">6.7.2 Do Not Delete Layers; Collapse Redundant Filters</h3>
+      <p>A convolutional layer is not itself the learned object. The <em>filters</em> are. A spoken shape "34 comma 3" means 34 filters of size \(3 \times 3\). Then the layer learns</p>
+      <div class="example-box">
+        <p>\[ 9 \times 34 = 306 \]</p>
+        <p>parameters in that picture (the spoken product ignores input-channel depth). If each filter also sees \(C\) input channels, the fuller count is \(3 \times 3 \times C \times 34\). The class product \(9 \times 34\) is the per-channel kernel area times the filter count.</p>
+        <p>You "play" inside those filters. You do not delete the layer. Removing a layer throws away that stage of computation. "The layer is not a learning thing; filters are learnable things."</p>
+      </div>
+      <p>Sense-check: 34 small \(3 \times 3\) patches have \(34 \times 9 = 306\) spatial weights. That is a board-sized count, not a 7 billion parameter count. The lesson is <em>where</em> learning lives, not the absolute size.</p>
+      <p>If you declare 64 or 128 filters, several of them may learn nearly the same feature. The distance between two filter matrices can be tiny. If two filters look for the same pattern, you can keep one copy. That merge is one pruning style. Declared width 128 does not mean 128 distinct concepts. Near-duplicate filters are the ones you remove to cut training time and storage.</p>
+      <div class="warning-box">
+        <p><strong>Pitfall:</strong> Deleting a CNN layer and calling it pruning. The stage of computation is then gone. <strong>Pitfall:</strong> Assuming 128 filters means 128 different detectors. Many can be duplicates. <strong>Pitfall:</strong> Mixing dropout's random training mask with a permanent zero. Dropout is related in spirit; it is not the same serving-time snip.</p>
+      </div>
+      <p>Sketch two \(3 \times 3\) grids that look almost equal: both light up on a vertical edge. The keep-test notices the tiny distance and drops one grid. The layer still exists. It just has 127 filters instead of 128.</p>
+      <h3 id="6.7.3-student-questions-and-answers">6.7.3 Student Questions and Answers</h3>
+      <p>The branch picture is the right spirit, if you zero weights rather than delete stages.</p>
+      <div class="important-note">
+        <p><strong>Q:</strong> What is a pruning technique? Is it removing branches?</p>
+        <p><strong>A:</strong> Yes, in spirit. You zero some weights or drop some filters so the live parameter count falls. Dropout is one related method. The full recipe is a later topic.</p>
+      </div>
+      <p>The dangerous shortcut is to remove a whole layer.</p>
+      <div class="important-note">
+        <p><strong>Q:</strong> In a CNN, can we prune by removing layers?</p>
+        <p><strong>A:</strong> No. You cannot remove the layer. Remove-layer means that stage of learning is gone. Filters are what learn. A layer with 34 filters of \(3 \times 3\) learns \(9 \times 34\) values. If two of 64 or 128 filters converge to the same feature, keep one. That is a pruning move.</p>
+      </div>
+      <div class="key-takeaway">
+        <p><strong>Exam note:</strong> Pruning details, including systematic filter-similarity tests, are promised for the next session. The examinable distinction now is: quantization changes bits, LoRA changes which extra matrices you train, pruning zeros redundant weights or filters. Do not delete CNN layers.</p>
+      </div>
+      <p>Over-wide CNNs with 128 filters often duplicate detectors. Collapsing those duplicates is a practical serving optimization, not only a diagram in a textbook.</p>
+      <div class="key-takeaway">
+        <p>Three levers, three objects: bits (quantization), extra matrices (LoRA), live filters (pruning). Practice the formulas from this lecture first. Leave the full pruning recipe for the next session.</p>
+      </div>
+
+      <h2 id="exam-guidance-summary">Exam Guidance Summary</h2>
+      <p>No numeric mark map was given. The emphasis signals still tell you what to practice.</p>
+      <ul>
+        <li>After pipeline slicing, the remaining cost is storing and shipping gradients. Bit-width is the first lever.</li>
+        <li>Know the FP32 split: 1 sign bit, 8 exponent bits, 23 mantissa bits, bias 127. Replay \(-3.14\) at least through sign, exponent integer 128, and \(2^{128-127}\).</li>
+        <li>Know that FP16 uses bias 15 and 10 mantissa bits, and that the same \(-3.14\) became about \(-3.13\) in the 16-bit try.</li>
+        <li>Know signed INT8 range \([-128, +127]\) and why 7 magnitude bits top out at 127.</li>
+        <li>Memorize the INT8 scale template: \(q = \mathrm{round}(x \cdot 127)\) for \(x = 0.65\) gives 83; dequantization is \(83/127\); error is \(0.003543\). Write every intermediate, not only the final float.</li>
+        <li>Pair the 7 billion parameter memory ladder with the accuracy warnings: 28 GB FP32, 14 GB FP16, 7 GB INT8, then INT4/1-bit with growing error.</li>
+        <li>Dequantization does not restore deleted bits. Integer-only sends are legal and error accumulates across billions of weights.</li>
+        <li>Fine-tuning is not quantization. Freeze-and-train-a-head is the simple path. Full updates are for ResNet-scale nets, not ChatGPT-scale nets.</li>
+        <li>LoRA is the PEFT method to know: \(W' = W + BA\) with \(r \ll d\), train \(A,B\) only, optional scale \(\alpha/r\). Replay the \(100 \times 100 \rightarrow 400\) count.</li>
+        <li>RAG is external retrieval. It is not LoRA. Bounding-box inspection needs fine-tuning. PDF/Jira/Confluence QA can use RAG. Few-shot prompts failed on the hard visual task.</li>
+        <li>Pruning preview: do not delete CNN layers; merge similar filters; dropout was named as related. Details later, along with catastrophic forgetting.</li>
+        <li>Interactive number converters and a LoRA training simulator were recommended as practice, not as a substitute for the formulas.</li>
+      </ul>
+      <div class="key-takeaway">
+        <p><strong>Exam note:</strong> If a question contrasts the three families, write: quantization changes bit-width, fine-tuning changes which weights learn your data, pruning zeros redundant weights or filters. Pair every compression factor with an accuracy or error warning.</p>
+      </div>
+
+      <h2 id="key-industry-applications">Key Industry Applications</h2>
+      <ul>
+        <li><strong>Pipeline-parallel GPU training (GPipe-style):</strong> activations go forward, quantized gradients come back. Bit-width cuts message size on the reverse path.</li>
+        <li><strong>Foundation LLM/VLM serving:</strong> GPT-style, BERT-style, Qwen, Mistral, and Llama-family models are too large to retrain; PEFT/LoRA is the practical adaptation path.</li>
+        <li><strong>Factory visual inspection:</strong> MRF-style tire defect detection with about 100–hundreds of images, needing bounding boxes, not a document index.</li>
+        <li><strong>Edge and federated deployment:</strong> INT4 (and similar) on devices such as a Raspberry Pi, accepting about a 1–2% accuracy drop to win memory and bandwidth.</li>
+        <li><strong>Accelerator formats:</strong> FP32, TF32 (19-bit), BF16, FP16, INT8 chosen by GPU/TPU vendors; conversion among them is quantization work. NVIDIA mixed precision is the common training form of that conversion.</li>
+        <li><strong>Enterprise text stacks:</strong> RAG over PDFs, Jira, and Confluence for lookup; not a replacement for visual fine-tuning.</li>
+        <li><strong>Legal specialists:</strong> a generic model hedges on California employment questions; a tuned model cites labor code.</li>
+        <li><strong>CNN serving:</strong> prune near-duplicate filters in wide layers (64 or 128 kernels) to cut storage and time.</li>
+        <li><strong>Transfer baselines:</strong> ResNet-style full or partial fine-tuning still works when the backbone is small enough; giant chat models need LoRA.</li>
+        <li><strong>Optimizers:</strong> LoRA's 95.3% optimizer-state saving matters because Adam-style buffers scale with the trainable tensor count, not with the frozen \(W\).</li>
+      </ul>
+    </main>
+
+    <!-- ============================================================
+    EXAM REVISION NOTES
+    Generated AFTER the main lecture-faithful content is complete. Each entry
+    distills one major concept into its most examinable elements.
+    Built FROM the core — never invented independently.
+
+    Each entry is a <div class="exam-revision-entry"> containing:
+      - .revision-topic (h3) — concept name
+      - .revision-mustknow — the single most examinable takeaway
+      - .revision-formula — central formula(s) in \[ ... \] MathJax
+      - .revision-pitfall — the #1 exam mistake
+      - .revision-check — one self-check question (no options)
+      - .revision-connections — linked concepts within this lecture
+    ============================================================ -->
+    <section class="exam-revision-section">
+      <h2>Exam Revision Notes</h2>
+      <p class="revision-intro">Below is the distilled, exam-ready core.
+      Every entry comes from the full explanation above. Use this section
+      for rapid review; return to the main notes when a point needs more context.</p>
+      <div class="exam-revision-entry">
+        <h3 class="revision-topic">Communication Bottlenecks After Model and Data Slicing</h3>
+        <p class="revision-mustknow"><strong>Must-know:</strong> Slicing is not enough; you still pay for every bit you store and send on the reverse pipeline path.</p>
+        <p class="revision-formula">\[g_{w} = \frac{\partial L}{\partial w}\]</p>
+        <p class="revision-pitfall"><strong>⚠️ Top pitfall:</strong> Naming differentiability as the leftover bottleneck instead of representation and communication of gradients.</p>
+        <p class="revision-check"><strong>Self-check:</strong> After GPipe-style slicing, what payload still dominates interconnect time?</p>
+        <p class="revision-connections"><strong>Connects to:</strong> Floating-point layouts and integer encodings, Quantization of weights and gradients</p>
+      </div>
+
+      <div class="exam-revision-entry">
+        <h3 class="revision-topic">Floating-Point Layouts and Integer Encodings</h3>
+        <p class="revision-mustknow"><strong>Must-know:</strong> FP32 is 1 sign, 8 exponent, 23 mantissa bits with bias 127; replay -3.14 through exponent 128 and 2^{128-127}.</p>
+        <p class="revision-formula">\[x = (-1)^{s} \cdot 2^{E - 127} \cdot \left(1 + \frac{M}{2^{23}}\right)\]</p>
+        <p class="revision-pitfall"><strong>⚠️ Top pitfall:</strong> Reading sign 0 as negative, or dividing the FP32 fraction by 2 instead of 2^{23}.</p>
+        <p class="revision-check"><strong>Self-check:</strong> Decode -3.14 given s=1, E=128, M=4781507.</p>
+        <p class="revision-connections"><strong>Connects to:</strong> Quantization of weights and gradients</p>
+      </div>
+
+      <div class="exam-revision-entry">
+        <h3 class="revision-topic">Quantization of Weights and Gradients</h3>
+        <p class="revision-mustknow"><strong>Must-know:</strong> INT8: q = round(x * 127) maps 0.65 to 83; dequantize as 83/127 with error 0.003543. Dequantization cannot restore deleted bits.</p>
+        <p class="revision-formula">\[q = \mathrm{round}(x \cdot 127), \quad \hat{x} = q / 127\]</p>
+        <p class="revision-pitfall"><strong>⚠️ Top pitfall:</strong> Believing dequantization recreates the original float, or quoting an 8x saving for INT8 instead of 4x.</p>
+        <p class="revision-check"><strong>Self-check:</strong> Quantize 0.65 with scale 127, dequantize, and state the residual.</p>
+        <p class="revision-connections"><strong>Connects to:</strong> Floating-point layouts and integer encodings, Fine-tuning and transfer learning</p>
+      </div>
+
+      <div class="exam-revision-entry">
+        <h3 class="revision-topic">Fine-Tuning and Transfer Learning</h3>
+        <p class="revision-mustknow"><strong>Must-know:</strong> Quantization changes bit-width; fine-tuning changes which weights learn your data. Full updates are for ResNet-scale nets, not ChatGPT-scale nets.</p>
+        <p class="revision-pitfall"><strong>⚠️ Top pitfall:</strong> Treating quantization as a substitute for fine-tuning, or planning a full update of a chat-scale LLM.</p>
+        <p class="revision-check"><strong>Self-check:</strong> You have 100 tire images and a pretrained VLM. Do you quantize or fine-tune, and which layers move?</p>
+        <p class="revision-connections"><strong>Connects to:</strong> Quantization of weights and gradients, Parameter-efficient fine-tuning and LoRA</p>
+      </div>
+
+      <div class="exam-revision-entry">
+        <h3 class="revision-topic">Parameter-Efficient Fine-Tuning and LoRA</h3>
+        <p class="revision-mustknow"><strong>Must-know:</strong> W' = W + BA with r &lt;&lt; d; train A and B only; optional scale alpha/r. Replay 100x100 to 400.</p>
+        <p class="revision-formula">\[W' = W + BA, \quad y = Wx + \frac{\alpha}{r}(BA)x\]</p>
+        <p class="revision-pitfall"><strong>⚠️ Top pitfall:</strong> Using PCA to crush frozen features, or thinking predictions use only Delta W and not Wx.</p>
+        <p class="revision-check"><strong>Self-check:</strong> How many numbers does LoRA train for a 100 by 100 matrix with rank 2?</p>
+        <p class="revision-connections"><strong>Connects to:</strong> Fine-tuning and transfer learning, Fine-tuning versus RAG and prompting</p>
+      </div>
+
+      <div class="exam-revision-entry">
+        <h3 class="revision-topic">Fine-Tuning Versus RAG and Prompting</h3>
+        <p class="revision-mustknow"><strong>Must-know:</strong> RAG cannot cover pixel localization or bounding boxes; PDF question answering can use RAG. LoRA is not RAG.</p>
+        <p class="revision-formula">\[\hat{y}_{\mathrm{RAG}} = f_{W}(q, \mathrm{retrieve}(q))\]</p>
+        <p class="revision-pitfall"><strong>⚠️ Top pitfall:</strong> Treating LoRA as the same technique RAG uses, or expecting few-shot image prompts to draw tire boxes.</p>
+        <p class="revision-check"><strong>Self-check:</strong> Should MRF scratch boxes live in a RAG store or in a LoRA adapter?</p>
+        <p class="revision-connections"><strong>Connects to:</strong> Parameter-efficient fine-tuning and LoRA, Preview of pruning</p>
+      </div>
+
+      <div class="exam-revision-entry">
+        <h3 class="revision-topic">Preview of Pruning</h3>
+        <p class="revision-mustknow"><strong>Must-know:</strong> Quantization changes bits, LoRA changes extra matrices, pruning zeros redundant weights or filters. Do not delete CNN layers.</p>
+        <p class="revision-formula">\[9 \times 34 = 306\]</p>
+        <p class="revision-pitfall"><strong>⚠️ Top pitfall:</strong> Removing a convolutional layer and calling it pruning.</p>
+        <p class="revision-check"><strong>Self-check:</strong> A layer is 34 comma 3. What learns, the layer or the filters, and how many 3 by 3 weights are in that picture?</p>
+        <p class="revision-connections"><strong>Connects to:</strong> Quantization of weights and gradients, Parameter-efficient fine-tuning and LoRA</p>
+      </div>
+    </section>
+  </div>
+</body>
+</html>
