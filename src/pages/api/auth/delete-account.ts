@@ -14,7 +14,6 @@ import {
   clearRefreshCookie,
   logAuthEvent,
 } from '../../../lib/auth';
-import { env } from 'cloudflare:workers';
 
 export const prerender = false;
 
@@ -50,16 +49,6 @@ export const POST: APIRoute = async (context) => {
 
     await revokeAllRefreshTokens(appEnv.DB, user.id);
     await deleteUserAccount(appEnv.DB, user.id);
-
-    // Best-effort: remove newsletter KV entry
-    try {
-      const kv = (env as any).NEWSLETTER_KV as KVNamespace | undefined;
-      if (kv && user.email) {
-        await kv.delete(`contact:${user.email.toLowerCase()}`);
-      }
-    } catch {
-      // ignore
-    }
 
     const headers = new Headers({
       'Content-Type': 'application/json',

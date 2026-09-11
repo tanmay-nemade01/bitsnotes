@@ -23,7 +23,6 @@ export interface AppEnv {
   CONTACT_RATE_LIMITER?: { limit: (opts: { key: string }) => Promise<{ success: boolean }> };
   VIEWS_RATE_LIMITER?: { limit: (opts: { key: string }) => Promise<{ success: boolean }> };
   CHATBOT_RATE_LIMITER?: { limit: (opts: { key: string }) => Promise<{ success: boolean }> };
-  ZOHO_CAMPAIGNS_LIST_KEY?: string;
   OPENROUTER_API_KEY?: string;
 }
 

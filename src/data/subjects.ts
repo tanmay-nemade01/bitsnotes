@@ -91,6 +91,15 @@ export const SUBJECTS: SubjectInfo[] = [
     code: 'UDL',
     semester: 2,
   },
+  {
+    name: 'Distributed Machine Learning',
+    shortName: 'DML',
+    description:
+      'Parallelism strategies, distributed SGD, and federated optimization for training machine-learning models at scale.',
+    order: 8,
+    code: 'DML',
+    semester: 2,
+  },
 
   // Semester 1 Subjects
   {
