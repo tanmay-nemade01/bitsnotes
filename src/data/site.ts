@@ -41,13 +41,13 @@ export const site: SiteConfig = {
     buymeacoffee: {
       url: 'https://buymeacoffee.com/bitsnotes',
     },
-    // Demo UPI ID for now — replace `upiId` with your real VPA before
-    // linking this page publicly. The live QR is generated in the browser
-    // from this config, so it updates automatically once changed.
+    // The live QR is generated in the browser from this config, so it
+    // updates automatically once changed. The UPI ID is intentionally not
+    // rendered on the page — it is only used for the QR and the copy button.
     upi: {
       enabled: true,
       payeeName: 'BitsNotes',
-      upiId: 'support@bitsnotes',
+      upiId: 'tanmaynemade-3@okicici',
       note: 'Supporting BitsNotes',
       presets: [
         { label: 'A chai', amount: 20 },

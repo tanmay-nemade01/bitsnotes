@@ -1,0 +1,1093 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+  <!-- Primary SEO -->
+  <title>Distributed Stochastic Gradient Descent | Distributed Machine Learning | BitsNotes</title>
+  <meta name="description" content="Distributed Machine Learning notes on distributed SGD: global gradients, mini-batches, sync and async updates, stale gradients, and quantized SGD.">
+  <meta name="keywords" content="Distributed Machine Learning, Distributed Stochastic Gradient Descent, SGD, global gradient, mini-batch gradient descent, synchronous distributed SGD, asynchronous SGD, stale gradients, decentralized SGD, quantized SGD, overlap SGD">
+  <meta name="author" content="BitsNotes">
+  <meta name="robots" content="index, follow">
+  <link rel="canonical" href="https://bitsnotes.com/view/distributed-machine-learning/distributed-stochastic-gradient-descent">
+
+  <!-- Open Graph / Facebook -->
+  <meta property="og:type" content="article">
+  <meta property="og:title" content="Distributed Stochastic Gradient Descent | Distributed Machine Learning">
+  <meta property="og:description" content="Distributed Machine Learning notes on distributed SGD: global gradients, mini-batches, sync and async updates, stale gradients, and quantized SGD.">
+  <meta property="og:url" content="https://bitsnotes.com/view/distributed-machine-learning/distributed-stochastic-gradient-descent">
+  <meta property="og:image" content="https://bitsnotes.com/og-default.png">
+  <meta property="og:image:width" content="1200">
+  <meta property="og:image:height" content="630">
+  <meta property="og:site_name" content="BitsNotes">
+
+  <!-- Twitter Card -->
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="Distributed Stochastic Gradient Descent | Distributed Machine Learning">
+  <meta name="twitter:description" content="Distributed Machine Learning notes on distributed SGD: global gradients, mini-batches, sync and async updates, stale gradients, and quantized SGD.">
+  <meta name="twitter:image" content="https://bitsnotes.com/og-default.png">
+  <meta name="twitter:site" content="@BitsNotes">
+
+  <!-- Stylesheet -->
+  <link rel="stylesheet" href="/lecture-notes.css">
+
+  <!-- Structured Data: JSON-LD -->
+  <script type="application/ld+json">
+{"@context":"https://schema.org","@type":"TechArticle","headline":"Distributed Stochastic Gradient Descent","description":"Distributed Machine Learning notes on distributed SGD: global gradients, mini-batches, sync and async updates, stale gradients, and quantized SGD.","inLanguage":"en","about":["Distributed Stochastic Gradient Descent","global gradient","mini-batch gradient descent","synchronous distributed SGD","asynchronous SGD","stale gradients","decentralized SGD","quantized SGD"],"author":{"@type":"Organization","name":"BitsNotes"},"publisher":{"@type":"Organization","name":"BitsNotes","logo":{"@type":"ImageObject","url":"https://bitsnotes.com/og-default.png"}},"datePublished":"2026-09-11","url":"https://bitsnotes.com/view/distributed-machine-learning/dml-lecture-8"}
+</script>
+
+  <!-- Lecture Metadata (for the BitsNotes platform viewer) -->
+  <!-- IMPORTANT: This is the ONLY metadata source. No companion .json file
+       is created. The viewer reads everything from this embedded script.
+       Required fields: title, subject, gradeLevel, datePublished,
+       targetAudience, sections (array), examRevisionNotes (array).
+       Optional fields: prerequisites (array of {subject, lecture, topics}).
+       NOT included (removed): summary, keyConcepts, quiz. -->
+  <script type="application/json" id="lecture-metadata">
+{
+  "title": "Distributed Stochastic Gradient Descent",
+  "subject": "Distributed Machine Learning",
+  "gradeLevel": "postgraduate",
+  "datePublished": "2026-09-11",
+  "targetAudience": "Postgraduate students in Distributed Machine Learning",
+  "sections": [
+    {
+      "title": "The Distributed Training Problem",
+      "description": "When data is sharded across workers, local gradients must be averaged into one global gradient so a shared model can learn from the complete dataset."
+    },
+    {
+      "title": "Stochastic Gradient Descent on a Single Weight",
+      "description": "SGD updates a weight by stepping opposite the slope of the loss. A one-weight squared-loss demo moves w from 2 to 3.2 and the prediction from 6 to 9.6."
+    },
+    {
+      "title": "Mini-Batch Gradient Descent",
+      "description": "Mini-batch SGD splits the dataset, freezes the weight for a subset, averages those gradients, and steps once. It is the practical cadence for large models and the inner loop of distributed SGD."
+    },
+    {
+      "title": "Synchronous Distributed SGD",
+      "description": "Every worker starts from the same weight, sends a closed-form gradient (wx-y)x, and the master averages once. Four workers at 1.5 yield mean gradient -6.25 and new weight 2.125."
+    },
+    {
+      "title": "Asynchronous SGD and Stale Gradients",
+      "description": "The server applies each arriving worker gradient at once, so stragglers do not idle the rest. Gradients computed on old weights and applied to newer weights are stale."
+    },
+    {
+      "title": "Decentralized SGD",
+      "description": "With no parameter server, workers keep local models and average weights with neighbors inside a distance threshold, avoiding a single point of failure."
+    },
+    {
+      "title": "Batch Loops, Overlap SGD, and Quantized SGD",
+      "description": "Sample-wise, mini-batch, and full-batch loops apply the same update on different clocks. Overlap SGD hides communication behind compute; quantized SGD lowers the bit size of shipped values."
+    },
+    {
+      "title": "Exam Guidance Summary",
+      "description": "Know the three distributed SGD designs, the sign rule, the classroom numerical traces, and the definition of a stale gradient before federated learning."
+    },
+    {
+      "title": "Key Industry Applications",
+      "description": "Distributed SGD shows up in multi-zone retail, multi-GPU trainers, large language models, edge devices, federated learning, and quantized communication."
+    }
+  ],
+  "examRevisionNotes": [
+    {
+      "topic": "The Distributed Training Problem",
+      "mustKnow": "Distributed SGD exists so one global model can learn from data that does not fit on one machine.",
+      "keyFormula": "\\[\\bar{g} = \\frac{1}{K} \\sum_{k=1}^{K} g_k\\]",
+      "commonPitfall": "Treating four worker copies as four finished models instead of sending gradients for one global update.",
+      "quickCheck": "If four workers send gradients -1.5, -4, -7.5, and -12, what is the global gradient?",
+      "connections": [
+        "8.4",
+        "8.6"
+      ]
+    },
+    {
+      "topic": "Stochastic Gradient Descent on a Single Weight",
+      "mustKnow": "Negative gradient: increase the weight. Positive gradient: decrease the weight. The minus in w - eta nabla L does this automatically.",
+      "keyFormula": "\\[w_{t+1} = w_{t} - \\eta \\nabla L\\]",
+      "commonPitfall": "Dropping the minus after seeing a negative slope, or editing the input x instead of the weight.",
+      "quickCheck": "With w=2, eta=0.1, and gradient -12, what is the new weight and the new prediction at x=3?",
+      "connections": [
+        "8.3",
+        "8.4"
+      ]
+    },
+    {
+      "topic": "Mini-Batch Gradient Descent",
+      "mustKnow": "Sample-wise, mini-batch, and full batch use the same slope; they differ in how often the weight moves and whether gradients are averaged.",
+      "keyFormula": "\\[w_{\\mathrm{new}} = w - \\eta \\bar{g},\\quad \\bar{g} = \\frac{1}{B}\\sum_{i=1}^{B} g_i\\]",
+      "commonPitfall": "Updating w inside the batch and still calling the result a mini-batch mean, or dividing by B twice.",
+      "quickCheck": "With frozen w=1.5 and four gradients -0.5, -2, -4.5, -8, what is the mini-batch update at eta=0.1?",
+      "connections": [
+        "8.2",
+        "8.4",
+        "8.7"
+      ]
+    },
+    {
+      "topic": "Synchronous Distributed SGD",
+      "mustKnow": "Workers send gradients; the master performs one global update. Closed-form (wx-y)x is the same slope as a finite difference.",
+      "keyFormula": "\\[\\frac{dL}{dw} = (w x - y) x,\\quad \\bar{g} = -6.25,\\quad w \\leftarrow 1.5 + 0.625 = 2.125\\]",
+      "commonPitfall": "Differentiating with respect to x, or drawing four final models instead of one master update.",
+      "quickCheck": "Fill the four-worker table at w=1.5 and compute w - 0.1 * mean(g).",
+      "connections": [
+        "8.2",
+        "8.5",
+        "8.6"
+      ]
+    },
+    {
+      "topic": "Asynchronous SGD and Stale Gradients",
+      "mustKnow": "A stale gradient is computed on old weights and applied to newer weights. The server does not force remaining workers to restart after every update.",
+      "keyFormula": "\\[w \\leftarrow w - \\eta g_k\\]",
+      "commonPitfall": "Assuming the server broadcasts and forces a restart after worker 1 finishes, or treating every stale gradient as fatal.",
+      "quickCheck": "Trace w = 2.0, eta = 0.1, gradients -2, -6, -10 arriving in order. What is the server weight after three applies?",
+      "connections": [
+        "8.4",
+        "8.6"
+      ]
+    },
+    {
+      "topic": "Decentralized SGD",
+      "mustKnow": "Neighbor-exchange averaging is decentralized SGD, not asynchronous SGD. Asynchronous SGD still has a server.",
+      "keyFormula": "\\[w_i, w_j \\leftarrow (w_i + w_j)/2\\]",
+      "commonPitfall": "Labeling neighbor averaging as asynchronous SGD, or mixing once and calling the models global.",
+      "quickCheck": "On a path of three weights 2, 4, 6, what happens after one mix of the first pair and then the second pair?",
+      "connections": [
+        "8.1",
+        "8.5",
+        "8.7"
+      ]
+    },
+    {
+      "topic": "Batch Loops, Overlap SGD, and Quantized SGD",
+      "mustKnow": "Synchronous waits for all workers; asynchronous updates per finish; decentralized averages neighbors. Quantized means lower bit size.",
+      "keyFormula": "\\[w \\leftarrow w - \\eta \\nabla L(x, y)\\]",
+      "commonPitfall": "Treating quantized SGD as a new loss, or mixing overlap SGD with async SGD.",
+      "quickCheck": "In one sentence each, define synchronous, asynchronous, and decentralized SGD, and say what quantized means.",
+      "connections": [
+        "8.3",
+        "8.4",
+        "8.5",
+        "8.6"
+      ]
+    },
+    {
+      "topic": "Exam Guidance Summary",
+      "mustKnow": "Close synchronous, asynchronous, and decentralized SGD before federated learning. Show the worker table then one global update.",
+      "keyFormula": "\\[w - \\eta \\bar{g}\\]",
+      "commonPitfall": "Confusing the three designs, or sending gradients but drawing four final models.",
+      "quickCheck": "List the six study signals for this session.",
+      "connections": [
+        "8.2",
+        "8.4",
+        "8.5"
+      ]
+    }
+  ],
+  "prerequisites": [
+    {
+      "subject": "Distributed Machine Learning",
+      "lecture": 1,
+      "topics": [
+        "Data Parallelism with Synchronous Replicas",
+        "Pipeline Parallelism with Mini-Batches and Stages"
+      ]
+    },
+    {
+      "subject": "Distributed Machine Learning",
+      "lecture": 2,
+      "topics": [
+        "Data Parallelism With Split Data, Copied Models, and Averaged Gradients"
+      ]
+    },
+    {
+      "subject": "Distributed Machine Learning",
+      "lecture": 3,
+      "topics": [
+        "Decentralized Learning on Mobile Agents",
+        "Why Model Caching: Slow Devices and Asynchronous Training",
+        "Cache Exchange, Staleness Bound, and Freshness"
+      ]
+    },
+    {
+      "subject": "Distributed Machine Learning",
+      "lecture": 6,
+      "topics": [
+        "Quantization of Weights and Gradients"
+      ]
+    }
+  ]
+}
+</script>
+</head>
+<body>
+  <div class="container">
+    <!-- ============================================================
+    HERO HEADER
+    ============================================================ -->
+    <header class="hero-header">
+      <span class="subject-badge">Distributed Machine Learning</span>
+      <h1 class="lecture-title">Distributed Stochastic Gradient Descent</h1>
+      <div class="meta-info">
+        <div class="meta-item"><strong>Published:</strong> 2026-09-11</div>
+        <div class="meta-item"><strong>Level:</strong> postgraduate</div>
+        <div class="meta-item"><strong>Audience:</strong> Postgraduate students in Distributed Machine Learning</div>
+      </div>
+    </header>
+
+    <!-- ============================================================
+    PREREQUISITE KNOWLEDGE
+    Optional section listing concepts from previous lectures that this
+    lecture builds on. Populated by Agent 3 from topic_mappings/*.yaml.
+    If no prerequisites exist, this section is omitted entirely.
+    ============================================================ -->
+        <section class="prerequisite-section">
+      <h2>Prerequisite Knowledge</h2>
+      <p class="prerequisite-intro">This lecture builds on the following
+      concepts from earlier lectures. If any feel unfamiliar, review the
+      linked notes before proceeding.</p>
+
+      <div class="prerequisite-entry">
+        <h3>Previously Covered in This Subject</h3>
+        <ul>
+          <li><strong>Data parallelism with synchronous replicas</strong> — covered in Lecture 1</li>
+          <li><strong>Averaged gradients on split data and copied models</strong> — covered in Lecture 2</li>
+          <li><strong>Asynchronous training, staleness, and decentralized neighbor models</strong> — covered in Lecture 3</li>
+          <li><strong>Mini-batches in pipeline stages</strong> — covered in Lecture 1</li>
+          <li><strong>Quantization of weights and gradients</strong> — covered in Lecture 6</li>
+        </ul>
+      </div>
+    </section>
+
+
+    <!-- ============================================================
+    MAIN LECTURE-FAITHFUL CONTENT
+    Page title = one h1.lecture-title
+    Each section = one h2.section-title
+    Each subsection = one h3.subsection-title
+    Callout boxes: .key-concept (blue), .important-note (violet),
+      .example-box (green), .warning-box (red), .key-takeaway (amber)
+    Display math: auto-scrolls via mjx-container CSS; .eqbox wrapper optional
+    ============================================================ -->
+    <main>
+      <p>Prior work already covered PySpark pipelines, Hadoop, and Kubernetes. This session closes the distributed gradient-descent family. The next major block is federated learning.</p>
+      <p>The goal here is to see how <em>stochastic gradient descent</em> (SGD) — a weight-update rule that follows the slope of the loss — behaves when data and workers live on many machines. On one box the story is a single model, a single dataset, and a single slope. On many boxes the same slope is computed in pieces, and those pieces must be mixed so that one <em>global model</em> (a shared set of weights that has seen every shard) can still learn.</p>
+      <p>Four variants appear, in this order: ordinary SGD on one model, <em>synchronous distributed SGD</em>, <em>asynchronous SGD</em>, <em>decentralized SGD</em>, then a preview of <em>overlap SGD</em> and <em>quantized SGD</em>.</p>
+      <p>The running picture is Amazon-scale retail traffic: purchases and processing happen across the world, so one zone cannot hold every record. Each zone trains on its own slice and returns a slope. The rest of the notes rebuild that slope from a one-weight toy network, then put the same update onto a server, onto a server with no waiting, and onto a neighbor graph with no server at all.</p>
+
+      <h2 class="section-title" id="8.1-the-distributed-training-problem">8.1 The Distributed Training Problem</h2>
+      <div class="important-note">
+        <p>A single laptop can train a model whose data sits in one file. How do you train when the records live in many cities, and no machine can hold the full set?</p>
+      </div>
+      <p>On a single machine the story is simple. You hold one model and one dataset. You compute a <em>loss</em> (a number that says how wrong the current prediction is). You compute a <em>gradient</em> of that loss with respect to the weights (the slope of the loss as a function of those weights). You update the weights. Distributed training breaks that picture because the dataset no longer sits in one place.</p>
+      <p>A <em>worker node</em> is a machine that trains on a shard of the data. A <em>server</em> (also called a master) is a machine that combines worker results. The dataset is split across workers because one box cannot hold every record.</p>
+      <p>Think of a worldwide checkout desk. You cannot run every purchase through one cash register. Each geographic zone keeps its own receipts, trains on those receipts, and reports a local slope. The verbal picture from class is the same: you cannot run worldwide purchase processing on a single system, so each zone trains on its own slice.</p>
+      <p>That picture is the Amazon-scale retail example that runs through the whole session. Purchases and processing happen across the world. One zone feeds one copy of the model and computes a local loss. Another zone feeds another copy and computes another loss. Each copy produces its own gradient.</p>
+      <p>The analogy maps as follows. A zone is a worker. The receipts in that zone are a data shard. The local slope is a worker gradient. The shared catalog of prices (the model) must still be one catalog, not a different catalog per city. The analogy breaks when zones have wildly different traffic mixes: averaging slopes still mixes them, but the mix is only as fair as the shards are representative.</p>
+      <h3 class="subsection-title" id="8.1.1-why-gradients-must-be-combined">8.1.1 Why Gradients Must Be Combined</h3>
+      <p>The gradients are scattered along servers and worker machines. No single worker has seen the full dataset, so no single local slope is a complete training signal. The training loop must collect those gradients, average them, and form one <em>global gradient</em> — a single update direction for a shared model.</p>
+      <p>Let \(K\) be the number of workers. Let \(g_k\) be the gradient computed on worker \(k\). The verbal rule is: collect all the gradients, average them, and compute the global gradient.</p>
+      <div class="key-concept">
+        <p>The <em>global gradient</em> \(\bar{g}\) (the mean slope across workers) is</p>
+        <p>\[ \bar{g} = \frac{1}{K} \sum_{k=1}^{K} g_k \]</p>
+        <p>Each \(g_k\) has the same shape as the weights. If the model stores a scalar weight \(w\), then each \(g_k\) is a scalar. If the model stores a vector \(w \in \mathbb{R}^{d}\), then each \(g_k \in \mathbb{R}^{d}\) and the average is taken coordinate-wise.</p>
+      </div>
+      <p>Averaging is the same idea already used in earlier distributed work: local results become one number the whole system can apply. After the average exists, the server (or the workers, in a peer design) applies that one direction to the shared weights.</p>
+      <p>The verbal explanation of the aim is blunt. You want a <em>global model</em> that represents all of the data. That means the model has learned from the complete dataset, not from one zone alone.</p>
+      <p>Standard data-parallel training writes the same mix as a sum of local gradients, then takes a step:</p>
+      <p>\[ \nabla W = \nabla W_{1} + \nabla W_{2} + \cdots + \nabla W_{K}, \qquad w \leftarrow w - \alpha \nabla W \]</p>
+      <p>The lecture form averages first, then steps with learning rate \(\eta\):</p>
+      <p>\[ w \leftarrow w - \eta \bar{g} = w - \eta \cdot \frac{1}{K} \sum_{k=1}^{K} g_k \]</p>
+      <p>Those two writings agree when \(\alpha = \eta / K\) (or when each local \(g_k\) is already a mean over its shard and the server uses a matching scale). The exam version is the lecture average: collect, average, apply one global gradient.</p>
+      <p>Two ways to get that global model appear.</p>
+      <p><strong>Centralized aggregation.</strong> Workers send gradients to a server. The server aggregates. After aggregation, the server's weights are treated as equal to training on all of the data. In the parameter-server writing, each round is four stages: workers <em>pull</em> the current weights, workers <em>push</em> local gradients, the server <em>aggregates</em>, and the server <em>updates</em> the stored model. That is the master-worker design used in the synchronous and asynchronous sections below.</p>
+      <p><strong>Peer exchange.</strong> There is no centralized server. Workers exchange gradients with neighbors. Model 3 talks to model 2. Model 2 talks to model 1. Model 1 and model 3 do not need a direct link. After several rounds of exchange, every model holds a copy of the mixed information. The models converge. A little extra loss compared with a perfect central average is acceptable. The requirement is still one global model.</p>
+      <p>A ring All-Reduce is the textbook cousin of this peer picture: each worker both trains and talks to neighbors, so there is no dedicated master that only averages. Neighbor averaging in Section 8.6 is the same idea with a distance threshold instead of a fixed ring.</p>
+      <p>The rest of this session first rebuilds ordinary SGD on one weight. Then it rebuilds the same update in the distributed, asynchronous, and decentralized settings.</p>
+      <div class="warning-box">
+        <p><strong>Scope:</strong> Averaging worker gradients yields a global model when every shard is a fair draw from the same data distribution and every worker finishes the round. If one zone holds only one product category, the mean slope is biased toward that category. If one worker never reports, a strict barrier stalls the round (the straggler problem in Section 8.5). Peer mixing needs a connected neighbor graph; an isolated worker never receives the rest of the data.</p>
+      </div>
+      <p>Imagine \(K = 4\) workers drawn as four dots on a map, each holding an arrow (its gradient). Centralized aggregation is a star: every arrow is mailed to a hub, the hub draws one mean arrow, and the hub mails the new weight back. Peer exchange is a path: the arrow at node 3 is blended into node 2, then into node 1. After enough blends, every node’s arrow points about the same way. The landmark on that picture is the hub: if the hub dies, the star stops; the path can still mix around a dead far node.</p>
+      <div class="warning-box">
+        <p>A common trap is to treat four worker copies as four finished models. In the centralized design the workers send slopes, not four independent catalogs. Another trap is to skip the \(1/K\) and add raw gradients into an update that already uses \(\eta\). The step size then grows with the number of machines. A third trap is to assume a missing worker is “almost averaged.” A missing shard is missing data, not a zero gradient you can ignore without changing the mean.</p>
+      </div>
+      <div class="example-box">
+        <p><strong>Amazon multi-zone retail.</strong> Suppose four zones each hold one day’s purchases. Zone A (US-East) computes gradient \(g_{1} = -1.5\). Zone B (EU) computes \(g_{2} = -4\). Zone C (APAC) computes \(g_{3} = -7.5\). Zone D (US-West) computes \(g_{4} = -12\). No zone has seen the full catalog of baskets.</p>
+        <p>The server (or a later numerical round in Section 8.4) forms</p>
+        <p>\[ \bar{g} = \frac{-1.5 + (-4) + (-7.5) + (-12)}{4} = \frac{-25}{4} = -6.25 \]</p>
+        <p>One global step uses that mean, not Zone D’s steep \(-12\) alone and not Zone A’s mild \(-1.5\) alone. The shared model then represents all four zones. Sense-check: every local slope is negative, so the mean is negative, so the shared weight will increase — the same direction every zone asked for, with a compromise size.</p>
+      </div>
+      <p>The same pattern appears on multi-GPU machines: GPU 1 through GPU 4 each hold a shard and send a gradient to a server. Geography is optional. Any split of the data across devices is the same problem.</p>
+      <div class="key-takeaway">
+        <p>Distributed SGD exists so that one global model can learn from data that does not fit on one machine. Collect the scattered gradients, average them, and apply one update. Next, rebuild that update on a single weight so the later multi-worker arithmetic is not a black box.</p>
+      </div>
+      <p>Retail platforms, payment switches, and warehouse-scale GPU clusters all hit this wall: the data is large and sharded, the model must still be one model. Federated learning later adds a privacy constraint (do not ship the records, only the slopes or weights), but the mixing step is the same average.</p>
+      <h3 class="subsection-title" id="8.1.2-student-questions-and-answers">8.1.2 Student Questions and Answers</h3>
+      <p>Several students asked how this session sits on the stack that already covered pipelines and cluster tools.</p>
+      <div class="important-note">
+        <p><strong>Q:</strong> Where did the last session stop, and what was already covered in the distributed stack?</p>
+        <p><strong>A:</strong> The prior work covered PySpark examples after the pipeline material, then Hadoop and Kubernetes. This session is the last distributed-gradient block. Federated learning starts next.</p>
+      </div>
+      <p>The next question is the distributed view of SGD itself, not the cluster tooling.</p>
+      <div class="important-note">
+        <p><strong>Q:</strong> In a distributed setting, what is SGD doing, and why is a distributed view needed?</p>
+        <p><strong>A:</strong> The gradient is scattered along the servers and different machines. Collect all the gradients. Average them. Compute one global gradient. Apply that global gradient to the models.</p>
+      </div>
+      <p>The aim of that collection step is easy to understate.</p>
+      <div class="important-note">
+        <p><strong>Q:</strong> What is the ultimate aim of this multi-machine setup?</p>
+        <p><strong>A:</strong> Get a global model that represents all the datasets. That means learning from the complete dataset, not from one shard.</p>
+      </div>
+      <h3 class="subsection-title" id="8.1.3-industry-applications">8.1.3 Industry Applications</h3>
+      <p>Real-world: multi-zone retail and payment traffic cannot train on one box. Each geographic zone holds a subset of Amazon-like transactions. Each zone trains locally and returns a gradient. The same pattern appears on multi-GPU machines: GPU 1 through GPU 4 each hold a shard and send a gradient to a server.</p>
+      <div class="key-takeaway">
+        <p><strong>Exam note:</strong> Be ready to state the aim in one sentence. Distributed SGD exists so that one global model can learn from data that does not fit on one machine.</p>
+      </div>
+
+      <h2 class="section-title" id="8.2-stochastic-gradient-descent-on-a-single-weight">8.2 Stochastic Gradient Descent on a Single Weight</h2>
+      <div class="important-note">
+        <p>If the loss is a hill and the weight is where you stand, which way do you step — and how do you know the step did not walk uphill?</p>
+      </div>
+      <p>Before workers and servers, the update itself must be solid. The vanilla setting is one model, one weight, and one mini-batch loss. Every later distributed rule is this same minus-the-slope step, only the slope is computed on a shard or applied on a busy server.</p>
+      <p>Think of a hiker on a foggy hill. The ground under their boots is the loss. A tiny step along the weight axis is a probe. The slope they feel is the gradient. Walk opposite the uphill arrow and the loss falls. The analogy breaks on a ridge or a saddle: a one-dimensional weight has no sideways ridge, but a real network does.</p>
+      <h3 class="subsection-title" id="8.2.1-weight-update-rule">8.2.1 Weight Update Rule</h3>
+      <p>Let \(w_{t}\) be the <em>current weight</em> at iteration \(t\) (where you stand now). Let \(w_{t+1}\) be the <em>next weight</em>. Let \(\eta\) (eta) be the <em>learning rate</em> — how large a step we take. Let \(\nabla L\) be the <em>gradient of the loss</em> with respect to the weight (the slope of \(L\) as a function of \(w\)).</p>
+      <p>The verbal rule is: new weight equals old weight minus learning rate times the gradient.</p>
+      <div class="key-concept">
+        <p>The SGD update on one weight is</p>
+        <p>\[ w_{t+1} = w_{t} - \eta \nabla L \]</p>
+        <p>\(w_{t}\) is a scalar here. \(\eta > 0\) is a small step size, often \(0.1\) in the classroom traces. \(\nabla L\) is \(\frac{dL}{dw}\) evaluated at \(w_{t}\). The minus sign walks downhill: if the slope is positive, \(w\) shrinks; if the slope is negative, \(w\) grows.</p>
+      </div>
+      <p>Learning means the weights converge. Convergence is a sequence of these iterations. \(w_{t}\) is where you are. \(w_{t+1}\) is the next iterate. The learning rate scales the gradient of the loss. Too large an \(\eta\) jumps over the valley. Too small an \(\eta\) crawls.</p>
+      <h3 class="subsection-title" id="8.2.2-a-one-weight-network-and-squared-loss">8.2.2 A One-Weight Network and Squared Loss</h3>
+      <p>Take the smallest useful network: one weight, no bias. The map is \(y = mx\). Here the slope \(m\) is the weight \(w\). The input is \(x\). The prediction is \(\hat{y} = w x\). The verbal setup is: a simple neural network with only one weight; \(x\) multiplied with the weight; ignore the bias.</p>
+      <p>The weight is initialized at \(2\). The input is \(x = 3\). The true output is \(y = 10\). The model predicts</p>
+      <p>\[ \hat{y} = w x = 2 \times 3 = 6 \]</p>
+      <p>The ground-truth value is \(10\). The difference is the <em>error</em>. The model is wrong because the prediction sits away from the true value. You cannot change the input. The weight is the reason for the loss.</p>
+      <p>Use a <em>mean squared error</em> with a one-half factor so the later derivative is clean. Let \(L\) be the loss. The verbal form is: predicted value minus ground truth, whole square, times one by two.</p>
+      <div class="key-concept">
+        <p>One-half squared loss on a single pair \((x, y)\) is</p>
+        <p>\[ L = \frac{1}{2}(\hat{y} - y)^{2} \]</p>
+        <p>The one-half is a convenience: when you differentiate \(u^{2}/2\) you get \(u\), not \(2u\). Some texts drop the one-half and absorb the extra \(2\) into \(\eta\). The lecture keeps the one-half.</p>
+      </div>
+      <p>Substitute the numbers from the initialized network:</p>
+      <p>\[ L = \frac{1}{2}(\hat{y} - y)^{2} = \frac{1}{2}(6 - 10)^{2} = \frac{1}{2} \times 16 = 8 \]</p>
+      <p>Loss \(8\) is the number you get after substitution. Loss tells how bad the prediction is. Higher loss means a worse prediction. Lower loss means a better prediction.</p>
+      <p>A true line through the origin with \(x = 3\) and \(y = 10\) would need \(w = 10/3 \approx 3.33\). Starting at \(w = 2\) is too small, so \(\hat{y} = 6\) undershoots \(10\). The update should raise \(w\).</p>
+      <h3 class="subsection-title" id="8.2.3-gradient-as-slope">8.2.3 Gradient as Slope</h3>
+      <p>A <em>gradient</em> is a slope. School algebra already has this. If you change the denominator by a small amount, how much does the numerator change? For two points the slope is</p>
+      <p>\[ \frac{y_{2} - y_{1}}{x_{2} - x_{1}} \]</p>
+      <p>The verbal restatement is: you sit at \(x_{1}\) and move to \(x_{2}\). The change in \(x\) approaches zero. The change that movement causes on the \(y\)-axis is the gradient.</p>
+      <p>Here the \(x\)-axis is the weight. The \(y\)-axis is the loss. The gradient asks: how fast is the loss changing when you slightly change the weight? In other words, how sensitive is the loss to a tiny change in the weight?</p>
+      <p>That school-slope picture is the working analogy for the rest of the lecture. The later closed form \((wx - y)x\) looks different on paper. Geometrically it is the same object: \(\Delta L / \Delta w\) in the limit of a tiny \(\Delta w\).</p>
+      <h3 class="subsection-title" id="8.2.4-worked-example-finite-difference-gradient">8.2.4 Worked Example: Finite-Difference Gradient</h3>
+      <p>Keep \(x = 3\) and \(y = 10\). Start at \(w = 2\) with loss \(8\). Nudge the weight by a tiny change of \(0.01\).</p>
+      <div class="example-box">
+        <p><strong>Finite-difference slope at \(w = 2\).</strong></p>
+        <p><strong>Increase the weight to \(2.01\).</strong> The new prediction is input times weight:</p>
+        <p>\[ \hat{y}(2.01) = 3 \times 2.01 = 6.03 \]</p>
+        <p>The loss is one-half times predicted minus ground truth, whole square:</p>
+        <p>\[ \begin{aligned} L(2.01) &= \frac{1}{2}(6.03 - 10)^{2} \\ &= \frac{1}{2}(-3.97)^{2} \\ &= \frac{1}{2} \times 15.7609 \\ &= 7.88045 \approx 7.88 \end{aligned} \]</p>
+        <p>The verbal result is a loss of \(7.88\).</p>
+        <p><strong>Decrease the weight to \(1.99\).</strong> The prediction is \(3 \times 1.99 = 5.97\). The loss is</p>
+        <p>\[ \begin{aligned} L(1.99) &= \frac{1}{2}(5.97 - 10)^{2} \\ &= \frac{1}{2}(-4.03)^{2} \\ &= \frac{1}{2} \times 16.2409 \\ &= 8.12045 \approx 8.12 \end{aligned} \]</p>
+        <p>The verbal result is a loss of \(8.12\).</p>
+        <p>Now read the three losses as a path. At \(w = 1.99\) the loss is \(8.12\). At \(w = 2\) the loss is \(8\). At \(w = 2.01\) the loss is \(7.88\). Increasing the weight reduces the loss. So the weight should go up.</p>
+        <p>Approximate the derivative with the tiny change \(0.01\). Use the pair \(w = 2.00\) and \(w = 2.01\). The change in the weight (the denominator) is</p>
+        <p>\[ x_{2} - x_{1} = 2.01 - 2.00 = 0.01 \]</p>
+        <p>The change in the loss (the numerator) is \(7.88045 - 8 = -0.11955\). The numerical slope is</p>
+        <p>\[ \nabla L \approx \frac{7.88045 - 8}{0.01} = -11.955 \]</p>
+        <p>Round that slope and the gradient is \(-12\). Using the stated two-decimal loss \(7.88\) gives \((7.88 - 8)/0.01 = -12\) on the nose. The verbal summary is: the gradient is the numerical slope of the loss with respect to the weight. In number terms, that slope is about \(-12\).</p>
+        <p>Sense-check against the closed form from Section 8.4: \(g = (wx - y)x = (6 - 10) \times 3 = -12\). The \(0.01\) probe recovers \(-11.955\), which is the same \(-12\) with a small truncation from the curved parabola.</p>
+      </div>
+      <p>A plot of \(L(w) = \frac{1}{2}(3w - 10)^{2}\) is a parabola opening upward. The horizontal axis is \(w\). The vertical axis is \(L\). The vertex sits at \(w = 10/3 \approx 3.33\), where \(L = 0\). At \(w = 2\) you are left of the vertex, on a downward slope as \(w\) grows, so the tangent is negative. The landmark is that vertex: every update should walk toward it, not away.</p>
+      <h3 class="subsection-title" id="8.2.5-sign-of-the-gradient-and-the-minus-sign-in-the-update">8.2.5 Sign of the Gradient and the Minus Sign in the Update</h3>
+      <p>The sign is not decoration. It tells you which way to move.</p>
+      <ul>
+        <li>If the gradient sign is <em>negative</em>, increasing the weight decreases the loss. You need to increase the weight.</li>
+        <li>If the gradient sign is <em>positive</em>, increasing the weight increases the loss. You need to decrease the weight.</li>
+      </ul>
+      <p>Why is this gradient negative? Because \(y_{2} - y_{1}\) is a smaller loss minus a larger loss. As the weight increases, the loss decreases, so the slope is negative.</p>
+      <p>Plug the negative gradient into the update. Let \(w_{\text{new}}\) be the updated weight. The verbal formula is: new weight equals old weight minus eta times the gradient value.</p>
+      <p>\[ w_{\text{new}} = w - \eta \nabla L \]</p>
+      <p>Here \(\nabla L = -12\) (the rounded slope). Then</p>
+      <p>\[ w_{\text{new}} = w - \eta (-12) = w + 12\eta \]</p>
+      <p>The minus sign in the update and the minus sign in the gradient cancel. The weight increases. That is exactly what the three-point picture asked for. If the gradient had been positive, the same minus sign would have reduced the weight.</p>
+      <p>A short rule to memorize:</p>
+      <ul>
+        <li>Negative gradient: add to the weight to reduce the loss.</li>
+        <li>Positive gradient: subtract from the weight to reduce the loss.</li>
+        <li>The formula \(w - \eta \nabla L\) does this automatically.</li>
+      </ul>
+      <div class="warning-box">
+        <p>Students often drop the minus in \(w - \eta \nabla L\) after they see a negative slope, and then they subtract again by hand. Do not double-correct. Write the formula once, plug in the signed gradient, and let the algebra move \(w\). The sign rule is a reading of that algebra, not a second update.</p>
+      </div>
+      <h3 class="subsection-title" id="8.2.6-completing-the-update-step">8.2.6 Completing the Update Step</h3>
+      <p>Apply the rounded gradient \(-12\) to \(w = 2\). The verbal arithmetic is: old weight minus learning rate times the gradient minus twelve, which is \(3.2\). The only learning rate that turns \(2\) and \(-12\) into \(3.2\) is \(\eta = 0.1\):</p>
+      <p>\[ w_{\text{new}} = 2 - 0.1 \times (-12) = 2 + 1.2 = 3.2 \]</p>
+      <p>The first demo states the new weight \(3.2\) without speaking \(\eta\). The later asynchronous demo uses \(\eta = 0.1\) on the same update family. Those two classroom numbers lock together: \(\eta = 0.1\) is the step size for this lecture.</p>
+      <div class="example-box">
+        <p><strong>One SGD step from \(w = 2\) to \(w = 3.2\).</strong></p>
+        <p>Given \(w = 2\), \(\eta = 0.1\), \(\nabla L = -12\):</p>
+        <p>\[ \begin{aligned} w_{\text{new}} &= w - \eta \nabla L \\ &= 2 - 0.1 \times (-12) \\ &= 2 + 1.2 \\ &= 3.2 \end{aligned} \]</p>
+        <p>The new prediction is the new weight times the fixed input:</p>
+        <p>\[ \hat{y}_{\text{new}} = 3.2 \times 3 = 9.6 \]</p>
+        <p>Old prediction \(6\). New prediction \(9.6\). Ground truth \(10\). The weight rose by \(1.2\). The prediction jumped toward \(10\). The loss dropped drastically:</p>
+        <p>\[ L_{\text{new}} = \frac{1}{2}(9.6 - 10)^{2} = \frac{1}{2} \times 0.16 = 0.08 \]</p>
+        <p>compared with the old loss \(8\). The input never changed. Only the weight moved. Sense-check: \(3.2\) is still below the exact fit \(10/3 \approx 3.33\), so one more small step would finish the job. The step did not overshoot.</p>
+      </div>
+      <p>You can replay the same table by hand. Fix the input. Change the weight. Recompute prediction and loss. That is the role of the gradient: it tells you how a small weight change moves the loss, and the update uses that slope to walk toward a better weight.</p>
+      <table>
+        <thead>
+          <tr>
+            <th>\(w\)</th>
+            <th>\(\hat{y} = 3w\)</th>
+            <th>\(L = \frac{1}{2}(\hat{y}-10)^{2}\)</th>
+            <th>slope vs previous</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>\(1.99\)</td>
+            <td>\(5.97\)</td>
+            <td>\(8.12\)</td>
+            <td>—</td>
+          </tr>
+          <tr>
+            <td>\(2.00\)</td>
+            <td>\(6.00\)</td>
+            <td>\(8.00\)</td>
+            <td>down as \(w\) grows</td>
+          </tr>
+          <tr>
+            <td>\(2.01\)</td>
+            <td>\(6.03\)</td>
+            <td>\(7.88\)</td>
+            <td>still down</td>
+          </tr>
+          <tr>
+            <td>\(3.20\)</td>
+            <td>\(9.60\)</td>
+            <td>\(0.08\)</td>
+            <td>after the SGD step</td>
+          </tr>
+        </tbody>
+      </table>
+      <p>Gradient <em>magnitude</em> also matters. Too much loss means a larger update, positive or negative. Near a minimum the magnitude is small, so only tiny adjustments are needed. The verbal test is: if I change the weight just a little, how much does the loss move?</p>
+      <div class="warning-box">
+        <p><strong>Assumption:</strong> This derivation uses a scalar weight, squared loss, and a learning rate small enough that one step stays on the same side of the minimum. <strong>Scope:</strong> Mini-batch noise, stale gradients, and neighbor mixing all reuse \(w - \eta g\), but they change which \(g\) arrives. If \(\eta\) is huge, \(w = 2\) with \(g = -12\) jumps far past \(3.33\) and the loss can rise. If you edit \(x\) instead of \(w\), you are no longer training; you are forging the data.</p>
+      </div>
+      <div class="key-takeaway">
+        <p><strong>Exam note:</strong> Memorize the sign rule. Negative gradient: increase the weight. Positive gradient: decrease the weight. The minus in \(w - \eta \nabla L\) is what makes the rule automatic. A useful numerical is loss \(8 \to 7.88\) when \(w: 2 \to 2.01\), slope about \(-12\), then \(w = 3.2\) and \(\hat{y} = 9.6\).</p>
+      </div>
+      <p>This one-weight walk is the same update a search engine uses when it nudges ranking weights from click logs, and the same update a warehouse GPU uses on a shard of images. The distributed sections only change who computes \(g\) and when \(w\) is allowed to move.</p>
+      <h3 class="subsection-title" id="8.2.7-student-questions-and-answers">8.2.7 Student Questions and Answers</h3>
+      <p>The sign of the slope is the most common first confusion.</p>
+      <div class="important-note">
+        <p><strong>Q:</strong> If the gradient is negative, should the weight increase or decrease?</p>
+        <p><strong>A:</strong> Increase the weight. A negative slope means a larger weight gives a smaller loss. The update is old weight minus eta times a negative number, so the weight grows on its own.</p>
+      </div>
+      <p>A second confusion is to treat the input as a knob.</p>
+      <div class="important-note">
+        <p><strong>Q:</strong> Can we change the input \(x\) to reduce the loss?</p>
+        <p><strong>A:</strong> No. The input is data. You do not edit data to make the model look good. Only the weight is a trainable parameter.</p>
+      </div>
+
+      <h2 class="section-title" id="8.3-mini-batch-gradient-descent">8.3 Mini-Batch Gradient Descent</h2>
+      <div class="important-note">
+        <p>If a dataset has hundreds of samples and a model has billions of weights, do you update after every sample, after every full pass, or somewhere in the middle?</p>
+      </div>
+      <p>The same slope idea now meets a dataset with many samples. <em>Mini-batch gradient descent</em> splits the full dataset into smaller batches and updates from each small batch instead of from one giant pass.</p>
+      <p>Think of grading a stack of 400 exam scripts. You can recompute the class average after every single script (noisy, slow). You can wait until all 400 are marked (stable, late). Or you can mark 32, average those, adjust your marking scheme, then mark the next 32. That middle cadence is a mini-batch. The analogy breaks when scripts are not shuffled: a batch of only one question type is a biased average, just as an unshuffled shard is a biased gradient.</p>
+      <h3 class="subsection-title" id="8.3.1-three-ways-to-use-the-dataset">8.3.1 Three Ways to Use the Dataset</h3>
+      <p>Suppose the dataset has \(400\) samples. Three update styles exist.</p>
+      <ol>
+        <li><strong>Sample-wise (batch size \(1\)).</strong> Loop over every sample. For each pair \((x, y)\), predict, compute a gradient, and update at once. Immediate update. No waiting. No averaging.</li>
+        <li><strong>Full batch.</strong> Compute a gradient on the entire dataset. Average those gradients. Then update once.</li>
+        <li><strong>Mini-batch.</strong> Take a subset. Compute gradients on that subset. Average those gradients. Update from the average. Repeat on the next subset.</li>
+      </ol>
+      <p>The thing that matters is when the weight changes. Sample-wise updates are the most frequent and the most expensive. Full-batch updates are the most stable and the slowest to show a step. Mini-batch sits in the middle.</p>
+      <table>
+        <thead>
+          <tr>
+            <th>Cadence</th>
+            <th>Batch size</th>
+            <th>When \(w\) moves</th>
+            <th>Averaging</th>
+            <th>Typical feel</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>Sample-wise</td>
+            <td>\(1\)</td>
+            <td>After every pair</td>
+            <td>None</td>
+            <td>Fastest feedback, noisiest path</td>
+          </tr>
+          <tr>
+            <td>Mini-batch</td>
+            <td>\(B\), e.g. \(32\)</td>
+            <td>After each subset</td>
+            <td>Mean of \(B\) slopes</td>
+            <td>Compromise used in practice</td>
+          </tr>
+          <tr>
+            <td>Full batch</td>
+            <td>\(N = 400\)</td>
+            <td>Once per pass</td>
+            <td>Mean of all \(N\) slopes</td>
+            <td>Smoothest, slowest step</td>
+          </tr>
+        </tbody>
+      </table>
+      <p>When to pick which: use sample-wise only on tiny models and tiny data. Use full batch when \(N\) fits in memory and you want a true mean slope. Use mini-batch for almost every large model.</p>
+      <p>Textbook gradient descent (GD) is the full-batch column: sum (or average) \(g_{i}\) over the whole set, then one update. SGD in the narrow sense is the sample-wise column. In this course, and in data-parallel training, “SGD” usually means the mini-batch column: a subset per step, because no worker sees the full set.</p>
+      <h3 class="subsection-title" id="8.3.2-why-mini-batches-for-large-models">8.3.2 Why Mini-Batches for Large Models</h3>
+      <p>Updating after every sample becomes too time-consuming on huge models. Real-world: transformers and large language models can contain some \(120\) billion parameters. In those cases a per-sample loop is too complex. Choose the approach from the size of the model.</p>
+      <p>A compact picture uses a frozen weight such as \(1.5\) and four inputs. Each input varies. The weight stays fixed for the batch. Each sample produces a loss and then a gradient, using the finite-difference or derivative method above. Then take the <em>average gradient</em> and apply one update.</p>
+      <div class="key-concept">
+        <p>Mini-batch SGD freezes \(w\) for the batch, averages the per-sample slopes, then steps once:</p>
+        <p>\[ \bar{g} = \frac{1}{B}\sum_{i=1}^{B} g_{i}, \qquad w_{\text{new}} = w - \eta \bar{g} \]</p>
+        <p>\(B\) is the mini-batch size. \(g_{i}\) is the gradient from sample \(i\). The verbal sequence is: compute the gradient sample-wise on a batch, take their gradients, average, and use that average to update the new weight.</p>
+      </div>
+      <p>That average is the same mixing step a parameter server performs in distributed SGD. GPU 1, GPU 2, GPU 3, and GPU 4 each send a gradient. The server averages. Then one global update runs. Mini-batch on one machine and synchronous distributed SGD on four GPUs differ only in where the shards live.</p>
+      <div class="example-box">
+        <p><strong>Frozen weight \(1.5\) over four inputs.</strong> Keep \(w = 1.5\) and \(\eta = 0.1\). Take four pairs that sit on a simple line through the origin, \(y = 2x\):</p>
+        <p>\[ (x, y) \in \{(1, 2),\ (2, 4),\ (3, 6),\ (4, 8)\} \]</p>
+        <p>Use the closed-form slope \(g = (wx - y)x\) from Section 8.4 (same geometry as the finite-difference slope).</p>
+        <p>\[ \begin{aligned} g_{1} &= (1.5 \times 1 - 2) \times 1 = -0.5 \\ g_{2} &= (1.5 \times 2 - 4) \times 2 = -2.0 \\ g_{3} &= (1.5 \times 3 - 6) \times 3 = -4.5 \\ g_{4} &= (1.5 \times 4 - 8) \times 4 = -8.0 \end{aligned} \]</p>
+        <p>Average, then step:</p>
+        <p>\[ \bar{g} = \frac{-0.5 - 2.0 - 4.5 - 8.0}{4} = \frac{-15}{4} = -3.75 \]</p>
+        <p>\[ w_{\text{new}} = 1.5 - 0.1 \times (-3.75) = 1.5 + 0.375 = 1.875 \]</p>
+        <p>The true fit on these four points is \(w^{\star} = 2\). One mini-batch step moved \(1.5 \to 1.875\), closer to \(2\), without touching \(w\) in the middle of the four forward passes. Sense-check: every \(g_{i}\) is negative, so the mean is negative, so \(w\) rises. Sample-wise SGD would have moved \(w\) four times and the later samples would have seen a changing weight. Mini-batch refused that: the weight stayed frozen at \(1.5\) until the mean was ready.</p>
+      </div>
+      <p>On a 400-sample set with \(B = 32\) you get \(400/32 = 12.5\), so after shuffling you take twelve batches of \(32\) and one leftover batch of \(16\), or you drop the leftover, or you pad. Each of those batches is one average and one update. A 120-billion-parameter transformer cannot afford \(400\) separate backward passes per tiny batch of text if a grouped backward is already expensive; the grouped backward <em>is</em> the mini-batch.</p>
+      <div class="warning-box">
+        <p><strong>Assumption:</strong> Samples in a mini-batch are treated as a fair draw, and \(w\) does not change until the batch mean is applied. <strong>Scope:</strong> If the loader always feeds the same class first, \(\bar{g}\) is not the dataset mean. If \(B = N\), mini-batch becomes full batch. If \(B = 1\), it becomes sample-wise. Distributed shards are mini-batches that live on different devices; they need a matching average across devices, not only inside one GPU.</p>
+      </div>
+      <p>Draw the 400-sample set as a long tape. Sample-wise is a tick after every square. Full batch is one tick at the end of the tape. Mini-batch is a tick every \(B\) squares. The landmark is the tick: that is when \(w\) is allowed to move. Takeaway: the slope formula does not change; the clock that applies it does.</p>
+      <div class="warning-box">
+        <p>Do not mix cadences inside one formula. Averaging \(g_{i}\) and then also dividing \(\eta\) by \(B\) a second time shrinks the step without meaning to. Do not update \(w\) inside the batch loop and then average those updated weights and call it mini-batch; that is a different algorithm. For large language models, “too slow” is about wall-clock backward passes, not about the algebra of \(g_{i}\).</p>
+      </div>
+      <div class="key-takeaway">
+        <p>Sample-wise, mini-batch, and full batch all use the same slope. They differ in how often the weight moves and whether gradients are averaged. Mini-batch is the practical cadence for large models, and it is the inner step each distributed worker runs on its shard.</p>
+      </div>
+      <p>Multi-GPU training in a data center is mini-batch SGD with hardware shards. Each GPU holds part of the global batch. The server (or an All-Reduce) averages GPU gradients and applies one global update. Recommendation systems and speech models use the same cadence: group examples, freeze weights, average, step.</p>
+      <h3 class="subsection-title" id="8.3.3-student-questions-and-answers">8.3.3 Student Questions and Answers</h3>
+      <div class="important-note">
+        <p><strong>Q:</strong> What is mini-batch gradient descent, in plain language?</p>
+        <p><strong>A:</strong> Split the whole batch into multiple small batches and run gradient descent on those. Instead of sending the whole data together, update the weights by splitting into multiple small batches.</p>
+      </div>
+      <h3 class="subsection-title" id="8.3.4-industry-applications-and-exam-notes">8.3.4 Industry Applications and Exam Notes</h3>
+      <p>Real-world: Multi-GPU training is mini-batch SGD with hardware shards. Each GPU holds part of the batch. The server averages GPU gradients and applies one global update.</p>
+      <div class="key-takeaway">
+        <p><strong>Exam note:</strong> Know the three cadences. Sample-wise, mini-batch, and full batch all use the same slope. They differ in how often the weight moves and whether gradients are averaged.</p>
+      </div>
+
+      <h2 class="section-title" id="8.4-synchronous-distributed-sgd">8.4 Synchronous Distributed SGD</h2>
+      <div class="important-note">
+        <p>Four workers each hold a different \((x, y)\) pair and the same starting weight. Do they finish with four models, or with one?</p>
+      </div>
+      <p><em>Synchronous distributed SGD</em> is mini-batch SGD with a barrier. Every worker starts from the same global weight. Every worker computes a gradient on its own data shard. The server waits until all gradients arrive. The server averages. The server applies one global update. Then it sends the new weight back. No worker starts the next round on a private model.</p>
+      <p>The finite-difference slope from Section 8.2 is slow to type on every sample. The same slope has a closed form. That algebra looks unlike \((y_{2} - y_{1})/(x_{2} - x_{1})\), but it is geometrically the same change in loss when \(w\) changes.</p>
+      <h3 class="subsection-title" id="8.4.1-derivative-of-squared-loss">8.4.1 Derivative of Squared Loss</h3>
+      <p>Keep</p>
+      <p>\[ L = \frac{1}{2}(\hat{y} - y)^{2}, \qquad \hat{y} = w x \]</p>
+      <p>Substitute the prediction:</p>
+      <p>\[ L = \frac{1}{2}(w x - y)^{2} \]</p>
+      <p>The verbal plan is: treat the inside as \(u\), so the loss is one-half \(u\) square. Use the power rule: \(x^{m}\) differentiates to \(m x^{m-1}\). Set \(u = w x - y\). Then \(L = \frac{1}{2} u^{2}\). Differentiating with respect to \(u\) produces a factor \(2u\) that cancels the one-half:</p>
+      <p>\[ \frac{dL}{du} = u \]</p>
+      <p>The chain rule also needs \(du/dw\). The derivative is with respect to \(w\), not with respect to \(x\). The input \(x\) is data. The weight \(w\) is the parameter. So</p>
+      <p>\[ \frac{du}{dw} = x \]</p>
+      <p>and the full chain is</p>
+      <p>\[ \begin{aligned} \frac{dL}{dw} &= \frac{dL}{du} \cdot \frac{du}{dw} \\ &= u \cdot x \\ &= (w x - y) x \end{aligned} \]</p>
+      <div class="key-concept">
+        <p>The per-sample gradient of one-half squared loss on \(\hat{y} = wx\) is</p>
+        <p>\[ \frac{dL}{dw} = (w x - y) x \]</p>
+        <p>Call this \(g = (w x - y) x\). The <em>error</em> in this derivation is \(w x - y\), which is predicted minus true. Worker tables later list that error and then multiply by \(x\).</p>
+        <p>The product \((wx - y)x\) looks unlike \((y_{2} - y_{1})/(x_{2} - x_{1})\). Geometrically it is the same object. It is still the change in loss when you change \(w\). The algebra is just a faster way to get that slope.</p>
+      </div>
+      <p>Spot-check on the Section 8.2 toy: \(w = 2\), \(x = 3\), \(y = 10\):</p>
+      <p>\[ g = (2 \times 3 - 10) \times 3 = (6 - 10) \times 3 = -12 \]</p>
+      <p>That matches the rounded finite-difference slope \(-12\). Dimensional check: \(wx - y\) is a prediction error (same units as \(y\)); multiplying by \(x\) turns that error into a slope on the \(w\)-axis.</p>
+      <p>A common slip is to differentiate with respect to the input. Then \(du/dx = w\) and you would write \((wx - y)w\), which is the wrong parameter and the wrong table.</p>
+      <h3 class="subsection-title" id="8.4.2-worked-example-four-workers-one-global-weight">8.4.2 Worked Example: Four Workers, One Global Weight</h3>
+      <p>For brevity the global weight is a scalar \(w_{t} = 1.5\). In a real net this would be a whole set of weights. In the first round every worker receives \(1.5\).</p>
+      <p>Each worker has its own data shard. The spoken pairs and later “closer to 3, 5, 7, 9” line up with four points \((x, y) = (1, 3),\ (2, 5),\ (3, 7),\ (4, 9)\). Worker 1 is spoken as \((1, 3)\) and worker 4 as gradient \(-12\). The inner two pairs follow from those gradients and from the spoken targets \(5\) and \(7\):</p>
+      <p>\[ g = (1.5 \cdot x - y) x \]</p>
+      <p>Solving for \(y\) on workers 2 and 3 with the consistent closed form recovers \(y = 5\) and \(y = 7\). These four points lie on the line \(y = 2x + 1\). The toy model has no bias, so it cannot fit that line exactly; the best scalar \(w\) is a compromise near \(70/30 \approx 2.33\). One synchronous step should raise \(1.5\) toward that compromise, not away from it.</p>
+      <div class="example-box">
+        <p><strong>Four workers, global weight \(1.5\), closed-form gradients.</strong></p>
+        <p><strong>Worker 1.</strong> Data \((x, y) = (1, 3)\). Prediction \(\hat{y} = 1.5 \times 1 = 1.5\). Error \(wx - y = 1.5 - 3 = -1.5\). Gradient</p>
+        <p>\[ g_{1} = (1.5 \times 1 - 3) \times 1 = -1.5 \]</p>
+        <p>Worker 1 says: increase the weight slightly. The gradient is \(-1.5\).</p>
+        <p><strong>Worker 2.</strong> Data \((2, 5)\). Prediction \(1.5 \times 2 = 3\). Gradient</p>
+        <p>\[ g_{2} = (3 - 5) \times 2 = -4 \]</p>
+        <p>Increase the weight, more than worker 1.</p>
+        <p><strong>Worker 3.</strong> Data \((3, 7)\). Prediction \(1.5 \times 3 = 4.5\). Gradient</p>
+        <p>\[ g_{3} = (4.5 - 7) \times 3 = -7.5 \]</p>
+        <p>Increase the weight more strongly. The spoken list stresses a “medium” third sample and then “very high \(-12\)” for the fourth. The consistent closed form for \((3, 7)\) is \(g_{3} = -7.5\); that is the value that belongs in the average.</p>
+        <p><strong>Worker 4.</strong> Data \((4, 9)\). Prediction \(1.5 \times 4 = 6\). Gradient</p>
+        <p>\[ g_{4} = (6 - 9) \times 4 = -12 \]</p>
+        <p>Increase the weight very high. The spoken fourth gradient is \(-12\).</p>
+        <p>All four workers used the same starting weight. The gradients still differ because the inputs differ.</p>
+        <p>The server averages:</p>
+        <p>\[ \bar{g} = \frac{g_{1} + g_{2} + g_{3} + g_{4}}{4} = \frac{-1.5 - 4 - 7.5 - 12}{4} = \frac{-25}{4} = -6.25 \]</p>
+        <p>The overall gradient is negative, so increasing the weight decreases the loss. The algorithm increases the weight automatically. Using the same \(\eta = 0.1\) as the later async numbers,</p>
+        <p>\[ w_{\text{new}} = 1.5 - 0.1 \times (-6.25) = 1.5 + 0.625 = 2.125 \]</p>
+        <p>Spoken new-weight values include \(2.1\), \(2.21\), and \(2.25\). The exact step with \(\eta = 0.1\) and mean gradient \(-6.25\) is \(2.125\). The classroom roundings \(2.1\) and \(2.25\) sit on either side of that exact value; \(2.21\) is a nearby slip of the same step. Predictions below use the spoken \(w = 2.1\), which is \(2.125\) to one decimal.</p>
+        <p>After the update, predictions move toward the four targets. With \(w = 2.1\) they are \(2.1\), \(4.2\), \(6.3\), and \(8.4\), closer to \(3\), \(5\), \(7\), and \(9\).</p>
+        <p>Mean one-half squared error at \(w = 1.5\):</p>
+        <p>\[ \begin{aligned} L_{1} &= \tfrac{1}{2}(1.5 - 3)^{2} = 1.125 \\ L_{2} &= \tfrac{1}{2}(3 - 5)^{2} = 2 \\ L_{3} &= \tfrac{1}{2}(4.5 - 7)^{2} = 3.125 \\ L_{4} &= \tfrac{1}{2}(6 - 9)^{2} = 4.5 \\ \bar{L} &= (1.125 + 2 + 3.125 + 4.5)/4 = 2.6875 \approx 2.69 \end{aligned} \]</p>
+        <p>At \(w = 2.1\):</p>
+        <p>\[ \begin{aligned} L_{1} &= \tfrac{1}{2}(2.1 - 3)^{2} = 0.405 \\ L_{2} &= \tfrac{1}{2}(4.2 - 5)^{2} = 0.32 \\ L_{3} &= \tfrac{1}{2}(6.3 - 7)^{2} = 0.245 \\ L_{4} &= \tfrac{1}{2}(8.4 - 9)^{2} = 0.18 \\ \bar{L} &= 1.15/4 = 0.2875 \approx 0.29 \end{aligned} \]</p>
+        <p>The spoken loss path “2.2.6 to 0.2” is a garbled reading of this drop: about \(2.6\) down to about \(0.2\). The reconstructed means \(2.69\) then \(0.29\) are the exact one-half squared errors. Sense-check: \(2.125\) (and the spoken \(2.1\)) still lie below the no-bias least-squares fit \(2.33\), so the step moved the right way and did not overshoot the valley.</p>
+      </div>
+      <table>
+        <thead>
+          <tr>
+            <th>Worker</th>
+            <th>\((x, y)\)</th>
+            <th>\(\hat{y} = 1.5 x\)</th>
+            <th>error \(wx - y\)</th>
+            <th>\(g = (wx - y)x\)</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>1</td>
+            <td>\((1, 3)\)</td>
+            <td>\(1.5\)</td>
+            <td>\(-1.5\)</td>
+            <td>\(-1.5\)</td>
+          </tr>
+          <tr>
+            <td>2</td>
+            <td>\((2, 5)\)</td>
+            <td>\(3\)</td>
+            <td>\(-2\)</td>
+            <td>\(-4\)</td>
+          </tr>
+          <tr>
+            <td>3</td>
+            <td>\((3, 7)\)</td>
+            <td>\(4.5\)</td>
+            <td>\(-2.5\)</td>
+            <td>\(-7.5\)</td>
+          </tr>
+          <tr>
+            <td>4</td>
+            <td>\((4, 9)\)</td>
+            <td>\(6\)</td>
+            <td>\(-3\)</td>
+            <td>\(-12\)</td>
+          </tr>
+          <tr>
+            <td>mean</td>
+            <td>—</td>
+            <td>—</td>
+            <td>—</td>
+            <td>\(\bar{g} = -6.25\)</td>
+          </tr>
+        </tbody>
+      </table>
+      <h3 class="subsection-title" id="8.4.3-one-global-model-not-four-local-models">8.4.3 One Global Model, Not Four Local Models</h3>
+      <p>A common wrong picture is: worker 1 updates model 1, worker 2 updates model 2, and so on, leaving four final models. That is not this algorithm.</p>
+      <p>Workers do not create four different final models. They send gradients. Worker 1 computes \(g_{1}\). Worker 2 computes \(g_{2}\). Worker 3 computes \(g_{3}\). Worker 4 computes \(g_{4}\). The master node receives all four. The master performs <strong>one</strong> global update. Then the new weight is shared with every worker.</p>
+      <div class="key-concept">
+        <p>Synchronous distributed SGD, as a procedure:</p>
+        <ol>
+          <li>Server sends the current global weight (first time: \(1.5\)).</li>
+          <li>Each worker computes a gradient on its local shard.</li>
+          <li>Workers send gradients to the server.</li>
+          <li>Server averages and updates one global weight.</li>
+          <li>Server sends the new weight for the next epoch.</li>
+          <li>Repeat.</li>
+        </ol>
+        <p>Each epoch uses the latest global weight. Workers never keep a private finished model in this synchronous design.</p>
+      </div>
+      <p>That loop is the parameter-server four-stage cycle (pull weights, push gradients, aggregate, update) with a barrier on stage 3: the server does not update until every worker has pushed. An All-Reduce implements the same barrier without a dedicated master: workers average among themselves, then each applies the same \(\bar{g}\). The lecture exam picture is the master: one global update.</p>
+      <p>Inputs: a shared \(w\), \(K\) shards, learning rate \(\eta\). Outputs: one new \(w\), identical on every worker after the broadcast. Time cost: one local backward per worker plus a wait for the slowest worker plus one average. Space cost: one model replica per worker plus the server copy.</p>
+      <div class="warning-box">
+        <p><strong>When to use / alternatives:</strong> Use synchronous averaging when you want a single global model and you can tolerate waiting for stragglers. Switch to asynchronous SGD (Section 8.5) when a slow worker would idle the rest. Switch to decentralized SGD (Section 8.6) when a master is a single point of failure or a long hop. Do not “fix” sync SGD by letting each worker apply \(g_{k}\) locally and then shipping four finished models; that is a different algorithm.</p>
+      </div>
+      <h3 class="subsection-title" id="8.4.4-aggregation-beyond-simple-averaging">8.4.4 Aggregation Beyond Simple Averaging</h3>
+      <p>The average used above is <em>FedAvg</em>-style: a simple mean of worker gradients (or of worker models). It is fine for teaching. It is not the end of the research story. Aggregation is not as simple as a plain mean. A large literature studies better mixing rules.</p>
+      <p>Standard <em>federated averaging</em> (FedAvg) weights each model by how many local samples it trained on:</p>
+      <p>\[ M_{\text{agg}} = \sum_{i=1}^{K} \frac{n_{i}}{N} M_{i}, \qquad N = \sum_{i=1}^{K} n_{i} \]</p>
+      <p>If every shard has the same \(n_{i}\), this collapses to the lecture mean. <em>Federated SGD</em> (FedSGD) is the gradient analog: average gradients instead of weights. The classroom four-worker step is FedSGD with equal shard sizes. Unequal zones (a huge US-East log and a tiny APAC log) need the \(n_{i}/N\) weights, or the tiny zone punches above its data.</p>
+      <p>FedAvg is the ideal case: shards look like the same distribution (IID), workers have similar speed, and no worker is adversarial. Real federated systems break those conditions, which is why later aggregators exist (median-based mixers, proximal terms, personalization). For this lecture, keep the simple mean, and remember that it is a baseline.</p>
+      <p>Real-world: a paper from IIT Bombay on federated asynchronous simultaneous training is flagged as the next reading. The spoken short name sits in the FedAvg / Fed-async family (the audio sounds like “fed asked”). The matching published title is FedAST: Federated Asynchronous Simultaneous Training — a buffered asynchronous aggregator for training several models at once on a shared client pool, so a slow client on a large model does not stall every task. Keep the lecture’s reading pointer; treat FedAST as the standard short name for that method.</p>
+      <div class="warning-box">
+        <p><strong>Scope:</strong> Equal-weight averaging assumes equal shard sizes and a completed barrier. <strong>Assumption:</strong> every worker used the same \(w_{t}\). If one worker trained on an older \(w\), you are no longer in synchronous SGD; that is staleness (Section 8.5). If you average <em>models</em> that each took many local steps, you are closer to FedAvg than to one-step FedSGD. Both are valid, but they are not the same numerical object as \(\bar{g} = -6.25\) above.</p>
+      </div>
+      <div class="key-takeaway">
+        <p><strong>Exam note:</strong> If a short numerical is asked, show the table: weight, prediction, error \(wx - y\), gradient \((wx - y)x\), then the average, then \(w - \eta \bar{g}\). Do not draw four final models. The master applies one global update.</p>
+      </div>
+      <p>Synchronous averaging is how a four-GPU image trainer stays on one ResNet, and how a payment-fraud model stays on one weight vector while card logs stay in regional warehouses. The next design removes the wait.</p>
+      <h3 class="subsection-title" id="8.4.5-student-questions-and-answers">8.4.5 Student Questions and Answers</h3>
+      <p>The highlighted gradient column still looks like a new object to some students.</p>
+      <div class="important-note">
+        <p><strong>Q:</strong> On the demo, what does the highlighted gradient term convey internally? Is it something other than a slope?</p>
+        <p><strong>A:</strong> Internally it is still \(y_{2} - y_{1}\) over \(x_{2} - x_{1}\). You are computing a derivative, and a derivative is a slope. Do not assume the formula \((wx - y)x\) is a different geometric object. Geometrically it represents the same change in loss when \(w\) changes.</p>
+      </div>
+      <p>The chain-rule target is the other high-frequency slip.</p>
+      <div class="important-note">
+        <p><strong>Q:</strong> When differentiating \(\frac{1}{2}(wx - y)^{2}\), is the derivative taken with respect to the input \(x\)?</p>
+        <p><strong>A:</strong> No. Take the derivative with respect to the weight \(w\), not with respect to \(x\). The input is not a trainable parameter. After the chain rule you still multiply by \(x\), because \(u = wx - y\) and \(du/dw = x\). Students who differentiate the loss with respect to the input get \((wx - y)w\) and the worker table no longer matches the finite-difference slope.</p>
+      </div>
+
+      <h2 class="section-title" id="8.5-asynchronous-sgd-and-stale-gradients">8.5 Asynchronous SGD and Stale Gradients</h2>
+      <div class="important-note">
+        <p>If one GPU is late, should the other three sit idle, or should the server take each arriving slope as soon as it lands?</p>
+      </div>
+      <p><em>Asynchronous SGD</em> still has a server. The change is the barrier. Workers do not wait for each other. Whenever a worker finishes a gradient, it sends that gradient at once. The server updates the global weight at once. Faster workers do not sit idle because a slow worker (a straggler) is late.</p>
+      <h3 class="subsection-title" id="8.5.1-synchronous-versus-asynchronous-updates">8.5.1 Synchronous Versus Asynchronous Updates</h3>
+      <div class="key-concept">
+        <p><strong>Purpose.</strong> Asynchronous SGD exists to hide stragglers. In the synchronous case already studied, all workers start from the same global point. They compute gradients. They send those gradients. The server takes the average. The server updates the weights. Then workers wait for the next version. Slow workers hold everyone.</p>
+        <p>In the asynchronous case, there is still a server, but there is no all-reduce barrier. The update is still</p>
+        <p>\[ w \leftarrow w - \eta g_{k} \]</p>
+        <p>where \(g_{k}\) is the gradient from whichever worker just finished. The server overwrites its weight using that one gradient. It does not wait to average a full set.</p>
+      </div>
+      <p><strong>Inputs:</strong> current server weight \(w\), learning rate \(\eta\), a stream of worker gradients \(g_{k}\) that may have been computed on older copies of \(w\). <strong>Outputs:</strong> a sequence of server weights, one per arrival, not one per full round.</p>
+      <table>
+        <thead>
+          <tr>
+            <th></th>
+            <th>Synchronous SGD</th>
+            <th>Asynchronous SGD</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>Server</td>
+            <td>Yes</td>
+            <td>Yes</td>
+          </tr>
+          <tr>
+            <td>Barrier</td>
+            <td>Wait for all \(K\) gradients</td>
+            <td>No wait</td>
+          </tr>
+          <tr>
+            <td>Update</td>
+            <td>\(w \leftarrow w - \eta \bar{g}\)</td>
+            <td>\(w \leftarrow w - \eta g_{k}\) per arrival</td>
+          </tr>
+          <tr>
+            <td>Extra loss source</td>
+            <td>Straggler idle time</td>
+            <td>Stale gradients</td>
+          </tr>
+          <tr>
+            <td>When to pick</td>
+            <td>You need a clean mean and similar worker speeds</td>
+            <td>Worker speeds differ a lot</td>
+          </tr>
+        </tbody>
+      </table>
+      <p>When to pick which: if GPUs are twins on one fabric, stay synchronous. If one zone’s network is a second slower, go asynchronous and watch staleness.</p>
+      <p>Federated learning uses the same fork. Synchronous FL waits for a chosen set of agents before aggregating. Asynchronous FL lets trusted agents upload whenever they finish, and the aggregator may close a round on a count, a timer, or a quorum such as \(80\%\) or \(90\%\).</p>
+      <h3 class="subsection-title" id="8.5.2-worked-example-immediate-server-updates">8.5.2 Worked Example: Immediate Server Updates</h3>
+      <p>Start with a normal SGD picture. Current weight, updated weight, learning rate, gradient. If the gradient is negative, the weight increases. If the gradient is positive, the weight decreases. Now add asynchrony.</p>
+      <div class="example-box">
+        <p><strong>Async trace from \(w = 2.0\) with \(\eta = 0.1\).</strong> Worker 4 is slow and does not finish in this trace. Three workers finish in order with gradients \(-2\), \(-6\), and \(-10\). Every worker began with the same copy \(2.0\).</p>
+        <p><strong>Worker 1 finishes first.</strong> Gradient \(g_{1} = -2\). The server still holds \(2.0\). The server applies the gradient at once:</p>
+        <p>\[ w \leftarrow 2.0 - 0.1 \times (-2) = 2.20 \]</p>
+        <p>The server now holds \(2.20\).</p>
+        <p><strong>Worker 2 finishes next.</strong> Worker 2 computed its gradient using the old weight \(2.0\). That gradient is \(g_{2} = -6\). The server is already at \(2.20\). The server still applies \(g_{2}\) on top of the new copy:</p>
+        <p>\[ w \leftarrow 2.20 - 0.1 \times (-6) = 2.20 + 0.60 = 2.80 \]</p>
+        <p>The server now holds \(2.80\).</p>
+        <p><strong>Worker 3 finishes last.</strong> Worker 3 also computed its gradient using \(2.0\). That gradient is \(g_{3} = -10\). The server is already at \(2.80\). The spoken arithmetic is “\(2.8\) minus \(0.2\) into minus \(10\), which is \(3.8\)”. Treating “\(0.2 \times -10\)” as \(\eta = 0.2\) would give \(2.80 + 2.0 = 4.80\), which is not the stated result. The stated result \(3.80\) matches \(\eta = 0.1\):</p>
+        <p>\[ w \leftarrow 2.80 - 0.1 \times (-10) = 2.80 + 1.00 = 3.80 \]</p>
+        <p>Treat the spoken \(0.2\) as a slip; keep \(\eta = 0.1\) with the rest of the lecture.</p>
+        <p>Final server weight in this trace is \(3.80\). Worker 2 and worker 3 used gradients computed on an older version of the model. Those gradients are late.</p>
+        <p>Sense-check: each arriving \(g_{k}\) is negative, so each overwrite raises \(w\). The path \(2.00 \to 2.20 \to 2.80 \to 3.80\) is three downhill steps with growing magnitude, not an average of \(-2, -6, -10\) (that mean would be \(-6\) and a single sync step would have been \(2.0 + 0.6 = 2.6\)). Async walked farther because it applied three full steps instead of one mean step.</p>
+      </div>
+      <h3 class="subsection-title" id="8.5.3-stale-gradients">8.5.3 Stale Gradients</h3>
+      <p>A <em>stale gradient</em> is a gradient computed using old model parameters but applied to a newer model. Staleness is the gap between the weight used to compute \(g\) and the weight that receives \(g\).</p>
+      <p>Walk the server-side clock:</p>
+      <ol>
+        <li>Time 0. All workers copy \(w = 2.0\) and start computing.</li>
+        <li>Time 1. Worker 1 updates the server. Server becomes \(2.20\). Fresh update.</li>
+        <li>Time 2. Worker 2 updates the server. Server becomes \(2.80\). Worker 2's gradient was computed at \(2.0\), so it is already slightly stale relative to \(2.20\).</li>
+        <li>Time 3. Worker 3 finally sends a gradient computed from \(w = 2.0\). The server currently has \(2.80\). The gradient belongs to old \(w = 2.0\) but is applied to \(2.80\). That is a stale gradient.</li>
+      </ol>
+      <p>Worker 3 is the loud case. Compute at \(2.0\). Apply at \(2.80\). The gap is \(0.80\) in weight space.</p>
+      <p>Staleness is not always fatal. If the learning rate is small and the gradients are not too noisy, the system can still converge. Large steps plus very old gradients are the dangerous mix.</p>
+      <div class="warning-box">
+        <p><strong>Assumption:</strong> Workers pull a copy of \(w\), compute, and push \(g\) without being interrupted. <strong>Scope:</strong> A delay of one server step (worker 2) is a mild stale apply. A delay of many steps with a large \(\eta\) can point \(g\) into a region the model has already left, like steering with a map from last week. Bounded-staleness and buffered async methods (FedBuff, FedAST) collect several arrivals before applying, which is a middle ground between this vanilla overwrite and a full barrier.</p>
+      </div>
+      <p>Draw a timeline. Horizontal axis: server time. Vertical axis: \(w\). The server staircase jumps at each arrival: \(2.00\), \(2.20\), \(2.80\), \(3.80\). Horizontal dashed lines mark the weight each worker used to compute (\(2.0\) for all three in this trace). The landmark is the gap between a dashed line and the staircase at apply time. Takeaway: the gradient is honest about an old hill, then it is spent on a new hill.</p>
+      <h3 class="subsection-title" id="8.5.4-when-workers-receive-new-weights">8.5.4 When Workers Receive New Weights</h3>
+      <p>A natural hope is: after worker 1 updates the server to \(2.20\), the server immediately broadcasts \(2.20\) to everyone else, and those workers restart. In basic asynchronous SGD that broadcast does not happen.</p>
+      <ul>
+        <li>The server does not wait for all workers.</li>
+        <li>The server does not force remaining workers to restart with the newest model after every update.</li>
+        <li>Workers keep running. A worker may still be computing a gradient on an older copy.</li>
+        <li>No forced broadcast hits worker 2 and worker 3 while they are busy. The server does not interrupt them.</li>
+      </ul>
+      <p>Worker 1 is not left out of the “remaining workers” story. After worker 1 sends its gradient and the server moves to \(2.20\), worker 1 may <strong>pull</strong> the latest \(w\) and start the next mini-batch. The pull happens because this batch is done. The server does not interrupt a worker in the middle of a gradient.</p>
+      <p>Typical pull points (implementation dependent):</p>
+      <ul>
+        <li>When a worker asks for the next task.</li>
+        <li>When a new mini-batch starts.</li>
+        <li>When a new epoch starts.</li>
+        <li>After some fraction of workers have reported, such as \(80\%\) or \(90\%\), in variants that wait for a quorum before shipping new weights.</li>
+      </ul>
+      <p>The principle: while a worker is running a gradient, it is not stopped. Once it starts a new batch or a new epoch, it may read the cache of new weights. Slow workers may still send gradients computed from old weights. Those gradients may be stale.</p>
+      <h3 class="subsection-title" id="8.5.5-server-load-compared-with-synchronous-averaging">8.5.5 Server Load Compared With Synchronous Averaging</h3>
+      <p>Synchronous SGD: workers send gradients, the server averages once, the server updates once. Asynchronous SGD: each finished worker triggers its own weight update. Backpropagation on the workers still happens locally. The extra question is whether the server becomes busier because it applies many single-worker updates instead of one mean.</p>
+      <p>The steps are similar: a gradient arrives, a weight is written. The count of server writes is higher in the async path, because each arrival is an update rather than one averaged update. Whether that is a heavy difference is something to check in code. It seems more operations happen on the server in the async case.</p>
+      <p>Complexity: for \(K\) workers and \(T\) local steps, sync SGD does about \(T\) averages and \(T\) writes. Vanilla async SGD does about \(KT\) writes. The worker-side backward pass count is the same family of work; the server-side apply count is what grows. Network traffic also shifts from one bundled round to many small messages, which can help or hurt depending on latency versus bandwidth.</p>
+      <div class="warning-box">
+        <p>Do not name every late gradient a failure. Staleness is a delay, not an automatic diverge. Do not force a restart mid-backward and call that “async SGD”; interrupting in-flight work is a different, more aggressive protocol. Do not assume the server is idle in sync SGD and overloaded in async SGD without counting writes: sync waits, async writes. The dangerous mix is a large \(\eta\) with a very old \(g\).</p>
+      </div>
+      <div class="key-takeaway">
+        <p>A stale gradient is computed on old weights and applied to newer weights. Small \(\eta\) and quiet gradients can still converge. New weights are pulled at batch or epoch boundaries, not by interrupting a worker mid-gradient. Next, drop the server entirely and mix with neighbors.</p>
+      </div>
+      <p>Parameter-server clusters for huge embedding tables often run this way: many workers stream gradients, the server applies them as they land, and a slow crawler does not freeze the ads model. The cost is the stale apply you just traced from \(2.0\) onto \(2.80\).</p>
+      <h3 class="subsection-title" id="8.5.6-student-questions-and-answers">8.5.6 Student Questions and Answers</h3>
+      <p>Several questions clustered on one confusion: when the new \(w\) goes back, and whether anyone is forced to restart.</p>
+      <div class="important-note">
+        <p><strong>Q:</strong> When a worker sends a gradient, what does the server update, and when do new weights go back to the workers?</p>
+        <p><strong>A:</strong> The server updates its own weights with the formula \(w \leftarrow w - \eta g\) as soon as a gradient arrives. It does not wait for other processes. A worker gets a fresh copy when it asks for the next task or starts a new mini-batch, not by being interrupted mid-compute.</p>
+      </div>
+      <p>The restart hope is the same confusion asked the other way.</p>
+      <div class="important-note">
+        <p><strong>Q:</strong> After worker 1 updates the server to \(2.20\), does the server immediately send that new weight to the remaining workers and force a restart?</p>
+        <p><strong>A:</strong> No. In asynchronous SGD the server does not wait and does not force all remaining workers to restart with the newest model after every update. Worker 2 and worker 3 keep computing with their old copies.</p>
+      </div>
+      <p>Worker 1’s next batch is a third wording of the pull rule.</p>
+      <div class="important-note">
+        <p><strong>Q:</strong> If remaining workers are not forced to restart, when does worker 1 get the new weights? Must it wait, or can it start the next batch on its old weights?</p>
+        <p><strong>A:</strong> Worker 1 may pull the latest \(w\) and start the next mini-batch once its current batch is done. It is not forced to idle. It also does not interrupt the others. New weights are read at batch or epoch boundaries, not while a gradient is mid-flight.</p>
+      </div>
+      <p>A separate confusion is server load, not staleness.</p>
+      <div class="important-note">
+        <p><strong>Q:</strong> Synchronous updates average all workers, then do one heavy update. Does asynchronous SGD pile more backpropagation onto the server and make the server much busier?</p>
+        <p><strong>A:</strong> The worry is valid. From the server's view, vanilla synchronous SGD averages incoming gradients and updates once. Async SGD applies a new weight after each arrival. The number of server-side updates can be higher. The worker-side backward pass still happens on the workers. Check with code. It seems more operations run in the async design.</p>
+      </div>
+
+      <h2 class="section-title" id="8.6-decentralized-sgd">8.6 Decentralized SGD</h2>
+      <div class="important-note">
+        <p>If the master is a single point of failure, can workers still mix their models by talking only to nearby machines?</p>
+      </div>
+      <p><em>Decentralized SGD</em> removes the central parameter server. Each worker keeps its own model. Workers periodically exchange parameters with neighbors in a local vicinity. “Vicinity” here means models whose distance is less than or equal to a threshold. Those nearby machines share parameters.</p>
+      <p>This is not asynchronous SGD with the server unplugged. Asynchronous SGD still has a server and stale gradients. Decentralized SGD is the neighbor-exchange design.</p>
+      <h3 class="subsection-title" id="8.6.1-neighbor-exchange-instead-of-a-master">8.6.1 Neighbor Exchange Instead of a Master</h3>
+      <div class="key-concept">
+        <p><strong>Purpose.</strong> Neighbor exchange reduces the <em>single point of failure</em> of a central parameter server. It also cuts communication overhead. In the master design, every machine sends to the master and later gets a response. Neighbor exchange is a shorter hop.</p>
+        <p><strong>Inputs:</strong> each worker’s local weights \(w_{i}\), a neighbor graph (or a distance threshold \(d\)), and a mixing rule. <strong>Outputs:</strong> updated local weights that have mixed information from the graph. After enough rounds, every model is a close copy of one global model, perhaps with a little extra loss compared with a perfect central average.</p>
+      </div>
+      <p>The topology matches the peer picture from the opening. Model 3 need not talk to model 1 if both talk to model 2. After several exchanges, information mixes through the graph.</p>
+      <div class="key-concept">
+        <p><strong>Steps.</strong> When neighbors \(i\) and \(j\) mix, a simple average of their weights is</p>
+        <p>\[ w_{i} \leftarrow \frac{w_{i} + w_{j}}{2}, \qquad w_{j} \leftarrow \frac{w_{i} + w_{j}}{2} \]</p>
+        <p>The verbal rule is: exchange parameters with neighbors and average. Models converge, perhaps with a little extra loss.</p>
+        <p>A local SGD step still happens on each worker, \(w_{i} \leftarrow w_{i} - \eta g_{i}\), on that worker’s shard. Mixing and stepping can alternate: train locally, then average with whoever is currently inside the distance threshold.</p>
+      </div>
+      <p>The student wrap-up sometimes labels this neighbor average as “asynchronous.” That label is wrong. Asynchronous SGD still has a server and stale gradients. Decentralized SGD is the neighbor-exchange design. Workers update locally. When workers come closer (distance at most the threshold), they exchange weights, often by averaging.</p>
+      <p>A ring All-Reduce is the data-center cousin: every node is a worker, there is no dedicated parameter server, and the mix is a fixed ring instead of a distance threshold. Blockchain-style swarm mixing is a further cousin used in some federated settings; the lecture exam object is the threshold neighbor average.</p>
+      <div class="example-box">
+        <p><strong>Three workers on a path, distance threshold \(1\).</strong> Place models on a line at positions \(0\), \(1\), and \(2\). Neighbors are pairs whose distance is at most \(1\): \((1,2)\) and \((2,3)\). Model 1 and model 3 do not share a direct link.</p>
+        <p>Suppose after local steps the weights are \(w_{1} = 2.0\), \(w_{2} = 4.0\), \(w_{3} = 6.0\).</p>
+        <p>Round 1, mix \(1\) with \(2\):</p>
+        <p>\[ w_{1} \leftarrow \frac{2.0 + 4.0}{2} = 3.0, \qquad w_{2} \leftarrow 3.0 \]</p>
+        <p>Now the vector is \((3.0,\ 3.0,\ 6.0)\). Mix \(2\) with \(3\):</p>
+        <p>\[ w_{2} \leftarrow \frac{3.0 + 6.0}{2} = 4.5, \qquad w_{3} \leftarrow 4.5 \]</p>
+        <p>Now the vector is \((3.0,\ 4.5,\ 4.5)\). Round 2, mix \(1\) with \(2\) again:</p>
+        <p>\[ w_{1} \leftarrow \frac{3.0 + 4.5}{2} = 3.75, \qquad w_{2} \leftarrow 3.75 \]</p>
+        <p>The three weights were \(2, 4, 6\) and are now \(3.75, 3.75, 4.5\). The mean of the original three is \(4\). Information from model 3 has already moved one hop into model 2 and is entering model 1. Sense-check: no master stored a global \(w\); each mix was a two-party average; the values are walking toward each other, not away.</p>
+      </div>
+      <p>Complexity: each mix ships one weight vector across a short link. With a central master, every worker ships to the same hub (fan-in) and the hub ships back (fan-out), so the hub bandwidth shrinks as \(1/K\). Neighbor mix costs grow with the number of edges, not with a single hot spot. The trade-off is mixing time: a long path needs several rounds before the far worker’s data arrives.</p>
+      <h3 class="subsection-title" id="8.6.2-when-decentralized-training-helps">8.6.2 When Decentralized Training Helps</h3>
+      <p>Use decentralized SGD when communication costs are high.</p>
+      <p>Real-world: <em>edge computing</em> on low-end devices. A small device cannot talk to a master all the time. Exchanging with a neighbor is a different cost from sending to a master. Federated learning is another setting where a central controller may be impractical. You may not be able to deploy a machine that acts as master controller.</p>
+      <p>Failure handling is local. Updates live on each machine. You can exchange only with neighbors inside distance \(d \le\) threshold. A dead far-away node does not freeze the whole ring the way a dead parameter server can.</p>
+      <div class="warning-box">
+        <p><strong>When to use / alternatives:</strong> Pick decentralized SGD on edge radios, on a shop floor of sensors, or whenever standing up a trusted aggregator is politically or operationally hard. Pick a parameter server when you want a single consistent snapshot and you can afford the hub. Pick async SGD when you still want a hub but not a barrier. Decentralized mix is slower to reach a perfect global mean; that extra loss is acceptable when the alternative is no training at all.</p>
+      </div>
+      <p>Picture three phones in a corridor. Each trains on its own photos. Every few minutes a phone pairs with whoever is within a few metres and they average weights. The corridor is the distance threshold. The landmark is the missing cloud server: if the building’s uplink dies, mixing can continue indoors.</p>
+      <div class="warning-box">
+        <p>Calling neighbor averaging “asynchronous SGD” hides the missing server and will cost marks. Averaging \(w_{i}\) with \(w_{j}\) is not the same as applying a stale \(g_{k}\) on a master. Another trap: mixing only once and declaring the models global; one hop does not carry a far shard. A third trap: using a disconnected graph. If model 4 never has a neighbor, its data never enters the rest.</p>
+      </div>
+      <div class="key-takeaway">
+        <p>Decentralized SGD has no master. Each worker keeps a model and averages with neighbors whose distance is under the threshold. That is a different design from asynchronous SGD, which still has a server. Next, write the three data loops in code form and name overlap SGD and quantized SGD for the follow-up session.</p>
+      </div>
+      <p>Phone-to-phone model mixing in a weak-signal warehouse, and peer mixing among hospital sites that will not stand up a shared aggregator, are the same pattern: train locally, average with whoever is close enough, accept a little extra loss.</p>
+      <h3 class="subsection-title" id="8.6.3-student-questions-and-answers">8.6.3 Student Questions and Answers</h3>
+      <p>The label mix-up is the one confusion to keep.</p>
+      <div class="important-note">
+        <p><strong>Q:</strong> After covering synchronous and asynchronous SGD, is the third type the one where each worker updates its own weights and, when workers come closer, they exchange weights by taking an average? Is that still asynchronous SGD?</p>
+        <p><strong>A:</strong> The neighbor-exchange picture is <em>decentralized</em> SGD, not asynchronous SGD. Asynchronous SGD still has a server. The server applies each arriving gradient and workers pull new weights when they start a new batch. Decentralized SGD has no master. Each worker keeps a model and averages with neighbors whose distance is under the threshold.</p>
+      </div>
+
+      <h2 class="section-title" id="8.7-batch-loops-overlap-sgd-and-quantized-sgd">8.7 Batch Loops, Overlap SGD, and Quantized SGD</h2>
+      <div class="important-note">
+        <p>The same one-weight update is three different <code>for</code> loops in code. What changes is not the slope formula, but when \(w\) is allowed to move — and how expensive the message that carries the slope is.</p>
+      </div>
+      <p>The same one-weight update appears in code as three data loops. Two further distributed variants are named for later study: overlap SGD and quantized SGD.</p>
+      <h3 class="subsection-title" id="8.7.1-sample-wise-mini-batch-and-full-batch-loops">8.7.1 Sample-Wise, Mini-Batch, and Full-Batch Loops</h3>
+      <p>These three loops are the concrete form of Section 8.3. They are also the inner step that each distributed worker runs on its shard.</p>
+      <div class="example-box">
+        <p><strong>Three loops on a five-sample shard.</strong> Let the shard be five pairs, \(\eta = 0.1\), and start at some \(w\).</p>
+        <p><strong>Sample-wise loop (batch size \(1\)).</strong> Walk the entire dataset. For each sample \((x, y)\), compute a prediction, compute a gradient, compute a new weight. Immediate update. No waiting. No averaging. Five samples means five updates. The verbal loop is: take a sample of \(x\) comma \(y\), predict, compute the gradient, compute the new weight.</p>
+        <p>\[ w \leftarrow w - \eta \nabla L(x, y) \quad \text{for each sample in turn} \]</p>
+        <p>After sample 1, \(w\) has already moved, so sample 2 sees a different model. That is the point: fastest clock, no mean.</p>
+        <p><strong>Mini-batch loop.</strong> Keep the weight frozen for the batch. Collect gradients. Replace them by their mean. Plug that mean into the update formula. Then move the weight.</p>
+        <p>For a batch of the first two samples:</p>
+        <p>\[ \bar{g} = \frac{g_{1} + g_{2}}{2}, \qquad w \leftarrow w - \eta \bar{g} \]</p>
+        <p>Then freeze again for samples 3–4, and handle sample 5 as a leftover batch of size \(1\). Two or three updates, not five.</p>
+        <p><strong>Full-batch loop.</strong> Same averaging idea, but the “batch” is the entire dataset. One mean. One update per pass.</p>
+        <p>\[ \bar{g} = \frac{1}{5}\sum_{i=1}^{5} g_{i}, \qquad w \leftarrow w - \eta \bar{g} \]</p>
+        <p>Sense-check: the algebra of \(\nabla L\) is the same object in all three loops. Only the grouping changes. Distributed synchronous SGD is the mini-batch (or full-shard) loop plus a barrier across machines. Distributed async SGD is closer to applying each finished shard’s \(g_{k}\) the way the sample-wise loop applies each sample’s \(g_{i}\), except the “samples” now live on different workers and may be stale.</p>
+      </div>
+      <div class="key-concept">
+        <p><strong>Purpose of the three loops.</strong> They turn the same update \(w \leftarrow w - \eta g\) into a training program. <strong>Inputs:</strong> a dataset (or shard), \(\eta\), a batch size \(B\). <strong>Outputs:</strong> a sequence of weights whose length is \(N\) (sample-wise), about \(N/B\) (mini-batch), or \(1\) per epoch (full batch).</p>
+      </div>
+      <h3 class="subsection-title" id="8.7.2-overlap-sgd-and-quantized-sgd">8.7.2 Overlap SGD and Quantized SGD</h3>
+      <p><em>Overlap SGD</em> is named as the next distributed variant after async and decentralized. The details are deferred so that code and demos can be inspected together.</p>
+      <p>The idea, in one paragraph, is to hide network wait inside math that must happen anyway. In a naive synchronous round you finish the whole backward pass, then you all-reduce the gradient, then you step. Overlap SGD starts shipping the first ready gradient buckets while later layers are still computing backward. The communication and the remaining compute sit on the same timeline instead of end-to-end. Frameworks such as multi-GPU data-parallel trainers do this by grouping parameters into buckets and launching an asynchronous reduce as soon as a bucket is ready. The lecture will treat the implementation as a follow-up, not as an exam derivation.</p>
+      <p><em>Quantized SGD</em> compresses what workers send. Quantized means: lower the bit size of the data. Gradients (or weights) travel in fewer bits. That is a communication trick, not a new loss. It belongs with overlap SGD in the follow-up session, before the move into federated learning.</p>
+      <p>A standard integer often uses \(32\) bits. If a value only needs the range \(\{0, 1, 2, 3\}\), \(2\) bits suffice. Mixed-precision training goes further: store some tensors in \(16\)-bit floating point instead of \(32\). The transform is lossy: \(1.00\) and \(1.01\) may collapse to the same code. Models usually still converge, sometimes to a slightly worse minimum. For distributed SGD the payoff is smaller messages on the wire, which is the industrial reason to quantize shipped gradients.</p>
+      <div class="warning-box">
+        <p><strong>Scope:</strong> Overlap SGD does not change the mathematical average; it changes when bytes leave the GPU. Quantized SGD does change the numerical payload: fewer bits, some rounding. <strong>Assumption:</strong> the follow-up session will inspect code for both. Do not invent a new loss function named “quantized loss.” The loss stays \(L\); only the message encoding changes.</p>
+      </div>
+      <p>Federated learning is the next large topic: how to aggregate, how to fill missing features, <em>horizontal federated learning</em>, and <em>vertical federated learning</em>. Horizontal (sample-based) federated learning is the Gboard-style case: the same features, different users. Vertical (feature-based) federated learning is the bank-plus-shop case: the same people, different columns. Distributed SGD is the bridge. Close these variants first.</p>
+      <div class="key-takeaway">
+        <p>Three distributed designs sit on the table: synchronous (wait, average, one update), asynchronous (update per finish, pull on the next batch), decentralized (no master, neighbor average). Overlap SGD hides communication behind compute. Quantized SGD lowers bit size. Federated learning comes next.</p>
+      </div>
+      <p>Shipping FP16 or INT8 gradients between GPU racks is why quantized SGD shows up in production trainers. Overlapping the reduce with backward is why a well-tuned data-parallel job is not twice as slow as a math-only profile would suggest.</p>
+      <h3 class="subsection-title" id="8.7.3-student-questions-and-answers">8.7.3 Student Questions and Answers</h3>
+      <div class="important-note">
+        <p><strong>Q:</strong> What does quantized mean in quantized SGD?</p>
+        <p><strong>A:</strong> Lower the bit size of the data. Send cheaper messages. The rest of the method waits for the next session.</p>
+      </div>
+      <p>The closing request is a recap of the three main distributed methods.</p>
+      <div class="important-note">
+        <p><strong>Q:</strong> Can someone summarize the distributed gradient methods in two or three points?</p>
+        <p><strong>A:</strong> Three types sit on the table. First, synchronous distributed SGD: every worker computes a gradient, the server waits for all of them, aggregates, updates the weights, and distributes the new weights to all workers. Second, asynchronous SGD: each time a worker finishes, the server updates the weights; workers take the new weights when they start a new batch; nobody waits for every worker. Third, decentralized SGD: workers update locally and, when they come close enough, exchange weights by averaging. The main async rule is that new weights are taken when you start passing a new batch.</p>
+      </div>
+
+      <h2 class="section-title" id="exam-guidance-summary">Exam Guidance Summary</h2>
+      <p>This session did not publish a mark table. The study signal is still sharp.</p>
+      <ol>
+        <li><strong>Close the distributed SGD family before federated learning.</strong> Know synchronous distributed SGD, asynchronous SGD, and decentralized SGD as three different designs, not three names for one idea.</li>
+        <li><strong>Expect numerical traces like the classroom demos.</strong> One-weight finite-difference slope (loss \(8 \to 7.88\) when \(w: 2 \to 2.01\)). Four-worker mean gradient from shards. Async chain \(2.00 \to 2.20 \to 2.80 \to 3.80\) with stale gradients.</li>
+        <li><strong>Memorize the sign rule.</strong> Positive gradient: decrease the weight. Negative gradient: increase the weight. The minus in \(w - \eta \nabla L\) is what makes the rule automatic.</li>
+        <li><strong>Do not confuse sending gradients with training four final models.</strong> In synchronous distributed SGD the master applies one global update.</li>
+        <li><strong>Name staleness correctly.</strong> A stale gradient is computed on old weights and applied to newer weights. Small \(\eta\) and quiet gradients can still converge.</li>
+        <li><strong>Federated learning is flagged as the next high-value block.</strong> Aggregation, missing features, horizontal federated learning, and vertical federated learning are the coming topics. Overlap SGD and quantized SGD (lower bit size) are the remaining distributed details to finish first.</li>
+      </ol>
+      <div class="key-takeaway">
+        <p><strong>Exam note:</strong> If a short numerical is asked, show the table: weight, prediction, error \(wx - y\), gradient \((wx - y)x\), then the average, then \(w - \eta \bar{g}\). Close synchronous, asynchronous, and decentralized SGD before federated learning.</p>
+      </div>
+
+      <h2 class="section-title" id="key-industry-applications">Key Industry Applications</h2>
+      <ol>
+        <li><strong>Amazon-scale multi-zone data.</strong> Worldwide purchase and transaction streams do not fit on one trainer. Each zone trains on a subset and returns a gradient so one global model can represent all zones.</li>
+        <li><strong>Multi-GPU mini-batch training.</strong> GPU 1 through GPU 4 compute gradients on shards. A server averages and performs one global update. This is synchronous distributed SGD on accelerators.</li>
+        <li><strong>Large language models and transformers.</strong> Models with some \(120\) billion parameters make per-sample updates too heavy. Mini-batch (and sharded mini-batch) is the practical cadence.</li>
+        <li><strong>Edge computing and low-end devices.</strong> Always-on links to a master are expensive. Decentralized SGD exchanges parameters with neighbors inside a distance threshold.</li>
+        <li><strong>Federated learning.</strong> Central coordination may be impractical. FedAvg-style means are the teaching baseline. Richer aggregation, including federated asynchronous simultaneous training (IIT Bombay), is active research. Horizontal and vertical federated learning come next.</li>
+        <li><strong>Quantized communication.</strong> Lowering bit size of shipped gradients is the industrial reason for quantized SGD: less network cost between workers and servers.</li>
+      </ol>
+    </main>
+
+    <!-- ============================================================
+    EXAM REVISION NOTES
+    Generated AFTER the main lecture-faithful content is complete. Each entry
+    distills one major concept into its most examinable elements.
+    Built FROM the core — never invented independently.
+
+    Each entry is a <div class="exam-revision-entry"> containing:
+      - .revision-topic (h3) — concept name
+      - .revision-mustknow — the single most examinable takeaway
+      - .revision-formula — central formula(s) in \[ ... \] MathJax
+      - .revision-pitfall — the #1 exam mistake
+      - .revision-check — one self-check question (no options)
+      - .revision-connections — linked concepts within this lecture
+    ============================================================ -->
+    <section class="exam-revision-section">
+      <h2>Exam Revision Notes</h2>
+      <p class="revision-intro">Below is the distilled, exam-ready core.
+      Every entry comes from the full explanation above. Use this section
+      for rapid review; return to the main notes when a point needs more context.</p>
+      <div class="exam-revision-entry">
+        <h3 class="revision-topic">The Distributed Training Problem</h3>
+        <p class="revision-mustknow"><strong>Must-know:</strong> Distributed SGD exists so one global model can learn from data that does not fit on one machine.</p>
+        <p class="revision-formula">\[\bar{g} = \frac{1}{K} \sum_{k=1}^{K} g_k\]</p>
+        <p class="revision-pitfall"><strong>⚠️ Top pitfall:</strong> Treating four worker copies as four finished models instead of sending gradients for one global update.</p>
+        <p class="revision-check"><strong>Self-check:</strong> If four workers send gradients -1.5, -4, -7.5, and -12, what is the global gradient?</p>
+        <p class="revision-connections"><strong>Connects to:</strong> 8.4 Synchronous Distributed SGD, 8.6 Decentralized SGD</p>
+      </div>
+      <div class="exam-revision-entry">
+        <h3 class="revision-topic">Stochastic Gradient Descent on a Single Weight</h3>
+        <p class="revision-mustknow"><strong>Must-know:</strong> Negative gradient: increase the weight. Positive gradient: decrease the weight. The minus in w - eta nabla L does this automatically.</p>
+        <p class="revision-formula">\[w_{t+1} = w_{t} - \eta \nabla L\]</p>
+        <p class="revision-pitfall"><strong>⚠️ Top pitfall:</strong> Dropping the minus after seeing a negative slope, or editing the input x instead of the weight.</p>
+        <p class="revision-check"><strong>Self-check:</strong> With w=2, eta=0.1, and gradient -12, what is the new weight and the new prediction at x=3?</p>
+        <p class="revision-connections"><strong>Connects to:</strong> 8.3 Mini-Batch Gradient Descent, 8.4 Synchronous Distributed SGD</p>
+      </div>
+      <div class="exam-revision-entry">
+        <h3 class="revision-topic">Mini-Batch Gradient Descent</h3>
+        <p class="revision-mustknow"><strong>Must-know:</strong> Sample-wise, mini-batch, and full batch use the same slope; they differ in how often the weight moves and whether gradients are averaged.</p>
+        <p class="revision-formula">\[w_{\mathrm{new}} = w - \eta \bar{g},\quad \bar{g} = \frac{1}{B}\sum_{i=1}^{B} g_i\]</p>
+        <p class="revision-pitfall"><strong>⚠️ Top pitfall:</strong> Updating w inside the batch and still calling the result a mini-batch mean, or dividing by B twice.</p>
+        <p class="revision-check"><strong>Self-check:</strong> With frozen w=1.5 and four gradients -0.5, -2, -4.5, -8, what is the mini-batch update at eta=0.1?</p>
+        <p class="revision-connections"><strong>Connects to:</strong> 8.2 Stochastic Gradient Descent on a Single Weight, 8.4 Synchronous Distributed SGD, 8.7 Batch Loops, Overlap SGD, and Quantized SGD</p>
+      </div>
+      <div class="exam-revision-entry">
+        <h3 class="revision-topic">Synchronous Distributed SGD</h3>
+        <p class="revision-mustknow"><strong>Must-know:</strong> Workers send gradients; the master performs one global update. Closed-form (wx-y)x is the same slope as a finite difference.</p>
+        <p class="revision-formula">\[\frac{dL}{dw} = (w x - y) x,\quad \bar{g} = -6.25,\quad w \leftarrow 1.5 + 0.625 = 2.125\]</p>
+        <p class="revision-pitfall"><strong>⚠️ Top pitfall:</strong> Differentiating with respect to x, or drawing four final models instead of one master update.</p>
+        <p class="revision-check"><strong>Self-check:</strong> Fill the four-worker table at w=1.5 and compute w - 0.1 * mean(g).</p>
+        <p class="revision-connections"><strong>Connects to:</strong> 8.2 Stochastic Gradient Descent on a Single Weight, 8.5 Asynchronous SGD and Stale Gradients, 8.6 Decentralized SGD</p>
+      </div>
+      <div class="exam-revision-entry">
+        <h3 class="revision-topic">Asynchronous SGD and Stale Gradients</h3>
+        <p class="revision-mustknow"><strong>Must-know:</strong> A stale gradient is computed on old weights and applied to newer weights. The server does not force remaining workers to restart after every update.</p>
+        <p class="revision-formula">\[w \leftarrow w - \eta g_k\]</p>
+        <p class="revision-pitfall"><strong>⚠️ Top pitfall:</strong> Assuming the server broadcasts and forces a restart after worker 1 finishes, or treating every stale gradient as fatal.</p>
+        <p class="revision-check"><strong>Self-check:</strong> Trace w = 2.0, eta = 0.1, gradients -2, -6, -10 arriving in order. What is the server weight after three applies?</p>
+        <p class="revision-connections"><strong>Connects to:</strong> 8.4 Synchronous Distributed SGD, 8.6 Decentralized SGD</p>
+      </div>
+      <div class="exam-revision-entry">
+        <h3 class="revision-topic">Decentralized SGD</h3>
+        <p class="revision-mustknow"><strong>Must-know:</strong> Neighbor-exchange averaging is decentralized SGD, not asynchronous SGD. Asynchronous SGD still has a server.</p>
+        <p class="revision-formula">\[w_i, w_j \leftarrow (w_i + w_j)/2\]</p>
+        <p class="revision-pitfall"><strong>⚠️ Top pitfall:</strong> Labeling neighbor averaging as asynchronous SGD, or mixing once and calling the models global.</p>
+        <p class="revision-check"><strong>Self-check:</strong> On a path of three weights 2, 4, 6, what happens after one mix of the first pair and then the second pair?</p>
+        <p class="revision-connections"><strong>Connects to:</strong> 8.1 The Distributed Training Problem, 8.5 Asynchronous SGD and Stale Gradients, 8.7 Batch Loops, Overlap SGD, and Quantized SGD</p>
+      </div>
+      <div class="exam-revision-entry">
+        <h3 class="revision-topic">Batch Loops, Overlap SGD, and Quantized SGD</h3>
+        <p class="revision-mustknow"><strong>Must-know:</strong> Synchronous waits for all workers; asynchronous updates per finish; decentralized averages neighbors. Quantized means lower bit size.</p>
+        <p class="revision-formula">\[w \leftarrow w - \eta \nabla L(x, y)\]</p>
+        <p class="revision-pitfall"><strong>⚠️ Top pitfall:</strong> Treating quantized SGD as a new loss, or mixing overlap SGD with async SGD.</p>
+        <p class="revision-check"><strong>Self-check:</strong> In one sentence each, define synchronous, asynchronous, and decentralized SGD, and say what quantized means.</p>
+        <p class="revision-connections"><strong>Connects to:</strong> 8.3 Mini-Batch Gradient Descent, 8.4 Synchronous Distributed SGD, 8.5 Asynchronous SGD and Stale Gradients, 8.6 Decentralized SGD</p>
+      </div>
+      <div class="exam-revision-entry">
+        <h3 class="revision-topic">Exam Guidance Summary</h3>
+        <p class="revision-mustknow"><strong>Must-know:</strong> Close synchronous, asynchronous, and decentralized SGD before federated learning. Show the worker table then one global update.</p>
+        <p class="revision-formula">\[w - \eta \bar{g}\]</p>
+        <p class="revision-pitfall"><strong>⚠️ Top pitfall:</strong> Confusing the three designs, or sending gradients but drawing four final models.</p>
+        <p class="revision-check"><strong>Self-check:</strong> List the six study signals for this session.</p>
+        <p class="revision-connections"><strong>Connects to:</strong> 8.2 Stochastic Gradient Descent on a Single Weight, 8.4 Synchronous Distributed SGD, 8.5 Asynchronous SGD and Stale Gradients</p>
+      </div>
+      <div class="exam-revision-entry">
+        <h3 class="revision-topic">Key Industry Applications</h3>
+        <p class="revision-mustknow"><strong>Must-know:</strong> Amazon-scale zones, multi-GPU averaging, 120-billion-parameter mini-batches, edge neighbor exchange, FedAvg, and quantized messages are the named industry settings.</p>
+        <p class="revision-pitfall"><strong>⚠️ Top pitfall:</strong> Treating federated learning as already fully covered rather than the next block.</p>
+        <p class="revision-check"><strong>Self-check:</strong> Name three industry settings from this lecture and which SGD variant each uses.</p>
+        <p class="revision-connections"><strong>Connects to:</strong> 8.1 The Distributed Training Problem, 8.3 Mini-Batch Gradient Descent, 8.6 Decentralized SGD, 8.7 Batch Loops, Overlap SGD, and Quantized SGD</p>
+      </div>
+    </section>
+  </div>
+</body>
+</html>

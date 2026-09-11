@@ -169,6 +169,21 @@ export const GET: APIRoute = async () => {
   }
 
   try {
+    // Version the cache by the current manifest version so a content upload
+    // invalidates the cached search index (Phase 8.9).
+    const manifest = await getManifest();
+
+    // Edge cache read: a warm isolate serves the compiled index without an R2
+    // round-trip or the map/re-serialize pass.
+    const cache = (env as any).caches?.default as Cache | undefined;
+    const cacheKey = new Request(`https://internal.bitsnotes/cache/search-index/${manifest.version}.json`);
+    if (cache) {
+      try {
+        const hit = await cache.match(cacheKey);
+        if (hit) return hit;
+      } catch { /* cache read is best-effort */ }
+    }
+
     const obj = await bucket.get('search-index.json');
     if (!obj) {
       console.warn('[search-index] search-index.json not found in R2 bucket.');
@@ -190,10 +205,7 @@ export const GET: APIRoute = async () => {
       snippet: item.snippet || (item.text || '').slice(0, 300)
     }));
 
-    // Version the cache by the current manifest version so a content upload
-    // invalidates the cached search index (Phase 8.9).
-    const manifest = await getManifest();
-    return new Response(JSON.stringify(safeIndex), {
+    const response = new Response(JSON.stringify(safeIndex), {
       headers: {
         'Content-Type': 'application/json',
         'Cache-Control': 'public, max-age=300',
@@ -201,6 +213,15 @@ export const GET: APIRoute = async () => {
         'X-Robots-Tag': 'noindex, nofollow'
       }
     });
+
+    // Populate the edge cache for subsequent isolates (fire-and-forget).
+    if (cache) {
+      try {
+        cache.put(cacheKey, response.clone()).catch(() => {});
+      } catch { /* cache write is best-effort */ }
+    }
+
+    return response;
   } catch (err: any) {
     console.error('[search-index] Error loading index from R2:', err.message);
     return new Response(JSON.stringify({ error: 'Failed to load search index' }), {

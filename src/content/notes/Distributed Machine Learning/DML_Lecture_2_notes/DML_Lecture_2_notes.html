@@ -1,0 +1,931 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+  <!-- Primary SEO -->
+  <title>Distributed Training Paradigms and Data Caching | Distributed Machine Learning | BitsNotes</title>
+  <meta name="description" content="Distributed Machine Learning notes on data, model and hybrid parallelism with MNIST demos, caching and merge pitfalls.">
+  <meta name="keywords" content="Distributed Machine Learning, distributed training paradigms, data parallelism, model parallelism, hybrid parallelism, MNIST, batch generator, caching and prefetch, weight averaging, FedAvg">
+  <meta name="author" content="BitsNotes">
+  <meta name="robots" content="index, follow">
+  <link rel="canonical" href="https://bitsnotes.com/view/distributed-machine-learning/distributed-training-paradigms-and-data-caching">
+
+  <!-- Open Graph / Facebook -->
+  <meta property="og:type" content="article">
+  <meta property="og:title" content="Distributed Training Paradigms and Data Caching | Distributed Machine Learning">
+  <meta property="og:description" content="Distributed Machine Learning notes on data, model and hybrid parallelism with MNIST demos, caching and merge pitfalls.">
+  <meta property="og:url" content="https://bitsnotes.com/view/distributed-machine-learning/distributed-training-paradigms-and-data-caching">
+  <meta property="og:image" content="https://bitsnotes.com/og-default.png">
+  <meta property="og:image:width" content="1200">
+  <meta property="og:image:height" content="630">
+  <meta property="og:site_name" content="BitsNotes">
+
+  <!-- Twitter Card -->
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="Distributed Training Paradigms and Data Caching | Distributed Machine Learning">
+  <meta name="twitter:description" content="Distributed Machine Learning notes on data, model and hybrid parallelism with MNIST demos, caching and merge pitfalls.">
+  <meta name="twitter:image" content="https://bitsnotes.com/og-default.png">
+  <meta name="twitter:site" content="@BitsNotes">
+
+  <!-- Stylesheet -->
+  <link rel="stylesheet" href="/lecture-notes.css">
+
+  <!-- Structured Data: JSON-LD -->
+  <script type="application/ld+json">
+{"@context":"https://schema.org","@type":"Article","headline":"Distributed Training Paradigms and Data Caching | Distributed Machine Learning","description":"Distributed Machine Learning notes on data, model and hybrid parallelism with MNIST demos, caching and merge pitfalls.","author":{"@type":"Organization","name":"BitsNotes"},"about":["data parallelism","model parallelism","hybrid parallelism","MNIST batch generator","caching and prefetch","weight averaging"],"url":"https://bitsnotes.com/view/distributed-machine-learning/dml-lecture-2"}
+</script>
+
+  <!-- Lecture Metadata (for the BitsNotes platform viewer) -->
+  <!-- IMPORTANT: This is the ONLY metadata source. No companion .json file
+       is created. The viewer reads everything from this embedded script.
+       Required fields: title, subject, gradeLevel, datePublished,
+       targetAudience, sections (array), examRevisionNotes (array).
+       Optional fields: prerequisites (array of {subject, lecture, topics}).
+       NOT included (removed): summary, keyConcepts, quiz. -->
+  <script type="application/json" id="lecture-metadata">
+{
+  "title": "Distributed Training Paradigms and Data Caching",
+  "subject": "Distributed Machine Learning",
+  "gradeLevel": "postgraduate",
+  "datePublished": "2026-09-10",
+  "targetAudience": "Postgraduate students in Distributed Machine Learning",
+  "sections": [
+    {
+      "title": "Recap and Four Training Scenarios",
+      "description": "Recap of parallel vs horizontal partitioning sets up the four training scenarios from data and model splits"
+    },
+    {
+      "title": "Code Setup With MNIST Data, CNN Builder, and Batch Generator",
+      "description": "MNIST 2000-row normalized setup with small CNN builder and lazy batch generator using yield"
+    },
+    {
+      "title": "Sequential Training With One Model and One Data Stream",
+      "description": "Single model with single data stream runs batches in strict order with per-batch gradient updates"
+    },
+    {
+      "title": "Data Parallelism With Split Data, Copied Models, and Averaged Gradients",
+      "description": "Data parallelism replicates the model over data shards and merges gradients with all-reduce averaging"
+    },
+    {
+      "title": "Model Parallelism by Ensembling With Same Batch to Separate Models",
+      "description": "Ensembling feeds the same batch to separate models and averages soft predictions; random starts explain diverse features"
+    },
+    {
+      "title": "Model Parallelism by Pipeline Split With Feature Stage and Choice Stage",
+      "description": "Pipeline model parallelism cuts one network into feature and choice stages trained end to end"
+    },
+    {
+      "title": "Hybrid Parallelism With Split Data and Split Model Together",
+      "description": "Hybrid parallelism gives each worker its own staged pipeline and shard, merged by averaged gradients and copy-back"
+    },
+    {
+      "title": "Distributed Execution Helpers and Device Placement",
+      "description": "Built-in Mirror and multi-worker helpers automate sharding and sync; placement puts stages where memory and links fit"
+    },
+    {
+      "title": "Caching for Data Input With In-Memory and In-Disk Paths",
+      "description": "Caching stores preprocessed batches in memory with prefetch staging the next batch ahead"
+    },
+    {
+      "title": "Weight-Merging Experiment and Why Blind Averaging Can Fail",
+      "description": "One-shot weight averaging of strong solo models fails on skewed splits; data-aware merging rules fix it"
+    }
+  ],
+  "examRevisionNotes": [
+    {
+      "topic": "Recap and Four Training Scenarios",
+      "mustKnow": "Four scenarios from two choices: sequential, data parallel, model parallel (ensemble + pipeline), hybrid",
+      "keyFormula": "",
+      "commonPitfall": "Mixing up row shards with layer cuts; calling ensemble data parallelism",
+      "quickCheck": "Which scenario splits data, which splits the model, which splits both?",
+      "connections": [
+        "Code Setup With MNIST Data, CNN Builder, and Batch Generator",
+        "Sequential Training With One Model and One Data Stream",
+        "Data Parallelism With Split Data, Copied Models, and Averaged Gradients"
+      ]
+    },
+    {
+      "topic": "Code Setup With MNIST Data, CNN Builder, and Batch Generator",
+      "mustKnow": "MNIST 2000 normalized rows, 28x28x1 images, small CNN, lazy batch generator with yield",
+      "keyFormula": "\\[x \\in \\mathbb{R}^{28 \\times 28 \\times 1}, \\; y \\in \\{0,\\dots,9\\}, \\; n = 2000\\]",
+      "commonPitfall": "Collecting all batches into a list removes the memory gain; changing slice size across comparisons",
+      "quickCheck": "What shapes do xb and yb have for batch size b?",
+      "connections": [
+        "Recap and Four Training Scenarios",
+        "Sequential Training With One Model and One Data Stream",
+        "Data Parallelism With Split Data, Copied Models, and Averaged Gradients"
+      ]
+    },
+    {
+      "topic": "Sequential Training With One Model and One Data Stream",
+      "mustKnow": "Sequential means each batch waits for the prior update; staircase execution with no overlap",
+      "keyFormula": "\\[W_{new} = W_{old} - \\eta G\\]",
+      "commonPitfall": "Using stale weights for batch 2; confusing batch size with epoch",
+      "quickCheck": "Why cannot batch 2 start before batch 1 finishes?",
+      "connections": [
+        "Code Setup With MNIST Data, CNN Builder, and Batch Generator",
+        "Data Parallelism With Split Data, Copied Models, and Averaged Gradients"
+      ]
+    },
+    {
+      "topic": "Data Parallelism With Split Data, Copied Models, and Averaged Gradients",
+      "mustKnow": "All-reduce: each worker trains on its shard, gradients averaged, same average updates all copies",
+      "keyFormula": "\\[G_{avg} = \\frac{G_{1} + G_{2}}{2}, \\quad G_{weighted} = \\frac{n_{1}}{N} G_{1} + \\frac{n_{2}}{N} G_{2}\\]",
+      "commonPitfall": "Skipping identical starts; averaging losses instead of gradients; slicing model instead of replicating",
+      "quickCheck": "Write Gavg and the size-weighted form and state when they match",
+      "connections": [
+        "Sequential Training With One Model and One Data Stream",
+        "Model Parallelism by Ensembling With Same Batch to Separate Models",
+        "Hybrid Parallelism With Split Data and Split Model Together",
+        "Weight-Merging Experiment and Why Blind Averaging Can Fail"
+      ]
+    },
+    {
+      "topic": "Model Parallelism by Ensembling With Same Batch to Separate Models",
+      "mustKnow": "Same batch to separate models, average soft scores, argmax; diversity comes from random starts",
+      "keyFormula": "\\[\\hat{p}_{avg} = \\frac{1}{K} \\sum_{k=1}^{K} \\hat{p}^{(k)}, \\quad \\hat{y} = \\arg\\max_{c} \\hat{p}_{avg,c}\\]",
+      "commonPitfall": "Identical seeds remove diversity; changing shapes breaks the scoring loop",
+      "quickCheck": "Write the ensemble mean and final label rule; why is feature distance non-zero?",
+      "connections": [
+        "Data Parallelism With Split Data, Copied Models, and Averaged Gradients",
+        "Model Parallelism by Pipeline Split With Feature Stage and Choice Stage"
+      ]
+    },
+    {
+      "topic": "Model Parallelism by Pipeline Split With Feature Stage and Choice Stage",
+      "mustKnow": "Pipeline cut: feature stage then choice stage, one tape, sequential per batch and overlapped across batches",
+      "keyFormula": "\\[f_{b} = S_{1}(x_{b}; W_{S1}), \\quad \\hat{y}_{b} = S_{2}(f_{b}; W_{S2})\\]",
+      "commonPitfall": "Two separate tapes break feature learning; forgetting to flatten 16x7x7 to 784",
+      "quickCheck": "Why must one tape wrap both stages?",
+      "connections": [
+        "Model Parallelism by Ensembling With Same Batch to Separate Models",
+        "Hybrid Parallelism With Split Data and Split Model Together",
+        "Distributed Execution Helpers and Device Placement"
+      ]
+    },
+    {
+      "topic": "Hybrid Parallelism With Split Data and Split Model Together",
+      "mustKnow": "Hybrid = per-worker pipeline plus cross-worker gradient mean plus copy-back sync",
+      "keyFormula": "\\[G_{avg} = \\frac{G_{0} + G_{1}}{2}, \\quad W_{W0,new} = W_{W0,old} - \\eta G_{avg}\\]",
+      "commonPitfall": "Different seeds per worker; zipping mismatched variable orders; skipping copy-back",
+      "quickCheck": "Draw the hybrid sync diagram and state why W1 is copied from W0",
+      "connections": [
+        "Data Parallelism With Split Data, Copied Models, and Averaged Gradients",
+        "Model Parallelism by Pipeline Split With Feature Stage and Choice Stage",
+        "Distributed Execution Helpers and Device Placement"
+      ]
+    },
+    {
+      "topic": "Distributed Execution Helpers and Device Placement",
+      "mustKnow": "Mirror for many GPUs in one host, multi-worker across hosts; helper automates shard, all-reduce, broadcast",
+      "keyFormula": "",
+      "commonPitfall": "Creating model partly outside strategy scope; tiny batches at scale starve GPUs",
+      "quickCheck": "When to pick Mirror vs MultiWorkerMirroredStrategy?",
+      "connections": [
+        "Data Parallelism With Split Data, Copied Models, and Averaged Gradients",
+        "Model Parallelism by Pipeline Split With Feature Stage and Choice Stage",
+        "Hybrid Parallelism With Split Data and Split Model Together",
+        "Caching for Data Input With In-Memory and In-Disk Paths"
+      ]
+    },
+    {
+      "topic": "Caching for Data Input With In-Memory and In-Disk Paths",
+      "mustKnow": "In-memory cache holds ready batches; prefetch stages the next batch during current compute",
+      "keyFormula": "",
+      "commonPitfall": "Caching raw rows before preprocessing; freezing one fixed order without reshuffle",
+      "quickCheck": "Contrast in-memory vs in-disk cache; what does prefetch add?",
+      "connections": [
+        "Distributed Execution Helpers and Device Placement",
+        "Weight-Merging Experiment and Why Blind Averaging Can Fail"
+      ]
+    },
+    {
+      "topic": "Weight-Merging Experiment and Why Blind Averaging Can Fail",
+      "mustKnow": "99 vs 93 gap: solo models fit shards, plain mean lands on high-loss ridge, fix with data-aware merging",
+      "keyFormula": "\\[accuracy = \\frac{correct}{total} \\times 100, \\quad W_{global} = \\frac{W_{A} + W_{B}}{2}\\]",
+      "commonPitfall": "Blaming overfitting alone; retuning shape instead of fixing the merge rule",
+      "quickCheck": "Explain the 99 vs 93 gap in three lines",
+      "connections": [
+        "Data Parallelism With Split Data, Copied Models, and Averaged Gradients",
+        "Hybrid Parallelism With Split Data and Split Model Together",
+        "Caching for Data Input With In-Memory and In-Disk Paths"
+      ]
+    }
+  ]
+}
+</script>
+</head>
+<body>
+  <div class="container">
+    <!-- ============================================================
+    HERO HEADER
+    ============================================================ -->
+    <header class="hero-header">
+      <span class="subject-badge">Distributed Machine Learning</span>
+      <h1 class="lecture-title">Distributed Training Paradigms and Data Caching</h1>
+      <div class="meta-info">
+        <div class="meta-item"><strong>Published:</strong> 2026-09-10</div>
+        <div class="meta-item"><strong>Level:</strong> postgraduate</div>
+        <div class="meta-item"><strong>Audience:</strong> Postgraduate students in Distributed Machine Learning</div>
+      </div>
+    </header>
+
+    <!-- ============================================================
+    PREREQUISITE KNOWLEDGE
+    Optional section listing concepts from previous lectures that this
+    lecture builds on. Populated by Agent 3 from topic_mappings/*.yaml.
+    If no prerequisites exist, this section is omitted entirely.
+    ============================================================ -->
+    <section class="prerequisite-section">
+  <h2>Prerequisite Knowledge</h2>
+  <p class="prerequisite-intro">This lecture builds on the following concepts from earlier lectures. If any feel unfamiliar, review the linked notes before proceeding.</p>
+  <div class="prerequisite-entry">
+    <h3>Previously Covered in This Subject</h3>
+    <ul>
+      <li><strong>Horizontal and vertical partitioning — rows versus columns</strong> — covered in Lecture 1</li>
+      <li><strong>Model splitting across machines with a CNN example</strong> — covered in Lecture 1</li>
+      <li><strong>Data parallelism with synchronous replicas and averaged updates</strong> — covered in Lecture 1</li>
+      <li><strong>Pipeline parallelism with mini-batches and stages</strong> — covered in Lecture 1</li>
+    </ul>
+  </div>
+</section>
+
+    <!-- ============================================================
+    MAIN LECTURE-FAITHFUL CONTENT
+    Page title = one h1.lecture-title
+    Each section = one h2.section-title
+    Each subsection = one h3.subsection-title
+    Callout boxes: .key-concept (blue), .important-note (violet),
+      .example-box (green), .warning-box (red), .key-takeaway (amber)
+    Display math: auto-scrolls via mjx-container CSS; .eqbox wrapper optional
+    ============================================================ -->
+    <main>
+<h2 id="2.1-recap-and-four-training-scenarios">2.1 Recap and Four Training Scenarios</h2>
+<h3 id="2.1.1-what-was-revisited-from-earlier-sessions">2.1.1 What Was Revisited From Earlier Sessions</h3>
+<p>The session opened with a short recap. A student restated two partitioning ideas from earlier discussion: parallel partitioning and horizontal partitioning, with use cases where each helps. The restatement added that most real-world settings look like parallel partitioning, where fields arrive from different institutions and model parts have to stay specific to their source. That recap of parallel partitioning with fields from different institutions set up the day plan: look closely at caching methods and how caching shapes speed, then work through parallel and sequential splitting methods in full, mostly through code.</p>
+<div class="important-note">
+  <p><strong>Hook:</strong> Imagine you run a hospital network where one hospital holds lab results, another holds X-ray images, and a third holds billing codes — all for the same patients. You cannot pull every column into one room, yet you still need one model that learns from all of them. Do you split the rows, split the columns, or split the model itself?</p>
+</div>
+<p>That question is the thread for the whole lecture. The recap answer was that horizontal partitioning cuts by rows — different patients on different machines, same columns everywhere — while parallel partitioning cuts by columns or fields — same patients, different fields from different institutions on different machines. In the parallel case each site needs model parts tied to its own fields, because only that site sees those inputs. The class accepted this as a good base and then moved into code.</p>
+<p>An <em>everyday map</em> helps here: think of the recap like opening a map before a walk. The map has two roads: split the data, or split the model. The walk then tries every mix of those roads. That image helps because the rest of the session keeps returning to one question: when we split data, when we split the model, and when we split both, what stays the same and what must be synced. Keep that map in mind; each later section is one road on it.</p>
+<h3 id="2.1.2-four-combinations-of-data-splits-and-model-splits">2.1.2 Four Combinations of Data Splits and Model Splits</h3>
+<p>The core frame for the day was four training scenarios built from data splits and model splits. Two binary choices — is the data split, and is the model split — give four setups.</p>
+<div class="key-concept">
+  <p><strong>The four training scenarios — data versus model splits:</strong></p>
+  <table>
+    <thead>
+      <tr>
+        <th>#</th>
+        <th>Data</th>
+        <th>Model</th>
+        <th>Name</th>
+        <th>One-line picture</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>1</td>
+        <td>one stream, cut only into batches</td>
+        <td>one model</td>
+        <td>Sequential training</td>
+        <td>One cook tastes every dish in turn.</td>
+      </tr>
+      <tr>
+        <td>2</td>
+        <td>split into shards on workers</td>
+        <td>copied model, same shape everywhere</td>
+        <td>Data parallelism</td>
+        <td>Two cooks with the same recipe work on different ingredient piles, then agree on one shared tweak.</td>
+      </tr>
+      <tr>
+        <td>3</td>
+        <td>same batch everywhere</td>
+        <td>split or multiple models</td>
+        <td>Model parallelism</td>
+        <td>One recipe is cut into courses across stations, or three cooks each cook the full menu alone and then vote.</td>
+      </tr>
+      <tr>
+        <td>4</td>
+        <td>split into shards</td>
+        <td>split into stages, copied per worker</td>
+        <td>Hybrid parallelism</td>
+        <td>Two kitchens each run their own assembly line on their own ingredients, then compare notes.</td>
+      </tr>
+    </tbody>
+  </table>
+  <p>The short spoken list in the session named these as single data batch with single model, single data batch with multiple models, multiple data shards with single model shape, and multiple data shards with multiple model parts. In plain words: one path, two paths that split data, two paths that split the model, and one path that splits both.</p>
+</div>
+<p>First, one data stream with one model. Data is cut into batches, but all batches go to the same model one after another. This is sequential training. Batch one goes in, weights update, then batch two goes in, weights update, then batch three, and so on. There is no overlap; it is the baseline that shows what normal training does before any splitting.</p>
+<p>Second, split data with copied models. The data set is cut into shards. Each shard goes to a copy of the same model shape. Each copy trains on its shard, produces gradients, and then the gradients are averaged so the copies stay in step. This is data parallelism. The copies start identical and the averaged update keeps them identical at each step boundary.</p>
+<p>Third, same data with split or multiple models. Two forms were shown. One form feeds the same batch to several full but separate models and averages predictions — the ensemble form. The other form cuts one large model into stages, for example early layers for feature building and later layers for choice, and passes the same batch through the stages in order — the pipeline form. This is model parallelism. The first form varies the model while holding data fixed; the second form cuts one model across devices so memory and compute spread out.</p>
+<p>Fourth, split data plus split model. Each worker holds its own staged pipeline and its own data shard. Each worker runs its shard through its own stages, computes gradients across stages, and then gradients are averaged across workers. This is hybrid parallelism. It mixes the merge rule from data parallelism with the stage cut from model parallelism.</p>
+<p>A visual helps: draw two axes on paper. Put data-split on the horizontal axis (no on the left, yes on the right) and model-split on the vertical axis (no at the bottom, yes at the top). The four corners are the four scenarios above. The session lives in all four corners by the end, starting bottom-left and ending top-right. The one-sentence takeaway is that splitting data forces a gradient merge, splitting the model forces a stage handoff, and splitting both forces both.</p>
+<div class="warning-box">
+  <p><strong>Scope:</strong> This four-way frame assumes the split plan is fixed before training starts and that every worker can reach every other worker for the merge step. It applies to the small MNIST demos in this lecture and to large GPU runs with fast links. It breaks when shards cannot be moved at all for privacy reasons, when links drop often, or when workers hold entirely different columns with no shared row keys — those settings need federated or vertical-split methods covered later.</p>
+</div>
+<p>A quick visual check: plot the 2-by-2 grid from the table above and place each demo you run into one corner. If a demo needs both a shard label and a stage label, it belongs top-right; if it needs neither, bottom-left. That sorting habit prevents most labeling slips.</p>
+<div class="warning-box">
+  <p><strong>Pitfalls:</strong> Beginners often mix up the two kinds of splitting. Splitting data means cutting rows into shards while keeping the model shape fixed; splitting the model means cutting layers or copies while keeping the batch fixed. A second trap is calling the ensemble form data parallelism because three models are involved — it is not, because the data is the same everywhere and no gradient merge happens. A third trap is thinking hybrid is just data parallelism with bigger models — it adds a stage handoff inside each worker, so two sync problems must be solved at once.</p>
+</div>
+<p>Real-world placement: banks split rows across branches with the same columns and use data parallelism; hospitals split columns across departments with the same patients and need model-stage thinking; phone-keyboard training splits both rows and model capacity across devices and uses hybrid ideas. The same four corners appear in each field, only the reason for the cut changes.</p>
+<div class="key-takeaway">
+  <p><strong>Recap:</strong> The recap fixed two vocab items — horizontal cuts rows, parallel cuts fields from different institutions — and the four training scenarios mapped every mix of data splits and model splits. The bridge from here is the shared code base: one MNIST setup, one batch helper, and four ways to run it, starting with the sequential baseline.</p>
+</div>
+<h3 id="2.1.3-student-questions-and-answers">2.1.3 Student Questions and Answers</h3>
+<div class="important-note">
+  <p><strong>Q:</strong> We saw parallel partitioning and horizontal partitioning before. Where are they useful, and is the real world mostly parallel partitioning with fields from different institutions?</p>
+  <p><strong>A:</strong> Yes, that recap was accepted as a good base. When fields come from different places and different institutions, each place holds different columns for the same rows, so each side needs model parts tied to its own fields. That setting points to parallel splits, while same-columns-different-rows settings point to horizontal splits. The day then moved from that recap into code for the four training scenarios and caching, so the recap became the map for the demos that followed.</p>
+</div>
+
+<h2 id="2.2-code-setup-with-mnist-data-cnn-builder-and-batch-generator">2.2 Code Setup With MNIST Data, CNN Builder, and Batch Generator</h2>
+<h3 id="2.2.1-data-preparation-and-small-cnn-builder">2.2.1 Data Preparation and Small CNN Builder</h3>
+<p>The code base for all demos used built-in MNIST handwritten digit images. Only the first 2000 samples were kept for the early demos, so runs stayed fast while still showing real learning. Those MNIST samples were normalized and the small CNN builder returned a two-stage network for the demo. Pixel values were normalized to a small range near zero to one, which keeps gradients stable and helps training move smoothly.</p>
+<div class="important-note">
+  <p><strong>Hook:</strong> Why start a distributed-systems lecture with tiny grey digits instead of a giant language model? Because a 2000-image slice trains in seconds on a laptop, so every split plan can be tested end to end before paying for GPU hours.</p>
+</div>
+<p>When the model builder was called, it returned a small convolutional network with two convolution stages followed by a dense choice stage for 10 digit classes. In words heard during the session: a simple CNN, a two-layered CNN with 10 classes. The first stage scans small patches for edges and corners, the second stage combines those into digit parts, and the dense stage maps parts to 10 class scores.</p>
+<div class="key-concept">
+  <p><strong>First-use definitions:</strong> Let \(x\) be one input image, a matrix of pixel values with shape \(28 \times 28 \times 1\), where 28 is height, 28 is width, and 1 is the single gray channel. Let \(y\) be its true label, an integer from 0 to 9. Let \(W\) stand for all trainable weights in the network, including convolution filters and dense weights plus bias terms. Let \(b\) be batch size, meaning how many samples form one update group. Let \(n = 2000\) be the kept sample count for the early demos. The input image shape of 28 by 28 with a single gray channel is the fixed contract every later section reuses.</p>
+</div>
+<p>Why normalize? Raw MNIST pixels sit in \([0, 255]\). Dividing by 255 maps them into \([0, 1]\). With inputs near 1, a small weight change moves the output by a small amount, so gradient steps stay calm. With inputs near 255, the same weight change would swing the output wildly and force a tiny step size. Normalization is the same idea as converting all prices to the same currency before comparing them.</p>
+<p>A quick shape check grounds the numbers. One image holds \(28 \times 28 \times 1 = 784\) pixel values. A 2000-row slice holds \(2000 \times 784 = 1{,}568{,}000\) pixel values, about 6 MB as 32-bit floats — small enough to sit in RAM on any laptop. That is why the demos reuse this slice for every later setup: the data cost stays flat while the split logic changes.</p>
+<div class="warning-box">
+  <p><strong>Scope:</strong> The 2000-row slice applies to the early demos only — sequential, data parallel, ensemble, pipeline, and hybrid walkthroughs. It is large enough to show learning curves rising and small enough to rerun fast. It does not prove scaling to 60000-row MNIST or to text data; the caching and merging sections later return to larger sizes where split effects bite harder.</p>
+</div>
+<p>Picture a chart with batch index on the horizontal axis and loss on the vertical axis for this setup. Loss starts high near 2.3 (random guessing over 10 classes gives \(-\log(1/10) \approx 2.3\)) and bends down toward 0.2 as training proceeds. The takeaway: even the tiny slice shows the classic falling curve, so broken split logic shows up as a curve that stays flat or jumps.</p>
+<div class="warning-box">
+  <p><strong>Pitfalls:</strong> A common slip is changing the slice size halfway through comparisons — for example training sequential on 2000 rows but data parallel on 60000 — and then blaming the split for the score gap. Keep \(n = 2000\) fixed across the four hand-built demos. A second slip is forgetting normalization on one shard; that shard then sends huge gradients and drags the shared update off course.</p>
+</div>
+<p>Real-world link: MNIST is a standard digit benchmark used to test distributed training logic before moving to larger image or text sets. Teams debug sharding, merging, and caching on MNIST or Fashion-MNIST first, then port the same pipeline to medical scans or product photos where each run costs far more.</p>
+<div class="key-takeaway">
+  <p><strong>Recap:</strong> MNIST with 2000 normalized rows and a small two-layer CNN gives a fast shared test bed. The bridge is the batch helper: with data and model fixed, the only moving part left is how batches are formed and handed out.</p>
+</div>
+<h3 id="2.2.2-batch-generator-with-yield">2.2.2 Batch Generator With Yield</h3>
+<p>A helper named make batches built groups on demand. It did not load all groups into memory at once. It produced one group at a time when asked, using a generator with yield. That batch generator with yield produces one batch at a time instead of holding all batches in memory.</p>
+<p>The logic was: loop over the data in steps of \(b\), from start index \(s\) to \(s + b\), collect those row ids, fetch \(x\) rows and \(y\) rows for those ids, yield the pair \((x_{b}, y_{b})\), then move to the next start. Here \(x_{b}\) means the input block for batch \(b\) and \(y_{b}\) means the label block for the same rows. The spoken form was: from starting to ending we get the ids and those ids we fetch from x and y, and yield makes the generator, it does not hold all batches in memory at once, it produces one batch at a time on demand.</p>
+<p>In code shape, the pattern was:</p>
+<pre><code>for s in range(0, n, b):
+    ids = indices[s:s+b]
+    xb = x[ids]
+    yb = y[ids]
+    yield xb, yb</code></pre>
+<p>Each yielded pair then went through the same steps: forward pass to get predictions, loss computation against true labels, gradient computation for each weight, and weight update. The same helper was reused for every later setup, with shards passed in place of the full arrays when data was split. Pass the full 2000 rows and it yields full-data batches; pass rows 0 to 999 and it yields shard-zero batches with no code change.</p>
+<div class="example-box">
+  <p><strong>Worked trace — MNIST 2000 rows, normalized, through the CNN builder and batch generator:</strong> Take \(n = 2000\), \(b = 100\). The loop runs \(s = 0, 100, 200, \dots, 1900\), giving 20 batches per epoch. At \(s = 0\), ids are rows \(0\) to \(99\); \(x_{b}\) has shape \(100 \times 28 \times 28 \times 1\) and \(y_{b}\) holds 100 labels. The CNN builder maps that block to scores of shape \(100 \times 10\). Loss compares the 100 score rows with the 100 labels. The generator then pauses and resumes at \(s = 100\) only when the training loop asks. Peak extra memory stays near one \(100\)-row block, not all 2000 rows at once. <strong>Final count: 20 batches per epoch, each \(100 \times 28 \times 28 \times 1\) images plus 100 labels.</strong> Sense-check: \(20 \times 100 = 2000\), so every row appears exactly once per epoch.</p>
+</div>
+<p>Think of yield like a ticket window that hands out one ticket group at a time instead of printing all tickets at once. Memory stays small, and training can start before the full grouping work is done. The generator holds its position \(s\) between calls, hands out the current block, and only then computes the next one — a desk tray that refills one folder at a time rather than stacking the whole archive on the desk.</p>
+<div class="warning-box">
+  <p><strong>Pitfalls:</strong> Newcomers sometimes collect all yielded batches into a list, which removes the whole memory gain. Keep the loop lazy: consume one batch, update, then ask for the next. Another slip is shuffling indices once and reusing the same order every epoch; reshuffle per epoch or the model sees the same batch order each pass.</p>
+</div>
+<h3 id="2.2.3-student-questions-and-answers">2.2.3 Student Questions and Answers</h3>
+<div class="important-note">
+  <p><strong>Q:</strong> What does batch mean here, and what do xb and yb hold for those rows?</p>
+  <p><strong>A:</strong> A batch is a small block of rows taken together. xb holds the images for those rows and yb holds the matching true labels. The generator pairs them so each training step sees inputs together with their correct answers — images plus labels, side by side, for exactly the ids in that block.</p>
+</div>
+<div class="important-note">
+  <p><strong>Q:</strong> Why does the ticket-window trick matter if 2000 rows already fit in memory?</p>
+  <p><strong>A:</strong> For 2000 rows it is a habit-forming demo, but the same helper scales to data that does not fit. The ticket window yields one batch so memory stays small even when the full set would overflow RAM, and the identical helper serves full data or per-worker shards later without edits.</p>
+</div>
+
+<h2 id="2.3-sequential-training-with-one-model-and-one-data-stream">2.3 Sequential Training With One Model and One Data Stream</h2>
+<h3 id="2.3.1-how-batches-flow-one-after-another">2.3.1 How Batches Flow One After Another</h3>
+<p>Single model with single data stream means one model object stays fixed in shape while batches arrive in order: batch one goes in, weights update, then batch two goes in, weights update, then batch three, and so on. Inside the fit call, the generator loop walks through the 2000 images, forms groups of size \(b\), and each group triggers forward pass, loss, back pass, and update before the next group starts. These sequential batches update one after another with no overlap.</p>
+<div class="important-note">
+  <p><strong>Hook:</strong> What if you had to grade 2000 exam papers alone, one stack at a time, and you were allowed to improve your answer key only after finishing each stack? That is sequential training — each batch teaches the same model before the next batch arrives.</p>
+</div>
+<p>The spoken steps were: batch one you give to the model, batch two you give to the model, batch three, and once you get the batch to the model you get the loss and you update, next batch again model and update, serially.</p>
+<p>Why this counts as sequential was made explicit through questions. The answer given was: after the output of the first one we start the second, we do it in sequence fashion. One update must finish before the next begins, so there is no overlap. That order is the whole point of the baseline: it shows what normal training does before any splitting.</p>
+<div class="key-concept">
+  <p><strong>Formal picture:</strong> Let \(M\) be the single model with weights \(W\). Let \((x_{1}, y_{1}), (x_{2}, y_{2}), \dots\) be the ordered batch stream. Training is the chain \(W_{0} \to W_{1} \to W_{2} \to \cdots\) where \(W_{t}\) depends on \(W_{t-1}\) and batch \(t\). Because step \(t\) reads \(W_{t-1}\), step \(t\) cannot start until step \(t-1\) has written its update. There is one writer, one reader, and a strict order between them.</p>
+</div>
+<p>Picture a timeline with batch index on the horizontal axis and weight version on the vertical axis. Each batch is a block that starts where the prior block ended, forming a staircase that rises one step per batch. No two blocks overlap. The takeaway: the staircase shape is the visual signature of sequential execution.</p>
+<div class="warning-box">
+  <p><strong>Scope:</strong> This baseline assumes one device, one model copy, and enough memory to hold one batch plus the model. It holds for the 2000-row laptop demo and for single-GPU training generally. It stops describing reality once a second copy or a second stage exists — then at least some work overlaps and the staircase gains parallel lanes.</p>
+</div>
+<h3 id="2.3.2-worked-walkthrough-of-sequential-steps">2.3.2 Worked Walkthrough of Sequential Steps</h3>
+<p>Setup: \(n = 2000\) MNIST rows, model \(M\) with weights \(W\), batch size \(b\) fixed for the run. Let \(L\) be loss, a single number that says how far predictions sit from true labels for the current batch. Let \(\hat{y}\) be predicted class scores for a batch. This sequential walkthrough covers forward pass, loss, backprop, update, and the epoch loop.</p>
+<p>Step 1: get \((x_{1}, y_{1})\) from the generator. Run \(x_{1}\) through \(M\) to get \(\hat{y}_{1}\).</p>
+<p>Step 2: compare \(\hat{y}_{1}\) with \(y_{1}\) to get \(L_{1}\). The spoken form was forward pass, compute loss, back propagation, update weights.</p>
+<p>Step 3: compute gradients \(G_{1} = \partial L_{1} / \partial W\), in words the change in loss per small change in each weight. Update \(W\) by stepping against \(G_{1}\) with the chosen optimizer step size.</p>
+<p>Step 4: repeat for \((x_{2}, y_{2})\) to get \(L_{2}\) and \(G_{2}\), update, then \((x_{3}, y_{3})\), and so on through all batches in the epoch. One epoch means one full pass over the 2000 rows.</p>
+<div class="key-concept">
+  <p><strong>Shared weight update with step size against batch gradient:</strong> The update rule used in plain stochastic steps has the form:</p>
+  <p>\[W_{new} = W_{old} - \eta G\]</p>
+  <p>Here \(\eta\) is step size, how large each move is, \(G\) is the gradient for the current batch, \(W_{old}\) holds weights before the batch, and \(W_{new}\) holds weights after. The verbal form kept alongside was forward pass, compute loss, back propagation, update weights, repeat for next batch. The minus sign moves weights downhill: \(G\) points uphill toward higher loss, so stepping against \(G\) lowers loss. Every symbol is named on first use and the rule applies per batch, not per epoch.</p>
+</div>
+<div class="example-box">
+  <p><strong>Fully worked sequential steps — forward, loss, backprop, update, epoch:</strong> Fix \(b = 100\), so one epoch has \(2000/100 = 20\) batches. Pick a single scalar weight to make the arithmetic visible: let \(W_{old} = 0.500\), batch gradient \(G = 0.040\), step size \(\eta = 0.01\). Then \(W_{new} = 0.500 - 0.01 \times 0.040 = 0.500 - 0.0004 = 0.4996\). That is one batch update. Repeat 20 times with fresh gradients \(G_{1}, \dots, G_{20}\) and the weight walks \(W_{0} \to W_{1} \to \cdots \to W_{20}\); \(W_{20}\) is the epoch-end weight. Suppose batch losses read \(2.10, 1.85, 1.60, \dots, 0.35\) across the epoch — the falling list is the learning signal. Accuracy after the epoch uses \(correct/total\) over all 2000 rows. <strong>Final state: 20 ordered updates, one epoch done, weights at \(W_{20}\).</strong> Sense-check: if loss fell and accuracy rose versus the pre-epoch values, the ordered updates helped; if loss flatlined, the step size or data order needs attention, not the split logic, because nothing is split yet.</p>
+</div>
+<div class="warning-box">
+  <p><strong>Pitfalls:</strong> A frequent mistake is shuffling away the order dependence — thinking batch 2 could use stale weights and still match. It cannot; using \(W_{0}\) for both batch 1 and batch 2 is a different algorithm with different results. A second trap is confusing batch size with epoch: batch size \(b\) sets updates per epoch (\(n/b\)), while one epoch always means one full pass over the 2000 rows.</p>
+</div>
+<div class="key-takeaway">
+  <p><strong>Recap:</strong> One model, one ordered stream, one update at a time — that strict chain is why the baseline is sequential. <strong>Exam note:</strong> expect to explain why this baseline is sequential: each batch waits for the prior update to finish, so step two cannot start until step one has produced its updated weights. The bridge is data parallelism, which breaks this chain by running two copies at the same time.</p>
+</div>
+<h3 id="2.3.3-student-questions-and-answers">2.3.3 Student Questions and Answers</h3>
+<div class="important-note">
+  <p><strong>Q:</strong> Why is the first setup sequential while the later one is parallel, given both loop over batches?</p>
+  <p><strong>A:</strong> In the first setup batches run one by one, so step two cannot start until step one has produced its updated weights — after the output of the first one we start the second, in sequence fashion. In the data parallel setup two model copies run at the same time on different shards, then their results are merged. Same-time execution plus a merge is what makes it parallel; ordered execution with no merge is what makes this one sequential.</p>
+</div>
+
+<h2 id="2.4-data-parallelism-with-split-data-copied-models-and-averaged-gradients">2.4 Data Parallelism With Split Data, Copied Models, and Averaged Gradients</h2>
+<h3 id="2.4.1-split-data-replicate-model-all-reduce">2.4.1 Split Data, Replicate Model, All-Reduce</h3>
+<p>Data parallelism keeps the model shape fixed but copies it. Data is cut into shards, often called subsets or shards in the session. Each worker node trains its own copy on its own shard. The copies start with identical weights. At each step each worker computes gradients on its shard, then all gradients are merged into one shared update. That merge step was named all-reduce: train in parallel, then reduce gradients into a single model state. This split-data-replicate-model all-reduce pattern is the heart of the section.</p>
+<div class="important-note">
+  <p><strong>Hook:</strong> Two students share one textbook but split the practice problems — one does odd pages, one does even pages. If they never compare answers, they learn different halves. If they average their corrections after every set, both end up knowing the whole book. Which version scales to ten students?</p>
+</div>
+<p>A sharp question was asked: did we slice the model here, with a few layers as model zero and a few as model one. The answer was no. Here the model is replicated, not sliced. Data is split into shards. Slicing by layers belongs to model parallelism, not here. That replication-not-slicing warning is worth memorizing: whenever every worker holds a full copy of every layer, the split is on data; whenever each device holds only some layers, the split is on the model.</p>
+<p>Concrete split used in the demo: total 2000 images, worker zero took rows 0 to 999, worker one took rows 1000 to 1999. Both started from the same weight values. At each step worker zero computed gradients on its block and worker one computed gradients on its block, then the pair was averaged and the same averaged update was applied to both copies so they stayed synced.</p>
+<p>Think of two cooks with the same recipe working on different ingredient piles, then tasting together and agreeing on one shared tweak to the recipe before the next round. Without that shared tweak each cook would drift into a different dish. The shared tweak is the averaged gradient; the agreement step is the all-reduce.</p>
+<div class="warning-box">
+  <p><strong>Scope:</strong> This pattern assumes workers start from identical weights, use the same model shape and optimizer settings, and can exchange gradients every step. It fits the 2000-row two-worker demo and multi-GPU training with fast links. It strains when links are slow (the merge dominates runtime), when shards differ wildly in size or class mix (a plain mean misleads), or when workers cannot share gradients at all.</p>
+</div>
+<p>Picture execution on a timeline with two lanes, one per worker. Both lanes run forward-plus-backward blocks side by side, then both pause at a vertical merge bar where gradients meet and one shared update is computed, then both resume from the same new point. The takeaway: parallel lanes plus a sync bar, repeated every step.</p>
+<h3 id="2.4.2-mathematical-formulation">2.4.2 Mathematical Formulation</h3>
+<p>The spoken form for the merge was: as of now we assume that the new gradients equal to G1 plus G2 divided by 2. We keep that verbal line as the audit trail and write it as:</p>
+<div class="key-concept">
+  <p><strong>Averaged gradients Gavg from G1 plus G2 divided by 2:</strong> Let \(G_{1}\) be the gradient list from worker zero on shard zero and \(G_{2}\) the matching list from worker one on shard one. The shared gradient is:</p>
+  <p>\[G_{avg} = \frac{G_{1} + G_{2}}{2}\]</p>
+  <p>Here \(G_{1}\) means gradients from worker zero on shard zero, a list with one entry per trainable weight, \(G_{2}\) means gradients from worker one on shard one in the same order, and \(G_{avg}\) means the element-wise mean used for the shared update. Element-wise means first entry with first entry, second with second, and so on. Each entry is a tensor with the same shape as its weight, so the mean never mixes slots.</p>
+</div>
+<p>Per-weight form was also stated: loss one with respect to weight one in one model, and loss two with respect to the same weight slot in the other model, averaged to form total loss effect for that slot. Write for weight slot \(j\):</p>
+<p>\[G_{avg,j} = \frac{G_{1,j} + G_{2,j}}{2}\]</p>
+<p>Here \(j\) indexes the flattened list of trainable variables, \(G_{1,j} = \partial L_{1} / \partial W_{j}\) on shard zero, and \(G_{2,j} = \partial L_{2} / \partial W_{j}\) on shard one. Slot-by-slot pairing is why the code zips gradient lists before averaging: slot zero with slot zero, slot one with slot one.</p>
+<p>A weighted form was discussed for later study, where shard sizes differ. The spoken form was: sample 1 by total samples into this gradient plus sample 2 by total samples into the other gradient. We write the size-weighted gradient mean with shard counts:</p>
+<p>\[G_{weighted} = \frac{n_{1}}{N} G_{1} + \frac{n_{2}}{N} G_{2}\]</p>
+<p>Here \(n_{1}\) is the count used for \(G_{1}\), \(n_{2}\) is the count used for \(G_{2}\), and \(N = n_{1} + n_{2}\) is the combined count. When \(n_{1} = n_{2}\), this form matches the simple mean above, because each weight becomes \(1/2\). Reference material confirms this exact weighting: federated averaging weights each side in proportion to its local dataset size, with total \(N = n_{1} + n_{2} + \cdots + n_{k}\) and aggregate \(\sum_{i} (n_{i}/N) M_{i}\). So the demo choice of half-and-half is the equal-size special case of the general size-weighted rule, not a competing formula.</p>
+<p>The shared update then applies the same averaged gradients to each copy:</p>
+<p>\[W_{new} = W_{old} - \eta G_{avg}\]</p>
+<p>Here \(W_{old}\) is the synced weight vector before the step, \(\eta\) is step size, and \(W_{new}\) is the synced vector after. Both copies receive \(W_{new}\), so they remain identical at the step boundary. Dimensional check: if \(X \in \mathbb{R}^{n \times d}\) and \(w \in \mathbb{R}^{d}\) then \(Xw \in \mathbb{R}^{n}\); here each \(G\) matches its \(W\) slot in shape, so the subtraction is shape-valid. Numerical spot-check: with scalar \(G_{1} = 0.06\), \(G_{2} = 0.02\), the mean is \(0.04\), and with \(\eta = 0.01\) and \(W_{old} = 0.5\) the update gives \(0.4996\) on both copies.</p>
+<p>Epoch loss was described as a mix of loss from model one and model two combined for the epoch. One workable reading kept alongside is mean batch loss across both workers for the epoch, not a new loss type. Average the per-batch losses from both lanes and report that single number per epoch.</p>
+<h3 id="2.4.3-worked-walkthrough-on-two-workers">2.4.3 Worked Walkthrough on Two Workers</h3>
+<p>Setup: \(x\) holds 2000 normalized MNIST images, \(y\) holds 2000 labels. Shard zero is \((x^{(0)}, y^{(0)})\) for rows 0 to 999. Shard one is \((x^{(1)}, y^{(1)})\) for rows 1000 to 1999. Two model copies \(M_{0}\) and \(M_{1}\) are built from the same builder and seeded with the same weights, so \(W^{(0)} = W^{(1)}\) at start. Each has its own optimizer object with the same settings. This is the data parallel demo with two workers on rows 0 to 999 and 1000 to 1999 whose gradients are averaged into a shared update.</p>
+<div class="example-box">
+  <p><strong>Fully worked two-worker step with real numbers:</strong> Fix batch size \(b = 100\), so each shard yields 10 batches per epoch. Step example: worker zero takes \((x_{b0}, y_{b0})\) of 100 rows, runs forward to get \(\hat{y}_{b0}\), gets loss \(L_{0} = 1.20\); worker one takes \((x_{b1}, y_{b1})\), gets \(L_{1} = 1.60\). Pick one scalar weight slot with \(G_{0} = 0.060\) and \(G_{1} = 0.020\). Then \(G_{avg} = (0.060 + 0.020)/2 = 0.040\). With \(\eta = 0.01\) and \(W_{old} = 0.5000\), both copies move to \(W_{new} = 0.5000 - 0.0004 = 0.4996\). Repeat for all 10 paired batches, then form epoch loss as the mean of the 20 batch losses and accuracy as \(correct/total\) over 2000 rows. The session printed loss and accuracy per epoch and compared them with the sequential baseline to see if the split hurt quality. <strong>Final state: both copies at identical \(W_{new}\) after every step.</strong> Sense-check: equal shards give equal voice, so the mean sits halfway; if one loss lane stays much higher, that shard holds harder or rarer patterns.</p>
+</div>
+<p>Step-by-step recipe restated: form batch groups inside each shard with the same make batches helper; take one batch from shard zero \((x_{b0}, y_{b0})\) and one batch from shard one \((x_{b1}, y_{b1})\); run each through its copy with training set to true; attribute each loss to its weights, that is compute \(G_{0} = \partial L_{0} / \partial W^{(0)}\) and \(G_{1} = \partial L_{1} / \partial W^{(1)}\) — for that loss, how much each weight adds to the loss; average element-wise to get \(G_{avg}\); call the optimizer apply step on \(M_{0}\) variables with \(G_{avg}\) and on \(M_{1}\) variables with the same \(G_{avg}\). Both copies move to the same new point.</p>
+<p>Accuracy each epoch uses:</p>
+<p>\[accuracy = \frac{correct}{total}\]</p>
+<p>Here \(correct\) counts rows where the top choice matches the true label, and \(total\) counts rows scored.</p>
+<p>Real-world: built-in mirrored execution helpers were named as the production path for this pattern, to be revisited later. In hand code the mean and copy are written by hand to show the idea; in production the helper does it.</p>
+<div class="warning-box">
+  <p><strong>Pitfalls:</strong> Skipping the identical-start step is the top bug: two random starts plus averaging gives a muddy middle from step one. Forgetting to apply the same \(G_{avg}\) to both copies is the second bug: the copies drift within a few steps. A third trap is averaging losses instead of gradients and updating each copy from its own loss — that trains two independent models, not one shared model.</p>
+</div>
+<div class="key-takeaway">
+  <p><strong>Recap:</strong> Averaging gradients keeps models synced so each copy learns from both shards at once. <strong>Exam note:</strong> be ready to state the all-reduce idea in one line: each worker trains on its shard, gradients are averaged, the same average updates all copies. The bridge is the ensemble alternative, which keeps the same batch everywhere and merges predictions instead of gradients.</p>
+</div>
+<h3 id="2.4.4-student-questions-and-answers">2.4.4 Student Questions and Answers</h3>
+<div class="important-note">
+  <p><strong>Q:</strong> Without averaging, what goes wrong? What is the gain from averaging G1 and G2, and what is the disadvantage of training each copy as an independent model?</p>
+  <p><strong>A:</strong> Without averaging each copy only learns its own shard. One copy would know shard zero patterns and the other would know shard one patterns, so they would drift into two independent models. Averaging lets each copy feel the other shard through the shared gradient, so each updated model acts as if it had seen both shards. The spoken image was G1 looks into G2 and G2 looks into G1, so averaging gradients keeps models synced and each model becomes equal to training on both shards.</p>
+</div>
+<p>The cat-dog thought experiment tested the same point with disjoint classes.</p>
+<div class="important-note">
+  <p><strong>Q:</strong> What if shards are mutually exclusive, for example one shard holds cat images and the other holds dog images? How can weights carry that split?</p>
+  <p><strong>A:</strong> That is why the average step matters. Each side computes gradients from its own classes — cat-only gradients on one side, dog-only on the other — then the mean carries both class signals into the shared update. Training then repeats batch after batch: next cat batch plus next dog batch, new gradients, new average, new shared update, so sync is kept over time and weights carry the split through the running mean.</p>
+</div>
+<p>Imbalance within overlapping shards was the next probe.</p>
+<div class="important-note">
+  <p><strong>Q:</strong> If one side saw only cats and the other saw cats plus dogs, would the weights show the imbalance?</p>
+  <p><strong>A:</strong> Yes. Gradients reflect what was seen. The side with only cats adds a cat-only signal, the mixed side adds a cat-plus-dog signal, so the mean leans toward cats because cats had more rows. That lean is intended: more samples should push more, which is exactly what the size-weighted mean formalizes.</p>
+</div>
+<p>The last two questions looked ahead to merging research.</p>
+<div class="important-note">
+  <p><strong>Q:</strong> Compared with one model on one full batch, is there any loss in final weights when we split and average? Is a single model on the full batch better than the split average?</p>
+  <p><strong>A:</strong> Yes, some gap can appear. Training one model on combined data is not the same as training two copies and merging gradients. How much weight to give G1 versus G2 matters, for example 50 and 50 is only a demo choice versus 80 and 20. That choice is active research. Size-weighted means and later federated merging rules such as FedAvg and related variants were named as the place where this is studied. For the demo simple averaging was enough.</p>
+</div>
+<div class="important-note">
+  <p><strong>Q:</strong> Will we study those merging rules such as FedAvg in this course?</p>
+  <p><strong>A:</strong> Yes. When federated learning is covered, rules that set per-side importance from sample counts and class mix will be covered, including FedAvg and follow-up methods. Those rules generalize the half-and-half demo into data-aware weighting.</p>
+</div>
+
+<h2 id="2.5-model-parallelism-by-ensembling-with-same-batch-to-separate-models">2.5 Model Parallelism by Ensembling With Same Batch to Separate Models</h2>
+<h3 id="2.5.1-same-batch-to-three-independent-models-with-averaged-predictions">2.5.1 Same Batch to Three Independent Models With Averaged Predictions</h3>
+<p>The first model parallel form keeps the batch fixed and varies the model. The same batch goes to model one, model two, and model three. Each model trains on its own with its own weights, gradients, and optimizer. At prediction time each model outputs soft class scores, and the three score vectors are averaged. The class with the highest mean score is the final choice. The same batch with separate models and averaged predictions is the whole trick.</p>
+<div class="important-note">
+  <p><strong>Hook:</strong> Three doctors read the same X-ray alone, then average their confidence per diagnosis. Even though the image never changed, the vote beats any single reader. When does holding the data fixed and varying the model help?</p>
+</div>
+<p>The session linked this to ensemble averaging and bagging, where the mean of decisions is the merge rule. The spoken check was: what kind of method is this when you take the average of decisions, and the answer named ensembling, where the average of predictions is used. Bagging trains diverse members and averages their votes; here diversity comes from different random starts on the same data rather than resampled data.</p>
+<div class="key-concept">
+  <p><strong>Ensemble mean of soft scores across three models:</strong> Define on first use: let \(\hat{p}^{(k)}\) be the soft score vector from model \(k\), with one entry per class that sums to one across classes. For MNIST the vector length is 10. Let \(K = 3\) be the count of ensemble members in the demo. The merged score is:</p>
+  <p>\[\hat{p}_{avg} = \frac{1}{K} \sum_{k=1}^{K} \hat{p}^{(k)}\]</p>
+  <p>The verbal form kept alongside was: all three models output the soft mix probabilities and then we take the average. The final label is:</p>
+  <p>\[\hat{y} = \arg\max_{c} \hat{p}_{avg,c}\]</p>
+  <p>Here \(c\) ranges over classes 0 to 9, \(\hat{p}_{avg,c}\) is the mean score for class \(c\), and \(\arg\max\) picks the class with the largest mean. Accuracy again uses \(correct / total\) on those final labels. Boundary check: each \(\hat{p}^{(k)}\) sums to one and each entry sits in \([0,1]\), so the mean also sums to one and stays a valid probability vector.</p>
+</div>
+<p>Think of three friends who study the same pages alone, then vote on each question by averaging their confidence. Even with the same pages, their notes differ, so the vote can beat any single friend. The vote steadies shaky single answers without any gradient exchange.</p>
+<p>Comparison with data parallelism, placed here because the lecture contrasts the two: data parallelism copies the model, splits the data, and averages gradients during training; ensembling fixes the data, keeps models separate, and averages predictions only at scoring time. Pick gradient-averaging when one model must serve everywhere; pick prediction-averaging when diverse members plus a vote give steadier choices. The one-line rule is gradients-during-training versus votes-after-training.</p>
+<div class="warning-box">
+  <p><strong>Scope:</strong> This form assumes members are diverse enough that errors do not line up. With different random starts that holds; with identical starts and identical order it fails and the vote adds nothing. It also assumes scoring cost of \(K\) forward passes is affordable — fine for \(K = 3\) on MNIST, heavy for giant models.</p>
+</div>
+<h3 id="2.5.2-why-same-data-and-same-shape-can-still-give-different-internal-notes">2.5.2 Why Same Data and Same Shape Can Still Give Different Internal Notes</h3>
+<p>A long exchange asked: if data is the same, batches are the same, epochs are the same, and shapes are the same, why would internal representations differ at all. Should they not be identical.</p>
+<p>The resolution was random start plus nonlinear training. Each model starts from a different random weight draw. That different start leads training down a different path, so the learned features differ. The session named random init draws and listed uniform choices to check, such as random uniform, He uniform style, and Glorot uniform style starts. These three names match the standard initializer family used in deep-learning frameworks: a plain uniform draw, a variance-scaled uniform suited to rectified units, and a variance-scaled uniform suited to symmetric activations. From different starts, weights end up fully different after training.</p>
+<p>The check proposed was concrete: take the flattened feature vector after convolutions for the same image from each model, then compute Euclidean distance between those vectors. The distance is not zero. Write for two flattened vectors \(f^{(a)}\) and \(f^{(b)}\) of length \(d\):</p>
+<div class="key-concept">
+  <p><strong>Euclidean distance between flattened feature vectors:</strong></p>
+  <p>\[dist = \sqrt{\sum_{i=1}^{d} (f^{(a)}_{i} - f^{(b)}_{i})^{2}}\]</p>
+  <p>Here \(f^{(a)}_{i}\) is entry \(i\) from model \(a\), \(f^{(b)}_{i}\) is the same slot from model \(b\), and \(dist = 0\) would mean identical notes while \(dist > 0\) means different notes. The session reported the non-zero case, which matches different random starts. Limiting check: identical vectors give \(dist = 0\); any single differing entry forces \(dist > 0\).</p>
+</div>
+<p>A concrete number makes it real: with \(d = 4\), \(f^{(a)} = [0.5, -0.2, 0.3, 0.8]\) and \(f^{(b)} = [0.4, -0.1, 0.5, 0.7]\), squared gaps are \(0.01 + 0.01 + 0.04 + 0.01 = 0.07\), so \(dist = \sqrt{0.07} \approx 0.265 > 0\). Same image, same shape, different internal notes.</p>
+<p>A common wrong idea was also addressed: that epochs alone explain the gap. Epoch count can shift results a little, but with same data, same shape, and same epochs the gap remains because the start values differed. Same pages plus different starting notes still give different final notes.</p>
+<div class="warning-box">
+  <p><strong>Pitfalls:</strong> Beginners often force identical seeds to make runs repeatable and then wonder why the ensemble vote adds nothing — identical starts remove the diversity the vote needs. The opposite trap is changing shapes across members to chase diversity; that breaks the shared scoring loop, so keep shapes matched and vary only the start.</p>
+</div>
+<p>Picture a chart with training step on the horizontal axis and pairwise feature distance on the vertical axis for a fixed probe image. The curve starts above zero at init and stays above zero through training, sometimes growing. The takeaway: the random-start gap never closes, which is why the vote keeps helping.</p>
+<h3 id="2.5.3-worked-walkthrough-of-ensemble-training-and-scoring">2.5.3 Worked Walkthrough of Ensemble Training and Scoring</h3>
+<p>Setup: build three CNN copies through the same builder, make three optimizer objects, pair them as \((M_{1}, O_{1})\), \((M_{2}, O_{2})\), \((M_{3}, O_{3})\). The spoken helper zip was only a Python pairing tool: it joins models with their matching optimizers so each model uses its own optimizer in the loop. This three-CNN-copies setup with a shared batch, separate training, and mean-scores-plus-argmax scoring is the worked demo.</p>
+<div class="example-box">
+  <p><strong>Fully worked ensemble round with numbers:</strong> Take one shared batch of \(b = 90\) MNIST rows with labels \(y_{b}\). Feed the same \(x_{b}\) to \(M_{1}, M_{2}, M_{3}\) and get three loss values, say \(L^{(1)} = 0.90\), \(L^{(2)} = 1.10\), \(L^{(3)} = 0.80\); each model computes gradients against its own weights and steps with its own optimizer — no cross-model gradient mean. For scoring, pick one row where the three soft vectors for classes \([3, 5, 7]\) read \([0.10, 0.70, 0.20]\), \([0.15, 0.55, 0.30]\), \([0.05, 0.80, 0.15]\). The mean is \([(0.10+0.15+0.05)/3, (0.70+0.55+0.80)/3, (0.20+0.30+0.15)/3] = [0.10, 0.683, 0.217]\); \(\arg\max\) picks class 5 with mean score <strong>0.683</strong>. Count \(correct\) over the batch and divide by \(total\) for batch accuracy. The session ran this and reported accuracy near 100 on the small demo slice. Sense-check: the mean vector sums to one and the winner is the class with the steadiest support, not the loudest single vote.</p>
+</div>
+<p>Step restated: take one shared batch \((x_{b}, y_{b})\); feed the same \(x_{b}\) to all three models with training set to true; compare each prediction block with the same ground truth \(y_{b}\); apply each gradient set with its own optimizer; at scoring time average the three soft score blocks element-wise, pick \(\arg\max\) per row, compare with \(y_{b}\). The session warned that changing shapes across members can break the loop code, so shapes must be kept in step if the demo is edited.</p>
+<p>Real-world: bagging ensembles are used when one model is unstable and a mean of diverse members gives steadier choices. Credit scoring, medical screening, and contest leaderboards all use the same trick: same task, diverse members, averaged vote.</p>
+<div class="key-takeaway">
+  <p><strong>Recap:</strong> Same data plus different random starts gives different internal notes, and averaging soft votes turns that diversity into steadier answers. The bridge is the second model-parallel form, which cuts one model into stages instead of copying it.</p>
+</div>
+<h3 id="2.5.4-student-questions-and-answers">2.5.4 Student Questions and Answers</h3>
+<div class="important-note">
+  <p><strong>Q:</strong> What does zip do in the ensemble loop — is it the averaging rule?</p>
+  <p><strong>A:</strong> Zip only pairs each model with its own optimizer. It combines the model list and the optimizer list so the loop can step through matching pairs together as \((M_{1}, O_{1})\), \((M_{2}, O_{2})\), \((M_{3}, O_{3})\). It is not the averaging rule; averaging happens later on predictions with the soft-score mean plus argmax.</p>
+</div>
+<p>Why identical inputs still diverge was the core confusion.</p>
+<div class="important-note">
+  <p><strong>Q:</strong> If all three models see the exact same batch and share the same shape, why do they learn different internal representations?</p>
+  <p><strong>A:</strong> Because they start from different random weights such as random uniform, He uniform style, or Glorot uniform style draws. The start gap grows during nonlinear training, so the flattened features for the same image differ with non-zero Euclidean distance. Shape or epoch tweaks alone do not explain it; the random start is the source.</p>
+</div>
+<p>The scoring rule closed the loop.</p>
+<div class="important-note">
+  <p><strong>Q:</strong> At test time how do we turn three outputs into one answer?</p>
+  <p><strong>A:</strong> Average the three soft score vectors per row with \(\hat{p}_{avg} = (1/K)\sum_{k}\hat{p}^{(k)}\), then pick the class with the highest mean score via \(\arg\max\). That mean plus argmax is the ensemble choice, scored with \(correct/total\).</p>
+</div>
+
+<h2 id="2.6-model-parallelism-by-pipeline-split-with-feature-stage-and-choice-stage">2.6 Model Parallelism by Pipeline Split With Feature Stage and Choice Stage</h2>
+<h3 id="2.6.1-cutting-one-model-across-devices">2.6.1 Cutting One Model Across Devices</h3>
+<p>The second model parallel form cuts one large model into stages instead of copying it. Stage one holds convolution layers for feature building. Stage two holds dense layers for choice. The same batch flows through stage one, then the produced features flow into stage two, then scores come out. Stage one can sit on one machine and stage two on another, so memory and compute spread out. This pipeline cut with a feature stage and a choice stage handling a sequential batch is the core idea.</p>
+<div class="important-note">
+  <p><strong>Hook:</strong> A tailor shop cuts suit-making into measuring, cutting, and stitching across three tables. No single table holds the whole suit, yet suits flow out the end. What happens when a neural network is cut the same way across two devices?</p>
+</div>
+<p>The spoken form was: one model we physically cut, convolution layers for feature extraction and another model which is like a classifier with dense layers, the same batch flows through both stages sequentially. That order matters: data moves stage one to stage two in sequence for a given batch, though different batches can overlap in a full pipeline setup.</p>
+<div class="key-concept">
+  <p><strong>Stage shapes and the handoff:</strong> Shapes named in the session: input image \(28 \times 28 \times 1\), flattened deep features \(16 \times 7 \times 7\). That flat vector is the handoff from stage one to stage two. For 10 classes, stage two maps that vector to 10 scores. The channel and spatial numbers are consistent with a small two-stage CNN: two \(2 \times 2\) downsamplings map \(28 \to 14 \to 7\) on each spatial side, and 16 convolution channels at the end give \(16\) maps of \(7 \times 7\), flattened to \(16 \times 7 \times 7 = 784\) values per image. Stage two is then a \(784 \to 10\) dense map plus biases.</p>
+</div>
+<p>Think of an assembly line: one station shapes parts, the next station labels them. A part must visit stations in order, but the line can still beat one worker doing all steps alone when many parts flow. The feature stage shapes the part; the choice stage labels it.</p>
+<p>Picture device memory as two boxes. Box one holds convolution filters plus one batch of activations; box two holds the dense matrix plus the handed-off features. Neither box holds the full model, yet the joined boxes process every batch. The takeaway: the cut trades one big memory demand for two smaller ones plus a handoff cost.</p>
+<div class="warning-box">
+  <p><strong>Scope:</strong> The cut assumes the model has a natural seam — here convolutions versus dense — and that the handoff tensor fits the link between devices. It fits large networks where one card cannot hold all weights and activations. It hurts when the handoff is huge or the link is slow, because every batch pays the transfer.</p>
+</div>
+<h3 id="2.6.2-mathematical-formulation-for-staged-flow">2.6.2 Mathematical Formulation for Staged Flow</h3>
+<p>Let \(S_{1}\) be stage one with weights \(W_{S1}\). Let \(S_{2}\) be stage two with weights \(W_{S2}\). Let \(x_{b}\) be a batch of images. The staged forward pass is:</p>
+<div class="key-concept">
+  <p><strong>Staged forward pass — features then predictions — with loss sensitivities:</strong></p>
+  <p>\[f_{b} = S_{1}(x_{b}; W_{S1})\]</p>
+  <p>Here \(f_{b}\) means deep features for the batch, of shape batch-by-784 in this demo. Then:</p>
+  <p>\[\hat{y}_{b} = S_{2}(f_{b}; W_{S2})\]</p>
+  <p>Here \(\hat{y}_{b}\) means predicted scores of shape batch-by-10. The verbal form kept alongside was: first batch going through stage one gives features, those features given to stage two give predictions. Composed, the pipeline computes \(\hat{y}_{b} = S_{2}(S_{1}(x_{b}; W_{S1}); W_{S2})\), exactly the same function as the uncut model — only the placement differs.</p>
+  <p>Loss \(L_{b}\) compares \(\hat{y}_{b}\) with \(y_{b}\). Gradients span both stages from one tape:</p>
+  <p>\[G_{S1} = \frac{\partial L_{b}}{\partial W_{S1}}, \quad G_{S2} = \frac{\partial L_{b}}{\partial W_{S2}}\]</p>
+  <p>Here \(G_{S1}\) lists loss sensitivity for each stage one weight and \(G_{S2}\) does the same for stage two. Both lists are applied to their stages, so the full pipeline learns end to end even though it is cut across devices. The chain rule carries the error backward through \(S_{2}\) into \(f_{b}\) and then into \(S_{1}\), which is why one tape must wrap both calls.</p>
+</div>
+<p>A tiny chain-rule view helps: with scalar stages \(f = a x\) and \(\hat{y} = c f\), loss \(L = (\hat{y} - y)^{2}/2\) gives \(\partial L/\partial c = (\hat{y}-y) f\) and \(\partial L/\partial a = (\hat{y}-y) c x\). Each stage gradient reuses the downstream error — the same reuse the pipeline tape automates for thousands of weights.</p>
+<h3 id="2.6.3-worked-walkthrough-of-pipeline-training">2.6.3 Worked Walkthrough of Pipeline Training</h3>
+<p>Setup: build \(S_{1}\) and \(S_{2}\), group all variables as pipeline variables, split the list mentally into stage one variables and stage two variables for tracking. Keep one optimizer or one paired set with the same step size so both stages move together.</p>
+<div class="example-box">
+  <p><strong>Fully worked pipeline round with shapes:</strong> Fix batch size \(b = 64\). Take \((x_{b}, y_{b})\) with \(x_{b}\) of shape \(64 \times 28 \times 28 \times 1\). Pass through \(S_{1}\) to get \(f_{b}\) of shape \(64 \times 16 \times 7 \times 7\), flattened to \(64 \times 784\). Pass into \(S_{2}\) to get \(\hat{y}_{b}\) of shape \(64 \times 10\). Compare with \(y_{b}\) to get scalar \(L_{b}\), say \(L_{b} = 1.05\). Open one gradient tape around both calls, compute \(G_{S1}\) and \(G_{S2}\), apply to \(W_{S1}\) and \(W_{S2}\) with step size \(\eta = 0.01\). Add \(L_{b}\) into epoch loss, count \(correct\) versus \(total\) over the 64 rows, repeat for all \(2000/64 \approx 31\) batches, then print epoch loss and accuracy. <strong>Final state: both stages updated from one shared tape, epoch loss and accuracy reported.</strong> Sense-check: feature shape \(64 \times 784\) times dense \(784 \times 10\) gives \(64 \times 10\) scores, so the handoff multiplies through; a mismatch here means the flatten or dense width is wrong.</p>
+</div>
+<p>Step restated: make mini batches \((x_{b}, y_{b})\) of the chosen batch size; take \(x_{b}\), pass through \(S_{1}\) with training set to true, get \(f_{b}\); pass \(f_{b}\) into \(S_{2}\), get \(\hat{y}_{b}\); compare with \(y_{b}\) to get \(L_{b}\); compute and apply both gradient lists. The session noted that true device split is best felt on multi-GPU lab hardware, and asked for help getting stable GPU slots for hands-on runs.</p>
+<div class="warning-box">
+  <p><strong>Pitfalls:</strong> The top bug is opening two separate tapes, one per stage — then \(S_{1}\) never sees the error from \(S_{2}\) and features stop learning. Forgetting to flatten \(16 \times 7 \times 7\) to 784 before the dense stage is the second bug and shows up as a shape error. A third trap is placing both stages on the same device and claiming a speedup; the memory win needs real placement, otherwise the handoff is pure overhead.</p>
+</div>
+<p>Real-world: large networks are often cut so early layers live on one accelerator and later layers live on another when one card cannot hold the full model. Language-model and vision-transformer serving uses the same stage-cut idea at far larger scale.</p>
+<div class="key-takeaway">
+  <p><strong>Recap:</strong> One model cut into a feature stage plus a choice stage still trains end to end through one shared tape. The bridge is hybrid parallelism, which copies this whole pipeline per worker and adds a cross-worker merge.</p>
+</div>
+<h3 id="2.6.4-student-questions-and-answers">2.6.4 Student Questions and Answers</h3>
+<div class="important-note">
+  <p><strong>Q:</strong> Is this staged form sequential or parallel — does the pipeline cut run in sequence or overlap?</p>
+  <p><strong>A:</strong> For one batch it is sequential, because features must exist before choice can run — stage two cannot score what stage one has not built yet. Across many batches it can be pipelined so stages work on different batches at once: while stage two scores batch one, stage one already builds features for batch two. Both views hold: sequential per batch, overlapped across batches.</p>
+</div>
+
+<h2 id="2.7-hybrid-parallelism-with-split-data-and-split-model-together">2.7 Hybrid Parallelism With Split Data and Split Model Together</h2>
+<h3 id="2.7.1-each-worker-holds-its-own-pipeline-and-its-own-shard">2.7.1 Each Worker Holds Its Own Pipeline and Its Own Shard</h3>
+<p>Hybrid form mixes both splits. Data is cut into shards and the model is cut into stages. Worker zero holds pipeline copy zero, meaning \(S_{1,W0}\) plus \(S_{2,W0}\), and trains on shard zero. Worker one holds pipeline copy one, meaning \(S_{1,W1}\) plus \(S_{2,W1}\), and trains on shard one. Both workers run at the same time, each pushing its shard through its own stages, each computing gradients across both stages with one tape, then gradients are averaged across workers exactly as in data parallelism. Each worker holds its own pipeline and its own shard — that doubled split is the definition.</p>
+<div class="important-note">
+  <p><strong>Hook:</strong> Two tailor shops in different cities each run their own measuring-plus-stitching line on local customers, then phone each other nightly to agree on one shared pattern update. What could go wrong if one shop skips the call?</p>
+</div>
+<p>The spoken summary kept alongside was: each worker gets its own pipeline and its own data shards, worker zero runs shard zero through its pipeline, worker one runs shard one through its pipeline, both happen independent at the same time, each worker computes gradients across both stages via one tape, then those gradients are averaged across workers.</p>
+<p>Define on first use: let \(W0\) mean worker zero state, \(W1\) mean worker one state. Let \(S_{1,W0}\) be stage one weights on worker zero, \(S_{2,W0}\) stage two weights on worker zero, with matching \(S_{1,W1}\) and \(S_{2,W1}\) on worker one. Start has \(S_{1,W0} = S_{1,W1}\) and \(S_{2,W0} = S_{2,W1}\) by copy. That copied start is load-bearing: without it the first average already mixes mismatched slots.</p>
+<p>Draw two pipelines side by side on paper. Data shards sit below, one per worker. Gradient arrows rise from each pipeline into a central mean node labeled \(G_{avg}\). Copy-back arrows run along the top from worker zero to worker one. The takeaway: side pipelines process, the middle merges, the top re-syncs.</p>
+<div class="warning-box">
+  <p><strong>Scope:</strong> Hybrid fits very large models on sharded data where neither pure data nor pure model splitting suffices — each device holds only stages, and stages are replicated per shard group. It assumes per-worker tapes plus a cross-worker merge plus a copy-back all work each step. It pays off only when both memory pressure and data volume are high; for the 2000-row demo it is a teaching model, not a speed win.</p>
+</div>
+<h3 id="2.7.2-mathematical-formulation-for-hybrid-merge">2.7.2 Mathematical Formulation for Hybrid Merge</h3>
+<p>For worker zero with batch \((x_{b0}, y_{b0})\):</p>
+<div class="key-concept">
+  <p><strong>Hybrid forward, loss, and merged gradient:</strong></p>
+  <p>\[f_{b0} = S_{1,W0}(x_{b0}), \quad \hat{y}_{b0} = S_{2,W0}(f_{b0}), \quad L_{0} = loss(\hat{y}_{b0}, y_{b0})\]</p>
+  <p>For worker one with batch \((x_{b1}, y_{b1})\):</p>
+  <p>\[f_{b1} = S_{1,W1}(x_{b1}), \quad \hat{y}_{b1} = S_{2,W1}(f_{b1}), \quad L_{1} = loss(\hat{y}_{b1}, y_{b1})\]</p>
+  <p>Gradients per worker cover both stages:</p>
+  <p>\[G_{0} = \frac{\partial L_{0}}{\partial [W_{S1,W0}, W_{S2,W0}]}, \quad G_{1} = \frac{\partial L_{1}}{\partial [W_{S1,W1}, W_{S2,W1}]}\]</p>
+  <p>Merge with the same mean as before, after pairing slots with zip:</p>
+  <p>\[G_{avg} = \frac{G_{0} + G_{1}}{2}\]</p>
+  <p>The verbal form kept alongside was: G0 gradients and G1 gradients combined together, take G0 plus G1, take the average, that average applied to both models. Pairing by zip was explained as joining slot zero with slot zero, slot one with slot one, so means line up by weight slot. Hybrid gradient mean \(G_{avg}\) applied to both workers is the sync contract.</p>
+</div>
+<p>Shared update per worker:</p>
+<p>\[W_{W0,new} = W_{W0,old} - \eta G_{avg}, \quad W_{W1,new} = W_{W1,old} - \eta G_{avg}\]</p>
+<p>Here \(W_{W0}\) packs both stage weights on worker zero and \(W_{W1}\) packs both on worker one. After the apply, an explicit copy sets \(S_{1,W1}\) from \(S_{1,W0}\) and \(S_{2,W1}\) from \(S_{2,W0}\) so only one copy drifts. Copying weights from worker zero to worker one after the shared step forces one shared state even if numeric order differed slightly.</p>
+<p>Shape check: each \(G_{0}\) slot matches the same-index \(G_{1}\) slot because both pipelines share the builder; the zip pairs equal shapes, so every element-wise mean is valid. Special case: with identical shards and identical starts, \(G_{0} = G_{1}\) and the hybrid step reduces to the pipeline step — a useful debugging limit.</p>
+<h3 id="2.7.3-worked-walkthrough-of-hybrid-steps">2.7.3 Worked Walkthrough of Hybrid Steps</h3>
+<p>Setup: call a make pipeline worker helper twice to get worker zero stages and worker one stages. Build worker zero stages normally to create variables, then set worker one weights from worker zero weights so starts match. That is why the code builds W0 and copies to W1 instead of building both from scratch. Keep one optimizer per worker with the same settings, collect total variables per worker. These hybrid pipelines per worker with shards, zipped gradients, and copy-back sync are the full demo.</p>
+<div class="example-box">
+  <p><strong>Fully worked hybrid step with slot pairing:</strong> Fix \(b = 64\) per worker. Worker zero takes 64 rows from shard zero, builds \(f_{b0}\) of shape \(64 \times 784\), scores \(64 \times 10\), gets \(L_{0} = 1.30\); worker one takes 64 rows from shard one, gets \(L_{1} = 1.10\). Suppose the first dense-bias slot gives \(G_{0,0} = 0.050\) and \(G_{1,0} = 0.030\); zipped mean gives \(G_{avg,0} = 0.040\). With \(\eta = 0.01\), that slot moves \(0.0004\) on both workers. Repeat slot by slot for every stage-one and stage-two variable, apply \(G_{avg}\) with each worker optimizer, then copy every worker-one weight from worker zero. Count correct predictions on both shards, form \(correct/total\) for accuracy, print loss and accuracy. The session ran this hybrid demo and then reviewed the sync diagram slot by slot until the copy logic was agreed. <strong>Final state: two pipelines, one shared weight point.</strong> Sense-check: after copy-back, pairwise weight distance between workers reads zero; any non-zero value means the copy step was skipped.</p>
+</div>
+<p>Step restated: cut data into two shards, form batch groups inside each shard; run worker zero path \(x_{b0} \to S_{1,W0} \to f_{b0} \to S_{2,W0} \to \hat{y}_{b0} \to L_{0} \to G_{0}\); run worker one path symmetrically; zip \(G_{0}\) and \(G_{1}\) slot by slot and average; apply to both workers; copy back worker zero weights to worker one for both stages.</p>
+<div class="warning-box">
+  <p><strong>Pitfalls:</strong> Building both workers from scratch with different seeds breaks slot alignment from step zero — always build W0 then copy to W1. Zipping mismatched variable lists (for example stage lists in different orders) averages wrong slots together; collect variables in the same builder order on both workers. Skipping copy-back and trusting two applies to land identically works in exact math but drifts in floating point over many steps, so keep the explicit copy.</p>
+</div>
+<div class="key-takeaway">
+  <p><strong>Recap:</strong> Side-by-side pipelines on side-by-side shards, merged by one gradient mean plus a copy-back, give data-plus-model parallelism in one loop. <strong>Exam note:</strong> be ready to draw the hybrid sync: two pipelines side by side, data shards below, gradient mean in the middle, copy-back arrows on top. The bridge is production helpers, which automate this hand sync.</p>
+</div>
+<h3 id="2.7.4-student-questions-and-answers">2.7.4 Student Questions and Answers</h3>
+<div class="important-note">
+  <p><strong>Q:</strong> Can you explain once more how weights get synced in the hybrid diagram with S1, S2, W0, W1?</p>
+  <p><strong>A:</strong> Make two copies of both stages, so worker zero has S1 W0 plus S2 W0 and worker one has S1 W1 plus S2 W1. Feed images of shape 28 by 28 by 1 into S1, get flat features of shape 16 by 7 by 7, feed those into S2 for scores. Start has worker one weights copied from worker zero, so they match. After each step average G0 and G1 into Gavg, apply Gavg to both workers, then set S1 W1 from S1 W0 and S2 W1 from S2 W0 to hold one shared state.</p>
+</div>
+<p>Why the build-then-copy order matters was the next doubt.</p>
+<div class="important-note">
+  <p><strong>Q:</strong> Why build only W0 and copy to W1 instead of building both from the same code?</p>
+  <p><strong>A:</strong> Because copying guarantees identical starts with no extra init gap. Once worker zero variables exist, their values are read and set into worker one, so both start synced by construction. Building both separately risks different random draws even from the same builder.</p>
+</div>
+<p>The double-apply plus overwrite looked redundant.</p>
+<div class="important-note">
+  <p><strong>Q:</strong> We applied gradients to W1 with its optimizer, then we overwrote W1 with W0 weights. Why do both? Can we skip the W1 apply?</p>
+  <p><strong>A:</strong> Yes, the second apply can be skipped in a clean version. Since the same Gavg goes to both workers, both would land in the same place. The extra overwrite is a safe-side step to force one copy when any small numeric or ordering gap might appear. If the mean is truly shared, updating W1 and then overwriting it gives the same result as only updating W0 and copying.</p>
+</div>
+
+<h2 id="2.8-distributed-execution-helpers-and-device-placement">2.8 Distributed Execution Helpers and Device Placement</h2>
+<h3 id="2.8.1-mirror-and-multi-worker-helpers">2.8.1 Mirror and Multi-Worker Helpers</h3>
+<p>After the four hand-built demos, built-in helpers were named for real multi-device runs. The distribute helper group holds ready strategies. Mirror style covers many accelerators in one machine, so copies run on each GPU and stay synced. Multi-worker style covers many machines, so copies run across hosts. Within-GPU and across-GPU choices sit under the same helper family. Mirror and multi-worker helpers that sync copies are the production path.</p>
+<div class="important-note">
+  <p><strong>Hook:</strong> Hand-averaging gradients teaches the idea, but who wants to hand-copy weights across eight GPUs at 3 a.m.? That is the job the helpers automate.</p>
+</div>
+<div class="key-concept">
+  <p><strong>What the helpers automate:</strong> In the demos the hand code did the mean and copy by hand to show the idea; in production the helper does it. Concretely the helper places one model copy per device, shards each global batch across copies, runs forward plus backward locally, performs the all-reduce merge of gradients with a fast collective, broadcasts the shared update, and keeps device copies aligned without manual zip or copy-back lines.</p>
+</div>
+<p>The spoken form kept alongside was: by using distribute helpers you can create mirror strategies for multiple machines and multiple copies, multi worker strategy for multiple machines, automatically it will handle the sync.</p>
+<p>A selection guide helps: one machine with several GPUs calls for the Mirror strategy; several machines each with GPUs calls for the MultiWorkerMirroredStrategy, which adds cross-host coordination over the same collective idea. Single-device debugging stays outside any strategy scope so breakpoints and prints stay simple, then the same model function moves inside the strategy scope for scale runs.</p>
+<p>Real-world: teams move from hand loops on 2000 MNIST rows to these helpers when they scale to many GPUs and many hosts, because the helper hides device copy and merge details. The demo logic ports almost unchanged; only the device placement and batch sharding move under the helper.</p>
+<div class="warning-box">
+  <p><strong>Scope:</strong> Helpers assume a working collective network between devices and matching software on every host. They shine when compute dominates and links are fast. They cannot fix skewed shards or a wrong merge rule — they run the chosen sync faithfully, whether the rule suits the data or not.</p>
+</div>
+<div class="warning-box">
+  <p><strong>Pitfalls:</strong> Wrapping only part of model creation in the strategy scope leaves some variables unsynced — create the full model inside the scope. A second trap is keeping the tiny-demo batch size at scale; per-device batches that are too small starve GPUs while the merge cost stays fixed.</p>
+</div>
+<h3 id="2.8.2-placement-questions-and-lab-access-thread">2.8.2 Placement Questions and Lab Access Thread</h3>
+<p>A placement thread asked where each stage should live and whether the teaching assistants could demo on lab GPUs. Students reported portal pain: short auto logout after about five minutes, slot waits, Linux environment quirks, lost state, and hard file moves. The response was to check for other access paths and share docs on login and cluster use, plus upload code and decks to the shared team folder so everyone could run the same notebook locally or on open slots.</p>
+<p>Think of placement as seating plan: put feature stages and choice stages where memory fits and links stay fast, then let the helper keep copies aligned. Heavy convolution stages sit where memory is roomy; small dense stages sit near the output; the handoff crosses the fastest available link.</p>
+<div class="key-takeaway">
+  <p><strong>Recap:</strong> Hand sync taught the mechanism; Mirror and multi-worker helpers carry it to real hardware. The bridge is input speed: even perfectly placed copies stall when data arrives slowly, which is why caching comes next.</p>
+</div>
+<h3 id="2.8.3-student-questions-and-answers">2.8.3 Student Questions and Answers</h3>
+<div class="important-note">
+  <p><strong>Q:</strong> Can you share the deck and code so we can run in parallel on our own machines?</p>
+  <p><strong>A:</strong> Yes. The files will be placed in the shared team folder and chat so they can be downloaded and run. The same notebook used in the session will be uploaded with data steps included, so local runs match the class demos.</p>
+</div>
+<p>Lab access was the second practical thread.</p>
+<div class="important-note">
+  <p><strong>Q:</strong> How do we get stable lab GPU time when sessions log out fast and slots are hard to get?</p>
+  <p><strong>A:</strong> The portal automatically logs out after idle time and slots need waits, which breaks longer runs. The plan was to collect login docs, ask about other cluster paths, and meanwhile run the small 2000-row demos locally since they do not need large accelerators.</p>
+</div>
+
+<h2 id="2.9-caching-for-data-input-with-in-memory-and-in-disk-paths">2.9 Caching for Data Input With In-Memory and In-Disk Paths</h2>
+<h3 id="2.9.1-why-cache-sits-before-training">2.9.1 Why Cache Sits Before Training</h3>
+<p>After a short break the focus moved to caching. The problem is simple: disk reads are slow. If each epoch pulls raw rows from disk again and again, training stalls on input. A cache holds ready batches in a faster spot so the model pulls from there instead of disk.</p>
+<div class="important-note">
+  <p><strong>Hook:</strong> A chef who walks to a far store room for every spoonful will never keep up with orders. A tray of pre-measured bowls beside the stove changes everything. Where should the next training batches wait?</p>
+</div>
+<p>Two placements were drawn. In-disk cache keeps ready data near disk with index help, so fetch is a bit faster but still disk-bound. In-memory cache keeps ready batches in RAM close to compute, so fetch is much faster. The spoken contrast kept alongside was: in-memory within RAM close to compute is very fast compared with in-disk, in-disk helps some with index-based fetch but is not as fast as memory. Reference checks agree: an in-memory cache is faster to access than an on-disk cache, and the caching pattern makes repeated training rounds on the same dataset far more efficient by reusing previously fetched data.</p>
+<div class="key-concept">
+  <p><strong>Cache-shape rule:</strong> Store preprocessed batches, not raw rows. Preprocessing (decode, resize, normalize, one-hot) runs once before the cache fill, so later epochs skip it. Keep the cache key as the batch index and the value as the ready \((x_{batch}, y_{batch})\) pair.</p>
+</div>
+<p>The book path named for next time goes deeper into cache plus related speed topics, while this session stayed on what cache changes for input pipelines and how to code it.</p>
+<p>Think of disk as a far store room and memory as a desk tray. Keep the next pages in the tray and work never waits for trips to the store room. Frequently used tools stay on the desk; the archive stays down the hall.</p>
+<p>Picture access time on the vertical axis and epoch number on the horizontal axis. Without cache the curve stays high every epoch because every batch re-pays disk plus preprocessing. With cache the first epoch pays full price (warmup fill) and later epochs drop to a low flat line served from RAM. The takeaway: pay once, reuse many times.</p>
+<div class="warning-box">
+  <p><strong>Scope:</strong> Cache helps when the same rows are revisited across epochs — full-epoch image training is the ideal case. It helps little for one-pass streaming where no row repeats, and it hurts when the preprocessed set exceeds RAM and forces swapping; then a smaller cache plus sharding or an on-disk tier is the fallback.</p>
+</div>
+<p>In practice the win is easy to feel: run one epoch twice, once with the cache lines removed and once with them kept, and compare wall-clock time per epoch after the first fill.</p>
+<div class="warning-box">
+  <p><strong>Pitfalls:</strong> Caching raw rows before preprocessing re-pays the preprocessing bill every epoch — cache after preprocessing. Caching without shuffling awareness can freeze one fixed order; shuffle before batching or set reshuffle per epoch so the model does not memorize order.</p>
+</div>
+<h3 id="2.9.2-pipeline-code-with-cache-and-prefetch">2.9.2 Pipeline Code With Cache and Prefetch</h3>
+<p>The demo built a fast input pipeline with dataset helpers. Steps heard were: load data and normalize, shape batches with height and channel plus one-hot labels, build a dataset from tensor slices, then chain shuffle, batch, cache, and prefetch. The spoken code line kept alongside was: dataset from tensor slices, so you create the dataset, you cache the data, prefetch, in-memory cache by using the pipelines, automatically it handles batch flow.</p>
+<p>Define on first use: let \(D\) be the full row set, let \(B\) be batch size, here 128 in the cache demo, let \(C\) be the cache holding ready batches, let \(P\) be prefetch depth, how many future batches are prepared while the current one trains.</p>
+<div class="key-concept">
+  <p><strong>Chain order and roles:</strong> Build the chain as shuffle then batch then cache then prefetch, and call fit on the pipelined set instead of raw arrays. Cache stores ready groups after first build, so later epochs hit memory. Prefetch prepares the next group while the current group trains, so the next group is already waiting when asked. The spoken form kept alongside was: prefetch will make sure that the next batch whenever the model tries to use it will be in cache, cache we declare, prefetch will fetch and put into cache up front, so they will always be hit. Prefetch stages the next batch ahead; cache holds ready batches for reuse.</p>
+</div>
+<p>Training then calls fit on the pipelined set instead of raw arrays. Internally the pipeline clears and refills groups, shuffles when asked, and hands \((x_{batch}, y_{batch})\) blocks of size 128. The session ran the cached fit and stressed that built-in calls take care of batch moves once the chain is set.</p>
+<p>A garbled count during fast code speech mentioned batches with height and channel. The dataset contract is standard: MNIST-class sets hold 60000 training rows of \(28 \times 28\) grayscale plus a 10000-row test split, so the heard batch figure is best read as rows misheard as batches — with \(B = 128\) the full 60000 rows give \(60000/128 \approx 469\) batches per epoch, not thousands of batches. The idea stands either way: shape once, cache once, reuse many times.</p>
+<div class="example-box">
+  <p><strong>Worked cache math with the demo numbers:</strong> With \(B = 128\) and full-train \(|D| = 60000\), one epoch needs \(\lceil 60000/128 \rceil = 469\) batches. Suppose disk-plus-preprocess costs 8 ms per batch and RAM-hit costs 1 ms. Without cache, 10 epochs pay \(10 \times 469 \times 8 = 37520\) ms on input. With cache, epoch one pays \(469 \times 8 = 3752\) ms to fill \(C\), and epochs two through ten pay \(9 \times 469 \times 1 = 4221\) ms, for <strong>7973 ms total — about a 4.7-fold input saving</strong>. With prefetch depth \(P = 2\), up to two future batches prepare during current compute, so GPU idle gaps shrink further. Sense-check: savings grow with epoch count; for one epoch only, cache adds no win.</p>
+</div>
+<p>Real-world: input pipelines with cache plus prefetch are standard for image training, where disk stalls would otherwise hide GPU speed. Fashion-MNIST and MNIST pipelines in the companion project chapters use the same from-tensor-slices plus cache plus prefetch chain before handing batches to the model.</p>
+<div class="key-takeaway">
+  <p><strong>Recap:</strong> In-memory cache holds ready preprocessed batches for hits after warmup; prefetch fills the next batch during current compute. <strong>Exam note:</strong> be ready to contrast in-memory versus in-disk cache in two lines and state what prefetch adds: cache holds ready batches, prefetch stages the next batch during current compute. The bridge is the merging experiment, which uses two such cached pipelines as its shards.</p>
+</div>
+<h3 id="2.9.3-student-questions-and-answers">2.9.3 Student Questions and Answers</h3>
+<div class="important-note">
+  <p><strong>Q:</strong> How does cache make data continuous so element zero fetch already has the rest ready through temporal locality?</p>
+  <p><strong>A:</strong> When the full pass plan is known, the pipeline can stage nearby rows together. Fetching element zero pulls its block, and neighbors are already staged because the epoch will need them next — that temporal locality grouping is why sequential passes gain so much from cache. Continuity here means planned adjacency, not a single long array.</p>
+</div>
+<p>Order versus randomness was the follow-up.</p>
+<div class="important-note">
+  <p><strong>Q:</strong> Is the speed gain based on the idea that batches will be read in order? What about random access?</p>
+  <p><strong>A:</strong> Order helps a lot because the next block is known, so prefetch can stage it. Random access still gains on hits: if a requested block sits in cache it is served fast, on a miss it must be built from source. For full-epoch training the pass covers the whole set, so most reads become hits after warmup either way.</p>
+</div>
+<p>Policy flexibility stayed open.</p>
+<div class="important-note">
+  <p><strong>Q:</strong> Can we change the access policy, for example read in reverse order, and does the helper support it?</p>
+  <p><strong>A:</strong> The policy question was left open to check in the helper docs. Whether the data helper allows reverse or custom order needs a doc check for the exact call in use. The session agreed to explore that support rather than guess, since order knobs differ across helper versions.</p>
+</div>
+<p>The chain position needed pinning down.</p>
+<div class="important-note">
+  <p><strong>Q:</strong> Where does prefetch sit in the chain, and what does it guarantee for the next batch?</p>
+  <p><strong>A:</strong> Prefetch sits after cache and batching in the chain. It does not replace cache; it fills cache ahead of need. With a fixed pass pattern of batch after batch, it keeps the next batch ready, so training rarely waits — prefetch stages the next batch ahead while the current one trains.</p>
+</div>
+
+<h2 id="2.10-weight-merging-experiment-and-why-blind-averaging-can-fail">2.10 Weight-Merging Experiment and Why Blind Averaging Can Fail</h2>
+<h3 id="2.10.1-setup-with-two-cached-splits-and-a-merged-global-model">2.10.1 Setup With Two Cached Splits and a Merged Global Model</h3>
+<p>The closing experiment tied caching and merging together. Two data splits were cached in RAM as separate pipelines. Two models were trained, one per split, then their weights were averaged into a global model. That global model was tested on held-out test images \(x_{test}\) with labels \(y_{test}\). Two cached splits near 99 percent each with a merged global near 93 percent on the same test set is the headline result.</p>
+<div class="important-note">
+  <p><strong>Hook:</strong> Two students each score 99 on their own half of the syllabus, then split the difference on every answer and land at 93 on the full paper. How can the average of two excellent models be worse than either parent?</p>
+</div>
+<div class="key-concept">
+  <p><strong>Experiment layout:</strong> Shard A and shard B are cached separately in memory. Model \(M_{A}\) trains only on shard A; model \(M_{B}\) trains only on shard B. The merged global model sets each weight to the plain mean \(W_{global} = (W_{A} + W_{B})/2\) — one-shot weight averaging after full local training, not per-step gradient averaging. All three models are then scored on the same held-out \((x_{test}, y_{test})\).</p>
+</div>
+<p>Numbers reported: first cached split near 99 percent accuracy, second cached split near 98.95 percent, merged global model near 93.43 percent on the same test set. With a larger 30000-row split per side the merged score fell further toward 81 percent in discussion. The drop after merging is the point of the section: two strong solo models can still make a weak mean model. These figures are the session demo readings on its test slice — useful as an ordering signal (solo high, mean lower, skew widens the gap) rather than a universal benchmark.</p>
+<p>Accuracy each time used the same rule:</p>
+<p>\[accuracy = \frac{correct}{total} \times 100\]</p>
+<p>Here \(correct\) counts test rows where the top score matches the true label, \(total\) counts all test rows, times 100 turns the share into percent. Boundary check: the share sits in \([0,1]\), so percent sits in \([0,100]\).</p>
+<div class="example-box">
+  <p><strong>Worked scoring with the demo numbers:</strong> Suppose the test slice holds \(total = 2000\) rows. Solo model A gets \(correct = 1980\), so accuracy is \(1980/2000 \times 100 =\) <strong>99.00 percent</strong>. Solo model B gets \(correct = 1979\), so \(1979/2000 \times 100 =\) <strong>98.95 percent</strong>. The weight-averaged global model gets \(correct = 1869\), so \(1869/2000 \times 100 =\) <strong>93.45 percent</strong> (reported as near 93.43 on the session slice — same story within rounding). The gap is \(99.00 - 93.43 \approx 5.6\) points lost by merging. With 30000 rows per side and heavier skew the discussion figure fell toward 81 percent, a gap near 18 points. Sense-check: identical test rows each time, so the drop isolates the merge rule, not the test.</p>
+</div>
+<p>Think of two specialists who each ace their own quiz, then split the difference on every answer and both slip. The mean of good answers is not always a good answer when the quizzes differed.</p>
+<h3 id="2.10.2-why-the-mean-slipped">2.10.2 Why the Mean Slipped</h3>
+<p>Several candidate reasons were tested in discussion. Data skew across splits was one: with 30000 rows per side some classes can be thin or missing on one side, so each model leans a different way and a plain mean lands between leans. Overfitting alone was rejected as the full story, because solo scores stayed high while the mean fell.</p>
+<div class="key-concept">
+  <p><strong>Geometry of the failure:</strong> Each solo model settles into its own low-loss pocket (its shard optimum). The plain mean lands on the straight line between pockets. In high-dimensional weight space that midpoint often sits on a high-loss ridge — good on neither shard and worse on the joint set. Averaging once after full local training is the risky schedule; averaging every step (as in data parallelism) or weighting by data would have kept the shared point closer to the joint optimum. Companion analysis of federated averaging makes the same point: one-shot averaging of fully trained locals generalizes poorly, while frequent aggregation tracks the joint target.</p>
+</div>
+<p>The accepted lesson was: mere blind use of weights is not going to work, a simple average is not going to work here. FedAvg as a simple mean was named as failing on this split, so newer merging rules are needed that weigh sides by sample counts, class mix, and update quality. Names heard included FedAvg plus follow-ups such as FedProx style, Krum style filtering, and optimization-based federated variants. Those families are documented aggregation methods: FedProx adds a proximal term on the client side so uneven local work stays near the shared model, and Krum uses pairwise distance scoring to pick or trim updates and resist faulty or skewed contributions. The session used them as named directions beyond plain means, not as code run that day.</p>
+<p>The session stressed tolerance thinking for splits: without splitting near 99, with careful splits 95 to 97 can be fine, but a fall to 75 signals a broken merge or bad split plan. After shape is fixed, the merge rule is where quality is won or lost, so study must focus on averaging rules that respect class spread. The near-99 ceiling with a 95-to-97 tolerance band is the working intuition for this course: small gaps are the price of splitting, large gaps are a bug in the split or the merge.</p>
+<p>Comparison placed here: per-step gradient averaging (section 2.4) merges continuously and stays synced; one-shot weight averaging (this section) merges once at the end and risks the ridge. Pick continuous merging during joint training; reserve one-shot weight means for settings where communication is rare, and then weigh by samples and class spread instead of fixed half-and-half.</p>
+<div class="warning-box">
+  <p><strong>Scope:</strong> This failure mode assumes non-identical shards — thin or missing classes on one side — plus a plain unweighted mean after long local training. It does not indict averaging in general: with identical shards and frequent merges the mean tracks the joint optimum well. The fix space is the merge rule, not the idea of merging.</p>
+</div>
+<p>A handy diagnostic is the gap size itself: a few points suggest normal split cost, while a double-digit fall points at skew plus a blind rule rather than at shape or tuning.</p>
+<div class="warning-box">
+  <p><strong>Pitfalls:</strong> Blaming overfitting alone misses the mechanism — solo scores near 99 rule out collapse on each shard. A second trap is retuning the model shape to fix a merge problem; after shape is fixed, the merge rule is where quality is won or lost. A third trap is quoting 99 versus 93 as universal constants; they are demo readings whose lesson is the gap pattern, not the decimals.</p>
+</div>
+<p>Real-world: federated deployments live or die on merge rules, because real shards are never balanced across users and devices. Phone keyboards, hospital devices, and edge sensors all hold skewed local mixes, so production systems use size-weighted means plus trust-aware filters rather than blind half-and-half.</p>
+<div class="key-takeaway">
+  <p><strong>Recap:</strong> Solo models fit their shards, the plain mean lands off both minima, and data-aware merging fixes it. <strong>Exam note:</strong> be ready to explain the 99 versus 93 gap in three lines: solo models fit their shards, plain mean lands off both minima, fix by weighing sides with data-aware merging. The bridge is the appendix set: exam rules plus industry uses for every pattern in this lecture.</p>
+</div>
+<h3 id="2.10.3-student-questions-and-answers">2.10.3 Student Questions and Answers</h3>
+<div class="important-note">
+  <p><strong>Q:</strong> Both solo models score near 99, but the merged model scores near 93. Why does the merge lose so much on the same test data?</p>
+  <p><strong>A:</strong> Because plain weight averaging blends two different minima into a point that may sit on a high-loss ridge between them. Solo scores show each side learned its own split, but the mean was not trained as one model on combined data. When splits miss classes, the gap grows, here toward 81 in the larger split talk, so the merge rule must weigh sides with care instead of blind 50-50.</p>
+</div>
+<p>Skew versus overfitting was the natural follow-up.</p>
+<div class="important-note">
+  <p><strong>Q:</strong> Is the gap just overfitting on small splits or missing classes on each side?</p>
+  <p><strong>A:</strong> Missing and skewed classes are the larger driver here. Each side can ace its own mix yet pull the mean off the shared answer — with 30000 rows per side some classes go thin on one side and each model leans its own way. Overfitting alone does not explain high solo scores plus a low mean; a weak merge rule does.</p>
+</div>
+<p>The fix direction closed the lecture.</p>
+<div class="important-note">
+  <p><strong>Q:</strong> What should we use instead of a simple mean for weighted merging?</p>
+  <p><strong>A:</strong> Use merging rules that look at sample counts and class spread per side and at update trust, such as size-weighted means and newer federated merging families beyond plain FedAvg — FedProx style adjustments, Krum style filtering, and optimization-based variants. Those rules set how much each side should count instead of fixed half and half.</p>
+</div>
+
+<h2 id="exam-guidance-summary">Exam Guidance Summary</h2>
+<p>No fixed mark split was announced in this session. Guidance was given as working rules. Keep single-model accuracy as the ceiling: without splitting near 99 sets the bar. After data splits, model splits, or both, aim to stay within a small band such as 95 to 97. A fall to 75 means the split plan or merge rule is broken and must be fixed.</p>
+<div class="key-takeaway">
+  <p><strong>Exam note:</strong> Sequential runs are sequential because each batch waits for the prior update to finish. Write the gradient mean \(G_{avg} = (G_{1} + G_{2}) / 2\) and the size-weighted form with \(n_{1}/N\) and \(n_{2}/N\) for the exam. Contrast ensemble mean of predictions with pipeline cut of layers, and contrast in-memory cache with in-disk cache plus what prefetch adds: cache holds ready batches, prefetch stages the next batch during current compute.</p>
+</div>
+<p>The second rule covers the accuracy bands and the merge lesson, which pairs with the contrast set above.</p>
+<div class="key-takeaway">
+  <p><strong>Exam note:</strong> Single-model accuracy is the ceiling near 99; careful splits stay in the 95 to 97 band, and a fall to 75 means a broken merge or bad split plan. The federated merging family beyond simple averaging (FedAvg and follow-ups) was flagged as the next study point, so know why plain 50-50 can fail when shards miss classes: the mean of two shard minima can land on a high-loss ridge.</p>
+</div>
+<p>Be ready to state in words why sequential runs are sequential and why parallel runs are parallel, to write the gradient mean and the size-weighted form, to contrast ensemble mean of predictions with pipeline cut of layers, and to contrast in-memory cache with in-disk cache plus what prefetch adds. The federated merging family beyond simple averaging was flagged as the next study point, so know why plain 50-50 can fail when shards miss classes.</p>
+
+<h2 id="key-industry-applications">Key Industry Applications</h2>
+<p>Real-world: MNIST digit data as a fast test bed for distributed logic before scale-up. Teams validate sharding and merging on small digit slices, then port the same pipeline to larger image or text sets where each run costs far more.</p>
+<p>Real-world: mirrored execution helpers for many GPUs in one host and multi-worker helpers for many hosts, used to run data parallel copies without hand sync. The Mirror strategy covers accelerators in one machine; the multi-worker strategy extends the same collective sync across hosts.</p>
+<p>Real-world: ensemble averaging in the style of bagging, where the mean of soft scores from diverse members steadies choices on same-batch tasks. Credit scoring and screening systems use diverse members plus averaged votes for steadier decisions.</p>
+<p>Real-world: pipeline cuts that place feature layers on one accelerator and dense choice layers on another when one device cannot hold a large model. The feature stage builds representations; the choice stage maps them to class scores across the device link.</p>
+<p>Real-world: hybrid pipelines per worker with cross-worker gradient means for very large models on sharded data. Each worker runs its own staged pipeline on its own shard, then a shared mean plus copy-back keeps one model state.</p>
+<p>Real-world: input pipelines with cache plus prefetch and batch size 128, used to remove disk stalls so accelerators stay fed. In-memory cache holds ready preprocessed batches; prefetch stages the next batch during current compute.</p>
+<p>Real-world: federated merging rules beyond plain means, used when user shards hold skewed classes and blind averaging would drop quality from near 99 toward low 90s or lower. Size-weighted means and trust-aware filters such as FedProx style and Krum style methods replace fixed half-and-half weights.</p>
+    </main>
+
+    <!-- ============================================================
+    EXAM REVISION NOTES
+    Generated AFTER the main lecture-faithful content is complete. Each entry
+    distills one major concept into its most examinable elements.
+    Built FROM the core — never invented independently.
+
+    Each entry is a <div class="exam-revision-entry"> containing:
+      - .revision-topic (h3) — concept name
+      - .revision-mustknow — the single most examinable takeaway
+      - .revision-formula — central formula(s) in \[ ... \] MathJax
+      - .revision-pitfall — the #1 exam mistake
+      - .revision-check — one self-check question (no options)
+      - .revision-connections — linked concepts within this lecture
+    ============================================================ -->
+    <section class="exam-revision-section">
+      <h2>Exam Revision Notes</h2>
+      <p class="revision-intro">Below is the distilled, exam-ready core.
+      Every entry comes from the full explanation above. Use this section
+      for rapid review; return to the main notes when a point needs more context.</p>
+<div class="exam-revision-entry">
+  <h3 class="revision-topic">Recap and Four Training Scenarios</h3>
+  <p class="revision-mustknow"><strong>Must-know:</strong> Four scenarios from two choices: sequential, data parallel, model parallel (ensemble + pipeline), hybrid</p>
+  <p class="revision-pitfall"><strong>Top pitfall:</strong> Mixing up row shards with layer cuts; calling ensemble data parallelism</p>
+  <p class="revision-check"><strong>Self-check:</strong> Which scenario splits data, which splits the model, which splits both?</p>
+  <p class="revision-connections"><strong>Connects to:</strong> 2.2 Code Setup With MNIST Data, CNN Builder, and Batch Generator, 2.3 Sequential Training With One Model and One Data Stream, 2.4 Data Parallelism With Split Data, Copied Models, and Averaged Gradients</p>
+</div>
+<div class="exam-revision-entry">
+  <h3 class="revision-topic">Code Setup With MNIST Data, CNN Builder, and Batch Generator</h3>
+  <p class="revision-mustknow"><strong>Must-know:</strong> MNIST 2000 normalized rows, 28x28x1 images, small CNN, lazy batch generator with yield</p>
+  <p class="revision-formula">\[x \in \mathbb{R}^{28 \times 28 \times 1}, \; y \in \{0,\dots,9\}, \; n = 2000\]</p>
+  <p class="revision-pitfall"><strong>Top pitfall:</strong> Collecting all batches into a list removes the memory gain; changing slice size across comparisons</p>
+  <p class="revision-check"><strong>Self-check:</strong> What shapes do xb and yb have for batch size b?</p>
+  <p class="revision-connections"><strong>Connects to:</strong> 2.1 Recap and Four Training Scenarios, 2.3 Sequential Training With One Model and One Data Stream, 2.4 Data Parallelism With Split Data, Copied Models, and Averaged Gradients</p>
+</div>
+<div class="exam-revision-entry">
+  <h3 class="revision-topic">Sequential Training With One Model and One Data Stream</h3>
+  <p class="revision-mustknow"><strong>Must-know:</strong> Sequential means each batch waits for the prior update; staircase execution with no overlap</p>
+  <p class="revision-formula">\[W_{new} = W_{old} - \eta G\]</p>
+  <p class="revision-pitfall"><strong>Top pitfall:</strong> Using stale weights for batch 2; confusing batch size with epoch</p>
+  <p class="revision-check"><strong>Self-check:</strong> Why cannot batch 2 start before batch 1 finishes?</p>
+  <p class="revision-connections"><strong>Connects to:</strong> 2.2 Code Setup With MNIST Data, CNN Builder, and Batch Generator, 2.4 Data Parallelism With Split Data, Copied Models, and Averaged Gradients</p>
+</div>
+<div class="exam-revision-entry">
+  <h3 class="revision-topic">Data Parallelism With Split Data, Copied Models, and Averaged Gradients</h3>
+  <p class="revision-mustknow"><strong>Must-know:</strong> All-reduce: each worker trains on its shard, gradients averaged, same average updates all copies</p>
+  <p class="revision-formula">\[G_{avg} = \frac{G_{1} + G_{2}}{2}, \quad G_{weighted} = \frac{n_{1}}{N} G_{1} + \frac{n_{2}}{N} G_{2}\]</p>
+  <p class="revision-pitfall"><strong>Top pitfall:</strong> Skipping identical starts; averaging losses instead of gradients; slicing model instead of replicating</p>
+  <p class="revision-check"><strong>Self-check:</strong> Write Gavg and the size-weighted form and state when they match</p>
+  <p class="revision-connections"><strong>Connects to:</strong> 2.3 Sequential Training With One Model and One Data Stream, 2.5 Model Parallelism by Ensembling With Same Batch to Separate Models, 2.7 Hybrid Parallelism With Split Data and Split Model Together, 2.10 Weight-Merging Experiment and Why Blind Averaging Can Fail</p>
+</div>
+<div class="exam-revision-entry">
+  <h3 class="revision-topic">Model Parallelism by Ensembling With Same Batch to Separate Models</h3>
+  <p class="revision-mustknow"><strong>Must-know:</strong> Same batch to separate models, average soft scores, argmax; diversity comes from random starts</p>
+  <p class="revision-formula">\[\hat{p}_{avg} = \frac{1}{K} \sum_{k=1}^{K} \hat{p}^{(k)}, \quad \hat{y} = \arg\max_{c} \hat{p}_{avg,c}\]</p>
+  <p class="revision-pitfall"><strong>Top pitfall:</strong> Identical seeds remove diversity; changing shapes breaks the scoring loop</p>
+  <p class="revision-check"><strong>Self-check:</strong> Write the ensemble mean and final label rule; why is feature distance non-zero?</p>
+  <p class="revision-connections"><strong>Connects to:</strong> 2.4 Data Parallelism With Split Data, Copied Models, and Averaged Gradients, 2.6 Model Parallelism by Pipeline Split With Feature Stage and Choice Stage</p>
+</div>
+<div class="exam-revision-entry">
+  <h3 class="revision-topic">Model Parallelism by Pipeline Split With Feature Stage and Choice Stage</h3>
+  <p class="revision-mustknow"><strong>Must-know:</strong> Pipeline cut: feature stage then choice stage, one tape, sequential per batch and overlapped across batches</p>
+  <p class="revision-formula">\[f_{b} = S_{1}(x_{b}; W_{S1}), \quad \hat{y}_{b} = S_{2}(f_{b}; W_{S2})\]</p>
+  <p class="revision-pitfall"><strong>Top pitfall:</strong> Two separate tapes break feature learning; forgetting to flatten 16x7x7 to 784</p>
+  <p class="revision-check"><strong>Self-check:</strong> Why must one tape wrap both stages?</p>
+  <p class="revision-connections"><strong>Connects to:</strong> 2.5 Model Parallelism by Ensembling With Same Batch to Separate Models, 2.7 Hybrid Parallelism With Split Data and Split Model Together, 2.8 Distributed Execution Helpers and Device Placement</p>
+</div>
+<div class="exam-revision-entry">
+  <h3 class="revision-topic">Hybrid Parallelism With Split Data and Split Model Together</h3>
+  <p class="revision-mustknow"><strong>Must-know:</strong> Hybrid = per-worker pipeline plus cross-worker gradient mean plus copy-back sync</p>
+  <p class="revision-formula">\[G_{avg} = \frac{G_{0} + G_{1}}{2}, \quad W_{W0,new} = W_{W0,old} - \eta G_{avg}\]</p>
+  <p class="revision-pitfall"><strong>Top pitfall:</strong> Different seeds per worker; zipping mismatched variable orders; skipping copy-back</p>
+  <p class="revision-check"><strong>Self-check:</strong> Draw the hybrid sync diagram and state why W1 is copied from W0</p>
+  <p class="revision-connections"><strong>Connects to:</strong> 2.4 Data Parallelism With Split Data, Copied Models, and Averaged Gradients, 2.6 Model Parallelism by Pipeline Split With Feature Stage and Choice Stage, 2.8 Distributed Execution Helpers and Device Placement</p>
+</div>
+<div class="exam-revision-entry">
+  <h3 class="revision-topic">Distributed Execution Helpers and Device Placement</h3>
+  <p class="revision-mustknow"><strong>Must-know:</strong> Mirror for many GPUs in one host, multi-worker across hosts; helper automates shard, all-reduce, broadcast</p>
+  <p class="revision-pitfall"><strong>Top pitfall:</strong> Creating model partly outside strategy scope; tiny batches at scale starve GPUs</p>
+  <p class="revision-check"><strong>Self-check:</strong> When to pick Mirror vs MultiWorkerMirroredStrategy?</p>
+  <p class="revision-connections"><strong>Connects to:</strong> 2.4 Data Parallelism With Split Data, Copied Models, and Averaged Gradients, 2.6 Model Parallelism by Pipeline Split With Feature Stage and Choice Stage, 2.7 Hybrid Parallelism With Split Data and Split Model Together, 2.9 Caching for Data Input With In-Memory and In-Disk Paths</p>
+</div>
+<div class="exam-revision-entry">
+  <h3 class="revision-topic">Caching for Data Input With In-Memory and In-Disk Paths</h3>
+  <p class="revision-mustknow"><strong>Must-know:</strong> In-memory cache holds ready batches; prefetch stages the next batch during current compute</p>
+  <p class="revision-pitfall"><strong>Top pitfall:</strong> Caching raw rows before preprocessing; freezing one fixed order without reshuffle</p>
+  <p class="revision-check"><strong>Self-check:</strong> Contrast in-memory vs in-disk cache; what does prefetch add?</p>
+  <p class="revision-connections"><strong>Connects to:</strong> 2.8 Distributed Execution Helpers and Device Placement, 2.10 Weight-Merging Experiment and Why Blind Averaging Can Fail</p>
+</div>
+<div class="exam-revision-entry">
+  <h3 class="revision-topic">Weight-Merging Experiment and Why Blind Averaging Can Fail</h3>
+  <p class="revision-mustknow"><strong>Must-know:</strong> 99 vs 93 gap: solo models fit shards, plain mean lands on high-loss ridge, fix with data-aware merging</p>
+  <p class="revision-formula">\[accuracy = \frac{correct}{total} \times 100, \quad W_{global} = \frac{W_{A} + W_{B}}{2}\]</p>
+  <p class="revision-pitfall"><strong>Top pitfall:</strong> Blaming overfitting alone; retuning shape instead of fixing the merge rule</p>
+  <p class="revision-check"><strong>Self-check:</strong> Explain the 99 vs 93 gap in three lines</p>
+  <p class="revision-connections"><strong>Connects to:</strong> 2.4 Data Parallelism With Split Data, Copied Models, and Averaged Gradients, 2.7 Hybrid Parallelism With Split Data and Split Model Together, 2.9 Caching for Data Input With In-Memory and In-Disk Paths</p>
+</div>
+    </section>
+  </div>
+</body>
+</html>

@@ -175,6 +175,20 @@ export async function getManifest(): Promise<NotesManifest> {
   try {
     const cache = (env as any).caches?.default as Cache | undefined;
     const cacheKey = new Request('https://internal.bitsnotes/cache/notes-manifest.json');
+
+    // Edge cache read: a warm isolate (≤5 min old copy) skips the R2 round-trip.
+    if (cache) {
+      try {
+        const hit = await cache.match(cacheKey);
+        if (hit) {
+          const manifest = (await hit.json()) as NotesManifest;
+          manifestCache = manifest;
+          lastFetchedTime = now;
+          return manifest;
+        }
+      } catch { /* cache read is best-effort */ }
+    }
+
     let obj = await bucket.get('notes-manifest.json');
     if (!obj) {
       console.warn('[notesLoader] notes-manifest.json not found in R2 bucket.');
@@ -470,6 +484,26 @@ export async function getLectureContent(subjectName: string, lectureFolderName: 
       return null;
     }
 
+    // Edge cache read (keyed by manifest version): a warm entry skips the R2
+    // round-trips AND the KaTeX pre-render entirely.
+    const cache = (env as any).caches?.default as Cache | undefined;
+    const cacheKey = new Request(`https://internal.bitsnotes/cache/lecture-v2/${manifest.version}/${encodeURIComponent(subjectName)}/${encodeURIComponent(lectureFolderName)}`);
+    if (cache) {
+      try {
+        const hit = await cache.match(cacheKey);
+        if (hit) {
+          const payload = (await hit.json()) as { htmlContent?: string; cssContent?: string; jsContent?: string };
+          return {
+            htmlContent: payload.htmlContent || '',
+            cssContent: payload.cssContent || '',
+            jsContent: payload.jsContent || '',
+            metadata: lecture.metadata,
+            fileName: lecture.fileName,
+          };
+        }
+      } catch { /* cache read is best-effort */ }
+    }
+
     const folderPrefixKey = `notes/${subjectName}/${lectureFolderName}/`;
     const key = `${folderPrefixKey}${lecture.fileName}.html`;
     try {
@@ -533,16 +567,14 @@ export async function getLectureContent(subjectName: string, lectureFolderName: 
         }
       }
 
-      // Cache the lecture HTML at the edge, versioned by the manifest version
-      // so a new content upload invalidates it (Phase 8.8). No unbounded
-      // in-memory map — rely on the Cache API instead.
-      const cache = (env as any).caches?.default as Cache | undefined;
+      // Cache the full lecture payload at the edge, versioned by the manifest
+      // version so a new content upload invalidates it (Phase 8.8). No
+      // unbounded in-memory map — rely on the Cache API instead.
       if (cache) {
         try {
-          const cacheKey = new Request(`https://internal.bitsnotes/cache/lecture/${subjectName}/${lectureFolderName}`);
-          const cached = new Response(htmlContent, {
+          const cached = new Response(JSON.stringify({ htmlContent, cssContent, jsContent }), {
             headers: {
-              'Content-Type': 'text/html; charset=utf-8',
+              'Content-Type': 'application/json',
               'Cache-Control': 'public, max-age=300',
               'ETag': `"${manifest.version}"`,
             },
