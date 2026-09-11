@@ -30,7 +30,6 @@ implementation plan. Run it after every theme-touching change.
 | Search modal (Ctrl+K) | ☐ | ☐ | ☐ | backdrop + shadow |
 | Navbar / mobile menu | ☐ | ☐ | ☐ | no `text-black`/`bg-white` leakage |
 | Cookie consent | ☐ | ☐ | ☐ | |
-| Newsletter / Turnstile | ☐ | ☐ | ☐ | re-render on theme change |
 | Turnstile | ☐ | ☐ | ☐ | re-render on theme change |
 | Auth (signin/signup/verify) | ☐ | ☐ | ☐ | `--color-text-muted` defined |
 | Bookmarks | ☐ | ☐ | ☐ | |

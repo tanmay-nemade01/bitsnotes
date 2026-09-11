@@ -15,7 +15,6 @@ Free, open-source AI/ML study notes — lectures across multiple subjects with i
 | Runtime | [Cloudflare Workers](https://workers.cloudflare.com) via `@astrojs/cloudflare` |
 | Database | [Cloudflare D1](https://developers.cloudflare.com/d1/) |
 | Content storage | [Cloudflare R2](https://developers.cloudflare.com/r2/) (production); Vite glob imports in local dev |
-| Cache / email | KV (newsletter tokens), Cloudflare Email Service + ZeptoMail |
 | Email | Cloudflare Email Service |
 | Auth | Google / GitHub OAuth, email verification, JWT sessions |
 | Tests | Vitest (unit) + Playwright (E2E) |
@@ -162,7 +161,6 @@ User data (auth, bookmarks, comments, progress) lives in D1. Schema: [`src/db/sc
 
 ## Environment
 
-Bindings are declared in [`wrangler.jsonc`](wrangler.jsonc): `DB`, `NOTES_BUCKET`, `NEWSLETTER_KV`, `SEND_EMAIL`, rate limiters, `ASSETS`.
 Bindings are declared in [`wrangler.jsonc`](wrangler.jsonc): `DB`, `NOTES_BUCKET`, `SEND_EMAIL`, rate limiters, `ASSETS`.
 
 Set secrets with `wrangler secret put` (and mirror them in `.dev.vars` for local work), including:
@@ -170,7 +168,6 @@ Set secrets with `wrangler secret put` (and mirror them in `.dev.vars` for local
 - `SESSION_SIGNING_KEY`
 - Google / GitHub OAuth client secrets
 - Turnstile secret
-- ZeptoMail / Zoho Campaigns credentials (including list key)
 - Any API keys required by your deploy
 
 Never commit credentials. Prefer Worker secrets over tracked config.
