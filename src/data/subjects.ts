@@ -100,6 +100,15 @@ export const SUBJECTS: SubjectInfo[] = [
     code: 'DML',
     semester: 2,
   },
+  {
+    name: 'Information Retrieval',
+    shortName: 'IR',
+    description:
+      'Indexing architectures, scoring models, vector retrieval, and evaluation techniques for large-scale search systems.',
+    order: 9,
+    code: 'IR',
+    semester: 2,
+  },
 
   // Semester 1 Subjects
   {
