@@ -195,4 +195,17 @@ CREATE TABLE IF NOT EXISTS bit_reactions (
   created_at    INTEGER NOT NULL,
   UNIQUE(user_id, slug, emoji)
 );
+
+CREATE TABLE IF NOT EXISTS supporters (
+  id             TEXT PRIMARY KEY,
+  name           TEXT NOT NULL,
+  tier           TEXT NOT NULL DEFAULT 'supporter',
+  tier_label     TEXT,
+  message        TEXT,
+  avatar_url     TEXT,
+  supporter_date TEXT,
+  created_at     INTEGER NOT NULL,
+  created_by     TEXT,
+  UNIQUE(name)
+);
 `;

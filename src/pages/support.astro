@@ -69,30 +69,34 @@ const initialsOf = (name: string) =>
         BitsNotes will always remain free. If these notes have been helpful in your studies, and you are in a position to do so, any voluntary contribution is deeply appreciated—but please, only if you can comfortably afford it.
       </p>
 
-      {supporters.length > 0 && (
-        <div class="mt-4 flex flex-wrap items-center gap-3 pt-1">
-          <a
-            href="#wall-of-gratitude"
-            class="inline-flex items-center gap-2.5 px-3.5 py-1.5 rounded-full border border-[var(--border)] bg-[var(--bg-elevated)] hover:border-[var(--accent)] text-xs font-medium text-[var(--text-muted)] transition-colors no-underline group"
-          >
-            <span class="flex -space-x-1.5 overflow-hidden">
-              {featuredSupporters.slice(0, 3).map((s, i) => (
-                <span class={`inline-flex items-center justify-center w-6 h-6 rounded-full text-[10px] font-bold ring-2 ring-[var(--bg)] ${
-                  i % 2 === 0 ? 'bg-[var(--accent)] text-[var(--accent-contrast)]' : 'bg-[var(--bg-interactive)] text-[var(--text)]'
-                }`}>
-                  {initialsOf(s.name)}
-                </span>
-              ))}
-            </span>
-            <span class="group-hover:text-[var(--text)]">
-              Backed by <strong class="text-[var(--text)]">{supporters.length} supporters</strong> including <span class="text-[var(--text)] font-semibold">{orderedSupporters[0].name}</span>{orderedSupporters[1] ? ` & ${orderedSupporters[1].name}` : ''}
-            </span>
-            <svg class="w-3.5 h-3.5 text-[var(--accent)] group-hover:translate-y-0.5 transition-transform" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
-              <path stroke-linecap="round" stroke-linejoin="round" d="M19 9l-7 7-7-7"/>
-            </svg>
-          </a>
-        </div>
-      )}
+      <!-- Kept in the DOM even when the static fallback list is empty, so the
+           live roster can reveal it without a server round-trip. -->
+      <div
+        class="mt-4 flex flex-wrap items-center gap-3 pt-1"
+        data-supporters-hero
+        style={supporters.length === 0 ? 'display:none' : undefined}
+      >
+        <a
+          href="#wall-of-gratitude"
+          class="inline-flex items-center gap-2.5 px-3.5 py-1.5 rounded-full border border-[var(--border)] bg-[var(--bg-elevated)] hover:border-[var(--accent)] text-xs font-medium text-[var(--text-muted)] transition-colors no-underline group"
+        >
+          <span class="flex -space-x-1.5 overflow-hidden" data-supporters-hero-stack>
+            {featuredSupporters.slice(0, 3).map((s, i) => (
+              <span class={`inline-flex items-center justify-center w-6 h-6 rounded-full text-[10px] font-bold ring-2 ring-[var(--bg)] ${
+                i % 2 === 0 ? 'bg-[var(--accent)] text-[var(--accent-contrast)]' : 'bg-[var(--bg-interactive)] text-[var(--text)]'
+              }`}>
+                {initialsOf(s.name)}
+              </span>
+            ))}
+          </span>
+          <span class="group-hover:text-[var(--text)]" data-supporters-hero-text>
+            Backed by <strong class="text-[var(--text)]">{supporters.length} supporters</strong> including <span class="text-[var(--text)] font-semibold">{orderedSupporters[0]?.name ?? 'our earliest backers'}</span>{orderedSupporters[1] ? ` & ${orderedSupporters[1].name}` : ''}
+          </span>
+          <svg class="w-3.5 h-3.5 text-[var(--accent)] group-hover:translate-y-0.5 transition-transform" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M19 9l-7 7-7-7"/>
+          </svg>
+        </a>
+      </div>
     </header>
 
     <aside
@@ -104,18 +108,27 @@ const initialsOf = (name: string) =>
         <h2 id="wall-of-gratitude-heading" class="font-display text-xl font-bold text-[var(--text)]">
           Wall of Gratitude
         </h2>
-        <span class="shrink-0 rounded-full border border-[var(--accent)]/20 bg-[var(--accent-subtle)] px-2.5 py-0.5 font-sans text-xs font-semibold text-[var(--accent)]">
+        <span
+          class="shrink-0 rounded-full border border-[var(--accent)]/20 bg-[var(--accent-subtle)] px-2.5 py-0.5 font-sans text-xs font-semibold text-[var(--accent)]"
+          data-supporters-count
+        >
           {supporters.length}
         </span>
       </div>
 
       <!-- Scrollable list: capped height + own scrollbar so a large roster can
-           never stretch the page. Focusable + labelled for keyboard users. -->
+           never stretch the page. Focusable + labelled for keyboard users.
+           Server-rendered from the static fallback, then replaced in place by
+           `renderWall()` once /api/supporters responds, so adding a supporter
+           from /admin shows up without a redeploy. -->
       <div
         class="mt-3 max-h-[70vh] space-y-2 overflow-y-auto overscroll-contain pr-1 focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--focus-ring)] lg:mt-4 lg:max-h-none lg:min-h-0 lg:flex-1"
         role="region"
         aria-label="Supporter list"
         tabindex="0"
+        data-supporters-list
+        data-card-limit={CARD_LIMIT}
+        data-chip-limit={CHIP_LIMIT}
       >
         {featuredSupporters.map((s) => (
           <div class="flex flex-col justify-between rounded-[var(--r-md)] border border-[var(--border)] bg-[var(--bg)] p-3 transition-colors duration-200 hover:border-[var(--border-strong)]">
@@ -540,4 +553,167 @@ const initialsOf = (name: string) =>
 
   initDonateWidget();
   document.addEventListener('astro:after-swap', initDonateWidget);
+</script>
+
+<!--
+  Live Wall of Gratitude.
+
+  The page is statically generated, so the wall is first painted from
+  `src/data/supporters.ts`. This script then swaps in the authoritative roster
+  from `/api/supporters` (D1 `supporters` table, editable in /admin), which is
+  what makes a new supporter appear within seconds instead of waiting for the
+  next deploy.
+
+  Deliberately inline (no bundler, no dependencies) and fail-safe: any error
+  simply leaves the server-rendered list in place.
+-->
+<script is:inline>
+  (function () {
+    var listEl = document.querySelector('[data-supporters-list]');
+    if (!listEl || typeof fetch !== 'function') return;
+
+    var countEl = document.querySelector('[data-supporters-count]');
+    var heroEl = document.querySelector('[data-supporters-hero]');
+    var heroStackEl = document.querySelector('[data-supporters-hero-stack]');
+    var heroTextEl = document.querySelector('[data-supporters-hero-text]');
+
+    var CARD_LIMIT = parseInt(listEl.dataset.cardLimit || '12', 10);
+    var CHIP_LIMIT = parseInt(listEl.dataset.chipLimit || '300', 10);
+
+    function esc(value) {
+      return String(value).replace(/[&<>"']/g, function (c) {
+        return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
+      });
+    }
+
+    function initialsOf(name) {
+      return String(name)
+        .split(' ')
+        .filter(Boolean)
+        .map(function (part) { return part[0]; })
+        .join('')
+        .slice(0, 2)
+        .toUpperCase();
+    }
+
+    var VERIFIED_SVG =
+      '<svg class="w-3.5 h-3.5 text-[var(--accent)] flex-shrink-0" fill="currentColor" viewBox="0 0 20 20" aria-label="Verified Supporter">' +
+      '<title>Verified Supporter</title>' +
+      '<path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clip-rule="evenodd"/>' +
+      '</svg>';
+
+    function cardHtml(s) {
+      return (
+        '<div class="flex flex-col justify-between rounded-[var(--r-md)] border border-[var(--border)] bg-[var(--bg)] p-3 transition-colors duration-200 hover:border-[var(--border-strong)]">' +
+          '<div class="flex items-center gap-3">' +
+            '<div class="w-9 h-9 rounded-full bg-[var(--accent-subtle)] border border-[var(--accent)]/30 text-[var(--accent)] flex items-center justify-center font-bold text-xs flex-shrink-0">' +
+              esc(initialsOf(s.name)) +
+            '</div>' +
+            '<div class="min-w-0 flex-1">' +
+              '<div class="flex items-center gap-1.5">' +
+                '<span class="font-bold text-sm text-[var(--text)] truncate">' + esc(s.name) + '</span>' +
+                VERIFIED_SVG +
+              '</div>' +
+              '<span class="inline-block text-[11px] font-medium text-[var(--text-muted)]">' +
+                esc(s.tierLabel || 'Supporter') +
+              '</span>' +
+            '</div>' +
+          '</div>' +
+          (s.message
+            ? '<p class="mt-2 text-xs text-[var(--text-muted)] italic line-clamp-2">&ldquo;' + esc(s.message) + '&rdquo;</p>'
+            : '') +
+        '</div>'
+      );
+    }
+
+    function chipHtml(s) {
+      return (
+        '<li class="rounded-full border border-[var(--border)] bg-[var(--bg-subtle)] px-2 py-0.5 text-[11px] text-[var(--text-muted)]"' +
+          (s.message ? ' title="' + esc(s.message) + '"' : '') +
+        '>' + esc(s.name) + '</li>'
+      );
+    }
+
+    function renderWall(supporters) {
+      var cards = supporters.slice(0, CARD_LIMIT);
+      var chips = supporters.slice(CARD_LIMIT, CARD_LIMIT + CHIP_LIMIT);
+      var hidden = Math.max(0, supporters.length - CARD_LIMIT - CHIP_LIMIT);
+
+      var html = cards.map(cardHtml).join('');
+
+      if (chips.length) {
+        html +=
+          '<div class="border-t border-[var(--border)] pt-3">' +
+            '<h3 class="text-[11px] font-bold uppercase tracking-wider text-[var(--text-faint)]">Earlier supporters</h3>' +
+            '<ul class="mt-2 flex flex-wrap gap-1.5">' + chips.map(chipHtml).join('') + '</ul>' +
+            (hidden > 0
+              ? '<p class="mt-2 text-[11px] text-[var(--text-faint)]">and ' + hidden + ' more supporters.</p>'
+              : '') +
+          '</div>';
+      }
+
+      if (!supporters.length) {
+        html = '<p class="text-sm text-[var(--text-muted)]">No supporters yet — be the first to help out.</p>';
+      }
+
+      listEl.innerHTML = html;
+    }
+
+    function renderSummary(supporters, total) {
+      var count = typeof total === 'number' && total >= 0 ? total : supporters.length;
+      if (countEl) countEl.textContent = String(count);
+
+      if (!heroEl) return;
+      if (!supporters.length) {
+        // Inline style (not the `hidden` attribute) so Tailwind's `flex` can't win.
+        heroEl.style.display = 'none';
+        return;
+      }
+      heroEl.style.display = '';
+
+      if (heroStackEl) {
+        heroStackEl.innerHTML = supporters.slice(0, 3).map(function (s, i) {
+          var tone = i % 2 === 0
+            ? 'bg-[var(--accent)] text-[var(--accent-contrast)]'
+            : 'bg-[var(--bg-interactive)] text-[var(--text)]';
+          return '<span class="inline-flex items-center justify-center w-6 h-6 rounded-full text-[10px] font-bold ring-2 ring-[var(--bg)] ' + tone + '">' +
+            esc(initialsOf(s.name)) +
+          '</span>';
+        }).join('');
+      }
+
+      if (heroTextEl) {
+        heroTextEl.innerHTML =
+          'Backed by <strong class="text-[var(--text)]">' + count + ' supporters</strong> including ' +
+          '<span class="text-[var(--text)] font-semibold">' + esc(supporters[0].name) + '</span>' +
+          (supporters[1] ? ' &amp; ' + esc(supporters[1].name) : '');
+      }
+    }
+
+    function refresh() {
+      fetch('/api/supporters', { credentials: 'same-origin', cache: 'no-store' })
+        .then(function (r) {
+          if (!r.ok) throw new Error('HTTP ' + r.status);
+          return r.json();
+        })
+        .then(function (data) {
+          var supporters = Array.isArray(data.supporters) ? data.supporters : [];
+          renderWall(supporters);
+          renderSummary(supporters, data.total);
+        })
+        .catch(function () {
+          // Keep the server-rendered static list.
+        });
+    }
+
+    refresh();
+
+    // Re-run after a view-transition (client-side) navigation back to /support.
+    document.addEventListener('astro:after-swap', refresh);
+
+    // Pick up a supporter added in another tab without a manual reload.
+    document.addEventListener('visibilitychange', function () {
+      if (document.visibilityState === 'visible') refresh();
+    });
+  })();
 </script>
