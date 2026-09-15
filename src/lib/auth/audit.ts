@@ -29,6 +29,9 @@ export type AuthEvent =
   | 'admin_comment_hide'
   | 'admin_comment_delete'
   | 'admin_comment_restore'
+  | 'admin_supporter_add'
+  | 'admin_supporter_update'
+  | 'admin_supporter_delete'
   | 'account_delete';
 
 export interface AuditContext {

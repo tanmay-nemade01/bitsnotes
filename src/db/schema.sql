@@ -249,3 +249,30 @@ CREATE TABLE IF NOT EXISTS page_views (
   page_key      TEXT PRIMARY KEY,
   views         INTEGER NOT NULL DEFAULT 0
 );
+
+-- ─── Supporters (Wall of Gratitude) ────────────────────────────────────────
+-- Managed from /admin at runtime so new backers appear instantly (no redeploy).
+-- Mirrors `src/db/migrations/007_supporters.sql`.
+CREATE TABLE IF NOT EXISTS supporters (
+  id             TEXT PRIMARY KEY,                  -- UUID v7
+  name           TEXT NOT NULL,
+  tier           TEXT NOT NULL DEFAULT 'supporter', -- chai|fuel|meal|sponsor|supporter
+  tier_label     TEXT,                              -- Optional display override
+  message        TEXT,                              -- Optional public note
+  avatar_url     TEXT,
+  supporter_date TEXT,                              -- Free-form, e.g. '2026-09'
+  created_at     INTEGER NOT NULL,                  -- Epoch ms; drives newest-first order
+  created_by     TEXT,                              -- Admin user id that added the row
+  UNIQUE(name)
+);
+
+CREATE INDEX IF NOT EXISTS idx_supporters_created
+  ON supporters (created_at DESC);
+
+-- Seed the backers that previously lived in `src/data/supporters.ts`.
+-- Fixed ids + INSERT OR IGNORE keep this idempotent.
+INSERT OR IGNORE INTO supporters (id, name, tier, tier_label, created_at, created_by)
+VALUES
+  ('0199a000-0000-7000-8000-000000000001', 'Tanu Tapli',  'supporter', 'Supporter', 1757000000000, NULL),
+  ('0199a000-0000-7000-8000-000000000002', 'Rajat Singh', 'supporter', 'Supporter', 1757000001000, NULL),
+  ('0199a000-0000-7000-8000-000000000003', 'Chinmay Das', 'supporter', 'Supporter', 1757000002000, NULL);
