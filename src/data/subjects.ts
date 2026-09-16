@@ -109,6 +109,15 @@ export const SUBJECTS: SubjectInfo[] = [
     code: 'IR',
     semester: 2,
   },
+  {
+    name: 'Video Analysis',
+    shortName: 'VA',
+    description:
+      'Spatiotemporal representations, optical flow, motion tracking, 3D CNNs, action recognition, and video transformers.',
+    order: 10,
+    code: 'VA',
+    semester: 2,
+  },
 
   // Semester 1 Subjects
   {
