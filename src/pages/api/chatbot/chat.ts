@@ -3,12 +3,20 @@
  * Server-side proxy for BitsNotes AI chatbot mode.
  * - Requires authenticated user (session cookie)
  * - Enforces 20 messages/day/user via D1 chatbot_usage table
+ * - Augments the system prompt with up to 2 related-lecture snippets from
+ *   the same subject (lean keyword retrieval, edge-cached, non-fatal)
  * - Proxies to OpenRouter API with server-side API key
  * - Returns friendly error message on any upstream failure
  */
 
 import type { APIRoute } from 'astro';
 import { getEnv } from '../../../lib/getEnv';
+import {
+  buildRelatedBlock,
+  getLastUserQuery,
+  getRelatedSnippets,
+  parseSubjectFromSystemPrompt,
+} from '../../../lib/chatbotRetrieval';
 
 export const prerender = false;
 
@@ -78,7 +86,12 @@ export const POST: APIRoute = async ({ locals, request }) => {
   }
 
   // ─── Parse request body ──────────────────────────────────────────────
-  let body: { messages?: any[] };
+  let body: {
+    messages?: Array<{ role?: string; content?: unknown }>;
+    subject?: string;
+    lectureFolder?: string;
+    query?: string;
+  };
   try {
     body = await request.json();
   } catch {
@@ -87,6 +100,48 @@ export const POST: APIRoute = async ({ locals, request }) => {
 
   if (!body.messages || !Array.isArray(body.messages) || body.messages.length === 0) {
     return jsonResponse({ error: 'Messages array is required.' }, 400);
+  }
+
+  // ─── Lean cross-lecture retrieval (non-fatal) ────────────────────────
+  // Client sends explicit subject/folder/query; fall back to parsing the
+  // system prompt + last user message for backwards compatibility.
+  let subject = (body.subject || '').trim();
+  let excludeFolder = (body.lectureFolder || '').trim();
+  let query = (body.query || '').trim();
+
+  const systemMsgForParse = body.messages.find((m) => m?.role === 'system');
+  if ((!subject || !excludeFolder) && systemMsgForParse && typeof systemMsgForParse.content === 'string') {
+    const parsed = parseSubjectFromSystemPrompt(systemMsgForParse.content);
+    if (!subject) subject = parsed.subject;
+    if (!excludeFolder) excludeFolder = parsed.lectureFolder;
+  }
+  if (!query) query = getLastUserQuery(body.messages);
+
+  let relatedBlock = '';
+  let relatedSources: Array<{ title: string; folderName: string; slug: string }> = [];
+  try {
+    const snippets = await getRelatedSnippets({ subject, excludeFolder, query });
+    if (snippets.length > 0) {
+      relatedBlock = buildRelatedBlock(snippets);
+      relatedSources = snippets.map((s) => ({ title: s.title, folderName: s.folderName, slug: s.slug }));
+    }
+  } catch (err) {
+    // Retrieval must never break chat — fall back to single-lecture context.
+    console.error('[chatbot/chat] Related-lecture retrieval failed (non-fatal):', err);
+  }
+
+  // Inject related excerpts into a COPY of the system message only.
+  const upstreamMessages = body.messages.map((m) => ({ ...m }));
+  if (relatedBlock) {
+    const sysIdx = upstreamMessages.findIndex((m) => m?.role === 'system');
+    if (sysIdx >= 0 && typeof upstreamMessages[sysIdx].content === 'string') {
+      upstreamMessages[sysIdx] = {
+        ...upstreamMessages[sysIdx],
+        content: (upstreamMessages[sysIdx].content as string) + relatedBlock,
+      };
+    } else {
+      upstreamMessages.unshift({ role: 'system', content: relatedBlock.trim() });
+    }
   }
 
   // ─── Proxy to OpenRouter ─────────────────────────────────────────────
@@ -101,7 +156,7 @@ export const POST: APIRoute = async ({ locals, request }) => {
       },
       body: JSON.stringify({
         model: OPENROUTER_MODEL,
-        messages: body.messages,
+        messages: upstreamMessages,
         temperature: 0.3,
       }),
     });
@@ -135,6 +190,7 @@ export const POST: APIRoute = async ({ locals, request }) => {
         limit: DAILY_LIMIT,
         remaining: DAILY_LIMIT - newCount,
       },
+      _sources: relatedSources,
     }, 200);
   } catch (err) {
     console.error('[chatbot/chat] Proxy error:', err);
