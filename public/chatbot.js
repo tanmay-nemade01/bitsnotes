@@ -796,7 +796,8 @@
       '- Lecture notes content:\n' +
       (lectureText || '(No notes loaded on current page)') +
       '\n\n' +
-      'Base answers primarily on these notes. You may supplement with general CS/engineering knowledge that directly supports the topic, but never invent theorems, equations, or lecture sections that don\'t exist.\n\n' +
+      'Base answers primarily on these notes. You may supplement with general CS/engineering knowledge that directly supports the topic, but never invent theorems, equations, or lecture sections that don\'t exist.\n' +
+      'If a RELATED LECTURES section is appended below (excerpts from other lectures in the same subject), treat the current lecture as PRIMARY and use related excerpts only when they genuinely help answer a complex or cross-lecture question. When you use them, cite inline like [Source: <lecture title>].\n\n' +
 
       '## HARD BOUNDARIES (non-negotiable)\n' +
       '1. **Scope:** You discuss "' + subjectName + '" and closely related CS / Engineering / Data Science / Mathematics topics — nothing else. For off-topic requests (recipes, politics, entertainment, personal advice, sports, etc.), reply ONLY with:\n' +
@@ -1093,6 +1094,35 @@
 
   // ─── BitsNotes mode submission (server proxy) ─────────────────────────
 
+  // Append a small "Sources" footer to the last assistant bubble (transparency
+  // for cross-lecture retrieval). History keeps only the raw reply text.
+  function appendSourcesFooter(sources) {
+    try {
+      if (!sources || sources.length === 0) return;
+      var container = document.getElementById('bn-chatbot-messages');
+      if (!container) return;
+      var bubbles = container.querySelectorAll('.bn-msg.assistant .bn-msg-bubble');
+      if (!bubbles || bubbles.length === 0) return;
+      var last = bubbles[bubbles.length - 1];
+      var footer = document.createElement('div');
+      footer.className = 'bn-sources';
+      var label = document.createElement('span');
+      label.className = 'bn-sources-label';
+      label.textContent = 'Sources: ';
+      footer.appendChild(label);
+      sources.forEach(function (s, idx) {
+        if (idx > 0) footer.appendChild(document.createTextNode(' · '));
+        var chip = document.createElement('span');
+        chip.className = 'bn-source-chip';
+        chip.textContent = s.title || s.folderName || 'Related lecture';
+        chip.title = (s.title || '') + (s.folderName ? ' (' + s.folderName + ')' : '');
+        footer.appendChild(chip);
+      });
+      last.appendChild(footer);
+      container.scrollTop = container.scrollHeight;
+    } catch (e) {}
+  }
+
   async function handleBitsNotesSubmit(userQuery) {
     var systemPrompt = buildSystemPrompt();
     var apiMessages = [{ role: 'system', content: systemPrompt }].concat(conversationHistory);
@@ -1101,7 +1131,12 @@
       var res = await fetch('/api/chatbot/chat', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ messages: apiMessages }),
+        body: JSON.stringify({
+          messages: apiMessages,
+          subject: getSubjectName(),
+          lectureFolder: getLectureFolderName(),
+          query: userQuery
+        }),
       });
 
       hideTypingIndicator();
@@ -1146,6 +1181,11 @@
       appendMessage('assistant', reply);
       conversationHistory.push({ role: 'assistant', content: reply });
       saveConversationHistory();
+
+      // Show cross-lecture sources when the server used related excerpts
+      if (data._sources && data._sources.length > 0) {
+        appendSourcesFooter(data._sources);
+      }
 
       // Update usage from response
       if (data._usage) {
