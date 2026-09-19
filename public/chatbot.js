@@ -34,6 +34,24 @@
     return getChatMode() === 'bitsnotes';
   }
 
+  // ─── Textbook companion toggle (on by default, persisted per session) ──
+  var TEXTBOOK_STORAGE_KEY = 'bn_chatbot_textbook';
+
+  function isTextbookEnabled() {
+    try {
+      var v = sessionStorage.getItem(TEXTBOOK_STORAGE_KEY);
+      return v === null ? true : v === '1';
+    } catch (e) {
+      return true;
+    }
+  }
+
+  function setTextbookEnabled(on) {
+    try {
+      sessionStorage.setItem(TEXTBOOK_STORAGE_KEY, on ? '1' : '0');
+    } catch (e) {}
+  }
+
   // ─── Conversation History ─────────────────────────────────────────────
   function loadConversationHistory() {
     try {
@@ -1113,9 +1131,10 @@
       sources.forEach(function (s, idx) {
         if (idx > 0) footer.appendChild(document.createTextNode(' · '));
         var chip = document.createElement('span');
-        chip.className = 'bn-source-chip';
-        chip.textContent = s.title || s.folderName || 'Related lecture';
-        chip.title = (s.title || '') + (s.folderName ? ' (' + s.folderName + ')' : '');
+        var isTextbook = s && s.kind === 'textbook';
+        chip.className = 'bn-source-chip' + (isTextbook ? ' bn-source-chip-textbook' : '');
+        chip.textContent = (isTextbook ? '📖 ' : '') + (s.title || s.folderName || 'Related lecture');
+        chip.title = (isTextbook ? 'Textbook: ' : '') + (s.title || '') + (s.folderName ? ' (' + s.folderName + ')' : '');
         footer.appendChild(chip);
       });
       last.appendChild(footer);
@@ -1135,7 +1154,8 @@
           messages: apiMessages,
           subject: getSubjectName(),
           lectureFolder: getLectureFolderName(),
-          query: userQuery
+          query: userQuery,
+          includeTextbook: isTextbookEnabled()
         }),
       });
 
@@ -1211,9 +1231,35 @@
 
   // ─── BYOK mode submission (direct to provider — unchanged logic) ──────
 
+  // Fetch a pre-formatted textbook context block for BYOK mode (client-direct
+  // provider calls bypass the server chat proxy). Non-fatal: returns {block, snippets}.
+  async function fetchCompanionBlock(userQuery) {
+    var empty = { block: '', snippets: [] };
+    if (!isTextbookEnabled()) return empty;
+    try {
+      var url = '/api/chatbot/companion?subject=' + encodeURIComponent(getSubjectName()) +
+        '&query=' + encodeURIComponent(userQuery);
+      var res = await fetch(url, { method: 'GET' });
+      if (!res.ok) return empty;
+      var data = await res.json();
+      return {
+        block: (data && data.block) || '',
+        snippets: (data && data.snippets) || []
+      };
+    } catch (e) {
+      return empty;
+    }
+  }
+
   async function handleByokSubmit(userQuery) {
     var config = getConfig();
     var systemPrompt = buildSystemPrompt();
+    var companionSources = [];
+    try {
+      var companion = await fetchCompanionBlock(userQuery);
+      if (companion.block) systemPrompt += companion.block;
+      companionSources = companion.snippets;
+    } catch (e) {}
     var apiMessages = [{ role: 'system', content: systemPrompt }].concat(conversationHistory);
 
     var sendBtn = document.getElementById('bn-chatbot-send');
@@ -1269,6 +1315,11 @@
       appendMessage('assistant', reply);
       conversationHistory.push({ role: 'assistant', content: reply });
       saveConversationHistory();
+
+      // Show textbook sources when the companion endpoint returned excerpts
+      if (companionSources && companionSources.length > 0) {
+        appendSourcesFooter(companionSources);
+      }
     } catch (err) {
       hideTypingIndicator();
       console.error('[chatbot] Error during fetch:', err);
@@ -1466,6 +1517,18 @@
     var subjectLabel = document.getElementById('bn-chat-subject-label');
     if (subjectLabel) {
       subjectLabel.textContent = getSubjectName();
+    }
+
+    // Textbook companion toggle (Astro re-renders the panel on navigation)
+    var textbookToggle = document.getElementById('bn-textbook-toggle');
+    if (textbookToggle) {
+      textbookToggle.checked = isTextbookEnabled();
+      if (!textbookToggle.dataset.bnInited) {
+        textbookToggle.dataset.bnInited = 'true';
+        textbookToggle.addEventListener('change', function () {
+          setTextbookEnabled(textbookToggle.checked);
+        });
+      }
     }
 
     // Fetch BitsNotes user status on init

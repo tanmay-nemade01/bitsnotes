@@ -4,7 +4,8 @@
  * - Requires authenticated user (session cookie)
  * - Enforces 20 messages/day/user via D1 chatbot_usage table
  * - Augments the system prompt with up to 2 related-lecture snippets from
- *   the same subject (lean keyword retrieval, edge-cached, non-fatal)
+ *   the same subject (lean keyword retrieval, edge-cached, non-fatal) plus
+ *   up to 1 per-subject textbook excerpt (opt-out via includeTextbook=false)
  * - Proxies to OpenRouter API with server-side API key
  * - Returns friendly error message on any upstream failure
  */
@@ -12,7 +13,9 @@
 import type { APIRoute } from 'astro';
 import { getEnv } from '../../../lib/getEnv';
 import {
+  buildCompanionBlock,
   buildRelatedBlock,
+  getCompanionSnippets,
   getLastUserQuery,
   getRelatedSnippets,
   parseSubjectFromSystemPrompt,
@@ -91,6 +94,7 @@ export const POST: APIRoute = async ({ locals, request }) => {
     subject?: string;
     lectureFolder?: string;
     query?: string;
+    includeTextbook?: boolean;
   };
   try {
     body = await request.json();
@@ -102,12 +106,15 @@ export const POST: APIRoute = async ({ locals, request }) => {
     return jsonResponse({ error: 'Messages array is required.' }, 400);
   }
 
-  // ─── Lean cross-lecture retrieval (non-fatal) ────────────────────────
+  // ─── Lean retrieval: related lectures + textbook (both non-fatal) ────
   // Client sends explicit subject/folder/query; fall back to parsing the
   // system prompt + last user message for backwards compatibility.
+  // Textbook excerpts are on by default; the client toggle sends
+  // includeTextbook=false to opt out.
   let subject = (body.subject || '').trim();
   let excludeFolder = (body.lectureFolder || '').trim();
   let query = (body.query || '').trim();
+  const includeTextbook = body.includeTextbook !== false;
 
   const systemMsgForParse = body.messages.find((m) => m?.role === 'system');
   if ((!subject || !excludeFolder) && systemMsgForParse && typeof systemMsgForParse.content === 'string') {
@@ -118,12 +125,35 @@ export const POST: APIRoute = async ({ locals, request }) => {
   if (!query) query = getLastUserQuery(body.messages);
 
   let relatedBlock = '';
-  let relatedSources: Array<{ title: string; folderName: string; slug: string }> = [];
+  let companionBlock = '';
+  let relatedSources: Array<{ kind: string; title: string; folderName: string; slug: string }> = [];
   try {
-    const snippets = await getRelatedSnippets({ subject, excludeFolder, query });
-    if (snippets.length > 0) {
-      relatedBlock = buildRelatedBlock(snippets);
-      relatedSources = snippets.map((s) => ({ title: s.title, folderName: s.folderName, slug: s.slug }));
+    // Independent fetches — run together; each degrades to [] on failure.
+    const [lectureSnippets, companionSnippets] = await Promise.all([
+      getRelatedSnippets({ subject, excludeFolder, query }),
+      includeTextbook
+        ? getCompanionSnippets({ subject, query })
+        : Promise.resolve([]),
+    ]);
+    if (lectureSnippets.length > 0) {
+      relatedBlock = buildRelatedBlock(lectureSnippets);
+      relatedSources = lectureSnippets.map((s) => ({
+        kind: 'lecture',
+        title: s.title,
+        folderName: s.folderName,
+        slug: s.slug,
+      }));
+    }
+    if (companionSnippets.length > 0) {
+      companionBlock = buildCompanionBlock(companionSnippets);
+      for (const s of companionSnippets) {
+        relatedSources.push({
+          kind: 'textbook',
+          title: s.title,
+          folderName: s.chapterId,
+          slug: s.chapterId,
+        });
+      }
     }
   } catch (err) {
     // Retrieval must never break chat — fall back to single-lecture context.
@@ -132,15 +162,16 @@ export const POST: APIRoute = async ({ locals, request }) => {
 
   // Inject related excerpts into a COPY of the system message only.
   const upstreamMessages = body.messages.map((m) => ({ ...m }));
-  if (relatedBlock) {
+  const extraContext = relatedBlock + companionBlock;
+  if (extraContext) {
     const sysIdx = upstreamMessages.findIndex((m) => m?.role === 'system');
     if (sysIdx >= 0 && typeof upstreamMessages[sysIdx].content === 'string') {
       upstreamMessages[sysIdx] = {
         ...upstreamMessages[sysIdx],
-        content: (upstreamMessages[sysIdx].content as string) + relatedBlock,
+        content: (upstreamMessages[sysIdx].content as string) + extraContext,
       };
     } else {
-      upstreamMessages.unshift({ role: 'system', content: relatedBlock.trim() });
+      upstreamMessages.unshift({ role: 'system', content: extraContext.trim() });
     }
   }
 

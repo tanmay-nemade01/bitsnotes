@@ -16,6 +16,7 @@
  */
 
 import { getLectureContent, getManifest } from '../utils/notesLoader';
+import { getEnv } from './getEnv';
 import {
   executeSearch,
   prepareSearchIndex,
@@ -27,6 +28,11 @@ export const RELATED_LIMIT = 2;
 export const MAX_CHARS_PER_LECTURE = 2000;
 export const TOTAL_BUDGET_CHARS = 4500;
 export const MIN_QUERY_LENGTH = 2;
+
+// ─── Textbook companion (per-subject supplementary chapters) ─────────────
+export const COMPANION_LIMIT = 1;
+export const MAX_CHARS_PER_COMPANION = 1500;
+export const COMPANION_PREVIEW_CHARS = 1200;
 
 export interface RelatedSource {
   subject: string;
@@ -329,6 +335,257 @@ export async function getRelatedSnippets(opts: {
     return results.filter((r): r is RelatedSnippet => r !== null).slice(0, limit);
   } catch (err) {
     console.error('[chatbotRetrieval] Non-fatal retrieval failure:', err);
+    return [];
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Textbook companion retrieval (per-subject supplementary chapters).
+//
+// Same lean philosophy as cross-lecture retrieval: no vector DB, no
+// embeddings. A per-subject `index.json` (chapter titles + preview text,
+// built by scripts/upload-companion.mjs) is ranked with the existing keyword
+// engine, then at most 1 full chapter file is fetched from R2 and a
+// query-centered window is extracted. All failures are non-fatal.
+// R2 layout (NOTES_BUCKET):
+//   companion/<Subject Name>/index.json   (chapter titles + previews + bundle byte offsets)
+//   companion/<Subject Name>/bundle.json  (concatenated full chapter texts; read via R2 range GET)
+// ═══════════════════════════════════════════════════════════════════════════
+
+export interface CompanionChapter {
+  id: string;
+  title: string;
+  book: string;
+  preview: string;
+  /** Byte range of the full chapter inside the per-subject bundle object. */
+  offset?: number;
+  length?: number;
+}
+
+export interface CompanionSnippet {
+  subject: string;
+  chapterId: string;
+  title: string;
+  book: string;
+  snippet: string;
+}
+
+const COMPANION_INDEX_TTL_MS = 60000;
+const companionIndexCache = new Map<string, { data: CompanionChapter[]; time: number }>();
+
+/**
+ * Derive a human-readable chapter title from a companion txt filename.
+ * e.g. "T1_Ch01_Boolean_Retrieval" -> "Boolean Retrieval",
+ *      "R1_AppA_Porter_Algorithm"  -> "AppA Porter Algorithm".
+ * Pure function — must stay in sync with scripts/upload-companion.mjs.
+ */
+export function deriveChapterTitle(fileName: string): string {
+  let t = (fileName || '').replace(/\.txt$/i, '').trim();
+  // Strip leading source-book tag: T1_, R12_, etc.
+  t = t.replace(/^[TR]\d+_/i, '');
+  // Strip leading chapter/section number tag: Ch01_, Chapter_10_, Lecture_3_, LN-1-, etc.
+  t = t.replace(/^(Ch|Chapter|Lecture|LN)[-_\s]*\d+[-_\s]*/i, '');
+  t = t.replace(/[_-]+/g, ' ').replace(/\s+/g, ' ').trim();
+  return t || fileName;
+}
+
+/** Collapse plain textbook text to single-spaced (txt files, not HTML). */
+export function cleanPlainText(text: string): string {
+  return (text || '').replace(/\s+/g, ' ').trim();
+}
+
+/**
+ * Rank companion chapters for a query using preview text.
+ * Pure function — easy to unit test, no I/O.
+ */
+export function rankCompanionCandidates(
+  chapters: CompanionChapter[],
+  query: string,
+  limit: number = COMPANION_LIMIT
+): CompanionChapter[] {
+  const q = (query || '').trim();
+  if (q.length < MIN_QUERY_LENGTH || chapters.length === 0) return [];
+  const { meaningfulTerms, isPureStopWords, allTerms } = tokenizeQuery(q);
+  if (isPureStopWords) return [];
+  if (meaningfulTerms.length === 0 && allTerms.length === 0) return [];
+
+  const items: RawSearchItem[] = chapters.map((c) => ({
+    type: 'note',
+    title: c.title,
+    subject: '',
+    folderName: c.id,
+    slug: c.id,
+    topicTitle: c.title,
+    text: `${c.title} ${c.preview || ''}`,
+  }));
+
+  const prepared = prepareSearchIndex(items);
+  const res = executeSearch(prepared, q, limit + 1);
+  if (res.status !== 'ready' || res.matches.length === 0) return [];
+
+  const byId = new Map(chapters.map((c) => [c.id, c]));
+  const ranked: CompanionChapter[] = [];
+  for (const m of res.matches) {
+    const orig = m.folderName ? byId.get(m.folderName) : undefined;
+    if (orig) ranked.push(orig);
+    if (ranked.length >= limit) break;
+  }
+  return ranked;
+}
+
+/**
+ * Format companion snippets as an LLM system-prompt block. Textbooks are
+ * explicitly marked supplementary and possibly beyond syllabus scope; the
+ * current lecture stays the primary ground truth.
+ */
+export function buildCompanionBlock(snippets: CompanionSnippet[]): string {
+  if (snippets.length === 0) return '';
+  const blocks = snippets.map((s) => {
+    const body =
+      s.snippet.length > MAX_CHARS_PER_COMPANION
+        ? s.snippet.slice(0, MAX_CHARS_PER_COMPANION).trim() + '…'
+        : s.snippet;
+    return `### [Textbook: ${s.title}]\n${body}`;
+  });
+  return (
+    `\n\n## TEXTBOOK SOURCES (supplementary — same subject, standard textbook)\n` +
+    `The current lecture above is the PRIMARY ground truth and defines the syllabus scope. Use these textbook excerpts ONLY when they add genuine depth, a clearer explanation, or background the lecture notes lack. Textbooks may go beyond the syllabus — say so when they do. When you use them, cite inline like [Textbook: <title>]. Never invent chapter titles.\n` +
+    blocks.join('\n\n')
+  );
+}
+
+function companionCacheKey(subject: string, suffix: string): Request {
+  return new Request(
+    `https://internal.bitsnotes/cache/companion/${encodeURIComponent(subject)}/${suffix}`
+  );
+}
+
+async function getCompanionCache(): Promise<Cache | null> {
+  try {
+    const env = await getEnv();
+    const fromEnv = (env as any)?.caches?.default as Cache | undefined;
+    if (fromEnv) return fromEnv;
+    const fromGlobal = (globalThis as any)?.caches?.default as Cache | undefined;
+    return fromGlobal ?? null;
+  } catch {
+    return null;
+  }
+}
+
+/** Load and cache the per-subject companion index. Returns null when unavailable. */
+async function getCompanionIndex(subject: string): Promise<CompanionChapter[] | null> {
+  const now = Date.now();
+  const cached = companionIndexCache.get(subject);
+  if (cached && now - cached.time < COMPANION_INDEX_TTL_MS) return cached.data;
+
+  try {
+    const env = await getEnv();
+    const bucket = (env as any)?.NOTES_BUCKET;
+    if (!bucket) return null;
+
+    const cache = await getCompanionCache();
+    const cacheKey = companionCacheKey(subject, 'index.json');
+    if (cache) {
+      try {
+        const hit = await cache.match(cacheKey);
+        if (hit) {
+          const payload = (await hit.json()) as { chapters?: CompanionChapter[] };
+          const chapters = Array.isArray(payload?.chapters) ? payload.chapters : [];
+          companionIndexCache.set(subject, { data: chapters, time: now });
+          return chapters;
+        }
+      } catch { /* cache read is best-effort */ }
+    }
+
+    const obj = await bucket.get(`companion/${subject}/index.json`);
+    if (!obj) return null;
+    const payload = (await obj.json()) as { chapters?: CompanionChapter[] };
+    const chapters = Array.isArray(payload?.chapters) ? payload.chapters : [];
+
+    if (cache) {
+      try {
+        const res = new Response(JSON.stringify({ chapters }), {
+          headers: { 'Content-Type': 'application/json', 'Cache-Control': 'public, max-age=300' },
+        });
+        cache.put(cacheKey, res).catch(() => {});
+      } catch { /* best-effort */ }
+    }
+
+    companionIndexCache.set(subject, { data: chapters, time: now });
+    return chapters;
+  } catch (err) {
+    console.error('[chatbotRetrieval] Non-fatal companion index failure:', err);
+    return null;
+  }
+}
+
+/** Fetch one full chapter text via a byte-range read on the subject bundle. */
+async function getCompanionChapterText(
+  subject: string,
+  chapter: CompanionChapter
+): Promise<string> {
+  try {
+    if (chapter.offset == null || chapter.length == null || chapter.length <= 0) return '';
+    const env = await getEnv();
+    const bucket = (env as any)?.NOTES_BUCKET;
+    if (!bucket) return '';
+
+    // Range reads are cheap and precise — no edge-cache layer needed
+    // (Cache API handles Range requests poorly); a range GET pulls only
+    // the ~70KB chapter out of the multi-MB subject bundle.
+    const obj = await bucket.get(`companion/${subject}/bundle.json`, {
+      range: { offset: chapter.offset, length: chapter.length },
+    });
+    if (!obj) return '';
+    return (await obj.text()) || '';
+  } catch (err) {
+    console.error('[chatbotRetrieval] Non-fatal companion chapter failure:', err);
+    return '';
+  }
+}
+
+/**
+ * Main entry: find up to COMPANION_LIMIT textbook snippets for a query,
+ * scoped to the current subject only. Never throws — returns [] on any
+ * failure so chat degrades gracefully.
+ */
+export async function getCompanionSnippets(opts: {
+  subject: string;
+  query: string;
+  limit?: number;
+}): Promise<CompanionSnippet[]> {
+  const { subject } = opts;
+  const limit = Math.min(opts.limit ?? COMPANION_LIMIT, COMPANION_LIMIT);
+  try {
+    const q = (opts.query || '').trim();
+    if (!subject || !q || q.length < MIN_QUERY_LENGTH) return [];
+    const { isPureStopWords } = tokenizeQuery(q);
+    if (isPureStopWords) return [];
+
+    const chapters = await getCompanionIndex(subject);
+    if (!chapters || chapters.length === 0) return [];
+
+    const ranked = rankCompanionCandidates(chapters, q, limit);
+    if (ranked.length === 0) return [];
+
+    const results = await Promise.all(
+      ranked.map(async (ch): Promise<CompanionSnippet | null> => {
+        try {
+          const raw = await getCompanionChapterText(subject, ch);
+          const fullText = cleanPlainText(raw);
+          if (fullText.length < 100) return null;
+          const snippet = extractSnippetWindow(fullText, q, MAX_CHARS_PER_COMPANION);
+          if (!snippet) return null;
+          return { subject, chapterId: ch.id, title: ch.title, book: ch.book, snippet };
+        } catch {
+          return null;
+        }
+      })
+    );
+
+    return results.filter((r): r is CompanionSnippet => r !== null).slice(0, limit);
+  } catch (err) {
+    console.error('[chatbotRetrieval] Non-fatal companion retrieval failure:', err);
     return [];
   }
 }
