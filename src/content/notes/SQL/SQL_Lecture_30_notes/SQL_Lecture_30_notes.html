@@ -1,0 +1,1092 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+  <!-- Primary SEO -->
+  <title>Table Partitions | SQL | BitsNotes</title>
+  <meta name="description" content="SQL notes: split huge PostgreSQL tables with range, list, and hash partitions, prune queries to one slice, and maintain indexes.">
+  <meta name="keywords" content="SQL, table partitioning, PARTITION BY RANGE, PARTITION BY LIST, PARTITION BY HASH, partition pruning, default partition, table inheritance, partition key, indexes on partitioned tables">
+  <meta name="author" content="BitsNotes">
+  <meta name="robots" content="index, follow">
+  <link rel="canonical" href="https://bitsnotes.com/view/sql/table-partitions">
+
+  <!-- Open Graph / Facebook -->
+  <meta property="og:type" content="article">
+  <meta property="og:title" content="Table Partitions | SQL">
+  <meta property="og:description" content="SQL notes: split huge PostgreSQL tables with range, list, and hash partitions, prune queries to one slice, and maintain indexes.">
+  <meta property="og:url" content="https://bitsnotes.com/view/sql/table-partitions">
+  <meta property="og:image" content="https://bitsnotes.com/og-default.png">
+  <meta property="og:image:width" content="1200">
+  <meta property="og:image:height" content="630">
+  <meta property="og:site_name" content="BitsNotes">
+
+  <!-- Twitter Card -->
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="Table Partitions | SQL">
+  <meta name="twitter:description" content="SQL notes: split huge PostgreSQL tables with range, list, and hash partitions, prune queries to one slice, and maintain indexes.">
+  <meta name="twitter:image" content="https://bitsnotes.com/og-default.png">
+  <meta name="twitter:site" content="@BitsNotes">
+
+  <!-- Stylesheet -->
+  <link rel="stylesheet" href="/lecture-notes.css">
+
+  <!-- Structured Data: JSON-LD -->
+  <script type="application/ld+json">
+{"@context":"https://schema.org","@type":"Article","headline":"Table Partitions | SQL","description":"SQL notes: split huge PostgreSQL tables with range, list, and hash partitions, prune queries to one slice, and maintain indexes.","author":{"@type":"Organization","name":"BitsNotes"},"about":["table partitioning","PARTITION BY RANGE","PARTITION BY LIST","PARTITION BY HASH","partition pruning","default partition","table inheritance","partition key","indexes on partitioned tables"]}
+</script>
+
+  <!-- Lecture Metadata (for the BitsNotes platform viewer) -->
+  <!-- IMPORTANT: This is the ONLY metadata source. No companion .json file
+       is created. The viewer reads everything from this embedded script.
+       Required fields: title, subject, gradeLevel, datePublished,
+       targetAudience, sections (array), examRevisionNotes (array).
+       Optional fields: prerequisites (array of {subject, lecture, topics}).
+       NOT included (removed): summary, keyConcepts, quiz. -->
+  <script type="application/json" id="lecture-metadata">
+{
+  "title": "Table Partitions",
+  "subject": "SQL",
+  "gradeLevel": "undergraduate",
+  "datePublished": "2026-09-22",
+  "targetAudience": "Undergraduate students learning SQL partitioning in PostgreSQL",
+  "sections": [
+    {
+      "title": "What Partitioning Is and Why It Matters",
+      "description": "Partition concept, pruning payoff on 60M rows, and when tables are big enough to split."
+    },
+    {
+      "title": "Table Inheritance Foundation",
+      "description": "Legacy parent-child inheritance, ONLY diagnostics, and cascade drops."
+    },
+    {
+      "title": "Three Partition Types at a Glance",
+      "description": "Chooser for range, list, and hash methods across PostgreSQL, MySQL, Snowflake, Databricks."
+    },
+    {
+      "title": "Partition by Range",
+      "description": "Half-open range bounds, yearly slices, master-issued writes, and prune-to-one-slice plans."
+    },
+    {
+      "title": "Partition by List",
+      "description": "Single and multi-value list slices on country code with routing and plan pruning."
+    },
+    {
+      "title": "Partition by Hash",
+      "description": "Modulus-remainder buckets for even spreading; pruning only on the hashed key."
+    },
+    {
+      "title": "Default Partition",
+      "description": "Catch-all slice for unlisted values and promotion rule for hot codes."
+    },
+    {
+      "title": "Multi-Level Partitioning",
+      "description": "List on top with hash below; sub-partition only the hot branch."
+    },
+    {
+      "title": "Attaching and Detaching Partitions",
+      "description": "One-step attach for new values and detach for archive without data loss."
+    },
+    {
+      "title": "Changing Range Bounds Safely",
+      "description": "Gap demo and detach-change-attach inside one transaction with scan cost."
+    },
+    {
+      "title": "Indexes on Partitioned Tables",
+      "description": "Local index copies per slice and the partition-key-in-unique rule."
+    },
+    {
+      "title": "Partition Pruning",
+      "description": "enable_partition_pruning switch demo: one slice on, all slices off."
+    },
+    {
+      "title": "Choosing a Partition Key",
+      "description": "Raw-data review, query ranking, span profiling, and test before commit."
+    },
+    {
+      "title": "Sizing Partitions",
+      "description": "Min-max, distinct, grouped counts plus 2-5 year growth headroom."
+    },
+    {
+      "title": "Why Partitioning Pays Off",
+      "description": "Faster reads and writes plus drop-a-slice retention and slice-sized maintenance."
+    },
+    {
+      "title": "Common Partitioning Mistakes",
+      "description": "Slow-partition checklist: settings, indexes, permissions, query shape, slice count."
+    }
+  ],
+  "examRevisionNotes": [
+    {
+      "topic": "What Partitioning Is and Why It Matters",
+      "mustKnow": "Master holds zero rows; keyed filters prune to one slice.",
+      "keyFormula": "",
+      "commonPitfall": "Bare SELECT with no key filter scans every slice.",
+      "quickCheck": "Why does a 60M-row filter scan one slice when partitioned?",
+      "connections": [
+        "30.12"
+      ]
+    },
+    {
+      "topic": "Table Inheritance Foundation",
+      "mustKnow": "Parent reads fan out; ONLY reads stay local; CASCADE drops all.",
+      "keyFormula": "",
+      "commonPitfall": "Constraints do not auto-copy to children in legacy inheritance.",
+      "quickCheck": "What does SELECT FROM ONLY master return?",
+      "connections": [
+        "30.4"
+      ]
+    },
+    {
+      "topic": "Three Partition Types at a Glance",
+      "mustKnow": "Range for spans, list for known values, hash for even spreading.",
+      "keyFormula": "",
+      "commonPitfall": "Hash never helps a business-column filter.",
+      "quickCheck": "Which method fits a country-code filter?",
+      "connections": [
+        "30.4",
+        "30.5",
+        "30.6"
+      ]
+    },
+    {
+      "topic": "Partition by Range",
+      "mustKnow": "Upper bound is exclusive; always write TO as next slice FROM.",
+      "keyFormula": "",
+      "commonPitfall": "TO (2000-12-31) orphans New Year Eve rows.",
+      "quickCheck": "Write the year-2000 slice bounds.",
+      "connections": [
+        "30.10"
+      ]
+    },
+    {
+      "topic": "Partition by List",
+      "mustKnow": "List fits equality filters on known values; unlisted values error.",
+      "keyFormula": "",
+      "commonPitfall": "Bare SELECT scans all list slices.",
+      "quickCheck": "What happens inserting an unlisted code with no default?",
+      "connections": [
+        "30.7"
+      ]
+    },
+    {
+      "topic": "Partition by Hash",
+      "mustKnow": "MODULUS 3 with remainders 0,1,2; non-key filters fan out.",
+      "keyFormula": "",
+      "commonPitfall": "Country filter on hash-by-id scans all buckets.",
+      "quickCheck": "Which filter prunes a hash-by-id table?",
+      "connections": [
+        "30.5"
+      ]
+    },
+    {
+      "topic": "Default Partition",
+      "mustKnow": "PARTITION OF parent DEFAULT catches every unmatched row.",
+      "keyFormula": "",
+      "commonPitfall": "A bloated default means missed first-class values.",
+      "quickCheck": "Write the DDL for a default slice.",
+      "connections": [
+        "30.5"
+      ]
+    },
+    {
+      "topic": "Multi-Level Partitioning",
+      "mustKnow": "A slice can be a parent; EU partitioned by hash under list master.",
+      "keyFormula": "",
+      "commonPitfall": "Symmetric deep splits multiply empty slices.",
+      "quickCheck": "How many tables does 6 ranges x 4 hashes create?",
+      "connections": [
+        "30.6"
+      ]
+    },
+    {
+      "topic": "Attaching and Detaching Partitions",
+      "mustKnow": "Attach via CREATE PARTITION OF; detach via ALTER DETACH PARTITION.",
+      "keyFormula": "",
+      "commonPitfall": "Detaching live writable keys without redirecting writes.",
+      "quickCheck": "Which statement detaches a slice?",
+      "connections": [
+        "30.7"
+      ]
+    },
+    {
+      "topic": "Changing Range Bounds Safely",
+      "mustKnow": "Detach, new bounds, attach inside BEGIN COMMIT.",
+      "keyFormula": "",
+      "commonPitfall": "Widening past the neighbor overlaps and is rejected.",
+      "quickCheck": "Why wrap bound changes in a transaction?",
+      "connections": [
+        "30.4"
+      ]
+    },
+    {
+      "topic": "Indexes on Partitioned Tables",
+      "mustKnow": "Unique keys must include the partition key, e.g. (id, country_code).",
+      "keyFormula": "",
+      "commonPitfall": "Unique on id alone is rejected on a list-by-country master.",
+      "quickCheck": "Fix a unique index missing the partition key.",
+      "connections": [
+        "30.15"
+      ]
+    },
+    {
+      "topic": "Partition Pruning",
+      "mustKnow": "No key filter means no pruning even with the switch on.",
+      "keyFormula": "",
+      "commonPitfall": "Volatile function around the key hides the value from the planner.",
+      "quickCheck": "Same filtered query scans all slices: what two causes?",
+      "connections": [
+        "30.1"
+      ]
+    },
+    {
+      "topic": "Choosing a Partition Key",
+      "mustKnow": "Most-used plain WHERE columns are the key candidates.",
+      "keyFormula": "",
+      "commonPitfall": "Function-wrapped filter columns prune poorly.",
+      "quickCheck": "Which votes more: id lookup or date-region join?",
+      "connections": [
+        "30.14"
+      ]
+    },
+    {
+      "topic": "Sizing Partitions",
+      "mustKnow": "Tens of slices, busiest slice fits maintenance windows.",
+      "keyFormula": "",
+      "commonPitfall": "Hundreds of pre-created empty daily slices tax every plan.",
+      "quickCheck": "Which probe reveals slice-count explosion?",
+      "connections": [
+        "30.13"
+      ]
+    },
+    {
+      "topic": "Why Partitioning Pays Off",
+      "mustKnow": "Reads prune, writes land small, history leaves by slice drops.",
+      "keyFormula": "",
+      "commonPitfall": "Expecting wins without key filters or with tiny tables.",
+      "quickCheck": "Name the three maintenance wins.",
+      "connections": [
+        "30.9"
+      ]
+    },
+    {
+      "topic": "Common Partitioning Mistakes",
+      "mustKnow": "Debug order: key filter, slice count, settings.",
+      "keyFormula": "",
+      "commonPitfall": "Key-less queries turn every read into a full fan-out.",
+      "quickCheck": "First check when a partitioned query is slow?",
+      "connections": [
+        "30.12"
+      ]
+    }
+  ],
+  "prerequisites": [
+    {
+      "subject": "SQL",
+      "lecture": "Lecture 2",
+      "topics": [
+        "CREATE TABLE with primary keys, data types and NOT NULL rules"
+      ]
+    },
+    {
+      "subject": "SQL",
+      "lecture": "Lecture 3",
+      "topics": [
+        "INSERT, UPDATE and DELETE rows"
+      ]
+    },
+    {
+      "subject": "SQL",
+      "lecture": "Lecture 5",
+      "topics": [
+        "WHERE, BETWEEN, IN and LIKE filters"
+      ]
+    },
+    {
+      "subject": "SQL",
+      "lecture": "Lecture 4",
+      "topics": [
+        "SELECT and ORDER BY"
+      ]
+    },
+    {
+      "subject": "SQL",
+      "lecture": "Lecture 7",
+      "topics": [
+        "ALTER TABLE with UNIQUE and CHECK constraints"
+      ]
+    }
+  ]
+}
+</script>
+</head>
+<body>
+  <div class="container">
+    <!-- ============================================================
+    HERO HEADER
+    ============================================================ -->
+    <header class="hero-header">
+      <span class="subject-badge">SQL</span>
+      <h1 class="lecture-title">Table Partitions</h1>
+      <div class="meta-info">
+        <div class="meta-item"><strong>Published:</strong> 2026-09-22</div>
+        <div class="meta-item"><strong>Level:</strong> undergraduate</div>
+        <div class="meta-item"><strong>Audience:</strong> Undergraduate students learning SQL partitioning in PostgreSQL</div>
+      </div>
+    </header>
+
+    <!-- ============================================================
+    PREREQUISITE KNOWLEDGE
+    Optional section listing concepts from previous lectures that this
+    lecture builds on. Populated by Agent 3 from topic_mappings/*.yaml.
+    If no prerequisites exist, this section is omitted entirely.
+    ============================================================ -->
+    <section class="prerequisite-section">
+  <h2>Prerequisite Knowledge</h2>
+  <p class="prerequisite-intro">This lecture builds on the following
+  concepts from earlier lectures. If any feel unfamiliar, review the
+  linked notes before proceeding.</p>
+  <div class="prerequisite-entry">
+    <h3>Previously Covered in This Subject</h3>
+    <ul>
+      <li><strong>CREATE TABLE with primary keys, data types and NOT NULL rules</strong> — covered in Lecture 2</li>
+      <li><strong>INSERT, UPDATE and DELETE rows through table names</strong> — covered in Lecture 3</li>
+      <li><strong>SELECT with WHERE, BETWEEN, IN and LIKE filters</strong> — covered in Lecture 5</li>
+      <li><strong>Reading data with SELECT and sorting with ORDER BY</strong> — covered in Lecture 4</li>
+      <li><strong>ALTER TABLE with UNIQUE and CHECK constraints</strong> — covered in Lecture 7</li>
+    </ul>
+  </div>
+</section>
+
+    <!-- ============================================================
+    MAIN LECTURE-FAITHFUL CONTENT
+    Page title = one h1.lecture-title
+    Each section = one h2.section-title
+    Each subsection = one h3.subsection-title
+    Callout boxes: .key-concept (blue), .important-note (violet),
+      .example-box (green), .warning-box (red), .key-takeaway (amber)
+    Display math: auto-scrolls via mjx-container CSS; .eqbox wrapper optional
+    ============================================================ -->
+    <main>
+<p>This lecture builds one skill end to end: splitting a very large PostgreSQL table into smaller physical pieces so queries, loads, and cleanup each touch less data. It starts from table inheritance, works range, list, and hash designs with full syntax, then covers default slices, multi-level splits, attach and detach, bound changes, indexes, pruning, and how to pick and size the key.</p>
+
+<h2 id="30.1-what-partitioning-is-and-why-it-matters">30.1 What Partitioning Is and Why It Matters</h2>
+<h3 id="30.1.1-core-idea-in-plain-words">30.1.1 Core Idea in Plain Words</h3>
+<p>A <em>partition</em> (one slice of a large logical table, stored as its own physical table) lets PostgreSQL store a huge table as a set of related physical tables while you keep querying one logical name. You take one master table and break it into smaller chunks that stay linked to each other. Each chunk holds a meaningful slice, for example all office products in one slice and all house products in another slice. The slices are designed so they are easy to manage on their own.</p>
+<div class="important-note">
+  <p>Think of a very big pie cut into smaller, meaningful pieces so that when you want the best piece you know exactly where it is. The plate is the master table name you query; each slice is a partition holding only its share. The picture captures the whole design goal: do not scan everything when you only need one slice. Where the analogy breaks: unlike pie slices you eat once, partitions stay linked and the engine can re-combine any subset on demand.</p>
+</div>
+<p>A single table with 60 million product rows cannot be scanned end to end for every ad hoc filter such as product name starting with A. Partitioning gives each filter a chance to touch only the matching slice. Administrative work gets the same win: one slice can be vacuumed, reindexed, backed up, or dropped while the rest stay online, and cold slices can live on cheaper storage while hot slices stay on fast disks.</p>
+<p>Partitioning in this lecture is <em>horizontal partitioning</em>: entire rows go to exactly one slice based on a <em>partition key</em> (the column whose values decide which slice holds each row) plus a <em>partitioning function</em> (the rule applied to the key, such as a date range, a value list, or a hash). Every slice shares the same columns and types; the data subsets never overlap.</p>
+<div class="key-concept">
+  <p>A partitioned table is a virtual routing layer. The master name holds the definition and the routing rules; the slices hold the rows and carry their own physical indexes. Users query the master name exactly as before, and the optimizer decides which slices to visit.</p>
+</div>
+<h3 id="30.1.2-how-the-engine-uses-partitions">30.1.2 How the Engine Uses Partitions</h3>
+<p>When a table is partitioned well, the query optimizer scans only the data needed to satisfy a given condition instead of scanning all contents of the large table. If your condition points at one category table, the engine reads only that table. This skipping step is called <em>partition pruning</em> (checking the query filter against slice bounds and dropping every slice that cannot hold a match). If you ask for everything with no condition, it still has to visit every slice and combine the results with an Append step, so the design only pays off when queries filter on the partition key.</p>
+<p>A surprise for newcomers: the master table itself holds no rows. You run <code>SELECT</code> against the master name and you get rows back, yet <code>SELECT ... FROM ONLY master</code> returns zero rows. The rows live in the partitions. The master name is a routing layer that plans which slice to hit based on your criteria. <code>ONLY</code> is the diagnostic keyword that restricts a query to the named table alone, skipping all linked slices, so <code>SELECT * FROM ONLY employees_range</code> proving empty is how you confirm the router holds nothing.</p>
+<div class="example-box">
+  <p>Run this filter against a 60-million-row products table:</p>
+  <pre><code>SELECT * FROM products WHERE product_name LIKE 'A%';</code></pre>
+  <p>With no partition, that filter scans 60 million records. With a good partition design on category, it scans only the slice that can hold A names. <strong>Final answer: one slice scanned instead of 60 million rows.</strong> Sense-check: if the filter does not match the partition key, for example filtering by price on a category-partitioned table, every slice is still visited and no time is saved.</p>
+</div>
+<p>The same routing applies to writes. An <code>INSERT</code> through the master name is routed to the one slice whose bound accepts the new row; an <code>UPDATE</code> that changes the key value moves the row between slices; a <code>DELETE</code> through the master removes the row from whichever slice holds it.</p>
+<h3 id="30.1.3-when-partitioning-pays">30.1.3 When Partitioning Pays</h3>
+<p>Partitioning is a performance feature for very large tables. It shines when the size of the table exceeds the size of physical memory available to PostgreSQL, or more simply once full scans, index builds, vacuum runs, statistics refreshes, or backups stop fitting comfortably in maintenance windows — typically past a few million rows. Small tables with six rows or a few thousand rows do not need it; the extra planning cost buys nothing. Tables that keep growing toward tens of millions of rows should be split early, with attention to how data arrives and how it will be queried.</p>
+<p>PostgreSQL version 12 added many improvements in this area, including better handling around integrity and partition management. The design rule stays the same across versions: define a good partition key and good bounds, and the optimizer will exclude partitions that cannot affect what you read or write.</p>
+<div class="warning-box">
+  <p><strong>Scope:</strong> partitioning pays when queries filter on the partition key and slices are sized so one slice fits the working set. It does not pay for tiny tables, for queries that never mention the key, or for designs with hundreds of near-empty slices, where planning overhead wipes out the savings.</p>
+</div>
+<p>How other systems differ on this same idea, in one place: MySQL uses the same manual range, list, and hash designs with its own <code>PARTITION BY RANGE (yearweek(sale_date))</code> style syntax and a spillover <code>MAXVALUE</code> slice, so the mental model transfers directly. Snowflake needs no manual slices at all: it breaks tables automatically into small <em>micro-partitions</em> (roughly 50 to 500 MB each) with min-max metadata per slice, and pruning happens silently behind the same <code>WHERE</code> clause. Databricks Delta Lake sits in between with manual <code>PARTITIONED BY</code> on write plus automatic file-skipping and liquid clustering that plays the same role as pruning. The rest of this lecture uses the PostgreSQL declarative form, which is the one you must write by hand.</p>
+<div class="key-takeaway">
+  <p><strong>Exam note:</strong> expect questions that ask why a full scan of 60 million rows is wasteful and how partitioning avoids it by pruning to one slice. Answer with three parts: the master holds zero rows, the <code>WHERE</code> clause on the partition key selects the slice, and a bare <code>SELECT *</code> with no filter still fans out to every slice.</p>
+</div>
+
+<h2 id="30.2-table-inheritance-foundation">30.2 Table Inheritance Foundation</h2>
+<h3 id="30.2.1-parent-and-child-in-plain-words">30.2.1 Parent and Child in Plain Words</h3>
+<p>An <em>inheritance</em> link (a child table that picks up all columns of a parent table) is the older PostgreSQL mechanism that partitioning builds on. In object-oriented terms, a subclass inherits properties of a parent class. In PostgreSQL, a table inherits columns from its parent table. Modern declarative partitioning (<code>PARTITION BY ...</code>) replaced this manual style in version 10, but the lecture walks it first because every partitioned master behaves like a parent: reads against the parent combine parent plus child rows, and writes against the parent reach into the matching child storage.</p>
+<div class="important-note">
+  <p>Picture a company form template (the parent) photocopied to every branch office (the children). Each branch copy starts with the same fields, and head office can collect all branches by asking for the template name. Where the picture breaks: unlike photocopies, the database children stay live-linked, so a query on the parent name automatically pulls in child rows unless you write <code>ONLY</code>.</p>
+</div>
+<p>The demonstration uses two tables. The parent is called <code>master</code> with three columns: <code>pk</code> as integer primary key, <code>tag</code> as text, and <code>pattern</code> as integer. The child is called <code>master_child</code> and it inherits from <code>master</code> without re-listing columns.</p>
+<pre><code>CREATE TABLE master (
+  pk INTEGER PRIMARY KEY,
+  tag TEXT,
+  pattern INTEGER
+);
+
+CREATE TABLE master_child () INHERITS (master);</code></pre>
+<p>In the graphical browser, the parent shows an arrow pointing right and the child shows an arrow pointing left. The child lists the same columns <code>pk</code>, <code>tag</code>, <code>pattern</code>. That visual cue tells you an inheritance link exists.</p>
+<h3 id="30.2.2-constraints-are-not-inherited-automatically">30.2.2 Constraints Are Not Inherited Automatically</h3>
+<p>Columns are inherited, but constraints are not copied in the same step. Right after creation, the parent has a primary key and the child shows no primary key under its constraints. You must add it by hand so the two shapes match exactly:</p>
+<pre><code>ALTER TABLE master_child ADD CONSTRAINT master_pk PRIMARY KEY (pk);</code></pre>
+<p>After a refresh, both tables show the same primary key mapping. This step matters because later partition work assumes parent and slice share the same shape and the same uniqueness rules.</p>
+<div class="warning-box">
+  <p><strong>Scope:</strong> in legacy inheritance you must replicate keys, checks, and indexes on every child by hand and add routing <code>CHECK</code> constraints yourself; the engine will not stop a wrong-slice row. In declarative partitioning (sections 30.4 onward) indexes created on the master propagate automatically, but unique keys must still include the partition key column.</p>
+</div>
+<p>A common beginner trap is assuming a <code>CHECK (pattern BETWEEN 0 AND 100)</code> on the parent protects the child. It does not under inheritance: each child enforces only its own constraints, so a legacy partition design needs the bound repeated on every child plus constraint exclusion enabled before the planner can skip slices.</p>
+<h3 id="30.2.3-seeing-inheritance-from-the-terminal">30.2.3 Seeing Inheritance From the Terminal</h3>
+<p>From <code>psql</code> connected to the <code>learning</code> database as user <code>postgres</code>, you can inspect the link:</p>
+<pre><code>\d master
+\D+ master</code></pre>
+<p>The output lists table structure plus a line such as number of child tables: 1, and names <code>master_child</code> as the child. The access method shows as heap. When many tables exist, this terminal view is faster than clicking through the browser tree. <code>\d master</code> shows columns, indexes, and the child list; the <code>+</code> variant adds size and description detail. For declarative tables the equivalent check is <code>\d+ employees_range</code>, which instead lists the partition key and the attached slice names.</p>
+<h3 id="30.2.4-worked-examples-with-insert-update-and-delete">30.2.4 Worked Examples With Insert Update and Delete</h3>
+<p>Insert one row into the parent and one row into the child:</p>
+<pre><code>INSERT INTO master (pk, tag, pattern) VALUES (1, 'Apple pen', 0);
+INSERT INTO master_child (pk, tag, pattern) VALUES (2, 'pen pencil', 0);
+
+SELECT * FROM master;
+SELECT * FROM master_child;
+SELECT * FROM ONLY master;
+SELECT * FROM ONLY master_child;</code></pre>
+<div class="example-box">
+  <p>Trace each read step by step. After the two inserts the physical stores hold: parent <code>{1}</code>, child <code>{2}</code>. <code>SELECT * FROM master_child</code> returns <strong>one row</strong> (<code>pk = 2</code>). <code>SELECT * FROM master</code> returns <strong>two rows</strong> (<code>pk = 1</code> plus <code>pk = 2</code> pulled up from the child). <code>SELECT * FROM ONLY master</code> returns <strong>one row</strong>, only the row physically stored in the parent. <code>ONLY</code> is a diagnostic aid: it shows what a single table holds without pulling in linked rows. Sense-check: master-through reads equal parent-only rows plus all child rows.</p>
+</div>
+<p>Update through the parent name:</p>
+<pre><code>UPDATE master SET tag = 'monitor' WHERE pk = 2;</code></pre>
+<p>The row with <code>pk = 2</code> lives in the child, yet updating via the parent name changes it in the child. Reading the parent shows pen plus monitor. Reading the child shows the updated monitor row. The operation touches only the child storage; the parent storage is unchanged.</p>
+<p>Delete through the parent name:</p>
+<pre><code>DELETE FROM master WHERE pk = 2;</code></pre>
+<p>The child row disappears. The parent shows <strong>one row left</strong> (<code>pk = 1</code>). The child shows <strong>zero rows</strong>. <code>ONLY</code> confirms the same split.</p>
+<p>The takeaway: operations issued against the parent propagate to the matching child, and reads against the parent combine parent plus child rows. Partitioning uses exactly this behavior, with added rules that route each row to the right slice.</p>
+<h3 id="30.2.5-dropping-tables-with-dependents">30.2.5 Dropping Tables With Dependents</h3>
+<p>A plain drop fails while a dependent exists:</p>
+<pre><code>DROP TABLE master;
+-- cannot drop table master because other objects depend on it
+-- table master_child depends on table master</code></pre>
+<p>You can drop the child first, or use cascade:</p>
+<pre><code>DROP TABLE master CASCADE;</code></pre>
+<div class="warning-box">
+  <p>Cascade removes the parent and all child tables and their data in one shot, with no per-table confirmation. On a production server always list dependents first (<code>\d master</code>), drop or detach the child explicitly, and reserve <code>CASCADE</code> for throwaway practice databases.</p>
+</div>
+<div class="key-takeaway">
+  <p>A parent read fans out to every child; an <code>ONLY</code> read stays local; parent writes land in the matching child store. Declarative partitioning keeps this exact fan-out idea and adds automatic key-based routing, which is why every later section insists on writing through the master name.</p>
+</div>
+
+<h2 id="30.3-three-partition-types-at-a-glance">30.3 Three Partition Types at a Glance</h2>
+<h3 id="30.3.1-range-list-and-hash">30.3.1 Range List and Hash</h3>
+<p>PostgreSQL offers three partition methods: range, list, and hash. Later sections work each one with full syntax, but the high-level split helps you pick:</p>
+<ul>
+  <li><em>Range partition</em> — the table is split by ranges on a key column or set of columns, with no overlap between ranges assigned to different partitions. Dates are the most frequent use. You might split by year, with one slice holding 2020-01-01 through 2020-12-31 and the next holding 2019-01-01 through 2019-12-31. Bounds are half-open (<code>FROM</code> inclusive, <code>TO</code> exclusive), so the year-2000 slice is <code>FROM ('2000-01-01') TO ('2001-01-01')</code>.</li>
+  <li><em>List partition</em> — the table is split by explicitly listing which key values belong in each partition. A country table with a country code column might have one slice for US, one for UK, and one for JP. One slice may hold several values (for example all of <code>UK, DE, IT, FR, ES</code> in one EU bucket), and any key type supporting equality comparison works.</li>
+  <li><em>Hash partition</em> — the table is split by modulus and remainder on a key, spreading rows across many slices when no single column gives a clean logical split. For three buckets you declare modulus 3 with remainders 0, 1, and 2; the engine hashes the key and drops each row into its remainder bucket.</li>
+</ul>
+<div class="important-note">
+  <p>Pick by asking one question: what do users filter on? Dates they range over point to range; a short known value list they test with <code>=</code> points to list; no clean business split but a table too big to keep whole points to hash for even spreading.</p>
+</div>
+<p>Comparison across systems, kept to what changes your choice: PostgreSQL and MySQL both offer all three manual methods with near-identical thinking, differing only in DDL spelling (MySQL writes <code>PARTITION BY RANGE (yearweek(sale_date))</code> with <code>VALUES LESS THAN</code>, PostgreSQL writes <code>PARTITION BY RANGE (birth_date)</code> with <code>FOR VALUES FROM ... TO ...</code>). MySQL range gets a built-in <code>MAXVALUE</code> catch-all while MySQL list has none, which is why the lecture adds an explicit <code>DEFAULT</code> slice for PostgreSQL list designs. Snowflake and Databricks need no method choice from you for mechanics: Snowflake micro-partitions and Delta Lake file-skipping prune on any filter column automatically, so the range-versus-list-versus-hash decision there is about file layout and clustering, not about writing slice DDL.</p>
+<div class="example-box">
+  <p>Match three workloads to methods. A sales table queried with <code>WHERE sale_date BETWEEN '2020-01-01' AND '2020-01-31'</code> wants <strong>range on sale_date</strong> (one monthly slice scanned). A users table queried with <code>WHERE country_code = 'US'</code> wants <strong>list on country_code</strong> (one country slice scanned). A log table with no repeating filter column but 500 million rows wants <strong>hash on id into 8 buckets</strong> (each physical table roughly one-eighth the size). Sense-check: a hash design never helps a country filter, and a list design never helps a date-range filter.</p>
+</div>
+<div class="key-takeaway">
+  <p>Range for ordered spans (usually dates), list for known enumerable values, hash for even spreading with no business boundary. The rest of the lecture builds each one from <code>CREATE TABLE ... PARTITION BY</code> through plans, so learn this chooser first and the syntax second.</p>
+</div>
+
+<h2 id="30.4-partition-by-range">30.4 Partition by Range</h2>
+<h3 id="30.4.1-core-idea-and-design-choices">30.4.1 Core Idea and Design Choices</h3>
+<p>A <em>range partition</em> (a split where each slice owns a <code>FROM</code> value up to but not including a <code>TO</code> value, with no overlap) fits dates best. You can build daily slices with 365 partitions, yearly slices, monthly slices, or multi-level splits such as year then month then day. Daily splits are possible but not recommended for most teams because they create many slices. A flat monthly design often runs faster than a deep year-month-day hierarchy, though a multi-level design can reduce planning time in some shapes. Match the grain to your queries: if users ask by year, partition by year; if they ask by month, partition by month.</p>
+<div class="important-note">
+  <p>Picture a filing cabinet with one drawer per year. A request for March 2001 opens only the 2001 drawer. The drawer labels must tile the timeline with no gaps and no overlaps, or a letter falls behind the cabinet (insert error) or fits two drawers (ambiguous routing, rejected at DDL time).</p>
+</div>
+<p>Values must not overlap between ranges. For dates, the upper bound is exclusive, so always add one extra day. For year 2000, use <code>FROM ('2000-01-01') TO ('2001-01-01')</code>, never <code>TO ('2000-12-31')</code>. A row dated <code>2000-12-31</code> then fits, while <code>2001-01-01</code> starts the next slice at <code>FROM ('2001-01-01') TO ('2002-01-01')</code>. The <code>TO ('2000-12-31')</code> form silently orphans New Year's Eve rows, which is the single most repeated range bug in this lecture.</p>
+<div class="warning-box">
+  <p><strong>Scope:</strong> range needs an ordered key (dates, timestamps, numbers) and queries that filter with <code>=</code>, <code>BETWEEN</code>, <code><</code>, or <code>></code> on that key. Equality on an unrelated column gets no pruning. Keep slice counts in the tens, not hundreds: 365 daily slices add planning and catalog cost that a 12-slice monthly design avoids.</p>
+</div>
+<h3 id="30.4.2-creating-the-master-table">30.4.2 Creating the Master Table</h3>
+<p>The master table is called <code>employees_range</code> with an <code>id</code> as bigserial for millions of rows, <code>birth_date</code> as date not null, and <code>country_code</code> as varchar(2) not null. The extra clause <code>PARTITION BY RANGE</code> names the key:</p>
+<pre><code>CREATE TABLE employees_range (
+  id BIGSERIAL,
+  birth_date DATE NOT NULL,
+  country_code VARCHAR(2) NOT NULL
+) PARTITION BY RANGE (birth_date);</code></pre>
+<p>No primary key or index is added yet; indexes get their own treatment later. In the browser, the new table shows a partition icon after the index node. Plain tables such as customers show no such icon. That icon is a quick way to tell a partitioned table apart.</p>
+<p><code>SELECT * FROM employees_range</code> returns no rows at first. <code>SELECT * FROM ONLY employees_range</code> also returns no rows. MySQL readers note the spelling difference only: the same weekly design there reads <code>PARTITION BY RANGE (yearweek(sale_date))</code> with <code>PARTITION s1 VALUES LESS THAN (202002)</code> slices, versus PostgreSQL <code>FOR VALUES FROM ... TO ...</code>. Snowflake and Databricks users write no slice DDL at all for this step.</p>
+<h3 id="30.4.3-creating-yearly-slices">30.4.3 Creating Yearly Slices</h3>
+<p>Each slice attaches to the master with <code>PARTITION OF</code> plus <code>FOR VALUES FROM ... TO ...</code>:</p>
+<pre><code>CREATE TABLE employees_range_2000 PARTITION OF employees_range
+  FOR VALUES FROM ('2000-01-01') TO ('2001-01-01)');
+
+CREATE TABLE employees_range_2001 PARTITION OF employees_range
+  FOR VALUES FROM ('2001-01-01') TO ('2002-01-01');</code></pre>
+<p>Note the first statement as demonstrated carries an extra closing parenthesis; the working form closes each string literal once, as in the second statement. Keep the master name as a prefix plus the slice label, such as <code>_2000</code> and <code>_2001</code>, so a long list stays readable. Each slice shows the same columns <code>id</code>, <code>birth_date</code>, <code>country_code</code>. After refresh, the master lists one partition, then two partitions.</p>
+<div class="warning-box">
+  <p>Overlapping bounds are rejected at creation time, but gaps are allowed and fail later at insert time with <code>no partition of relation ... found for row</code>. Always tile ranges edge to edge (<code>TO</code> of one equals <code>FROM</code> of the next) or add a default slice to catch strays.</p>
+</div>
+<h3 id="30.4.4-worked-examples-with-insert-update-and-delete">30.4.4 Worked Examples With Insert Update and Delete</h3>
+<p>Insert through the master name only, never directly into the slice:</p>
+<pre><code>INSERT INTO employees_range (birth_date, country_code) VALUES
+  ('2000-01-01', 'US'),
+  ('2000-01-02', 'US'),
+  ('2000-12-15', 'US'),
+  ('2001-03-10', 'US');</code></pre>
+<div class="example-box">
+  <p>Trace the routing. <code>SELECT * FROM employees_range</code> shows <strong>four rows</strong>. <code>SELECT * FROM ONLY employees_range</code> shows <strong>zero rows</strong>, proving the master stores nothing and the engine moved each row to its slice. <code>SELECT * FROM employees_range_2000</code> shows <strong>three rows</strong> (the two January plus the December date, all below the exclusive <code>2001-01-01</code> bound). <code>SELECT * FROM employees_range_2001</code> shows <strong>one row</strong> (March 2001). Sense-check: master-visible rows always equal the sum across slices, 3 + 1 = 4.</p>
+</div>
+<p>Update through the master name and the row can move slices:</p>
+<pre><code>UPDATE employees_range SET birth_date = '2001-10-10' WHERE id = 1;</code></pre>
+<p>The master still shows four rows, with the first now dated in 2001. The 2000 slice drops from three rows to two. The 2001 slice grows from one row to two. <code>ONLY</code> queries confirm the new counts. This cross-slice move (row migration) only works when written through the master; writing directly into <code>employees_range_2000</code> with a 2001 date is rejected by that slice's check constraint.</p>
+<p>Delete through the master name:</p>
+<pre><code>DELETE FROM employees_range WHERE id = 1;</code></pre>
+<p>The master drops to three rows. The 2000 slice holds one row in this walkthrough state and the 2001 slice holds one row after the earlier move plus delete sequence. The exact counts depend on order, but the pattern is stable: deletes issued on the master remove the row from whichever slice holds it.</p>
+<div class="key-takeaway">
+  <p><strong>Exam note:</strong> expect to explain why inserts, updates, and deletes should target the master name so routing stays correct. One line: only the master knows all bounds, so only master-issued writes can route, migrate, or prune correctly.</p>
+</div>
+<h3 id="30.4.5-reading-the-plan">30.4.5 Reading the Plan</h3>
+<p>Without a filter, the plan must visit every slice:</p>
+<pre><code>SELECT * FROM employees_range;</code></pre>
+<p>The graphical Explain with F7 shows scans of <code>employees_range_2000</code> plus <code>employees_range_2001</code> combined with Append. That is the same cost as an unpartitioned table and defeats the purpose. With 100 million rows across many slices, a bare <code>SELECT *</code> is expensive.</p>
+<p>With a filter on the key, the plan prunes to one slice:</p>
+<pre><code>SELECT * FROM employees_range WHERE birth_date = '2000-01-02';</code></pre>
+<div class="example-box">
+  <p>Explain shows a direct scan of <code>employees_range_2000</code> only. No other slice is touched. <strong>Final answer: one slice scanned instead of two.</strong> That single-slice access is the whole payoff of range design, and the same pruning idea appears in every engine: PostgreSQL <code>EXPLAIN</code> dropping slices, MySQL <code>EXPLAIN PARTITIONS</code> listing one slice, Snowflake skipping micro-partitions via min-max metadata.</p>
+</div>
+<p>Visual to carry: picture the plan tree going from a wide fan (one branch per slice under Append) to a single narrow branch when the <code>WHERE birth_date = ...</code> filter is added. The axes are slices versus rows scanned; the landmark is the Append node collapsing to one child; the takeaway is that the filter, not the table size, controls the cost.</p>
+
+<h2 id="30.5-partition-by-list">30.5 Partition by List</h2>
+<h3 id="30.5.1-core-idea-and-when-it-fits">30.5.1 Core Idea and When It Fits</h3>
+<p>A <em>list partition</em> (a split where you explicitly list which key values live in each slice) fits columns with known, enumerable values that support equality comparison. Country codes such as US, UK, DE, IT, FR, ES, JP are a textbook case. Month names from January to December are another. Any data type that allows equality comparison can serve as the key, and composite keys with more than one column are allowed.</p>
+<div class="important-note">
+  <p>Picture labeled mailboxes, one per country or one per region. A letter addressed US drops into the US box; a letter for an unlisted country has nowhere to go until you add a catch-all box (the default partition in section 30.7).</p>
+</div>
+<p>Use list when you know the values up front and users filter on them in the <code>WHERE</code> clause. If the business logic says most queries filter by country code, partition by country code. Range-filtered queries (<code>BETWEEN</code>, <code><</code>) on this column gain nothing; equality filters (<code>=</code>, <code>IN</code>) gain everything.</p>
+<h3 id="30.5.2-creating-the-master-table">30.5.2 Creating the Master Table</h3>
+<p>The master is called <code>employees_list</code> with <code>id</code> bigserial, <code>birth_date</code> date not null, and <code>country_code</code> varchar(2) not null, partitioned by list on country code:</p>
+<pre><code>CREATE TABLE employees_list (
+  id BIGSERIAL,
+  birth_date DATE NOT NULL,
+  country_code VARCHAR(2) NOT NULL
+) PARTITION BY LIST (country_code);</code></pre>
+<p>After refresh, the browser shows the partition icon with zero slices. A plain table such as customers shows no partition node. That contrast confirms the new table is partitioned. The MySQL spelling of the same idea is <code>PARTITION BY LIST COLUMNS (geo_region_cd)</code> with <code>PARTITION europe VALUES IN ('EUR_E','EUR_W')</code>; PostgreSQL folds the attach into <code>PARTITION OF ... FOR VALUES IN (...)</code> instead.</p>
+<h3 id="30.5.3-creating-slices-with-single-and-multiple-values">30.5.3 Creating Slices With Single and Multiple Values</h3>
+<p>One slice holds a single value:</p>
+<pre><code>CREATE TABLE employees_list_us PARTITION OF employees_list
+  FOR VALUES IN ('US');</code></pre>
+<p>Any row with country code US lands in <code>employees_list_us</code>. Keep the value in the slice name for fast visual scanning.</p>
+<p>One slice can hold many values, for example all Europe codes in one EU slice:</p>
+<pre><code>CREATE TABLE employees_list_eu PARTITION OF employees_list
+  FOR VALUES IN ('UK', 'DE', 'IT', 'FR', 'ES');</code></pre>
+<p>Any row with UK, DE, IT, FR, or ES lands in <code>employees_list_eu</code>. This grouping is handy when one region grows fast and may later need sub-slices (split EU into per-country slices or sub-partition by hash, as section 30.8 does). No primary key or index is defined yet; those come later. After refresh, the master lists two slices, US and EU.</p>
+<div class="warning-box">
+  <p><strong>Scope:</strong> each distinct value may belong to exactly one slice; listing the same value twice is rejected. Values are matched exactly, so <code>'us'</code> does not land in a <code>'US'</code> slice unless the data is cleaned first. Any unlisted value (JP, SP, a typo) errors until a default slice exists.</p>
+</div>
+<h3 id="30.5.4-worked-examples-with-insert-update-and-delete">30.5.4 Worked Examples With Insert Update and Delete</h3>
+<p>Insert through the master name:</p>
+<pre><code>INSERT INTO employees_list (id, birth_date, country_code) VALUES
+  (1, '2000-01-01', 'US'),
+  (2, '2000-02-01', 'US'),
+  (3, '2001-05-10', 'UK'),
+  (4, '2001-06-12', 'DK');</code></pre>
+<div class="example-box">
+  <p>Trace the routing as walked in the lecture. Here DK stands in for Denmark and routes to the EU slice in this walkthrough because the EU slice is treated as the Europe bucket. <code>SELECT * FROM employees_list</code> shows <strong>four rows</strong>. <code>SELECT * FROM employees_list_us</code> shows <strong>two US rows</strong>. <code>SELECT * FROM employees_list_eu</code> shows <strong>two rows</strong> (UK plus Denmark). <code>SELECT * FROM ONLY employees_list</code> shows <strong>zero rows</strong>, proving the master is a router, not a store. Sense-check: 2 + 2 = 4 across slices.</p>
+</div>
+<p>Note for careful readers: the DDL above lists only <code>UK, DE, IT, FR, ES</code> in the EU slice, so a literal <code>DK</code> insert would fail with a partition-missing error until <code>DK</code> is added to the EU list or a default slice exists (section 30.7). The lecture treats DK as covered by the Europe bucket for the walkthrough; in your own schema, add the value explicitly first.</p>
+<p>Update through the master name and the row moves slices:</p>
+<pre><code>UPDATE employees_list SET country_code = 'US' WHERE id = 4;</code></pre>
+<p>The Denmark row with <code>id = 4</code> becomes US. The master still shows four rows, now with three US codes and one UK code. The US slice grows from two rows to three. The EU slice shrinks from two rows to one. Always run such changes on the master name. Editing a slice directly breaks the routing idea because the definition lives on the master; worse, the slice's own check constraint rejects the out-of-range value.</p>
+<p>Delete through the master name:</p>
+<pre><code>DELETE FROM employees_list WHERE id = 2;</code></pre>
+<p>The <code>id = 2</code> US row disappears. The master shows <strong>three rows</strong>. The US slice drops from three rows to two. The EU slice still shows one row. Insert, update, and delete all filter by the list definition and place each row in its slice.</p>
+<h3 id="30.5.5-reading-the-plan">30.5.5 Reading the Plan</h3>
+<p>Without a filter, the plan visits every slice:</p>
+<pre><code>SELECT * FROM employees_list;</code></pre>
+<p>Explain shows scans of the EU slice plus the US slice plus combining steps. Because no <code>WHERE</code> clause guides the optimizer, it cannot prune, so it scans all partitions just like an unpartitioned table.</p>
+<p>With a filter on the key, the plan prunes:</p>
+<pre><code>SELECT * FROM employees_list WHERE country_code = 'US';
+SELECT * FROM employees_list WHERE country_code = 'UK';</code></pre>
+<div class="example-box">
+  <p>The first prunes to <code>employees_list_us</code>; the second prunes to <code>employees_list_eu</code>. The graphical plan shows a sequential scan limited to that one slice. <code>EXPLAIN SELECT ...</code> in text form shows the same split: bare selects scan US plus EU plus default when present, while filtered selects scan only the matching slice. With millions of rows split into ten to forty slices, pruning turns a huge scan into a small slice read. <strong>Final answer: filtered queries touch one slice; unfiltered queries touch all of them.</strong></p>
+</div>
+<div class="key-takeaway">
+  <p><strong>Exam note:</strong> never use bare <code>SELECT *</code> from a partitioned master in a performance answer; always add a <code>WHERE</code> clause on the partition key. One line: no key filter means no pruning even when the pruning switch is on.</p>
+</div>
+
+<h2 id="30.6-partition-by-hash">30.6 Partition by Hash</h2>
+<h3 id="30.6.1-core-idea-and-when-it-fits">30.6.1 Core Idea and When It Fits</h3>
+<p>A <em>hash partition</em> (a split by modulus <code>M</code> and remainder <code>N</code> for each slice) spreads rows into many smaller, roughly even buckets when no column gives a clean logical split. If you cannot find a field that users filter on and that divides the data in a meaningful way, hash lets you shrink each physical table without imposing a business meaning on the boundary.</p>
+<div class="important-note">
+  <p>Picture dealing cards to three players round-robin by a shuffled deck order (the hash), not by suit. Each player ends with about the same pile, but asking for "all hearts" still means checking every pile. That is hash partitioning: even piles, no business meaning per pile.</p>
+</div>
+<p>The rule is simple: pick how many slices you want as the modulus, then number remainders from zero upward. For three slices, use modulus 3 with remainders 0, 1, 2. The engine hashes the key and assigns each new row to the matching remainder bucket. Hash works best when the key column has many distinct values (ids, customer keys); with only two or three distinct values the buckets skew.</p>
+<p>Use hash to cut table size by spreading rows, not to answer business filters such as country or year. If users filter by country code, list is a better match than hash. MySQL expresses the same idea as <code>PARTITION BY HASH (cust_id) PARTITIONS 4</code> and spreads 16 test rows roughly 4-5-3-4 across buckets; PostgreSQL spells out each bucket with <code>MODULUS</code> and <code>REMAINDER</code> but the even-spread result is the same.</p>
+<h3 id="30.6.2-creating-the-master-and-three-buckets">30.6.2 Creating the Master and Three Buckets</h3>
+<p>The master is called <code>employees_hash</code> with the same three columns, partitioned by hash on <code>id</code>:</p>
+<pre><code>CREATE TABLE employees_hash (
+  id BIGSERIAL,
+  birth_date DATE NOT NULL,
+  country_code VARCHAR(2) NOT NULL
+) PARTITION BY HASH (id);</code></pre>
+<p>The browser shows the partition icon. Then create three buckets with the same modulus and distinct remainders:</p>
+<pre><code>CREATE TABLE employees_hash_1 PARTITION OF employees_hash
+  FOR VALUES WITH (MODULUS 3, REMAINDER 0);
+
+CREATE TABLE employees_hash_2 PARTITION OF employees_hash
+  FOR VALUES WITH (MODULUS 3, REMAINDER 1);
+
+CREATE TABLE employees_hash_3 PARTITION OF employees_hash
+  FOR VALUES WITH (MODULUS 3, REMAINDER 2);</code></pre>
+<p>Names such as <code>_1</code>, <code>_2</code>, <code>_3</code> carry no business meaning here; they only label bucket one, two, and three. Each bucket shows no constraint yet. <code>SELECT</code> from the master and from each bucket returns no rows before loading.</p>
+<div class="warning-box">
+  <p><strong>Scope:</strong> every bucket sharing one modulus must cover every remainder exactly once (0, 1, 2 for modulus 3). A missing remainder silently funnels those rows into an error at insert time; a duplicated remainder is rejected at DDL time. Buckets cannot be added one at a time later without re-hashing: growing from 3 to 4 buckets redistributes nearly every row.</p>
+</div>
+<h3 id="30.6.3-worked-examples-with-insert-update-and-delete">30.6.3 Worked Examples With Insert Update and Delete</h3>
+<p>Insert through the master name:</p>
+<pre><code>INSERT INTO employees_hash (id, birth_date, country_code) VALUES
+  (1, '2000-01-01', 'US'),
+  (2, '2000-02-01', 'UK'),
+  (3, '2001-05-10', 'UK');</code></pre>
+<div class="example-box">
+  <p><code>SELECT * FROM employees_hash</code> shows <strong>three rows</strong>. Each bucket shows about one row. <code>SELECT * FROM ONLY employees_hash</code> shows <strong>zero rows</strong>. Bucket labels do not encode the <code>id</code>; an <code>id</code> of 3 does not have to live in bucket 3. The engine spreads rows roughly evenly based on the hash of <code>id</code>, not on the digits you see. Sense-check: with three rows and three buckets the even outcome is 1 + 1 + 1, and larger loads converge toward one-third each as long as <code>id</code> values are distinct.</p>
+</div>
+<p>Update through the master name:</p>
+<pre><code>UPDATE employees_hash SET country_code = 'US' WHERE id = 3;</code></pre>
+<p>The master shows the change. Only the bucket that holds <code>id = 3</code> is affected; other buckets keep their rows unchanged. The engine goes straight to where the key lives instead of scanning every bucket. Note this stays in-bucket because <code>country_code</code> is not the hash key; changing <code>id</code> itself would migrate the row to a different bucket.</p>
+<p>Delete through the master name:</p>
+<pre><code>DELETE FROM employees_hash WHERE id = 2;</code></pre>
+<p>The master drops to <strong>two rows</strong>. The bucket that held <code>id = 2</code> becomes empty. The other two buckets keep one row each.</p>
+<h3 id="30.6.4-reading-the-plan-and-key-discipline">30.6.4 Reading the Plan and Key Discipline</h3>
+<p>Without a filter, the plan scans all buckets:</p>
+<pre><code>SELECT * FROM employees_hash;</code></pre>
+<p>Explain shows sequential scans of all three hash tables combined. That matches an unpartitioned cost because no partition key guides the choice.</p>
+<p>With a filter on the hash key, the plan prunes:</p>
+<pre><code>SELECT * FROM employees_hash WHERE id = 1;</code></pre>
+<p>Explain touches only the bucket that holds that hash, for example <code>employees_hash_3</code> in the demo. With a filter on a non-key column, pruning fails:</p>
+<pre><code>SELECT * FROM employees_hash WHERE country_code = 'US';</code></pre>
+<p>The engine does not know how country code maps to hash buckets, so it scans hash 1 plus hash 2 plus hash 3 and then applies the country filter. That full scan shows why design and query shape must match: a hash on <code>id</code> helps <code>id</code> filters, while country filters want a list design on country code. From personal preference shared in the lesson, list with known values ranks first for clarity, range for dates ranks next, and hash ranks last but stays powerful for even spreading.</p>
+<div class="key-takeaway">
+  <p>Hash spreads rows evenly across buckets but prunes only on the hashed key. Memorize the chooser: filter by <code>id</code> goes to hash on <code>id</code>; filter by country goes to list; filter by date goes to range. A hash design queried without its key is a full fan-out every time.</p>
+</div>
+
+<h2 id="30.7-default-partition">30.7 Default Partition</h2>
+<h3 id="30.7.1-core-idea-in-plain-words">30.7.1 Core Idea in Plain Words</h3>
+<p>A <em>default partition</em> (a catch-all slice that receives every row matching no other slice) prevents insert failures when new values appear. Without it, inserting a value with no matching slice raises <code>no partition of relation ... found for row</code>, naming the failing key such as country code JP. Exactly one default slice is allowed per master, and it also catches range gaps and out-of-span dates, not just unlisted list values.</p>
+<div class="important-note">
+  <p>Picture the mailroom catch-all tray for letters with unknown postcodes. Without the tray every unknown letter bounces; with it, the room keeps running while you watch which codes pile up and deserve their own box.</p>
+</div>
+<p>MySQL comparison worth one line: MySQL range designs get a built-in <code>VALUES LESS THAN (MAXVALUE)</code> spillover but MySQL list designs get none, so new values error the same way; the PostgreSQL <code>DEFAULT</code> slice is the portable fix for both range and list masters. Snowflake and Databricks never raise this error because slices are automatic.</p>
+<h3 id="30.7.2-worked-example-with-japan-rows">30.7.2 Worked Example With Japan Rows</h3>
+<p>Start from <code>employees_list</code> with US and EU slices only. This insert has no home:</p>
+<pre><code>INSERT INTO employees_list (id, birth_date, country_code)
+VALUES (10, '2001-01-01', 'JP');
+-- no partition of relation employees_list found for row
+-- partition key of failing row contains country_code JP</code></pre>
+<div class="example-box">
+  <p>Read the error literally: relation <code>employees_list</code> owns no slice whose bound contains <code>JP</code>. Adding one slice per country would create hundreds of tiny tables, many nearly empty. The cleaner fix is one default slice:</p>
+  <pre><code>CREATE TABLE employees_list_default PARTITION OF employees_list DEFAULT;</code></pre>
+  <p>No <code>FOR VALUES</code> list is needed. Any value absent from US and EU lands here. Keep <code>default</code> in the name because the browser does not badge which slice is the catch-all. After refresh the master shows <strong>three slices</strong>: US, EU, and default. Re-running the Japan insert now <strong>succeeds</strong>. <code>SELECT * FROM employees_list</code> shows the new row at the end. <code>SELECT * FROM employees_list_us</code> shows only US rows. <code>SELECT * FROM employees_list_eu</code> shows only Europe rows. <code>SELECT * FROM employees_list_default</code> shows <strong>the Japan row</strong>. Adding another uncovered code such as Sri Lanka also lands in default, giving <strong>two rows</strong> there. Sense-check: master total equals US plus EU plus default.</p>
+</div>
+<p>Watch default growth the way you watch a catch-all tray. If one code repeats often inside default, that repetition signals it is time to promote that code to its own slice: create the dedicated slice, move or re-route those rows, and the default shrinks back to true strays. A default slice holding half the table means the design missed a first-class value.</p>
+<div class="warning-box">
+  <p>A default slice disables some fast path operations: adding a new slice later must scan the default to relocate any rows that now belong to the newcomer, and bulk detach flows slow down the same way. Keep the default small and promote hot values promptly.</p>
+</div>
+<div class="key-takeaway">
+  <p><strong>Exam note:</strong> always plan a default slice when using list or range so users never see a partition-missing error. Memorize <code>CREATE TABLE ... PARTITION OF parent DEFAULT;</code> with no <code>FOR VALUES</code> clause, plus the promotion rule: repeated values graduate out of default into their own slice.</p>
+</div>
+
+<h2 id="30.8-multi-level-partitioning">30.8 Multi-Level Partitioning</h2>
+<h3 id="30.8.1-core-idea-and-caution">30.8.1 Core Idea and Caution</h3>
+<p>A <em>sub-partition</em> (a partition under a partition) lets one slice act as a parent for finer slices. You might hold US rows in one top slice and split a fast-growing EU slice into <code>EU_1</code>, <code>EU_2</code>, and finer buckets. PostgreSQL allows mixing methods, for example list on top and hash below, or range on top and range below for year-then-month splits.</p>
+<div class="important-note">
+  <p>Picture the filing cabinet again, but the EU drawer now contains its own dividers. A query for one UK customer opens the cabinet, then the EU drawer, then one divider. Each added level narrows the search but adds a label the planner must read.</p>
+</div>
+<p>Caution with ranges: it is easy to create a large number of tiny or empty sub-slices. Each extra slice adds entries to system tables and adds time and memory to planning and execution, which can slow queries. When that happens, widen the interval from days to months, quarters, half-years, or years, or pick a method that creates fewer slices. Naming matters even more here; plan names like master, <code>_US</code>, <code>_EU</code>, <code>_EU_1</code> before you build. The book's composite example shows the same explosion concretely: 6 range partitions times 4 hash sub-partitions equals 24 physical tables for one logical name, which is why flat monthly designs often beat deep year-month-day trees.</p>
+<div class="warning-box">
+  <p><strong>Scope:</strong> sub-partition only the hot branch. If US holds a trickle and EU holds the flood, divide EU and leave US flat. Splitting every branch symmetrically multiplies empty slices and planning cost for no pruning gain.</p>
+</div>
+<h3 id="30.8.2-worked-example-with-list-on-top-and-hash-below">30.8.2 Worked Example With List on Top and Hash Below</h3>
+<p>Build a fresh master called <code>employees_master</code> with the same three columns, partitioned by list on country code:</p>
+<pre><code>CREATE TABLE employees_master (
+  id BIGSERIAL,
+  birth_date DATE NOT NULL,
+  country_code VARCHAR(2) NOT NULL
+) PARTITION BY LIST (country_code);</code></pre>
+<p>The browser properties confirm partitioning by list on country code.</p>
+<p>Create the US top slice as a plain slice:</p>
+<pre><code>CREATE TABLE employees_master_us PARTITION OF employees_master
+  FOR VALUES IN ('US');</code></pre>
+<p>Create the EU top slice as a partitioned parent in one step, holding UK, IT, FR, ES values and sub-partitioned by hash on <code>id</code>:</p>
+<pre><code>CREATE TABLE employees_master_eu PARTITION OF employees_master
+  FOR VALUES IN ('UK', 'IT', 'FR', 'ES')
+  PARTITION BY HASH (id);</code></pre>
+<p>The EU table properties now show a partition tab with hash on <code>id</code>, while the US table shows no further partition tab. That contrast tells you EU is both a slice and a parent.</p>
+<p>Create three hash buckets under EU:</p>
+<pre><code>CREATE TABLE employees_master_eu_1 PARTITION OF employees_master_eu
+  FOR VALUES WITH (MODULUS 3, REMAINDER 0);
+
+CREATE TABLE employees_master_eu_2 PARTITION OF employees_master_eu
+  FOR VALUES WITH (MODULUS 3, REMAINDER 1);
+
+CREATE TABLE employees_master_eu_3 PARTITION OF employees_master_eu
+  FOR VALUES WITH (MODULUS 3, REMAINDER 2);</code></pre>
+<div class="example-box">
+  <p>The master properties list US plus EU, and the EU properties list its three buckets. Insert through the top master name:</p>
+  <pre><code>INSERT INTO employees_master (id, birth_date, country_code) VALUES
+  (1, '2000-01-01', 'US'),
+  (2, '2000-02-01', 'US'),
+  (3, '2001-05-10', 'UK'),
+  (4, '2001-06-12', 'UK');</code></pre>
+  <p><code>SELECT * FROM employees_master</code> shows <strong>four rows</strong>. <code>SELECT * FROM ONLY employees_master</code> shows <strong>zero rows</strong> because the top master is only a router. <code>SELECT * FROM employees_master_us</code> shows <strong>two US rows</strong>. <code>SELECT * FROM employees_master_eu</code> shows zero rows with <code>ONLY</code> semantics because EU is now a router too; its rows live one level down. Its buckets show <strong>one row plus one row plus zero rows</strong> in this run, matching the two UK rows spread by hash. Sense-check: 2 (US) + 1 + 1 + 0 (EU branch) = 4. You can drop from the same tree, but take care on live data.</p>
+</div>
+<p>MySQL names this same idea composite partitioning (<code>PARTITION BY RANGE ... SUBPARTITION BY HASH</code>), where querying <code>PARTITION (s3)</code> reads four sub-slices and querying <code>PARTITION (s3_h3)</code> reads one. The mechanics differ in spelling; the lesson is shared: prune top-down, and only the branch matching every filter level stays open.</p>
+
+<h2 id="30.9-attaching-and-detaching-partitions">30.9 Attaching and Detaching Partitions</h2>
+<h3 id="30.9.1-attaching-a-new-slice">30.9.1 Attaching a New Slice</h3>
+<p>Suppose Singapore with code SP must join <code>employees_list</code>, which currently holds EU plus US. Build and attach in one <code>CREATE</code> step by naming the parent and the new value:</p>
+<pre><code>CREATE TABLE employees_list_sp PARTITION OF employees_list
+  FOR VALUES IN ('SP');</code></pre>
+<div class="important-note">
+  <p>Picture adding a new labeled mailbox to the wall and telling the sorter its rule in the same motion. From that moment every SP letter routes itself; no existing mail moves.</p>
+</div>
+<p>Keep the value in the name so the slice purpose is plain. After refresh the master shows three slices including SP. Then load through the master:</p>
+<pre><code>INSERT INTO employees_list (id, birth_date, country_code)
+VALUES (10, '2020-01-01', 'SP');
+
+SELECT * FROM employees_list;
+SELECT * FROM employees_list_us;
+SELECT * FROM employees_list_eu;
+SELECT * FROM employees_list_sp;</code></pre>
+<div class="example-box">
+  <p>The master shows the new SP row at the end. The US slice shows only US. The EU slice shows only Europe such as UK. The new SP slice shows <strong>the Singapore row just added</strong>. Attach plus insert keeps routing intact because the definition lives with the parent. The two-step alternative, creating a standalone table then running <code>ALTER TABLE ... ATTACH PARTITION ... FOR VALUES IN ('SP')</code>, scans the table to validate every row first, so the one-step <code>CREATE ... PARTITION OF</code> is cheaper for empty newcomers. <strong>Final state: three slices, SP holding one row.</strong> Sense-check with <code>ONLY</code> on each slice if counts look off.</p>
+</div>
+<p>The MySQL equivalent of growing a design is <code>ALTER TABLE sales REORGANIZE PARTITION s999 INTO (...)</code> for ranges or <code>REORGANIZE PARTITION asia INTO (...)</code> for lists; PostgreSQL instead attaches a fresh slice with no reorganization of neighbors, which is why pre-creating future range slices is cheap here.</p>
+<h3 id="30.9.2-detaching-a-slice">30.9.2 Detaching a Slice</h3>
+<p>To remove a slice from routing without dropping its stored rows from the database, detach it:</p>
+<pre><code>ALTER TABLE employees_list DETACH PARTITION employees_list_sp;</code></pre>
+<p>After refresh the master shows two slices again. The detached table remains as a standalone table holding its rows, queryable by its own name but invisible through the master. That makes detach the safe retention and archive move: detach last year's slice, back it up or drop it on its own schedule, and the live master never locks the hot slices. Re-attach later with <code>ALTER TABLE ... ATTACH PARTITION ...</code> if the data returns, paying one validation scan of that slice.</p>
+<div class="warning-box">
+  <p>Detaching is instant metadata surgery, but readers with open transactions may still see the old shape until they commit. Run attach and detach off-peak, confirm slice counts with <code>ONLY</code> queries before and after, and never detach the slice holding live writable keys without redirecting those writes first.</p>
+</div>
+<div class="key-takeaway">
+  <p>Attach with <code>CREATE TABLE ... PARTITION OF ...</code>; detach with <code>ALTER TABLE ... DETACH PARTITION ...</code>. Attach adds future capacity, detach parks history, and neither move touches the rows in the surviving slices.</p>
+</div>
+
+<h2 id="30.10-changing-range-bounds-safely">30.10 Changing Range Bounds Safely</h2>
+<h3 id="30.10.1-core-idea-in-plain-words">30.10.1 Core Idea in Plain Words</h3>
+<p>A <em>bound change</em> (widening or narrowing the <code>FROM</code> to <code>TO</code> interval that a range slice owns) is needed when the first design leaves a gap. Version 10 onward supports partitioning, but split and merge helpers are missing, so the safe pattern is detach, change bounds, then attach again inside one transaction block. The transaction holds an access-exclusive lock that blocks a second session from adding a conflicting range or inserting a clashing row mid-move.</p>
+<div class="important-note">
+  <p>Picture repainting parking-bay lines while cars keep arriving. You cone off the bay (detach), repaint wider lines (new bounds), reopen it (attach), all under one supervisor's whistle (the transaction) so nobody parks on wet paint.</p>
+</div>
+<h3 id="30.10.2-worked-example-with-a-gap-from-100-to-200">30.10.2 Worked Example With a Gap From 100 to 200</h3>
+<p>Build a small master <code>t1</code> with two integer columns <code>a</code> and <code>b</code>, partitioned by range on <code>a</code>:</p>
+<pre><code>CREATE TABLE t1 (a INTEGER, b INTEGER) PARTITION BY RANGE (a);
+
+CREATE TABLE t1_p1 PARTITION OF t1 FOR VALUES FROM (0) TO (100);
+CREATE TABLE t1_p2 PARTITION OF t1 FOR VALUES FROM (200) TO (300);</code></pre>
+<p>The gap from 100 to 200 is deliberate. Loading inside a slice works:</p>
+<pre><code>INSERT INTO t1 (a, b) VALUES (1, 1);
+SELECT * FROM t1;
+SELECT * FROM t1_p1;
+SELECT * FROM t1_p2;
+SELECT * FROM ONLY t1;</code></pre>
+<div class="example-box">
+  <p><code>t1</code> shows <strong>one row</strong> (1, 1), <code>t1_p1</code> shows it, <code>t1_p2</code> shows none, and <code>ONLY t1</code> shows none. Loading inside the gap fails:</p>
+  <pre><code>INSERT INTO t1 (a, b) VALUES (150, 150);
+-- no partition of relation t1 found for row</code></pre>
+  <p><strong>Final answer: rows 0-99 route to p1, rows 200-299 route to p2, and 150 has no home.</strong> The error names the relation and the failing key, which is your cue to widen a bound or add the missing slice. Sense-check: bounds are half-open, so 100 already belongs to the gap, not to p1.</p>
+</div>
+<h3 id="30.10.3-safe-detach-alter-and-attach-in-a-transaction">30.10.3 Safe Detach Alter and Attach in a Transaction</h3>
+<p>Widen <code>t1_p1</code> from 0-100 to 0-200 so 150 has a home. Do all three steps between <code>BEGIN</code> and <code>COMMIT</code> so the table stays guarded while bounds move:</p>
+<pre><code>BEGIN;
+ALTER TABLE t1 DETACH PARTITION t1_p1;
+ALTER TABLE t1 ATTACH PARTITION t1_p1 FOR VALUES FROM (0) TO (200);
+COMMIT;</code></pre>
+<p>Detaching alone removes the slice from routing but leaves its stored table in the database. Attaching again checks every row in that slice against the new constraint, which means a full scan of that slice; on a huge slice that scan costs time, so schedule bound moves off-peak. If the block hits an error, the session reports the current transaction as aborted, so run <code>ROLLBACK</code> and retry the <code>BEGIN ... COMMIT</code> block cleanly. After commit, properties show 0 to 200 plus 200 to 300, and the earlier failing insert of 150 now succeeds.</p>
+<div class="warning-box">
+  <p>Never widen past your neighbor: <code>TO (250)</code> here would overlap p2's <code>FROM (200)</code> and the attach is rejected. Widen exactly to the neighbor's <code>FROM</code>, and keep the half-open rule in mind so 200 still belongs to p2, not p1.</p>
+</div>
+<div class="key-takeaway">
+  <p><strong>Exam note:</strong> state the three steps in order — detach, alter bounds, attach — wrapped in a transaction. Add the cost line: attach revalidates with a full slice scan, and any error aborts the block, so <code>ROLLBACK</code> and retry cleanly.</p>
+</div>
+
+<h2 id="30.11-indexes-on-partitioned-tables">30.11 Indexes on Partitioned Tables</h2>
+<h3 id="30.11.1-core-idea-in-plain-words">30.11.1 Core Idea in Plain Words</h3>
+<p>An <em>index on a partitioned master</em> (one <code>CREATE INDEX</code> on the parent name) automatically builds the same index on every attached slice. There is no single physical index that spans all slices; each slice gets its own matching index. Plan for that storage and build time on large masters. In the book's vocabulary these are <em>local indexes</em> (one per slice, useful when queries name the partition key) as opposed to <em>global indexes</em> (one structure spanning all slices, useful for non-key lookups); PostgreSQL declarative partitioning builds local ones.</p>
+<div class="important-note">
+  <p>Picture ordering one stamp for the company and the print shop automatically cutting a matching stamp for every branch. There is still no master stamp that covers all branches at once; each branch stamps its own mail with its own copy.</p>
+</div>
+<p>A second rule shapes every unique index: a primary key or any unique index must include the column named in <code>PARTITION BY</code>. A unique on <code>id</code> alone is rejected when the master is partitioned by list on country code. The reason is physical: each slice enforces uniqueness only inside itself, so without the slice discriminator in the key, two slices could each hold <code>id = 7</code> and no single check would catch the clash.</p>
+<h3 id="30.11.2-worked-example-with-a-rejected-and-then-accepted-index">30.11.2 Worked Example With a Rejected and Then Accepted Index</h3>
+<p>Start from <code>employees_list</code> with no indexes on master or slices. This attempt fails:</p>
+<pre><code>CREATE UNIQUE INDEX id_u ON employees_list (id);
+-- unique constraint on table employees_list lacks column country_code
+-- which is part of the partition key</code></pre>
+<div class="example-box">
+  <p>Read the error as the rule statement: the key lacks <code>country_code</code>, the partition key. The fix adds the partition key as a second column:</p>
+  <pre><code>CREATE UNIQUE INDEX employees_list_id_country_code_u
+  ON employees_list (id, country_code);</code></pre>
+  <p>After refresh, the master shows the new unique index on <code>id, country_code</code>. Each slice shows its own copy with the same two columns. Queries that filter on that pair now benefit in every slice. <strong>Final state: one logical unique index, N physical copies, enforced per slice but safe globally because the key carries the slice value.</strong> Sense-check: inserting <code>(7, 'US')</code> and <code>(7, 'UK')</code> is legal (different slices, different full keys), while inserting <code>(7, 'US')</code> twice is rejected inside the US slice.</p>
+</div>
+<p>Why the extra column is required: each slice is an independent table, so uniqueness across the whole logical table can only be enforced when the key carries the slice discriminator. Without country code in the key, two slices could each hold the same <code>id</code> with no way to stop the clash.</p>
+<p>Deleting the master index removes the copies too. Re-running the same <code>CREATE UNIQUE INDEX</code> brings them back. On a huge master, both build and drop take time, so avoid them during peak use. The same caution covers attaching a slice with missing indexes: creating on the parent normally propagates, but confirm every slice carries the set after each attach, or one branch silently runs unindexed.</p>
+<div class="key-takeaway">
+  <p><strong>Exam note:</strong> if asked to create a primary key or unique index on a partitioned table, always include the partition key column in the column list. Memorize the pair <code>(id, country_code)</code> and the one-line reason: per-slice enforcement needs the slice value inside the key.</p>
+</div>
+
+<h2 id="30.12-partition-pruning">30.12 Partition Pruning</h2>
+<h3 id="30.12.1-core-idea-in-plain-words">30.12.1 Core Idea in Plain Words</h3>
+<p><em>Partition pruning</em> (using the partition key to pick which slice to scan) is the switch that makes partitioning fast. When pruning is on and the query filters on the key, the engine reads only the matching slice. When pruning is off or the query has no key filter, the engine scans all slices and combines them. Older setups call the same behavior <em>constraint exclusion</em>; the modern <code>enable_partition_pruning</code> switch covers declarative tables the same way.</p>
+<p>Check and flip the switch in the session:</p>
+<pre><code>SHOW enable_partition_pruning;
+SET enable_partition_pruning = OFF;
+SET enable_partition_pruning = ON;</code></pre>
+<div class="important-note">
+  <p>Picture a receptionist who reads the department on each envelope and walks only to that floor. Switch pruning off and the same receptionist photocopies the letter to every floor and lets each floor throw its copy away. Same result, wildly different step count.</p>
+</div>
+<p>The demo starts with the value on, which is the production default. Keep it on everywhere except narrow debugging sessions where you want to prove pruning was responsible for a fast plan.</p>
+<h3 id="30.12.2-worked-examples-with-the-switch-on-and-off">30.12.2 Worked Examples With the Switch On and Off</h3>
+<p>With pruning on, a bare read touches everything:</p>
+<pre><code>SELECT * FROM employees_list;</code></pre>
+<p>Explain with F7 shows scans of all slices combined with Append, because no <code>WHERE</code> clause tells the planner which slice can be skipped. This is the correct plan for the question asked, and also the proof that partitioning without key filters buys nothing.</p>
+<p>With pruning on plus a key filter, the plan narrows:</p>
+<pre><code>SELECT * FROM employees_list WHERE country_code = 'US';</code></pre>
+<div class="example-box">
+  <p>Explain connects straight to <code>employees_list_us</code>. The partition key identifies the slice to scan, so a ten-slice table reads roughly one-tenth the data. Turn pruning off and repeat the same filtered query:</p>
+  <pre><code>SET enable_partition_pruning = OFF;
+SELECT * FROM employees_list WHERE country_code = 'US';</code></pre>
+  <p>Explain now scans all tables such as EU plus US and then filters, a pure sequential pass over every slice. Turn pruning back on and the same query prunes to US again. <strong>Final answer: same query, one slice with pruning on, all slices with pruning off.</strong> Sense-check by toggling the switch and re-running <code>EXPLAIN</code> without changing the query.</p>
+</div>
+<p>Two pruning killers beyond the switch: a filter on the wrong column (country filter on a hash-by-id table scans everything), and an unstable expression the planner cannot evaluate at plan time (a volatile function around the key hides the value, so keep key filters plain and put the key first among <code>AND</code> conditions). Snowflake micro-partition skipping and Delta Lake file skipping obey the same rule: a selective <code>WHERE</code> on a well-clustered column prunes files; a filter on an unrelated column reads everything.</p>
+<div class="key-takeaway">
+  <p><strong>Exam note:</strong> link pruning to the <code>WHERE</code> clause; no key filter means no pruning even when the switch is on. Memorize the toggle pair <code>SET enable_partition_pruning = OFF / ON</code> and the one-line diagnosis: filtered query still scanning all slices means the switch is off or the filter misses the key.</p>
+</div>
+
+<h2 id="30.13-choosing-a-partition-key">30.13 Choosing a Partition Key</h2>
+<h3 id="30.13.1-review-raw-data-first">30.13.1 Review Raw Data First</h3>
+<p>Picking the key is the most critical step, and it starts before any <code>CREATE</code> statement. Study raw history plus samples, not only what already sits in the database, because samples can hide formats such as numbers mixed with letters. Spreadsheet tools and pivot aids help review highs, lows, averages, date spans, numeric spans, and how values spread across days, weeks, months, and case variants. Note how the candidate table joins to other tables, since a key that helps one table but breaks common joins is a poor pick.</p>
+<div class="important-note">
+  <p>Treat key choice like choosing the chapter titles of a textbook before writing it. Good titles match how readers search; bad titles match only how the author filed drafts. The readers here are your queries, so their <code>WHERE</code> clauses vote on the titles.</p>
+</div>
+<p>Concretely, pull the raw feed files, not just the loaded table: check for mixed-case country codes (<code>us</code> versus <code>US</code>), free-text statuses with typos, dates stored as strings in two formats, and null keys that would need a default slice. A key candidate that needs heavy cleaning first is a weak candidate no matter how often queries mention it.</p>
+<h3 id="30.13.2-review-queries-and-rank-common-fields">30.13.2 Review Queries and Rank Common Fields</h3>
+<p>List every query that touches the table: single-table selects, multi-table joins, procedures, subqueries, and common table expressions. Rank them from simple to advanced, then flip the view and weigh the advanced ones most because they carry more joins and more filter columns. An advanced nightly report joining orders to customers on date and region outvotes a trivial lookup by id.</p>
+<p>Collect the filter columns from each query on paper first, then move them to a sheet. Count appearances: if order date, country code, and status keep showing up, those are starting candidates. Rank by count so the most-used columns rise to the top ten, then narrow to the top five after deeper checks. The lecture's pencil-first habit is deliberate: tallying by hand forces you to read each <code>WHERE</code> clause instead of skimming, and the sheet then preserves the ranking for the team review.</p>
+<div class="warning-box">
+  <p><strong>Scope:</strong> a column that appears often but only inside functions (<code>WHERE year(order_date) = 2020</code>, <code>WHERE lower(status) = 'x'</code>) is a weaker candidate than a column tested directly, because wrapped filters prune poorly. Prefer keys your queries test directly with <code>=</code>, <code>IN</code>, or <code>BETWEEN</code>.</p>
+</div>
+<h3 id="30.13.3-check-ranges-and-test-before-committing">30.13.3 Check Ranges and Test Before Committing</h3>
+<p>For each top candidate, profile its span. For order date, find min and max to see the time window. For country code, list distinct values to see the slice count; a full ISO list near 300 codes means near 300 slices if you split per code, which may be too many. For each key value, count rows with <code>GROUP BY</code> to see whether daily, weekly, monthly, or yearly grain spreads evenly.</p>
+<pre><code>SELECT MIN(order_date), MAX(order_date) FROM orders;
+SELECT DISTINCT country_code FROM orders;
+SELECT order_date, COUNT(*) FROM orders GROUP BY order_date;
+SELECT country_code, COUNT(*) FROM orders GROUP BY country_code;</code></pre>
+<div class="example-box">
+  <p>Read the four probes as a decision table. Min-max sets the outer bounds (how many yearly slices the timeline needs). Distinct counts set the slice total (20 regions is comfortable, 300 raw codes is not, so group codes into regions or sub-partition). Grouped counts reveal skew: one country holding 80 percent of rows warns that its slice will outgrow the rest and needs sub-partitioning or a different key. Build the top two or three designs in a test environment and measure query speed before committing. <strong>Final answer: the key with selective filters, tileable bounds, and even spread wins.</strong> A filter such as <code>WHERE order_date = ...</code> votes for order date, while <code>WHERE country_code = ...</code> votes for country code.</p>
+</div>
+<p>The lesson favors starting on paper with a pencil, then moving tallies to a sheet for ranking and range checks. Join behavior gets the last vote: when two tables join, partitioning both on the join key unlocks partition-wise joins where matching slices join pairwise instead of one giant join, so a key shared with the biggest join partner beats an equally popular single-table filter.</p>
+
+<h2 id="30.14-sizing-partitions">30.14 Sizing Partitions</h2>
+<h3 id="30.14.1-measure-boundaries-uniques-and-counts">30.14.1 Measure Boundaries Uniques and Counts</h3>
+<p>Sizing asks how many slices and how big each slice should be. Run min and max on the candidate key to learn its outer bounds. Dates get min and max; numbers can add averages too. Run distinct counts to learn slice totals; distinct country codes tell you whether list means 20, 30, or 300 tables, and each table costs physical space. Run grouped counts to learn spread:</p>
+<pre><code>SELECT MIN(order_date), MAX(order_date) FROM orders;
+SELECT DISTINCT country_code FROM orders;
+SELECT order_date, COUNT(*) FROM orders GROUP BY order_date;
+SELECT country_code, COUNT(*) FROM orders GROUP BY country_code;</code></pre>
+<div class="example-box">
+  <p>Work the probes on a sample orders table. Suppose min-max returns 2015-01-01 to 2024-12-31 (ten years), distinct codes return 40 regions, and grouped counts show the top region holding half the rows while most hold slivers. The read: yearly slices give 10 tables, monthly slices give 120, and the skewed region needs grouping or sub-partitioning before it becomes one giant slice. Grouped counts show whether rows spread evenly by day, week, month, or year, and whether one country dwarfs the rest. <strong>Final answer: pick the grain whose busiest slice still fits maintenance windows and whose total count stays in the tens.</strong> Uneven spread warns you that one slice will outgrow the rest.</p>
+</div>
+<p>Keep the overhead rule beside these numbers: ten to twenty slices add little planning cost, while hundreds add a large cost in catalog entries, planner time, and memory. A 300-code raw list therefore wants region buckets (as the lecture's US and EU slices show) rather than one slice per code.</p>
+<h3 id="30.14.2-plan-for-growth">30.14.2 Plan for Growth</h3>
+<p>Estimate insert pace, then project two to five years forward with headroom. For example, turn daily insert counts into monthly totals using 28 to 30 business days, then add 5 to 15 percent growth for busier days. Create slices for that future span up front so the router never stalls. A concrete pass: 50,000 rows per day times 30 days is 1.5 million per month; plus 10 percent headroom is about 1.65 million per monthly slice; times 24 months of hot data sets the recent window, with older years kept coarse.</p>
+<p>Dates allow flexible grain: keep eight cold years in two or three coarse slices while splitting the hot last two years by month, or group three months per slice as quarters or half-years. Cold history is rarely filtered finely, so coarse slices cost nothing at query time and save hundreds of catalog entries. A table with only 1,000 rows does not qualify for partitioning, while one with millions of rows does; the projection tells you when the line will be crossed, so re-run these probes yearly and split the grain finer only when a slice outgrows its window.</p>
+<div class="warning-box">
+  <p>Pre-creating future slices is cheap, but pre-creating hundreds of daily slices years ahead is not: empty slices still cost planning time on every query. Create the next few periods plus a default catch-all, and roll forward on a schedule instead of building the whole decade on day one.</p>
+</div>
+
+<h2 id="30.15-why-partitioning-pays-off">30.15 Why Partitioning Pays Off</h2>
+<h3 id="30.15.1-faster-reads-and-writes">30.15.1 Faster Reads and Writes</h3>
+<p>Partitioning cuts the number of index blocks the engine must walk to find a row. Instead of a full sequential scan, a filtered query goes straight to the slice for year 2020 or the matching key value. In one analytics setup with terabytes of stock-market rows partitioned by symbol plus date on a yearly grain, that direct routing gave a large query speedup: a symbol-and-date filter opened one yearly symbol slice instead of scanning terabytes.</p>
+<div class="important-note">
+  <p>Picture a library that shelves books by year instead of one giant pile. A request for 2020 reviews walks to one bay; without the bays every request re-shelves the whole building in its head first.</p>
+</div>
+<p>Writes benefit too. Inserts, updates, and deletes route to one slice, so each operation touches less data and locks a smaller object. Bulk loads show the same effect: loading a 500 gigabyte file or 6 to 20 billion rows into a well-partitioned master ran much faster than loading into a single giant table, because each incoming row landed in its small target slice with a small index to maintain rather than one giant index to rebalance. Partition-wise joins add a further win when both join sides share the key: matching slices join pairwise in parallel instead of one monster join.</p>
+<h3 id="30.15.2-cheaper-maintenance">30.15.2 Cheaper Maintenance</h3>
+<p>Old ranges can be removed by dropping one slice instead of running <code>DELETE ... WHERE ...</code> over a giant table, which can run nearly forever while holding locks and generating dead rows. <code>DROP</code> or <code>DETACH</code> of a historical slice is a metadata move plus file cleanup; the mass <code>DELETE</code> is row-by-row work plus vacuum afterward. Historical pruning is cheaper for the same reason: detach last year's slice to archive storage and the live master shrinks instantly.</p>
+<p>Storage handling also improves because updates and deletes keep old row versions around until cleanup; smaller slices mean less leftover work for vacuum, and one slice can be vacuumed or frozen while the rest serve traffic. Reindexing one slice takes a fraction of the time of rebuilding one giant index, since each slice carries its own smaller index. Backups and statistics refreshes parallelize the same way: refresh stats on the hot recent slices nightly while freezing statistics on sealed historical slices.</p>
+<div class="example-box">
+  <p>Three maintenance wins teams feel first: retention by dropping one old yearly or monthly slice instead of mass deletes, slice-sized reindex and vacuum windows that fit maintenance slots, and faster bulk ingest landing row-by-row into small slices. A seven-year financial retention rule becomes seven yearly drops, one per year, instead of seven years of <code>DELETE ... WHERE date < ...</code> statements.</p>
+</div>
+<div class="key-takeaway">
+  <p>Partitioning pays three times: reads prune to one slice, writes land in one small index, and history leaves by whole-slice drops. If a workload gets none of these three, it does not need partitioning yet.</p>
+</div>
+
+<h2 id="30.16-common-partitioning-mistakes">30.16 Common Partitioning Mistakes</h2>
+<h3 id="30.16.1-settings-indexes-permissions-and-query-shape">30.16.1 Settings Indexes Permissions and Query Shape</h3>
+<p>Keep this checklist on hand when a partitioned design feels slow. Each item is a full fan-out or a silent correctness gap, so walk the list top to bottom before redesigning the key:</p>
+<ul>
+  <li>Leave pruning and exclusion disabled. If constraint exclusion stays off (or <code>enable_partition_pruning</code> is off on modern versions), every query visits every slice, which is a sequential scan of the whole logical table. Keep the exclusion behavior enabled and confirm with <code>SHOW enable_partition_pruning</code>.</li>
+  <li>Miss indexes or constraints on slices. Replicate the same indexes and constraints from the master to every slice so each independent table enforces the same rules. Creating on the parent normally propagates, but check after every attach, because a standalone-then-attached table brings only the indexes it already has.</li>
+  <li>Mismatch permissions. If the master allows a query but a slice denies it, the query can fail in odd ways, including mid-plan permission errors that mention a slice name the user never typed. Grant the same rights on each slice as on the parent, and re-grant after every attach.</li>
+  <li>Skip the partition key in queries. Queries that never filter on the key get no pruning. Always include the key as a plain filter, and put it first when several <code>AND</code> or <code>OR</code> conditions appear, so the planner sees the slice choice right away. Parametric filters such as changing current-date functions optimize poorly for the same reason; keep the key filter simple and stable, computing volatile values once into a plain literal or parameter before the query.</li>
+  <li>Ignore slice count in overhead. Overhead grows with slice count. Ten to twenty slices add little planning cost, while hundreds add a large cost in plan time, memory, and catalog pressure. Size list, range, and hash counts with that trade-off in view, and widen the grain or group values when counts explode.</li>
+</ul>
+<div class="warning-box">
+  <p>The costliest error is a well-built partitioned table queried without its key, which turns every read into a full fan-out. The second costliest is hundreds of near-empty slices: each query pays planning tax on all of them before reading any rows. Fix query shape first, slice count second, and settings last.</p>
+</div>
+<div class="example-box">
+  <p>Debug in order: run <code>SHOW enable_partition_pruning</code> (expect <code>on</code>), run <code>EXPLAIN</code> on the slow query and count slice branches under Append (expect one for a keyed filter), compare slice index lists against the master (expect identical sets), and test the same filter with a literal in place of any function call (a speedup means the expression blocked pruning). <strong>Final answer for most slow-partition tickets: restore the key filter, not the hardware.</strong></p>
+</div>
+
+<h2 id="exam-guidance-summary">Exam Guidance Summary</h2>
+<ul>
+  <li>Explain the 60-million-row products case: a bare filter scans everything, while a partitioned design scans one slice based on the <code>WHERE</code> clause on the partition key.</li>
+  <li>State when partitioning fits: very huge tables past a few million rows, tables larger than physical memory, not small tables with hundreds or thousands of rows.</li>
+  <li>Show <code>ONLY</code> to prove the master holds zero rows while slices hold the data: <code>SELECT * FROM ONLY master</code> returns the locally stored rows only.</li>
+  <li>For range, memorize the exclusive upper bound pattern <code>FROM ('2000-01-01') TO ('2001-01-01')</code> and the no-overlap, no-gap tiling rule.</li>
+  <li>For list, memorize <code>PARTITION BY LIST (country_code)</code> plus <code>FOR VALUES IN (...)</code> with single-value (<code>'US'</code>) and multi-value (<code>'UK', 'DE', 'IT', 'FR', 'ES'</code>) forms.</li>
+  <li>For hash, memorize <code>PARTITION BY HASH (id)</code> plus <code>FOR VALUES WITH (MODULUS 3, REMAINDER 0/1/2)</code> starting at remainder zero, and that pruning needs a filter on the hashed key.</li>
+  <li>For default, memorize <code>PARTITION OF parent DEFAULT</code> as the catch-all that avoids partition-missing errors, plus promoting hot values into their own slices.</li>
+  <li>For maintenance, memorize attach via <code>CREATE TABLE ... PARTITION OF ...</code>, detach via <code>ALTER TABLE ... DETACH PARTITION ...</code>, and bound changes via detach plus attach inside <code>BEGIN ... COMMIT</code>, noting the attach validation scan cost and the <code>ROLLBACK</code> retry on abort.</li>
+  <li>For indexes, memorize that unique indexes must include the partition key, for example <code>(id, country_code)</code>, because each slice enforces uniqueness locally.</li>
+  <li>For pruning, link <code>enable_partition_pruning</code> on versus off to single-slice versus all-slice plans, and stress that a missing <code>WHERE</code> key means no pruning.</li>
+  <li>For key choice and sizing, list raw-data review, query ranking with advanced queries weighted most, range plus distinct plus grouped counts, and two-to-five-year growth headroom with the tens-of-slices budget.</li>
+  <li>For advantages, cite fewer index blocks, direct slice reads, partition-wise joins, fast drop-a-slice retention, cheaper vacuum and reindex, faster writes, and faster bulk loads up to billions of rows.</li>
+  <li>For mistakes, cite disabled exclusion or pruning, missing slice indexes, mismatched permissions, key-less queries, unstable parametric filters, and too many slices.</li>
+</ul>
+
+<h2 id="key-industry-applications">Key Industry Applications</h2>
+<ul>
+  <li>60-million-row products filtering by name prefix routes to one category slice instead of scanning all rows.</li>
+  <li>Time-series order and birth-date tables use yearly and monthly range slices for date-filtered reads, with cold years kept coarse and hot months split fine.</li>
+  <li>Country-code tables use list slices such as US and EU buckets for region-filtered reads, with new codes landing in a default catch-all until promoted.</li>
+  <li>Even spreading of key-less tables uses hash buckets with modulus and remainder for smaller physical sizes and parallel-friendly writes.</li>
+  <li>Terabyte-scale stock-market analytics partitioned by symbol plus yearly date for fast symbol-date reads and partition-wise joins.</li>
+  <li>Bulk ingest of 500 gigabyte files and 6-to-20-billion-row loads into partitioned masters for fast landing into small per-slice indexes.</li>
+  <li>Retention by dropping or detaching one old yearly or monthly slice instead of mass deletes, with cheaper vacuum, frozen statistics on sealed slices, and reindex per slice.</li>
+  <li>Cross-system carryover: MySQL weekly range and region list designs prune the same way, Snowflake micro-partitions skip files automatically behind identical <code>WHERE</code> clauses, and Delta Lake partition-plus-clustering layouts answer the same date and region filters without hand-built slice DDL.</li>
+</ul>
+    </main>
+
+    <!-- ============================================================
+    EXAM REVISION NOTES
+    Generated AFTER the main lecture-faithful content is complete. Each entry
+    distills one major concept into its most examinable elements.
+    Built FROM the core — never invented independently.
+
+    Each entry is a <div class="exam-revision-entry"> containing:
+      - .revision-topic (h3) — concept name
+      - .revision-mustknow — the single most examinable takeaway
+      - .revision-formula — central formula(s) in \[ ... \] MathJax
+      - .revision-pitfall — the #1 exam mistake
+      - .revision-check — one self-check question (no options)
+      - .revision-connections — linked concepts within this lecture
+    ============================================================ -->
+    <section class="exam-revision-section">
+      <h2>Exam Revision Notes</h2>
+      <p class="revision-intro">Below is the distilled, exam-ready core.
+      Every entry comes from the full explanation above. Use this section
+      for rapid review; return to the main notes when a point needs more context.</p>
+<div class="exam-revision-entry">
+  <h3 class="revision-topic">What Partitioning Is and Why It Matters</h3>
+  <p class="revision-mustknow"><strong>Must-know:</strong> Master holds zero rows; keyed filters prune to one slice.</p>
+  <p class="revision-pitfall"><strong>Top pitfall:</strong> Bare SELECT with no key filter scans every slice.</p>
+  <p class="revision-check"><strong>Self-check:</strong> Why does a 60M-row filter scan one slice when partitioned?</p>
+  <p class="revision-connections"><strong>Connects to:</strong> 30.12</p>
+</div>
+<div class="exam-revision-entry">
+  <h3 class="revision-topic">Table Inheritance Foundation</h3>
+  <p class="revision-mustknow"><strong>Must-know:</strong> Parent reads fan out; ONLY reads stay local; CASCADE drops all.</p>
+  <p class="revision-pitfall"><strong>Top pitfall:</strong> Constraints do not auto-copy to children in legacy inheritance.</p>
+  <p class="revision-check"><strong>Self-check:</strong> What does SELECT FROM ONLY master return?</p>
+  <p class="revision-connections"><strong>Connects to:</strong> 30.4</p>
+</div>
+<div class="exam-revision-entry">
+  <h3 class="revision-topic">Three Partition Types at a Glance</h3>
+  <p class="revision-mustknow"><strong>Must-know:</strong> Range for spans, list for known values, hash for even spreading.</p>
+  <p class="revision-pitfall"><strong>Top pitfall:</strong> Hash never helps a business-column filter.</p>
+  <p class="revision-check"><strong>Self-check:</strong> Which method fits a country-code filter?</p>
+  <p class="revision-connections"><strong>Connects to:</strong> 30.4, 30.5, 30.6</p>
+</div>
+<div class="exam-revision-entry">
+  <h3 class="revision-topic">Partition by Range</h3>
+  <p class="revision-mustknow"><strong>Must-know:</strong> Upper bound is exclusive; always write TO as next slice FROM.</p>
+  <p class="revision-pitfall"><strong>Top pitfall:</strong> TO (2000-12-31) orphans New Year Eve rows.</p>
+  <p class="revision-check"><strong>Self-check:</strong> Write the year-2000 slice bounds.</p>
+  <p class="revision-connections"><strong>Connects to:</strong> 30.10</p>
+</div>
+<div class="exam-revision-entry">
+  <h3 class="revision-topic">Partition by List</h3>
+  <p class="revision-mustknow"><strong>Must-know:</strong> List fits equality filters on known values; unlisted values error.</p>
+  <p class="revision-pitfall"><strong>Top pitfall:</strong> Bare SELECT scans all list slices.</p>
+  <p class="revision-check"><strong>Self-check:</strong> What happens inserting an unlisted code with no default?</p>
+  <p class="revision-connections"><strong>Connects to:</strong> 30.7</p>
+</div>
+<div class="exam-revision-entry">
+  <h3 class="revision-topic">Partition by Hash</h3>
+  <p class="revision-mustknow"><strong>Must-know:</strong> MODULUS 3 with remainders 0,1,2; non-key filters fan out.</p>
+  <p class="revision-pitfall"><strong>Top pitfall:</strong> Country filter on hash-by-id scans all buckets.</p>
+  <p class="revision-check"><strong>Self-check:</strong> Which filter prunes a hash-by-id table?</p>
+  <p class="revision-connections"><strong>Connects to:</strong> 30.5</p>
+</div>
+<div class="exam-revision-entry">
+  <h3 class="revision-topic">Default Partition</h3>
+  <p class="revision-mustknow"><strong>Must-know:</strong> PARTITION OF parent DEFAULT catches every unmatched row.</p>
+  <p class="revision-pitfall"><strong>Top pitfall:</strong> A bloated default means missed first-class values.</p>
+  <p class="revision-check"><strong>Self-check:</strong> Write the DDL for a default slice.</p>
+  <p class="revision-connections"><strong>Connects to:</strong> 30.5</p>
+</div>
+<div class="exam-revision-entry">
+  <h3 class="revision-topic">Multi-Level Partitioning</h3>
+  <p class="revision-mustknow"><strong>Must-know:</strong> A slice can be a parent; EU partitioned by hash under list master.</p>
+  <p class="revision-pitfall"><strong>Top pitfall:</strong> Symmetric deep splits multiply empty slices.</p>
+  <p class="revision-check"><strong>Self-check:</strong> How many tables does 6 ranges x 4 hashes create?</p>
+  <p class="revision-connections"><strong>Connects to:</strong> 30.6</p>
+</div>
+<div class="exam-revision-entry">
+  <h3 class="revision-topic">Attaching and Detaching Partitions</h3>
+  <p class="revision-mustknow"><strong>Must-know:</strong> Attach via CREATE PARTITION OF; detach via ALTER DETACH PARTITION.</p>
+  <p class="revision-pitfall"><strong>Top pitfall:</strong> Detaching live writable keys without redirecting writes.</p>
+  <p class="revision-check"><strong>Self-check:</strong> Which statement detaches a slice?</p>
+  <p class="revision-connections"><strong>Connects to:</strong> 30.7</p>
+</div>
+<div class="exam-revision-entry">
+  <h3 class="revision-topic">Changing Range Bounds Safely</h3>
+  <p class="revision-mustknow"><strong>Must-know:</strong> Detach, new bounds, attach inside BEGIN COMMIT.</p>
+  <p class="revision-pitfall"><strong>Top pitfall:</strong> Widening past the neighbor overlaps and is rejected.</p>
+  <p class="revision-check"><strong>Self-check:</strong> Why wrap bound changes in a transaction?</p>
+  <p class="revision-connections"><strong>Connects to:</strong> 30.4</p>
+</div>
+<div class="exam-revision-entry">
+  <h3 class="revision-topic">Indexes on Partitioned Tables</h3>
+  <p class="revision-mustknow"><strong>Must-know:</strong> Unique keys must include the partition key, e.g. (id, country_code).</p>
+  <p class="revision-pitfall"><strong>Top pitfall:</strong> Unique on id alone is rejected on a list-by-country master.</p>
+  <p class="revision-check"><strong>Self-check:</strong> Fix a unique index missing the partition key.</p>
+  <p class="revision-connections"><strong>Connects to:</strong> 30.15</p>
+</div>
+<div class="exam-revision-entry">
+  <h3 class="revision-topic">Partition Pruning</h3>
+  <p class="revision-mustknow"><strong>Must-know:</strong> No key filter means no pruning even with the switch on.</p>
+  <p class="revision-pitfall"><strong>Top pitfall:</strong> Volatile function around the key hides the value from the planner.</p>
+  <p class="revision-check"><strong>Self-check:</strong> Same filtered query scans all slices: what two causes?</p>
+  <p class="revision-connections"><strong>Connects to:</strong> 30.1</p>
+</div>
+<div class="exam-revision-entry">
+  <h3 class="revision-topic">Choosing a Partition Key</h3>
+  <p class="revision-mustknow"><strong>Must-know:</strong> Most-used plain WHERE columns are the key candidates.</p>
+  <p class="revision-pitfall"><strong>Top pitfall:</strong> Function-wrapped filter columns prune poorly.</p>
+  <p class="revision-check"><strong>Self-check:</strong> Which votes more: id lookup or date-region join?</p>
+  <p class="revision-connections"><strong>Connects to:</strong> 30.14</p>
+</div>
+<div class="exam-revision-entry">
+  <h3 class="revision-topic">Sizing Partitions</h3>
+  <p class="revision-mustknow"><strong>Must-know:</strong> Tens of slices, busiest slice fits maintenance windows.</p>
+  <p class="revision-pitfall"><strong>Top pitfall:</strong> Hundreds of pre-created empty daily slices tax every plan.</p>
+  <p class="revision-check"><strong>Self-check:</strong> Which probe reveals slice-count explosion?</p>
+  <p class="revision-connections"><strong>Connects to:</strong> 30.13</p>
+</div>
+<div class="exam-revision-entry">
+  <h3 class="revision-topic">Why Partitioning Pays Off</h3>
+  <p class="revision-mustknow"><strong>Must-know:</strong> Reads prune, writes land small, history leaves by slice drops.</p>
+  <p class="revision-pitfall"><strong>Top pitfall:</strong> Expecting wins without key filters or with tiny tables.</p>
+  <p class="revision-check"><strong>Self-check:</strong> Name the three maintenance wins.</p>
+  <p class="revision-connections"><strong>Connects to:</strong> 30.9</p>
+</div>
+<div class="exam-revision-entry">
+  <h3 class="revision-topic">Common Partitioning Mistakes</h3>
+  <p class="revision-mustknow"><strong>Must-know:</strong> Debug order: key filter, slice count, settings.</p>
+  <p class="revision-pitfall"><strong>Top pitfall:</strong> Key-less queries turn every read into a full fan-out.</p>
+  <p class="revision-check"><strong>Self-check:</strong> First check when a partitioned query is slow?</p>
+  <p class="revision-connections"><strong>Connects to:</strong> 30.12</p>
+</div>
+    </section>
+  </div>
+</body>
+</html>
