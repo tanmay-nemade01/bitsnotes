@@ -1,0 +1,54 @@
+name: donation-integrity
+
+on:
+  push:
+    paths:
+      - 'src/data/site.ts'
+      - 'src/pages/support.astro'
+      - 'scripts/verify-donation-config.mjs'
+      - 'test/donation-integrity.test.ts'
+      - 'e2e/browse-and-support.spec.ts'
+      - 'public/support-upi-qr.png'
+  pull_request:
+    paths:
+      - 'src/data/site.ts'
+      - 'src/pages/support.astro'
+      - 'scripts/verify-donation-config.mjs'
+      - 'test/donation-integrity.test.ts'
+      - 'e2e/browse-and-support.spec.ts'
+      - 'public/support-upi-qr.png'
+  schedule:
+    # Daily drift check against production (catches tampering outside git).
+    - cron: '30 4 * * *'
+  workflow_dispatch:
+    inputs:
+      live_url:
+        description: 'Support page URL to check'
+        required: false
+        default: 'https://bitsnotes.com/support'
+
+jobs:
+  guard:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install deps
+        run: npm ci
+
+      - name: Source guard (no deps needed)
+        run: node scripts/verify-donation-config.mjs
+
+      - name: Unit guard
+        run: npm run test -- test/donation-integrity.test.ts
+
+      - name: Live production check
+        # On PRs the deploy may not be updated yet; only fail loudly on
+        # schedule / main pushes. PRs still log the result.
+        continue-on-error: ${{ github.event_name == 'pull_request' }}
+        run: node scripts/verify-donation-config.mjs --live-url "${{ inputs.live_url || 'https://bitsnotes.com/support' }}"

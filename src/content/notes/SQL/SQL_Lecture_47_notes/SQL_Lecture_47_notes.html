@@ -1,0 +1,554 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+  <!-- Primary SEO -->
+  <title>Extended PostgreSQL | SQL | BitsNotes</title>
+  <meta name="description" content="SQL extended notes: tail-first B-tree operator classes with canonical keys, plus user-defined aggregates with INITCOND, SFUNC and FINALFUNC.">
+  <meta name="keywords" content="SQL, Extended PostgreSQL, operator class, B-tree index, canonical key, ssn_compare, CREATE AGGREGATE, INITCOND, STYPE, SFUNC, FINALFUNC, taxi fare, EXPLAIN">
+  <meta name="author" content="BitsNotes">
+  <meta name="robots" content="index, follow">
+  <link rel="canonical" href="https://bitsnotes.com/view/sql/extended-postgresql">
+
+  <!-- Open Graph / Facebook -->
+  <meta property="og:type" content="article">
+  <meta property="og:title" content="Extended PostgreSQL | SQL">
+  <meta property="og:description" content="SQL extended notes: tail-first B-tree operator classes with canonical keys, plus user-defined aggregates with INITCOND, SFUNC and FINALFUNC.">
+  <meta property="og:url" content="https://bitsnotes.com/view/sql/extended-postgresql">
+  <meta property="og:image" content="https://bitsnotes.com/og-default.png">
+  <meta property="og:image:width" content="1200">
+  <meta property="og:image:height" content="630">
+  <meta property="og:site_name" content="BitsNotes">
+
+  <!-- Twitter Card -->
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="Extended PostgreSQL | SQL">
+  <meta name="twitter:description" content="SQL extended notes: tail-first B-tree operator classes with canonical keys, plus user-defined aggregates with INITCOND, SFUNC and FINALFUNC.">
+  <meta name="twitter:image" content="https://bitsnotes.com/og-default.png">
+  <meta name="twitter:site" content="@BitsNotes">
+
+  <!-- Stylesheet -->
+  <link rel="stylesheet" href="/lecture-notes.css">
+
+  <!-- Structured Data: JSON-LD -->
+  <script type="application/ld+json">
+{"@context":"https://schema.org","@type":"Article","headline":"Extended PostgreSQL | SQL","description":"SQL extended notes: tail-first B-tree operator classes with canonical keys, plus user-defined aggregates with INITCOND, SFUNC and FINALFUNC.","author":{"@type":"Organization","name":"BitsNotes"},"about":["operator class","B-tree index","canonical key","CREATE AGGREGATE","INITCOND","SFUNC","FINALFUNC","EXPLAIN"]}
+</script>
+
+  <!-- Lecture Metadata (for the BitsNotes platform viewer) -->
+  <!-- IMPORTANT: This is the ONLY metadata source. No companion .json file
+       is created. The viewer reads everything from this embedded script.
+       Required fields: title, subject, gradeLevel, datePublished,
+       targetAudience, sections (array), examRevisionNotes (array).
+       Optional fields: prerequisites (array of {subject, lecture, topics}).
+       NOT included (removed): summary, keyConcepts, quiz. -->
+  <script type="application/json" id="lecture-metadata">
+{
+  "title": "Extended PostgreSQL",
+  "subject": "SQL",
+  "gradeLevel": "undergraduate",
+  "datePublished": "2026-09-22",
+  "targetAudience": "Undergraduate students learning advanced PostgreSQL",
+  "sections": [
+    {
+      "title": "Custom Index Methods With Operator Classes",
+      "description": "Tail-first B-tree index on SSN text via canonicalizing function fn_fix_ssn, integer three-way comparator ssn_compare, five-strategy operator class and CREATE INDEX, verified with EXPLAIN."
+    },
+    {
+      "title": "User-Defined Aggregate Functions",
+      "description": "Taxi-fare aggregate fare_taxi from INITCOND, STYPE, SFUNC taxi_all_rows and FINALFUNC taxi_trip_sum, traced row by row and cross-checked against the closed-form GROUP BY query."
+    }
+  ],
+  "examRevisionNotes": [
+    {
+      "topic": "Custom Index Methods With Operator Classes",
+      "mustKnow": "Tail-first SSN index = canonicalize (tail first, strip dashes), integer three-way compare, operator class with strategies 1-5 plus FUNCTION 1, CREATE INDEX with the class",
+      "keyFormula": "\\[cmp(a, b) = -1 \\text{ when } c(a) < c(b), \\text{ } 1 \\text{ when } c(a) > c(b), \\text{ } 0 \\text{ otherwise}\\]",
+      "commonPitfall": "Comparator returning text '-1' instead of integer -1 is rejected by the B-tree contract; leaving enable_seqscan OFF distorts later plans",
+      "quickCheck": "What canonical key does 111-11-0100 map to, and what does ssn_compare return for 111-11-0100 vs 222-22-0120?",
+      "connections": [
+        "47.2"
+      ]
+    },
+    {
+      "topic": "User-Defined Aggregate Functions",
+      "mustKnow": "CREATE AGGREGATE fare_taxi = INITCOND 5, STYPE numeric, SFUNC taxi_all_rows per row, FINALFUNC taxi_trip_sum per group; cross-check 36.00 and 17.50 against 5 + 2.5*sum",
+      "keyFormula": "\\[fare(g) = 5 + 2.5 \\times \\sum_{i \\in g} km_i\\]",
+      "commonPitfall": "Adding the 5-dollar flagfall inside SFUNC charges it per row (trip 2 becomes 27.50 instead of 17.50); it belongs in INITCOND once per group",
+      "quickCheck": "Trace the running state for trip 2 rows 1.8 and 3.2 starting from INITCOND 5 at rate 2.5.",
+      "connections": [
+        "47.1"
+      ]
+    }
+  ],
+  "prerequisites": [
+    {
+      "subject": "SQL",
+      "lecture": 2,
+      "topics": [
+        "Creating tables with CREATE TABLE and data types"
+      ]
+    },
+    {
+      "subject": "SQL",
+      "lecture": 4,
+      "topics": [
+        "Querying with SELECT and sorting with ORDER BY"
+      ]
+    },
+    {
+      "subject": "SQL",
+      "lecture": 5,
+      "topics": [
+        "Filtering rows with WHERE"
+      ]
+    }
+  ]
+}
+</script>
+</head>
+<body>
+  <div class="container">
+    <!-- ============================================================
+    HERO HEADER
+    ============================================================ -->
+    <header class="hero-header">
+      <span class="subject-badge">SQL</span>
+      <h1 class="lecture-title">Extended PostgreSQL</h1>
+      <div class="meta-info">
+        <div class="meta-item"><strong>Published:</strong> 2026-09-22</div>
+        <div class="meta-item"><strong>Level:</strong> undergraduate</div>
+        <div class="meta-item"><strong>Audience:</strong> Undergraduate students learning advanced PostgreSQL</div>
+      </div>
+    </header>
+
+    <!-- ============================================================
+    PREREQUISITE KNOWLEDGE
+    Optional section listing concepts from previous lectures that this
+    lecture builds on. Populated by Agent 3 from topic_mappings/*.yaml.
+    If no prerequisites exist, this section is omitted entirely.
+    ============================================================ -->
+    <section class="prerequisite-section">
+  <h2>Prerequisite Knowledge</h2>
+  <p class="prerequisite-intro">This lecture builds on the following
+  concepts from earlier lectures. If any feel unfamiliar, review the
+  linked notes before proceeding.</p>
+  <div class="prerequisite-entry">
+    <h3>Previously Covered in This Subject</h3>
+    <ul>
+      <li><strong>Creating tables with CREATE TABLE and data types</strong> — covered in Lecture 2</li>
+      <li><strong>Querying with SELECT and sorting with ORDER BY</strong> — covered in Lecture 4</li>
+      <li><strong>Filtering rows with WHERE</strong> — covered in Lecture 5</li>
+    </ul>
+  </div>
+</section>
+
+    <!-- ============================================================
+    MAIN LECTURE-FAITHFUL CONTENT
+    Page title = one h1.lecture-title
+    Each section = one h2.section-title
+    Each subsection = one h3.subsection-title
+    Callout boxes: .key-concept (blue), .important-note (violet),
+      .example-box (green), .warning-box (red), .key-takeaway (amber)
+    Display math: auto-scrolls via mjx-container CSS; .eqbox wrapper optional
+    ============================================================ -->
+    <main>
+<h2 id="47.1-custom-index-methods-with-operator-classes">47.1 Custom Index Methods With Operator Classes</h2>
+<div class="important-note">
+  <p>What if a phone book were sorted by the last four digits of every number instead of by name? That is exactly what this section builds: a PostgreSQL index that orders Social Security numbers by their tail first, without touching the stored rows.</p>
+</div>
+<p>An <em>index</em> (a helper structure the database uses to find rows fast, without scanning the whole table) in PostgreSQL is best seen as a framework rather than a fixed structure. The built-in <em>access method</em> (the engine part that knows how to walk a tree, here <code>btree</code>) knows how to walk a tree and compare keys, but the meaning of "smaller" and "larger" can be supplied by the user through an <em>operator class</em> (a named bundle that ties ordering operators and a comparison function to one data type for one access method). That opening makes it possible to index the same stored text in a new order without changing the stored rows at all. The session builds one full example around United States Social Security numbers of the shape 111-11-0100, where the goal is an index ordered by the last group first instead of the usual left-to-right text order.</p>
+<p>Think of it like a library that keeps the books on the shelves in acquisition order but maintains a separate card catalog sorted by title. The books never move; only the catalog cards are rewritten into title order. Here the stored <code>ssn</code> values are the books, and the canonical rewritten keys are the catalog cards.</p>
+<h3 id="47.1.1-why-a-plain-index-cannot-order-by-the-tail-of-a-value">47.1.1 Why a plain index cannot order by the tail of a value</h3>
+<p>A Social Security number such as 111-11-0100 is stored here as plain <em>text</em> (a variable-length character string, for example <code>'111-11-0100'</code>) in a one-column table called <code>ssn</code>. A default B-tree index on that column compares whole strings from the first character onward, so rows come back grouped by their leading digits: all values starting with 111 sort together, then values starting with 222, no matter what tail digits follow. The working example uses two families of sample rows, one shaped like 111-11-0100 with tails 0100, 0140, 0160, and one shaped like 222-22-0120 with tails near 0120, and a plain <code>ORDER BY ssn</code> returns them in leading-digit order, for example 111-11-0140 before 222-22-0120 even though 0140 is greater than 0120.</p>
+<p>The request is different: sort and look up by the last four digits first, then by the rest. A stock index cannot do that because it never reorders characters before comparing. So the work proceeds in four stages: first a canonicalizing function that rewrites each value into index order, second a three-way comparison function built on that canonical form, third an operator class that binds the comparison to the B-tree access method, and fourth a <code>CREATE INDEX</code> statement that names the new operator class. Each stage is tested on its own before the next one is built.</p>
+<div class="key-concept">
+  <p><strong>The four-stage build.</strong> Stage 1 rewrites each value with <code>fn_fix_ssn</code> into a tail-first key. Stage 2 compares two rewritten keys with <code>ssn_compare</code> returning \(-1\), \(0\), or \(1\). Stage 3 registers operators plus the comparator in a new operator class. Stage 4 creates <code>idx_ssn</code> on the column using that class.</p>
+</div>
+<p>The contrast below pins down why each stage is needed.</p>
+<table>
+  <thead>
+    <tr>
+      <th>Dimension</th>
+      <th>Plain B-tree on <code>ssn</code></th>
+      <th>Custom tail-first index</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td>Compared value</td>
+      <td>Stored string as-is, for example <code>111-11-0100</code></td>
+      <td>Rewritten key, for example <code>010011111</code></td>
+    </tr>
+    <tr>
+      <td>Sort priority</td>
+      <td>Leading digits dominate</td>
+      <td>Last four digits dominate</td>
+    </tr>
+    <tr>
+      <td>Partial-tail lookup</td>
+      <td>Full scan or filter after scan</td>
+      <td>Index can serve tail-first order directly</td>
+    </tr>
+    <tr>
+      <td>Extra objects</td>
+      <td>None</td>
+      <td>Two functions plus one operator class</td>
+    </tr>
+  </tbody>
+</table>
+<p>Pick the plain index when queries filter or sort by the full value left to right. Pick the custom class when the access pattern is tail-first, such as "find everyone whose number ends in 0120".</p>
+<p>Fraud review, call-center lookup, and benefits desks often search partial identifiers such as the last four digits of a national number. A tail-first index matches that access pattern instead of forcing a full scan. The same pattern recurs in other domains: case-insensitive name search rewrites <code>Smith</code> to <code>smith</code> before comparing, phone search strips spaces and dashes, and unit-normalized search converts <code>5 km</code> and <code>5000 m</code> into one comparable scale.</p>
+<p>Supporting cross-database note: this operator-class mechanism is PostgreSQL-specific. MySQL has B-tree indexes but no user-defined operator classes; the closest equivalent there is a functional key part or a stored generated column holding the rewritten value with a plain index on it, for example a generated column <code>ssn_tail</code> defined as the tail-first expression. Snowflake and Databricks/Spark SQL likewise have no <code>CREATE OPERATOR CLASS</code>; Snowflake relies on micro-partitions plus clustering keys, and Databricks relies on partitioning, Z-ordering, and file skipping rather than custom comparators. If the same tail-first idea is needed there, rewrite the value in a view or derived column and sort or filter on that. The lecture's four-stage PostgreSQL build below is the PostgreSQL version of a portable idea: canonicalize, then compare, then index.</p>
+<h3 id="47.1.2-canonicalizing-function-fn-fix-ssn">47.1.2 Canonicalizing function fn_fix_ssn</h3>
+<div class="important-note">
+  <p>A phone number written as <code>(555) 123-4567</code> and one written as <code>5551234567</code> reach the same person, but a naive string sort treats them as unrelated. The fix used here is to rewrite every value into one canonical spelling before comparing, the way a post office rewrites every address into postcode-first order before sorting mail.</p>
+</div>
+<p>The first step moves the sortable part to the front and strips punctuation so comparison is a plain string comparison. In plain words, the function takes one text input holding a value shaped like AAA-BB-CCCC, pulls characters from position 8 onward as the new head, then appends characters 1 through 7 with dashes removed. For 111-11-0100 the head from position 8 is 0100 and the cleaned prefix is 11111, giving the canonical key 010011111. The analogy breaks at one point: mail sorting changes the physical route, while this rewrite never touches stored rows and only changes the index key.</p>
+<div class="key-concept">
+  <p><strong>Canonical key definition.</strong> Let \(s\) be the stored text value such as <code>111-11-0100</code>. Let \(tail\) be the substring from position 8 onward, written inline as \(tail = substring(s, 8)\). Let \(head\) be the cleaned prefix, written as \(head = replace(substring(s, 1, 7), -, empty)\) where \(-\) is the dash character and \(empty\) is the zero-length string that deletes each dash. The full canonical key is the concatenation of the two parts:</p>
+  <p>\[ canonical(s) = substring(s, 8) \text{ followed by } replace(substring(s, 1, 7), \text{-}, \text{empty}) \]</p>
+  <p>Here \(s\) is the stored value, \(substring(s, 8)\) means characters from position 8 to the end with positions counted from 1 including dashes, and \(replace\) with \(empty\) deletes every dash. For \(s = \text{111-11-0100}\), the result is \(\text{010011111}\).</p>
+</div>
+<p>Position arithmetic shows why 8 and 7 are the right constants. Lay out <code>111-11-0100</code> with 1-based positions:</p>
+<table>
+  <thead>
+    <tr>
+      <th>Positions</th>
+      <th>1-3</th>
+      <th>4</th>
+      <th>5-6</th>
+      <th>7</th>
+      <th>8-11</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td>Characters</td>
+      <td><code>111</code></td>
+      <td><code>-</code></td>
+      <td><code>11</code></td>
+      <td><code>-</code></td>
+      <td><code>0100</code></td>
+    </tr>
+  </tbody>
+</table>
+<p>So characters 1 through 7 are <code>111-11-</code> (seven characters including two dashes) and characters 8 onward are the four-digit tail. Stripping dashes from the seven-character prefix leaves five digits, and appending gives a nine-character key of the shape CCCCAAAAA. Two worked substitutions: <code>111-11-0100</code> gives head <code>0100</code> plus cleaned prefix <code>11111</code>, giving <code>010011111</code>; <code>222-22-0120</code> gives head <code>0120</code> plus cleaned prefix <code>22222</code>, giving <code>012022222</code>. Since <code>0100</code> sorts before <code>0120</code> as plain text, the new order groups by tail first.</p>
+<p>The build proceeds interactively: first a <code>SELECT substring(...)</code> test on position 8 to confirm the tail extraction, then a <code>SELECT replace(substring(... from 1 for 7), '-', '')</code> test to confirm dash removal, and only then the combined <code>RETURN</code>. Written with single-quoted bodies to keep the draft free of dollar quoting, the function reads:</p>
+<pre><code>CREATE OR REPLACE FUNCTION fn_fix_ssn(first_arg text)
+RETURNS text AS
+'SELECT substring(first_arg from 8)
+    || replace(substring(first_arg from 1 for 7), ''-'', '''')'
+LANGUAGE sql IMMUTABLE;</code></pre>
+<p>Line by line: <code>first_arg text</code> names one input of type text; <code>RETURNS text</code> declares a text result; the body concatenates with <code>||</code> the tail part and the dash-stripped prefix part; <code>LANGUAGE sql</code> marks it a plain SQL function; <code>IMMUTABLE</code> promises the output depends only on the input. The alternate spoken form wraps the same <code>RETURN</code> expression in a plpgsql block with <code>BEGIN</code> and <code>END</code>, which behaves identically for this expression.</p>
+<div class="example-box">
+  <p><strong>Trace: <code>fn_fix_ssn('111-11-0100')</code>.</strong> Step 1: <code>substring('111-11-0100' from 8)</code> gives <code>0100</code>. Step 2: <code>substring('111-11-0100' from 1 for 7)</code> gives <code>111-11-</code>, and <code>replace(..., '-', '')</code> gives <code>11111</code>. Step 3: <code>0100 || 11111</code> gives <strong>010011111</strong>. Sense-check: the tail now leads, so ordering by canonical key is ordering by tail first.</p>
+</div>
+<div class="warning-box">
+  <p><strong>Scope:</strong> this rewrite assumes every value has exactly the shape AAA-BB-CCCC with dashes at positions 4 and 7. <strong>Assumption:</strong> the tail is always four characters starting at position 8. If a row holds a malformed value such as <code>111110100</code> with no dashes or a short tail, the position constants pick the wrong characters and the index order becomes meaningless. A production version would validate the shape with a check constraint or a regular expression before indexing.</p>
+</div>
+<p>Picture the effect as two columns side by side: the left column lists stored values <code>111-11-0160</code>, <code>111-11-0100</code>, <code>222-22-0120</code> in leading-digit order, while the right column lists their keys <code>016011111</code>, <code>010011111</code>, <code>012022222</code>. Draw an arrow from each stored value to its key, then sort by the right column: <code>010011111</code>, <code>012022222</code>, <code>016011111</code>. The takeaway is that sorting keys reorders the rows tail-first while stored values never move.</p>
+<div class="warning-box">
+  <p><strong>Pitfalls.</strong> Testing only one input family hides the bug where positions are off by one; always test at least one <code>111-*</code> and one <code>222-*</code> value. Forgetting <code>IMMUTABLE</code> blocks the function from index use, because only immutable functions may appear in an index definition since the stored key must never change for the same input. Using <code>substring</code> with 0-based counting (as in some other databases) shifts every character; in PostgreSQL positions start at 1.</p>
+</div>
+<p>A quick check applies the function to the whole table with <code>SELECT fn_fix_ssn(ssn) FROM ssn</code>, confirming rows such as 111-11-0100 mapping to a key headed by 0100 and 222-22-0120 mapping to a key headed by 0120. Stored rows stay untouched; only the index key is rewritten. In MySQL the same check would read <code>SELECT CONCAT(SUBSTRING(ssn, 8), REPLACE(SUBSTRING(ssn, 1, 7), '-', '')) FROM ssn</code>, since MySQL spells the functions <code>SUBSTRING</code> and <code>REPLACE</code> with commas rather than <code>FROM</code>/<code>FOR</code> keywords; Snowflake and Databricks also support <code>SUBSTRING</code>/<code>SUBSTR</code> plus <code>REPLACE</code>, so the rewrite expression ports with small syntax changes even though the operator-class wrapper does not.</p>
+<div class="key-takeaway">
+  <p><strong>Exam note:</strong> be ready to write the canonicalizing expression from memory with <code>substring</code> and <code>replace</code>, to state the position constants 8 and 7 with the AAA-BB-CCCC layout, and to give one input-to-key mapping such as 111-11-0100 to 010011111.</p>
+</div>
+<h3 id="47.1.3-three-way-comparison-function-ssn-compare">47.1.3 Three-way comparison function ssn_compare</h3>
+<p>Indexing comes down to pairwise comparison, so the next function answers one question for any two inputs: which canonical key sorts first. The strategy uses three branches over the canonical form: when the fixed form of the first input is less than the fixed form of the second input, return minus one; when it is greater, return one; otherwise return zero. In plain words, "less" means earlier in tail-first order and "greater" means later in tail-first order. This is the same sign convention as C's <code>strcmp</code> or Java's <code>compareTo</code>: negative for first-earlier, positive for first-later, zero for tie.</p>
+<div class="key-concept">
+  <p><strong>Three-way sign rule.</strong> Let \(a\) and \(b\) be text inputs such as <code>111-11-0100</code> and <code>222-22-0120</code>. Let \(c(x)\) be the canonical key \(canonical(x)\) from the previous section. Let \(cmp(a, b)\) be the integer sign result defined by:</p>
+  <p>\[ cmp(a, b) = -1 \text{ when } c(a) < c(b), \text{ } 1 \text{ when } c(a) > c(b), \text{ } 0 \text{ otherwise} \]</p>
+  <p>Here \(<\) and \(>\) are plain text ordering on the canonical keys, \(-1\) means the first key sorts earlier, \(1\) means it sorts later, and \(0\) means the canonical keys tie.</p>
+</div>
+<p>The first cut of the function is written to return text on purpose so the later failure is visible. Its shape, again with single-quoted body text, is:</p>
+<pre><code>CREATE OR REPLACE FUNCTION ssn_compare(first_arg text, second_arg text)
+RETURNS text AS
+'SELECT CASE
+    WHEN fn_fix_ssn(first_arg) &lt; fn_fix_ssn(second_arg) THEN ''-1''
+    WHEN fn_fix_ssn(first_arg) &gt; fn_fix_ssn(second_arg) THEN ''1''
+    ELSE ''0'' END'
+LANGUAGE sql IMMUTABLE;</code></pre>
+<p>Each <code>WHEN</code> arm compares the two canonical keys and yields a quoted text digit. The alternate spoken form spells the same logic as <code>IF</code> and <code>ELSIF</code> branches inside plpgsql: an <code>IF</code> branch returning minus one for the less-than case, an <code>ELSIF</code> branch returning one for the greater-than case, and a final <code>ELSE</code> returning zero. Live tests pass pairs such as 111-11-0100 against 222-22-0120 and get minus one because the canonical head 0100 is less than 0120, then reverse the argument order and get one. Equal inputs give zero. The function works as a value test at this point, but it is not yet usable as a B-tree comparator because its declared return type is text.</p>
+<div class="example-box">
+  <p><strong>Trace: <code>ssn_compare('111-11-0100', '222-22-0120')</code>.</strong> Step 1: canonicalize both, giving <code>010011111</code> and <code>012022222</code>. Step 2: compare as text, where <code>0100... < 0120...</code> holds. Step 3: take the first <code>WHEN</code> arm, giving <strong>-1</strong>. Reversed call <code>ssn_compare('222-22-0120', '111-11-0100')</code> takes the second arm and gives <strong>1</strong>; identical inputs fall to <code>ELSE</code> and give <strong>0</strong>. Sense-check: the sign always answers "which tail sorts first".</p>
+</div>
+<p>That mismatch is deliberate pedagogy. The <code>CREATE OPERATOR CLASS</code> step below fails with "B-tree comparison function must return integer", which names the exact contract: a B-tree comparator takes two keys and must return type <em>integer</em> (a whole-number sign value with minus one for less, zero for equal, and one for greater). The fix drops the old function and re-creates it with <code>RETURNS integer</code> and unquoted numeric results minus one, zero, and one:</p>
+<pre><code>DROP FUNCTION ssn_compare(text, text);
+CREATE OR REPLACE FUNCTION ssn_compare(first_arg text, second_arg text)
+RETURNS integer AS
+'SELECT CASE
+    WHEN fn_fix_ssn(first_arg) &lt; fn_fix_ssn(second_arg) THEN -1
+    WHEN fn_fix_ssn(first_arg) &gt; fn_fix_ssn(second_arg) THEN 1
+    ELSE 0 END'
+LANGUAGE sql IMMUTABLE;</code></pre>
+<p>After the fix, the same pair of calls returns integer minus one in one direction and integer one in the reverse direction. The displayed digits look identical to the text version, but the declared type now satisfies the support-function contract. <code>DROP FUNCTION ... CASCADE</code> is needed if the half-built operator class already depends on the old function name, because the class holds a dependency link to the function.</p>
+<div class="warning-box">
+  <p><strong>Scope:</strong> the comparator inherits the canonicalizer's shape assumption and adds one more: text ordering on canonical keys must match the intended numeric-tail order, which holds here because every tail is zero-padded to four digits. <strong>Assumption:</strong> equal canonical keys mean interchangeable rows for ordering. If two distinct stored values ever canonicalized to the same key, they would tie at \(0\) and the index would treat them as peers.</p>
+</div>
+<div class="warning-box">
+  <p><strong>Pitfalls.</strong> Returning quoted <code>'-1'</code> instead of bare <code>-1</code> is the headline trap: same printed digits, wrong type, rejected by the B-tree contract. Re-creating the function without dropping first can leave the old signature behind when argument types differ; always check signatures. Marking the comparator volatile or stable instead of immutable also breaks index use.</p>
+</div>
+<div class="key-takeaway">
+  <p><strong>Exam note:</strong> state the three-branch sign rule with integer returns, explain why a boolean is not enough (a B-tree needs earlier, equal, and later to walk the tree), and explain the "must return integer" error plus its drop-and-recreate fix.</p>
+</div>
+<h3 id="47.1.4-operator-class-and-b-tree-index-build">47.1.4 Operator class and B-tree index build</h3>
+<p>An <em>operator class</em> (the bundle named here <code>opclass_ssn_ops1</code>) tells a named access method which operators and which support function belong together for a given data type. Here the access method is <code>btree</code>, the data type is text, and the new class is named <code>opclass_ssn_ops1</code>. Inside the class body, strategy numbers 1 through 5 bind the five ordering operators and support number 1 names the comparison function:</p>
+<pre><code>CREATE OPERATOR CLASS opclass_ssn_ops1
+FOR TYPE text USING btree AS
+    OPERATOR 1 &lt; ,
+    OPERATOR 2 &lt;= ,
+    OPERATOR 3 = ,
+    OPERATOR 4 &gt;= ,
+    OPERATOR 5 &gt; ,
+    FUNCTION 1 ssn_compare(text, text);</code></pre>
+<div class="key-concept">
+  <p><strong>Strategy-to-operator map.</strong> Number 1 binds \(<\) (less than), 2 binds \(<=\) (less than or equal), 3 binds \(=\) (equal), 4 binds \(>=\) (greater than or equal), and 5 binds \(>\) (greater than). <code>FUNCTION 1</code> is the B-tree support slot for three-way comparison, filled here by <code>ssn_compare</code> over two text inputs. Strategy numbers are the B-tree's fixed vocabulary; the class just fills each slot.</p>
+</div>
+<p>Each <code>OPERATOR</code> line maps a strategy number to a familiar sign. Running this body while <code>ssn_compare</code> still returns text reproduces the integer-return error on purpose; after the function is fixed to return integer, the same statement succeeds. The pgAdmin check refreshes the operator-class list and shows the class properties with its five operators plus the one support function, which is the click-level audit for review and handover.</p>
+<p>With the class in place, the index itself is one line that names the column and the class together:</p>
+<pre><code>CREATE INDEX idx_ssn ON ssn (ssn opclass_ssn_ops1);</code></pre>
+<p>Before this statement the table properties show no index under the <code>ssn</code> table; afterward a refresh shows <code>idx_ssn</code> with its definition on column <code>ssn</code> using the new operator class. The hierarchy matters: canonicalizing function first, then comparison function, then operator class, then index. Skipping the class and naming the column alone would fall back to default text ordering and lose the tail-first behavior.</p>
+<div class="example-box">
+  <p><strong>Trace: build order with the deliberate failure.</strong> Step 1: create <code>ssn_compare</code> returning text and run <code>CREATE OPERATOR CLASS</code>, giving the error <strong>B-tree comparison function must return integer</strong>. Step 2: run <code>DROP FUNCTION ssn_compare(text, text) CASCADE</code> to remove the dependent linkage, re-create with <code>RETURNS integer</code>, and re-test to integer <strong>-1</strong> and <strong>1</strong>. Step 3: re-run <code>CREATE OPERATOR CLASS</code>, which now succeeds, then run <code>CREATE INDEX idx_ssn</code>. Sense-check: the error is the contract speaking, and <code>CASCADE</code> is needed because the class already depends on the function name.</p>
+</div>
+<p>Picture the dependency chain as four stacked boxes with arrows pointing down: <code>fn_fix_ssn</code> at the bottom, <code>ssn_compare</code> above it, <code>opclass_ssn_ops1</code> above that, <code>idx_ssn</code> at the top. Each box rests on the one below, so rebuilding a lower box forces everything above it to be rechecked. The takeaway is that the build order is load-bearing, not cosmetic.</p>
+<div class="warning-box">
+  <p><strong>Pitfalls.</strong> Naming the index column without the class silently uses default ordering and the demo appears to "work" while sorting wrong. Reusing the class name without dropping the old class first raises a duplicate-object error. Forgetting <code>FOR TYPE text USING btree</code> binds the class to the wrong type or method, so later <code>CREATE INDEX</code> cannot find it.</p>
+</div>
+<p>Cross-database supporting note: MySQL, Snowflake, and Databricks have no <code>CREATE OPERATOR CLASS</code> statement. In MySQL the portable substitute is an expression or generated-column index such as <code>INDEX ((SUBSTRING(...)))</code> on recent versions, or a stored generated column plus a plain index. In Snowflake and Databricks the substitute is a derived column in a view or materialized result with clustering or sorting on that column. The PostgreSQL class is worth learning as the PostgreSQL spelling of "teach the index a new sort order", with generated-column indexes as its sibling elsewhere.</p>
+<h3 id="47.1.5-planner-control-and-reading-explain-output">47.1.5 Planner control and reading EXPLAIN output</h3>
+<p>PostgreSQL normally prefers a sequential scan for tiny tables, so the session first shows the default plan with a plain <code>ORDER BY ssn</code> producing a sequential scan with sort key <code>ssn</code>, then changes the planner switch to force the new path during testing:</p>
+<pre><code>SHOW enable_seqscan;
+SET enable_seqscan = OFF;
+SHOW enable_seqscan;</code></pre>
+<div class="key-concept">
+  <p><strong>Planner switch.</strong> Let \(enable\_seqscan\) be a boolean planner switch where <code>ON</code> allows sequential scans and <code>OFF</code> steers the planner toward index scans when a usable index exists. <code>SHOW</code> reports the current value; <code>SET</code> changes it for the current session. It never changes data, only plan choice.</p>
+</div>
+<p>With the switch off, a probe such as <code>SELECT * FROM ssn WHERE ssn = '111-11-0100'</code> produces an <code>Index Scan using idx_ssn</code> with an <code>Index Cond</code> on the <code>ssn</code> column, and the message pane reports rows handled through that scan. That plan line is the proof that the custom path is reachable. Concretely, an <code>EXPLAIN</code> line reading <code>Index Scan using idx_ssn on ssn</code> with <code>Index Cond: (ssn = '111-11-0100'::text)</code> means the planner walked the custom tree; a line reading <code>Seq Scan on ssn</code> means it scanned every row and the index was bypassed.</p>
+<div class="example-box">
+  <p><strong>Trace: index-use proof.</strong> Step 1: with <code>enable_seqscan = ON</code>, run <code>EXPLAIN SELECT * FROM ssn WHERE ssn = '111-11-0100'</code> and see <strong>Seq Scan on ssn</strong>. Step 2: run <code>SET enable_seqscan = OFF</code> and re-run the same <code>EXPLAIN</code>, now seeing <strong>Index Scan using idx_ssn</strong>. Step 3: run <code>SET enable_seqscan = ON</code> to restore normal planning. Sense-check: the plan changes with no query rewrite, which shows the index is genuinely usable.</p>
+</div>
+<div class="warning-box">
+  <p><strong>Scope:</strong> <code>enable_seqscan = OFF</code> is strictly a demonstration aid that forbids one plan shape so the new path becomes visible on a tiny table. <strong>Assumption:</strong> on a large production table the planner would pick the index on its own when selective. Leaving the switch off in a shared database would distort every later plan, so the toggle must be reverted immediately after the demo.</p>
+</div>
+<p>The session stresses housekeeping: turn the switch back on afterward with <code>SET enable_seqscan = ON</code> and confirm with <code>SHOW</code> so later queries plan normally.</p>
+<div class="key-takeaway">
+  <p><strong>Exam note:</strong> expect a build-order question such as naming the four stages function, comparison, operator class, index, or explaining why the comparator must return integer rather than text, plus reading one <code>EXPLAIN</code> line to say whether the custom index was used.</p>
+</div>
+<h3 id="47.1.6-worked-examples">47.1.6 Worked Examples</h3>
+<div class="example-box">
+  <p><strong>Example 1: canonical key for 111-11-0100.</strong> Setup takes stored text \(s = \text{111-11-0100}\). Step one extracts \(substring(s, 8) = \text{0100}\). Step two extracts \(substring(s, 1, 7) = \text{111-11-}\) and applies \(replace(\text{111-11-}, \text{-}, \text{empty}) = \text{11111}\). Step three concatenates to <strong>canonical(s) = 010011111</strong>. Sense-check: the tail now leads, so ordering by canonical key is ordering by tail first.</p>
+</div>
+<div class="example-box">
+  <p><strong>Example 2: pairwise comparison of 111-11-0100 and 222-22-0120.</strong> Setup fixes both inputs: the first maps to a key headed by 0100 and the second to a key headed by 0120. Substitution into the sign rule gives \(c(a) = \text{0100...}\) and \(c(b) = \text{0120...}\) with \(c(a) < c(b)\) as text. The result is <strong>cmp(a, b) = -1</strong>. Reversing the inputs gives <strong>cmp(b, a) = 1</strong>, and identical inputs give <strong>0</strong>. Sense-check: minus one means first sorts earlier, one means first sorts later, zero means identical canonical keys.</p>
+</div>
+<p>The two examples above use the example-box callout back to back with this prose between them so the boxes stay scannable; the next two continue the same staged pattern.</p>
+<div class="example-box">
+  <p><strong>Example 3: failing then fixed operator class.</strong> Setup creates <code>ssn_compare</code> returning text and runs <code>CREATE OPERATOR CLASS</code>. The result is the error <strong>B-tree comparison function must return integer</strong>. Correction drops the function with <code>DROP FUNCTION ssn_compare(text, text) CASCADE</code> to remove the dependent half-built linkage, re-creates it with <code>RETURNS integer</code>, re-tests to integer <strong>-1</strong> and integer <strong>1</strong>, and re-runs <code>CREATE OPERATOR CLASS</code> successfully. Sense-check: the error is the contract speaking, and <code>CASCADE</code> is needed because the class already depends on the function name.</p>
+</div>
+<div class="example-box">
+  <p><strong>Example 4: index use proof.</strong> Setup has table <code>ssn</code> with sample rows and index <code>idx_ssn</code> built with the new class. Step one runs <code>EXPLAIN</code> on the equality probe with <code>enable_seqscan</code> on and sees a <strong>sequential scan</strong>. Step two sets <code>enable_seqscan</code> to <code>OFF</code> and re-runs <code>EXPLAIN</code>, now seeing <strong>Index Scan using idx_ssn</strong> with an index condition. Step three resets the switch to <code>ON</code>. Sense-check: the plan change with no query rewrite shows the index is genuinely usable.</p>
+</div>
+<h3 id="47.1.7-student-questions-and-answers">47.1.7 Student Questions and Answers</h3>
+<div class="important-note">
+  <p><strong>Q:</strong> Why can a normal index not sort by the last part of the number? <strong>A:</strong> A normal text index compares the whole stored string from the first character, so leading digits dominate. To lead with the tail, rewrite each value into a canonical key with the tail first and index that derived order through a custom operator class.</p>
+</div>
+<div class="important-note">
+  <p><strong>Q:</strong> Why does the comparison function return minus one, zero, or one instead of true or false? <strong>A:</strong> A B-tree needs three outcomes for every pair: earlier, equal, or later. Minus one marks the first key earlier, one marks it later, and zero marks equality, and the access method uses those signs to walk the tree. A boolean could only answer equality, never ordering.</p>
+</div>
+<p>The two answers above are separated by this prose so the violet callouts do not run together; the remaining two answers follow the same question-and-resolution shape.</p>
+<div class="important-note">
+  <p><strong>Q:</strong> Why did the operator class fail with "must return integer" when the text version already returned minus one? <strong>A:</strong> The displayed characters matched but the declared type did not. The B-tree support contract requires return type integer, so a function returning the text value minus one is rejected even though it prints the same digits. Re-creating the function with <code>RETURNS integer</code> satisfies the contract.</p>
+</div>
+<div class="important-note">
+  <p><strong>Q:</strong> Why turn enable_seqscan off, and should it stay off? <strong>A:</strong> Small tables default to sequential scans, which hides the new index during a demo. Setting the switch off forces the planner to show the index path, and switching it back on afterward restores normal planning. It is a test scaffold, never a permanent setting.</p>
+</div>
+<div class="key-takeaway">
+  <p>Custom operator classes separate what is stored from how it sorts: one rewrite function puts the tail first, one integer comparator orders rewritten keys, one class registers the order with the B-tree, and one index applies it. That separation is what carries forward into the next section, where a different kind of user-defined object, an aggregate, separates per-row folding from per-group reporting.</p>
+</div>
+
+<h2 id="47.2-user-defined-aggregate-functions">47.2 User-Defined Aggregate Functions</h2>
+<div class="important-note">
+  <p>Built-in <code>sum</code> and <code>avg</code> hide a small machine: start somewhere, fold in one row at a time, then report once per group. What if a taxi meter with a flagfall plus a per-kilometer rate could be packaged as its own <code>sum</code>-like function? This section builds exactly that.</p>
+</div>
+<p>PostgreSQL lets users add new <em>aggregate functions</em> (functions that accept rows grouped by a key and return one value per group, such as <code>sum</code> or <code>avg</code>) that behave like built-ins: they accept rows grouped by a key and return one value per group. The session builds a taxi-fare aggregate from scratch, including the two helper functions it needs, and then checks it against a hand-written query so the new function earns trust.</p>
+<p>Think of the aggregate as a cash register that opens each trip with 5 dollars already in the drawer, adds the fare for each leg as it arrives, and prints one receipt per trip at the end. The drawer contents between legs are the running state; the printed receipt is the final result.</p>
+<h3 id="47.2.1-aggregate-anatomy-initcond-stype-sfunc-finalfunc">47.2.1 Aggregate anatomy: initcond, stype, sfunc, finalfunc</h3>
+<p><code>CREATE AGGREGATE</code> takes a name, one or more input argument types, and four defining pieces. <em>INITCOND</em> (the starting value before any row is seen, here <code>5</code>, meaning a 5-dollar flagfall charged the moment a rider steps in) sets the opening state. <em>STYPE</em> (the data type of the running intermediate state, here <code>numeric</code> for money with decimals) declares what the drawer holds. <em>SFUNC</em> (the state transition function called once per input row, folding the current row into the running state, here <code>taxi_all_rows</code>) does the per-row folding. <em>FINALFUNC</em> (the last function called once per group, turning the final state into the reported result, here <code>taxi_trip_sum</code>) prints the receipt. In the taxi build the transition function is named <code>taxi_all_rows</code> and the final function is named <code>taxi_trip_sum</code>.</p>
+<div class="key-concept">
+  <p><strong>Loop plus finish.</strong> Start each group at \(state_0 = 5\), update once per row with \(state_{k} = sfunc(state_{k-1}, km_k, rate)\), then report \(result = finalfunc(state_n)\) where \(state_0\) is the opening state in dollars, \(km_k\) is the kilometers of row \(k\) in the group, \(rate\) is the 2.5-dollar per-kilometer price, and \(n\) is the row count of the group. The spoken wording calls SFUNC the "function for each row" and FINALFUNC the "function for each group", which maps directly onto that loop. Groups here come from <code>GROUP BY trip</code>, so with two trip ids the final function runs twice and returns two rows.</p>
+</div>
+<p>The closed form and the stepwise form always agree for this fare shape:</p>
+<p>\[ fare(g) = 5 + 2.5 \times \sum_{i \in g} km_i \]</p>
+<p>where \(g\) is one trip group and \(km_i\) ranges over that group's rows, while the aggregate reaches the same value stepwise through \(state_0 = 5\) and \(state_k = state_{k-1} + km_k \times 2.5\). The left side is what a hand-written query computes in one shot; the right side is what the aggregate computes row by row.</p>
+<p>Fare meters, utility billing, and delivery pricing all combine a fixed boarding or connection charge with a per-unit rate, which is exactly the shape INITCOND plus per-row accumulation computes. The same skeleton also covers running totals with a starting balance, loyalty points with a sign-up bonus, and parcel pricing with a base fee plus per-kilogram charge.</p>
+<p>Supporting cross-database note: this four-piece <code>CREATE AGGREGATE</code> spelling is PostgreSQL-specific. MySQL has no <code>CREATE AGGREGATE</code>; the portable substitute is a stored function or application-side accumulation, or the closed-form query <code>5 + 2.5 * SUM(kilometer)</code> with <code>GROUP BY</code>. Snowflake supports user-defined aggregate functions through JavaScript or Java handlers, and Databricks/Spark SQL supports them through Scala, Java, or Python aggregators, but both spell the pieces differently (handler code plus registration rather than SFUNC/FINALFUNC SQL functions). The lecture's anatomy below is the PostgreSQL version of a portable idea: opening state, per-row fold, per-group finish. The fare numbers stay identical everywhere because the arithmetic is shared; only the registration syntax changes.</p>
+<div class="key-takeaway">
+  <p><strong>Exam note:</strong> define INITCOND, STYPE, SFUNC, and FINALFUNC in one line each, and state how many times each runs: INITCOND once per group as a value, SFUNC once per row, FINALFUNC once per group.</p>
+</div>
+<h3 id="47.2.2-taxi-fare-scenario-and-sample-table">47.2.2 Taxi-fare scenario and sample table</h3>
+<p>The scenario fixes two money facts: boarding costs 5 dollars and each kilometer costs 2.5 dollars, so a ride of \(km\) kilometers in a single row would cost \(fare = 5 + 2.5 \times km\), where \(km\) is the distance in kilometers, \(5\) is the flagfall in dollars, and \(2.5\) is the rate in dollars per kilometer. The aggregate generalizes that to multi-row trips by starting at 5 once per trip and adding 2.5 per kilometer for every row in the trip. The sample table is:</p>
+<pre><code>CREATE TABLE taxi (
+    id_trip int,
+    kilometer numeric
+);</code></pre>
+<p>Here \(id\_trip\) is an integer trip label and \(kilometer\) is a numeric distance with decimals. Inserted rows deliberately interleave two trips so grouping matters: trip 1 holds 3.5, 4.2, 1.2, and 3.5 kilometers, while trip 2 holds 1.8 and 3.2 kilometers. A plain <code>SELECT * FROM taxi</code> shows six rows across the two trips, and the aggregate must return one fare per trip: 36.00 dollars for trip 1 and 17.50 dollars for trip 2 under the stated rates. Those two numbers become the acceptance test.</p>
+<div class="example-box">
+  <p><strong>Acceptance numbers up front.</strong> Trip 1 total distance is \(3.5 + 4.2 + 1.2 + 3.5 = 12.4\) km, so \(fare = 5 + 2.5 \times 12.4 = 5 + 31.00 =\) <strong>36.00</strong>. Trip 2 total distance is \(1.8 + 3.2 = 5.0\) km, so \(fare = 5 + 2.5 \times 5.0 = 5 + 12.50 =\) <strong>17.50</strong>. Any correct aggregate must print exactly these two values. Sense-check: trip 1 is longer, so its fare is higher, and both exceed the bare flagfall.</p>
+</div>
+<p>Interleaving matters because it proves grouping works: rows arrive mixed together, yet each row's kilometers must land in exactly one trip's drawer. A query without <code>GROUP BY</code> would collapse everything into one fare, which is the classic beginner slip this dataset is designed to catch.</p>
+<p>Picture the table as six boarding passes shuffled in a pile, each stamped with a trip number and a leg distance. Sorting the pile into two stacks by trip number and then running the cash-register loop on each stack gives two receipts. The takeaway is that <code>GROUP BY id_trip</code> is the sorting-into-stacks step, and everything after it runs per stack.</p>
+<h3 id="47.2.3-row-level-transition-function">47.2.3 Row-level transition function</h3>
+<p>The transition function takes everything accumulated so far plus the current row and returns the new accumulation. Its three numeric inputs are the running state, the current row kilometers, and the per-kilometer rate, and its result is numeric. In plain words from the session, it "takes all the intermediate values from all the previous calls and data from the current row". Written with a single-quoted body:</p>
+<pre><code>CREATE OR REPLACE FUNCTION taxi_all_rows(state numeric, km numeric, rate numeric)
+RETURNS numeric AS
+'SELECT state + km * rate'
+LANGUAGE sql IMMUTABLE;</code></pre>
+<div class="key-concept">
+  <p><strong>Per-row fold.</strong> Let \(state\) be the running fare so far in dollars, \(km\) be the current row distance in kilometers, and \(rate\) be the dollars-per-kilometer price. One call computes:</p>
+  <p>\[ new\_state(state, km, rate) = state + km \times rate \]</p>
+  <p>The expression adds only the current row share to the running total. Multiplication binds first, so \(km \times rate\) is the leg fare and adding \(state\) carries the past forward.</p>
+</div>
+<p>Line by line: the three inputs arrive in order as running state, row kilometers, and rate; <code>RETURNS numeric</code> keeps money with decimals; the body is a single <code>SELECT</code> of the fold expression; <code>LANGUAGE sql IMMUTABLE</code> marks it safe for repeated use inside an aggregate.</p>
+<div class="example-box">
+  <p><strong>Trace: trip 1 starting from 5.</strong> After 3.5 km the state is \(5 + 3.5 \times 2.5 = 5 + 8.75 =\) <strong>13.75</strong>. After 4.2 km it grows by \(4.2 \times 2.5 = 10.50\) to <strong>24.25</strong>. After 1.2 km it grows by \(1.2 \times 2.5 = 3.00\) to <strong>27.25</strong>. After the second 3.5 km it grows by another 8.75, landing at <strong>36.00</strong>. For trip 2 the same walk starts at 5, adds \(1.8 \times 2.5 = 4.50\) to reach 9.50, then adds \(3.2 \times 2.5 = 8.00\), landing at <strong>17.50</strong>. Sense-check: the 5 enters only once, and each call adds just its row's share.</p>
+</div>
+<p>A common wrong reading is that the function adds a fresh 5 per row; the walk shows 5 enters only once through INITCOND, and each call adds just \(km \times rate\). The counter-example in the worked examples quantifies that overshoot so the distinction sticks.</p>
+<div class="warning-box">
+  <p><strong>Scope:</strong> this transition assumes non-negative distances and a fixed non-negative rate passed per call. <strong>Assumption:</strong> rows within a group can fold in any order because addition commutes, so \(a + b = b + a\) keeps the total order-independent. If the fold involved a non-commutative step such as string concatenation in arrival order, row order would need an <code>ORDER BY</code> inside the aggregate.</p>
+</div>
+<div class="warning-box">
+  <p><strong>Pitfalls.</strong> Swapping the argument order (rate where kilometers belong) silently computes the wrong leg fare with no type error, since all three inputs share type numeric. Forgetting that <code>rate</code> is an argument and hard-coding 2.5 inside the body removes flexibility and breaks the later two-argument aggregate call. Using integer instead of numeric truncates money decimals.</p>
+</div>
+<h3 id="47.2.4-group-level-final-function">47.2.4 Group-level final function</h3>
+<p>The final function runs once per group on the finished state and returns the group answer. The teaching version does no extra math so the accumulation logic stays visible:</p>
+<pre><code>CREATE OR REPLACE FUNCTION taxi_trip_sum(final_state numeric)
+RETURNS numeric AS
+'SELECT final_state'
+LANGUAGE sql IMMUTABLE;</code></pre>
+<div class="key-concept">
+  <p><strong>Per-group report.</strong> Let \(final\_state\) be the numeric accumulation handed over after the last row of the group. The function returns that same numeric fare unchanged, written as \(result = final\_state\). It runs once per group, so with two trip groups present it is invoked twice and yields two output rows.</p>
+</div>
+<p>Here \(final\_state\) is the drawer contents after the last leg, and the result is that same value. The session notes that rounding or extra charges could live here, but they are left out to keep the two-function split crisp: the first function folds rows, the second reports groups. Real extensions that belong in FINALFUNC include <code>round(final_state, 2)</code> for cents, adding a night surcharge, applying a discount threshold, or casting to a display type; each keeps SFUNC untouched, which is the point of the split.</p>
+<p>This prose separates the two same-family callouts: the identity-function choice above is pedagogy, while the production variations live in this paragraph rather than in a second box. The design lesson is that per-row logic and per-group finishing evolve independently.</p>
+<div class="warning-box">
+  <p><strong>Pitfalls.</strong> Putting per-row math in FINALFUNC double-counts or under-counts, because FINALFUNC sees only the finished total, never individual rows. Returning a different type than STYPE without declaring it breaks the aggregate registration. Adding the flagfall here as well as in INITCOND charges it twice.</p>
+</div>
+<h3 id="47.2.5-create-aggregate-and-full-query-use">47.2.5 CREATE AGGREGATE and full-query use</h3>
+<p>With helpers ready, one statement registers the aggregate by naming its inputs and its four defining pieces:</p>
+<pre><code>CREATE AGGREGATE fare_taxi(numeric, numeric) (
+    INITCOND = '5',
+    STYPE = numeric,
+    SFUNC = taxi_all_rows,
+    FINALFUNC = taxi_trip_sum
+);</code></pre>
+<div class="key-concept">
+  <p><strong>Registration.</strong> The name <code>fare_taxi</code> takes two numeric inputs (kilometers, then per-kilometer price), starts each group at <code>5</code> quoted as a string literal per the syntax, carries <code>numeric</code> state, folds rows with <code>taxi_all_rows</code>, and finishes groups with <code>taxi_trip_sum</code>. The quoted <code>'5'</code> is parsed into numeric state at first use; the quotes are required syntax even though the value is numeric.</p>
+</div>
+<p>Using it looks like any built-in aggregate with a <code>GROUP BY</code> key:</p>
+<pre><code>SELECT id_trip, fare_taxi(kilometer, 2.5)
+FROM taxi
+GROUP BY id_trip
+ORDER BY id_trip;</code></pre>
+<p>Here \(kilometer\) is the per-row column and 2.5 is the rate argument in dollars per kilometer, so each group computes \(5 + 2.5 \times \sum km\) over its rows. The reported answers are <strong>36.00</strong> for trip 1 and <strong>17.50</strong> for trip 2. Trust comes from a side-by-side manual query that writes the same arithmetic without the new function:</p>
+<pre><code>SELECT id_trip, 5 + 2.5 * sum(kilometer)
+FROM taxi
+GROUP BY id_trip
+ORDER BY id_trip;</code></pre>
+<p>Both queries return the identical pair 36.00 and 17.50, which confirms the aggregate folds each row exactly once and charges the flagfall exactly once per group. The manual form states the closed form directly:</p>
+<p>\[ fare(g) = 5 + 2.5 \times \sum_{i \in g} km_i \]</p>
+<p>where \(g\) is one trip group and \(km_i\) ranges over that group's rows, while the aggregate reaches the same value stepwise through \(state_0 = 5\) and \(state_k = state_{k-1} + km_k \times 2.5\). Seeing both forms agree is the closing check.</p>
+<div class="example-box">
+  <p><strong>Trace: the two queries side by side.</strong> Aggregate path for trip 1: \(5 \to 13.75 \to 24.25 \to 27.25 \to\) <strong>36.00</strong>. Manual path for trip 1: \(5 + 2.5 \times 12.4 =\) <strong>36.00</strong>. Aggregate path for trip 2: \(5 \to 9.50 \to\) <strong>17.50</strong>. Manual path for trip 2: \(5 + 2.5 \times 5.0 =\) <strong>17.50</strong>. Sense-check: stepwise folding and one-shot summation agree on both groups.</p>
+</div>
+<p>Picture execution as two lanes merging at the finish: the left lane folds row by row through SFUNC, the right lane sums first then multiplies once, and both lanes pass through the same FINALFUNC gate to print receipts. The takeaway is that the aggregate is a packaged loop that must reproduce the closed form exactly.</p>
+<div class="warning-box">
+  <p><strong>Pitfalls.</strong> Omitting <code>GROUP BY</code> collapses all trips into one fare, hiding the per-group behavior the test is built to verify. Passing only one argument to a two-argument aggregate raises an arity error, since the rate has no default. Quoting <code>INITCOND</code> wrong (bare <code>5</code> instead of <code>'5'</code>) fails registration on strict servers. Forgetting <code>ORDER BY id_trip</code> returns correct fares in an unpredictable row order.</p>
+</div>
+<p>Cross-database supporting note: the manual cross-check query <code>5 + 2.5 * SUM(kilometer) ... GROUP BY</code> runs unchanged in MySQL, Snowflake, and Databricks/Spark SQL, which is why the lecture uses it as the acceptance test. Only the <code>CREATE AGGREGATE</code> wrapper is PostgreSQL-only. A learner moving to MySQL would keep the closed-form query and optionally wrap it in a view; moving to Snowflake or Databricks would keep the same query and reach for their native UDAF frameworks only when the fold logic outgrows plain SQL.</p>
+<div class="key-takeaway">
+  <p><strong>Exam note:</strong> expect a parts question asking what INITCOND, STYPE, SFUNC, and FINALFUNC each supply, or a trace asking for the running state after each row of a small group, plus a cross-check of an aggregate answer against the closed form \(5 + rate \times sum\).</p>
+</div>
+<h3 id="47.2.6-worked-examples">47.2.6 Worked Examples</h3>
+<div class="example-box">
+  <p><strong>Example 1: trip 1 fare through the transition function.</strong> Setup fixes rate 2.5 and rows 3.5, 4.2, 1.2, 3.5 with \(state_0 = 5\). Step one gives \(state_1 = 5 + 3.5 \times 2.5 = 5 + 8.75 =\) <strong>13.75</strong>. Step two gives \(state_2 = 13.75 + 4.2 \times 2.5 = 13.75 + 10.50 =\) <strong>24.25</strong>. Step three gives \(state_3 = 24.25 + 1.2 \times 2.5 = 24.25 + 3.00 =\) <strong>27.25</strong>. Step four gives \(state_4 = 27.25 + 3.5 \times 2.5 = 27.25 + 8.75 =\) <strong>36.00</strong>. The final function reports <strong>36.00</strong>. Sense-check: each row contributes only its kilometer share, and the single 5 at the start is never repeated.</p>
+</div>
+<div class="example-box">
+  <p><strong>Example 2: trip 2 fare and the closed-form cross-check.</strong> Setup fixes rows 1.8 and 3.2 with the same rate. Accumulation gives \(state_1 = 5 + 1.8 \times 2.5 =\) <strong>9.50</strong> and \(state_2 = 9.50 + 3.2 \times 2.5 =\) <strong>17.50</strong>. Closed form gives \(fare = 5 + 2.5 \times (1.8 + 3.2) = 5 + 2.5 \times 5.0 = 5 + 12.50 =\) <strong>17.50</strong>. Sense-check: stepwise folding and one-shot summation agree, which is the acceptance test run live.</p>
+</div>
+<p>The first two examples establish the correct behavior; the third shows the characteristic failure mode so the INITCOND lesson sticks.</p>
+<div class="example-box">
+  <p><strong>Example 3: what goes wrong if the flagfall is folded per row.</strong> Setup mistakenly adds 5 inside SFUNC on every call. For trip 2 the trace would give \(5 + 5 + 4.50 =\) <strong>14.50</strong> after row one and \(14.50 + 5 + 8.00 =\) <strong>27.50</strong> after row two instead of <strong>17.50</strong>. Sense-check: this overshoot shows why INITCOND exists, namely to inject the starting value once per group rather than once per row.</p>
+</div>
+<h3 id="47.2.7-student-questions-and-answers">47.2.7 Student Questions and Answers</h3>
+<div class="important-note">
+  <p><strong>Q:</strong> What does each of INITCOND, STYPE, SFUNC, and FINALFUNC actually do? <strong>A:</strong> INITCOND sets the starting state before any row is seen, here 5 dollars. STYPE declares the running-state type, here numeric. SFUNC folds one row into the running state and runs once per row. FINALFUNC turns the finished state into the answer and runs once per group.</p>
+</div>
+<div class="important-note">
+  <p><strong>Q:</strong> Why does the transition function need three inputs when each row has only one kilometer value? <strong>A:</strong> It needs the past, the present row, and the rate together: the running state carries the past, the kilometer column carries the present row, and the rate argument carries the 2.5 price. With fewer than three it could not add the current row share to the correct running total.</p>
+</div>
+<p>The two answers above cover structure and arity; the final answer covers trust in the result.</p>
+<div class="important-note">
+  <p><strong>Q:</strong> How do we know the new aggregate is correct and not double-counting the 5 dollars? <strong>A:</strong> Run the manual query with 5 plus 2.5 times the summed kilometers alongside the new aggregate grouped the same way. Both return 36.00 for trip 1 and 17.50 for trip 2, so the flagfall lands once per group and each row lands once.</p>
+</div>
+<div class="key-takeaway">
+  <p>Aggregates package a loop plus a finish: INITCOND opens each group's drawer, SFUNC folds every row exactly once, FINALFUNC prints one receipt per group, and the closed-form query certifies the totals. Together with the previous section's separate-what-is-stored-from-how-it-sorts lesson, the lecture shows two faces of PostgreSQL extensibility: new orderings and new computations, each built from small immutable helpers plus one registration statement.</p>
+</div>
+
+<h2 id="exam-guidance-summary">Exam Guidance Summary</h2>
+<p>No mark split or paper pattern is stated in this session, so guidance here is about likely question shapes rather than weightage. For custom indexes, be ready to list the four build stages in order (canonicalizing function, three-way comparison, operator class, index), to write the canonicalizing expression with <code>substring</code> and <code>replace</code> including the position constants 8 and 7, to state the three-branch sign rule with integer returns, to map strategy numbers 1 through 5 to their comparison signs, and to explain the integer-return error and its <code>CASCADE</code> fix. For aggregates, be ready to define INITCOND, STYPE, SFUNC, and FINALFUNC in one line each, to trace running state row by row from a given start value such as the trip 1 walk from 5 to 36.00, and to cross-check an aggregate answer against the closed form \(5 + rate \times sum\) with the 36.00 and 17.50 acceptance pair.</p>
+<div class="key-takeaway">
+  <p><strong>Exam note:</strong> practical checks favor two proofs: <code>EXPLAIN</code> showing the index scan after disabling sequential scans (then resetting <code>enable_seqscan</code> to <code>ON</code>), and identical manual versus aggregate totals for the taxi data. Always state that only immutable helpers may back an index.</p>
+</div>
+
+<h2 id="key-industry-applications">Key Industry Applications</h2>
+<p>Partial-identifier search such as last-four-digits lookup in fraud review, telecom, and service desks motivates tail-first custom indexes: the access pattern asks for the tail first, so the index sorts tail first instead of forcing a full scan. Fare meters, ride-hailing billing, utility metering, and parcel pricing all pair a fixed boarding or connection charge with a per-unit rate, which is the exact INITCOND plus SFUNC shape with a 5-dollar flagfall and a 2.5-dollar rate in the lecture's example.</p>
+<div class="important-note">
+  <p>Domain-ordered indexes such as case-insensitive, locale-aware, or unit-normalized orderings reuse the same canonicalize-then-compare pattern with a different rewrite function: the rewrite changes, while the compare, class, and index stages stay the same.</p>
+</div>
+<p>The pgAdmin operator-class and index property panes give a click-level audit of class name, access method, column, and support function for review and handover. <code>EXPLAIN</code> plan review with <code>Index Scan</code> versus sequential scan lines is the standard proof that a new access path is picked up by the planner, in demos and in production reviews alike.</p>
+    </main>
+
+    <!-- ============================================================
+    EXAM REVISION NOTES
+    Generated AFTER the main lecture-faithful content is complete. Each entry
+    distills one major concept into its most examinable elements.
+    Built FROM the core — never invented independently.
+
+    Each entry is a <div class="exam-revision-entry"> containing:
+      - .revision-topic (h3) — concept name
+      - .revision-mustknow — the single most examinable takeaway
+      - .revision-formula — central formula(s) in \[ ... \] MathJax
+      - .revision-pitfall — the #1 exam mistake
+      - .revision-check — one self-check question (no options)
+      - .revision-connections — linked concepts within this lecture
+    ============================================================ -->
+    <section class="exam-revision-section">
+      <h2>Exam Revision Notes</h2>
+      <p class="revision-intro">Below is the distilled, exam-ready core.
+      Every entry comes from the full explanation above. Use this section
+      for rapid review; return to the main notes when a point needs more context.</p>
+<div class="exam-revision-entry">
+  <h3 class="revision-topic">Custom Index Methods With Operator Classes</h3>
+  <p class="revision-mustknow"><strong>Must-know:</strong> Tail-first SSN index = canonicalize (tail first, strip dashes), integer three-way compare, operator class with strategies 1-5 plus FUNCTION 1, CREATE INDEX with the class</p>
+  <p class="revision-formula">\[cmp(a, b) = -1 \text{ when } c(a) < c(b), \text{ } 1 \text{ when } c(a) > c(b), \text{ } 0 \text{ otherwise}\]</p>
+  <p class="revision-pitfall"><strong>Top pitfall:</strong> Comparator returning text &#x27;-1&#x27; instead of integer -1 is rejected by the B-tree contract; leaving enable_seqscan OFF distorts later plans</p>
+  <p class="revision-check"><strong>Self-check:</strong> What canonical key does 111-11-0100 map to, and what does ssn_compare return for 111-11-0100 vs 222-22-0120?</p>
+  <p class="revision-connections"><strong>Connects to:</strong> 47.2</p>
+</div>
+<div class="exam-revision-entry">
+  <h3 class="revision-topic">User-Defined Aggregate Functions</h3>
+  <p class="revision-mustknow"><strong>Must-know:</strong> CREATE AGGREGATE fare_taxi = INITCOND 5, STYPE numeric, SFUNC taxi_all_rows per row, FINALFUNC taxi_trip_sum per group; cross-check 36.00 and 17.50 against 5 + 2.5*sum</p>
+  <p class="revision-formula">\[fare(g) = 5 + 2.5 \times \sum_{i \in g} km_i\]</p>
+  <p class="revision-pitfall"><strong>Top pitfall:</strong> Adding the 5-dollar flagfall inside SFUNC charges it per row (trip 2 becomes 27.50 instead of 17.50); it belongs in INITCOND once per group</p>
+  <p class="revision-check"><strong>Self-check:</strong> Trace the running state for trip 2 rows 1.8 and 3.2 starting from INITCOND 5 at rate 2.5.</p>
+  <p class="revision-connections"><strong>Connects to:</strong> 47.1</p>
+</div>
+    </section>
+  </div>
+</body>
+</html>

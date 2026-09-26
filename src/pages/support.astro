@@ -236,7 +236,37 @@ const initialsOf = (name: string) =>
         )}
 
         {upi.enabled && (
-          <div id="donate-widget" data-config={JSON.stringify(widgetConfig)}>
+          <div
+            id="donate-widget"
+            data-config={JSON.stringify(widgetConfig)}
+            data-upi-id={upi.upiId}
+            data-payee-name={upi.payeeName}
+          >
+            <div
+              class="mb-5 rounded-[var(--r-sm)] border border-amber-500/40 bg-amber-500/10 px-4 py-3 text-sm leading-relaxed text-[var(--text)]"
+              role="note"
+              aria-label="Verify payee before paying"
+              data-verify-payee-notice
+            >
+              <strong class="font-bold">Verify before you pay:</strong>
+              {' '}your UPI app must show payee <strong class="font-bold" data-payee-name-text>{upi.payeeName}</strong>.
+              If it shows any other name, do not pay — the QR may have been tampered with.
+              {' '}<a href="/contact" class="underline font-semibold">Report it here</a>.
+            </div>
+            <p class="mb-5 text-sm text-[var(--text-muted)] leading-relaxed">
+              UPI ID (visible so anyone can spot tampering):{' '}
+              <code
+                class="font-mono font-bold text-[var(--text)] break-all"
+                data-upi-id-text
+              >{upi.upiId}</code>
+            </p>
+            <p
+              id="donate-tamper-warning"
+              class="hidden mb-5 rounded-[var(--r-sm)] border border-red-500/50 bg-red-500/10 px-4 py-3 text-sm font-semibold text-red-700 dark:text-red-300"
+              role="alert"
+            >
+              Warning: this page's payment details look inconsistent. Do not pay until this is resolved — please report it via the contact page.
+            </p>
             <div class="flex flex-col md:flex-row gap-8 items-start">
               <div class="flex-1 w-full space-y-5">
                 <div>
@@ -309,7 +339,7 @@ const initialsOf = (name: string) =>
 
               <div class="w-full md:w-64 flex flex-col items-center gap-3 md:flex-none mx-auto md:mx-0">
                 <div class="w-full max-w-64 p-4 bg-[var(--bg)] border border-[var(--border)] rounded-[var(--r-md)]">
-                  <canvas id="donate-qr" width="512" height="512" class="w-full h-auto block" role="img" aria-label="UPI QR code. Scan with any UPI app to support BitsNotes."></canvas>
+                  <canvas id="donate-qr" width="512" height="512" class="w-full h-auto block" role="img" aria-label={`UPI QR code for ${upi.upiId}. Scan with any UPI app and verify payee ${upi.payeeName}.`}></canvas>
                 </div>
                 <p id="donate-summary" class="text-xs text-center text-[var(--text-muted)]" aria-live="polite"></p>
               </div>
@@ -317,7 +347,7 @@ const initialsOf = (name: string) =>
 
             <div class="mt-6 pt-5 border-t border-[var(--border)]">
               <p class="text-xs text-[var(--text-faint)] leading-relaxed">
-                Payments go directly from your UPI app to me&mdash;no platform, no commission, nothing stored. UPI has no confirmation callback, so this page cannot show a &ldquo;payment received&rdquo; message. If your UPI app refuses to open from the browser (some apps restrict deeplinks), just scan the QR or copy the UPI ID instead&mdash;those work everywhere.
+                Payments go directly from your UPI app to me (Tanmay Nemade, personal account)&mdash;no platform, no commission, nothing stored. UPI has no confirmation callback, so this page cannot show a &ldquo;payment received&rdquo; message. If your UPI app refuses to open from the browser (some apps restrict deeplinks), just scan the QR or copy the UPI ID instead&mdash;those work everywhere. If the payee name or UPI ID ever looks different from what is shown here, stop and report it — it may mean this page was tampered with.
               </p>
             </div>
           </div>
@@ -397,7 +427,39 @@ const initialsOf = (name: string) =>
     const copyStatus = document.getElementById('upi-copy-status');
     const canvas = document.getElementById('donate-qr') as HTMLCanvasElement | null;
     const summary = document.getElementById('donate-summary');
+    const tamperWarning = document.getElementById('donate-tamper-warning');
     if (!amountInput || !messageInput || !payBtn || !payLabel || !copyBtn || !canvas || !summary) return;
+
+    // Runtime tamper-evidence: the same VPA is rendered in 4 places
+    // (data-config, data-upi-id, visible text, pay-button href). An XSS or
+    // extension that rewrites only one of them triggers a visible warning.
+    // This does NOT replace CI + external monitoring — a full redeploy with
+    // a new VPA passes this check, which is why the monitor workflow exists.
+    function checkIntegrity() {
+      try {
+        const attrId = (root!.dataset.upiId || '').trim();
+        const attrName = (root!.dataset.payeeName || '').trim();
+        const visibleId = (root!.querySelector('[data-upi-id-text]')?.textContent || '').trim();
+        const visibleName = (root!.querySelector('[data-payee-name-text]')?.textContent || '').trim();
+        const hrefPa = new URL(payBtn!.href, location.origin).searchParams.get('pa')?.trim() ?? '';
+        const mismatch =
+          !config.upiId ||
+          !attrId ||
+          config.upiId !== attrId ||
+          (visibleId && visibleId !== config.upiId) ||
+          (hrefPa && hrefPa !== config.upiId) ||
+          (attrName && attrName !== config.payeeName) ||
+          (visibleName && visibleName !== config.payeeName);
+        if (mismatch && tamperWarning) {
+          tamperWarning.classList.remove('hidden');
+          payBtn!.setAttribute('aria-disabled', 'true');
+          return false;
+        }
+        return true;
+      } catch {
+        return true;
+      }
+    }
 
     let lastGoodUri = '';
 
@@ -549,6 +611,7 @@ const initialsOf = (name: string) =>
     themeObserver.observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
 
     update();
+    checkIntegrity();
   }
 
   initDonateWidget();

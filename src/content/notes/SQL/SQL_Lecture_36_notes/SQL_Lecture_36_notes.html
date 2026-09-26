@@ -1,0 +1,2052 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+  <!-- Primary SEO -->
+  <title>Using Cursors | SQL | BitsNotes</title>
+  <meta name="description" content="SQL notes: master PostgreSQL cursors with DECLARE, OPEN, FETCH and CLOSE, plus positioned updates and functions.">
+  <meta name="keywords" content="SQL, Using Cursors, DECLARE cursor, OPEN cursor, FETCH, MOVE, CLOSE cursor, refcursor, SCROLL, WHERE CURRENT OF, PL/pgSQL, parameterized cursors">
+  <meta name="author" content="BitsNotes">
+  <meta name="robots" content="index, follow">
+  <link rel="canonical" href="https://bitsnotes.com/view/sql/using-cursors">
+
+  <!-- Open Graph / Facebook -->
+  <meta property="og:type" content="article">
+  <meta property="og:title" content="Using Cursors | SQL">
+  <meta property="og:description" content="SQL notes: master PostgreSQL cursors with DECLARE, OPEN, FETCH and CLOSE, plus positioned updates and functions.">
+  <meta property="og:url" content="https://bitsnotes.com/view/sql/using-cursors">
+  <meta property="og:image" content="https://bitsnotes.com/og-default.png">
+  <meta property="og:image:width" content="1200">
+  <meta property="og:image:height" content="630">
+  <meta property="og:site_name" content="BitsNotes">
+
+  <!-- Twitter Card -->
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="Using Cursors | SQL">
+  <meta name="twitter:description" content="SQL notes: master PostgreSQL cursors with DECLARE, OPEN, FETCH and CLOSE, plus positioned updates and functions.">
+  <meta name="twitter:image" content="https://bitsnotes.com/og-default.png">
+  <meta name="twitter:site" content="@BitsNotes">
+
+  <!-- Stylesheet -->
+  <link rel="stylesheet" href="/lecture-notes.css">
+
+  <!-- Structured Data: JSON-LD -->
+  <script type="application/ld+json">
+{"@context":"https://schema.org","@type":"Article","headline":"Using Cursors | SQL","description":"SQL notes: master PostgreSQL cursors with DECLARE, OPEN, FETCH and CLOSE, plus positioned updates and functions.","author":{"@type":"Organization","name":"BitsNotes"},"about":["cursors","DECLARE cursor","OPEN cursor","FETCH","MOVE","CLOSE cursor","refcursor","SCROLL","WHERE CURRENT OF","PL/pgSQL","parameterized cursors"]}
+</script>
+
+  <!-- Lecture Metadata (for the BitsNotes platform viewer) -->
+  <!-- IMPORTANT: This is the ONLY metadata source. No companion .json file
+       is created. The viewer reads everything from this embedded script.
+       Required fields: title, subject, gradeLevel, datePublished,
+       targetAudience, sections (array), examRevisionNotes (array).
+       Optional fields: prerequisites (array of {subject, lecture, topics}).
+       NOT included (removed): summary, keyConcepts, quiz. -->
+  <script type="application/json" id="lecture-metadata">
+{
+  "title": "Using Cursors",
+  "subject": "SQL",
+  "gradeLevel": "undergraduate",
+  "datePublished": "2026-09-22",
+  "targetAudience": "Undergraduate students learning SQL cursors in PostgreSQL",
+  "sections": [
+    {
+      "title": "Set-Based Retrieval and the Row-by-Row Problem",
+      "description": "Standard SQL queries evaluate declarative filters and return complete result sets at once. Navigating through individual rows sequentially or non-sequentially requires an explicit database cursor."
+    },
+    {
+      "title": "Procedural and Non-Procedural Languages",
+      "description": "Non-procedural SQL specifies what data is needed, while procedural languages define step-by-step execution. Cursors bridge declarative sets to sequential execution lists."
+    },
+    {
+      "title": "Cursor Lifecycle of Declare Open Fetch Close",
+      "description": "Every cursor transitions through four states: Declare registers the query, Open executes it and allocates server memory, Fetch reads rows and shifts the pointer, and Close frees server resources."
+    },
+    {
+      "title": "Creating Cursors in PostgreSQL",
+      "description": "PostgreSQL provides unbound refcursor variables for runtime query attachment and bound parameterized cursors that tie queries, scroll options, and typed argument lists directly to cursor identifiers."
+    },
+    {
+      "title": "Opening Cursors Bound Unbound and Dynamic",
+      "description": "Opening a cursor evaluates the query, binds parameters, allocates a server portal in memory, and sets the pointer to p=0 before the first record."
+    },
+    {
+      "title": "Using a Cursor With Fetch and Move",
+      "description": "FETCH shifts the pointer and copies row attributes into target variables or records; MOVE repositions the pointer coordinate with zero memory copy. Directions such as PRIOR and LAST require SCROLL."
+    },
+    {
+      "title": "Updating and Deleting the Positioned Row",
+      "description": "The WHERE CURRENT OF cursor_name clause performs direct in-place updates and deletions on the physical storage row currently addressed by the cursor pointer, bypassing secondary index lookups."
+    },
+    {
+      "title": "Closing Cursors and Resource Handling",
+      "description": "CLOSE frees the server portal memory and temporary spool files while preserving the cursor declaration, allowing safe reopening with fresh parameter values."
+    },
+    {
+      "title": "Block That Lists All Movie Names Row by Row",
+      "description": "An anonymous DO block combines DECLARE, OPEN, an iterative FETCH loop with EXIT WHEN NOT FOUND, string concatenation, and CLOSE to output a delimited list via RAISE NOTICE."
+    },
+    {
+      "title": "Parametric Cursor Function That Finds Star Titles by Year",
+      "description": "A stored PL/pgSQL function encapsulates a parameterized cursor to filter films by release year, applies procedural pattern matching with LIKE '%Star%', and enforces the alias spelling contract."
+    }
+  ],
+  "examRevisionNotes": [
+    {
+      "topic": "Set-Based Retrieval and the Row-by-Row Problem",
+      "mustKnow": "SQL SELECT statements deliver entire result sets at once; interactive row-by-row movement requires holding the result in a cursor.",
+      "keyFormula": "\\[R = \\{r \\in T \\mid P(r)\\}\\]",
+      "commonPitfall": "Assuming standard SELECT allows FIRST, NEXT, or PRIOR row navigation without an explicit cursor.",
+      "quickCheck": "Can a plain SELECT statement fetch the first row, then move forward to the next row and back five rows?",
+      "connections": [
+        "36.2",
+        "36.3"
+      ]
+    },
+    {
+      "topic": "Procedural and Non-Procedural Languages",
+      "mustKnow": "Declarative SQL defines the target result set without execution order; procedural languages provide sequential flow control, loops, and conditional logic.",
+      "keyFormula": "\\[L = [r_1, r_2, \\dots, r_n]\\]",
+      "commonPitfall": "Writing procedural row-by-row cursor loops for operations that standard set-based SQL can compute orders of magnitude faster.",
+      "quickCheck": "Why is a procedural language required if SQL already has the ability to retrieve rows from tables?",
+      "connections": [
+        "36.1",
+        "36.3"
+      ]
+    },
+    {
+      "topic": "Cursor Lifecycle of Declare Open Fetch Close",
+      "mustKnow": "Declare performs no table I/O; query execution and memory allocation occur strictly on Open. Cursors can be reopened after being closed.",
+      "keyFormula": "\\[state: \\text{declared}(Q) \\to \\text{open}(R(Q), p) \\to \\text{closed}(\\emptyset)\\]",
+      "commonPitfall": "Attempting to fetch rows from a declared or closed cursor, or neglecting to close open cursors causing memory leaks.",
+      "quickCheck": "Does the DECLARE statement pull any data from the table or perform disk I/O?",
+      "connections": [
+        "36.2",
+        "36.4",
+        "36.8"
+      ]
+    },
+    {
+      "topic": "Creating Cursors in PostgreSQL",
+      "mustKnow": "Expect to write cursor headers from memory with name, typed bracket parameters, FOR, and SELECT query. Always narrow projection over SELECT *.",
+      "keyFormula": "\\[C_{\\text{bound}} = \\langle \\text{identifier}, Q, \\Theta \\rangle\\]",
+      "commonPitfall": "Using SELECT * on wide tables, exhausting server work_mem, or failing to match parameter names between brackets and query body.",
+      "quickCheck": "How do you declare a cursor that accepts an integer year parameter and filters release_date?",
+      "connections": [
+        "36.3",
+        "36.5",
+        "36.6"
+      ]
+    },
+    {
+      "topic": "Opening Cursors Bound Unbound and Dynamic",
+      "mustKnow": "Unbound cursors receive their query at OPEN time using FOR SELECT or FOR EXECUTE ... USING; bound cursors open directly and accept argument values.",
+      "keyFormula": "\\[\\text{open}(C, Q, \\Theta) \\to \\langle R(Q, \\Theta), p_0 \\rangle\\]",
+      "commonPitfall": "Calling OPEN on an already open cursor without issuing CLOSE first, or concatenating unsanitized text into dynamic EXECUTE statements.",
+      "quickCheck": "How do you open an unbound refcursor using dynamic SQL with parameterized substitution values in PL/pgSQL?",
+      "connections": [
+        "36.4",
+        "36.6",
+        "36.8"
+      ]
+    },
+    {
+      "topic": "Using a Cursor With Fetch and Move",
+      "mustKnow": "FETCH copies data into targets while MOVE only shifts the pointer. PRIOR, FIRST, LAST, BACKWARD, ABSOLUTE, and negative RELATIVE require SCROLL.",
+      "keyFormula": "\\[\\text{fetch}(C, \\text{direction}): p \\leftarrow \\text{shift}(p, \\text{direction}), \\quad \\text{target} \\leftarrow r_p\\]",
+      "commonPitfall": "Attempting to use FETCH PRIOR or FETCH LAST on a default NO SCROLL cursor, resulting in a runtime scan error.",
+      "quickCheck": "Which FETCH directions can be used when a cursor is declared without the SCROLL keyword?",
+      "connections": [
+        "36.4",
+        "36.5",
+        "36.7"
+      ]
+    },
+    {
+      "topic": "Updating and Deleting the Positioned Row",
+      "mustKnow": "WHERE CURRENT OF cursor_name enables positioned updates and deletions on single-table queries declared FOR UPDATE, eliminating primary key searches.",
+      "keyFormula": "\\[\\text{update}(T, r_p, \\Delta): T \\leftarrow (T \\setminus \\{\\tau(p)\\}) \\cup \\{\\tau(p) \\oplus \\Delta\\}\\]",
+      "commonPitfall": "Attempting WHERE CURRENT OF on cursors declared without FOR UPDATE, or on queries involving joins, distinct, or aggregates.",
+      "quickCheck": "Does MySQL support positioned updates using the WHERE CURRENT OF cursor_name clause?",
+      "connections": [
+        "36.6",
+        "36.8"
+      ]
+    },
+    {
+      "topic": "Closing Cursors and Resource Handling",
+      "mustKnow": "CLOSE destroys the active server portal and releases temporary memory buffers; the cursor can be reopened immediately to query fresh table data.",
+      "keyFormula": "\\[\\text{close}(C) = \\emptyset, \\quad \\text{reopen}(C) = R(Q, \\theta)\\]",
+      "commonPitfall": "Leaking cursors by omitting CLOSE in long-running batch sessions, or forgetting DEALLOCATE in SQL Server environments.",
+      "quickCheck": "What happens to the cursor declaration after issuing CLOSE cursor_name?",
+      "connections": [
+        "36.3",
+        "36.5",
+        "36.9"
+      ]
+    },
+    {
+      "topic": "Block That Lists All Movie Names Row by Row",
+      "mustKnow": "Place DECLARE, OPEN, LOOP, FETCH, EXIT WHEN NOT FOUND, string concatenation with ||, CLOSE, and RAISE NOTICE in exact operational sequence.",
+      "keyFormula": "\\[\\text{out}_i = \\text{out}_{i-1} \\mathbin{\\Vert} \\text{sep} \\mathbin{\\Vert} t_i\\]",
+      "commonPitfall": "Placing the EXIT WHEN NOT FOUND condition after the concatenation line instead of immediately after FETCH, resulting in duplicate or null data processing.",
+      "quickCheck": "How many times does the FETCH statement execute in an anonymous block processing 53 records?",
+      "connections": [
+        "36.3",
+        "36.6",
+        "36.10"
+      ]
+    },
+    {
+      "topic": "Parametric Cursor Function That Finds Star Titles by Year",
+      "mustKnow": "Column aliases in the cursor SELECT query form a strict contract with dynamic RECORD variables; any spelling mismatch causes a runtime missing field exception.",
+      "keyFormula": "\\[R_1 = \\{r \\in \\text{movies} \\mid \\text{yr}(r) = y\\}, \\quad R_2 = \\{r \\in R_1 \\mid \\text{title}(r) \\text{ LIKE } \\text{'\\%Star\\%'}\\]",
+      "commonPitfall": "Omitting the AS alias in the query projection or mismatching the alias spelling when reading attributes from a RECORD variable.",
+      "quickCheck": "What error occurs if the cursor projects EXTRACT(YEAR FROM release_date) without an alias but procedural code reads rec_movie.release_year?",
+      "connections": [
+        "36.4",
+        "36.5",
+        "36.9"
+      ]
+    }
+  ],
+  "prerequisites": [
+    {
+      "subject": "SQL",
+      "lecture": "Lecture 4",
+      "topics": [
+        "SELECT and ORDER BY"
+      ]
+    },
+    {
+      "subject": "SQL",
+      "lecture": "Lecture 5",
+      "topics": [
+        "WHERE, LIKE and FETCH filters"
+      ]
+    },
+    {
+      "subject": "SQL",
+      "lecture": "Lecture 3",
+      "topics": [
+        "UPDATE and DELETE rows"
+      ]
+    },
+    {
+      "subject": "SQL",
+      "lecture": "Lecture 14",
+      "topics": [
+        "Aggregate functions and string_agg"
+      ]
+    },
+    {
+      "subject": "SQL",
+      "lecture": "Lecture 15",
+      "topics": [
+        "EXTRACT and datetime functions"
+      ]
+    }
+  ]
+}
+</script>
+</head>
+<body>
+  <div class="container">
+    <!-- ============================================================
+    HERO HEADER
+    ============================================================ -->
+    <header class="hero-header">
+      <span class="subject-badge">SQL</span>
+      <h1 class="lecture-title">Using Cursors</h1>
+      <div class="meta-info">
+        <div class="meta-item"><strong>Published:</strong> 2026-09-22</div>
+        <div class="meta-item"><strong>Level:</strong> undergraduate</div>
+        <div class="meta-item"><strong>Audience:</strong> Undergraduate students learning SQL cursors in PostgreSQL</div>
+      </div>
+    </header>
+
+    <!-- ============================================================
+    PREREQUISITE KNOWLEDGE
+    Optional section listing concepts from previous lectures that this
+    lecture builds on. Populated by Agent 3 from topic_mappings/*.yaml.
+    If no prerequisites exist, this section is omitted entirely.
+    ============================================================ -->
+    <section class="prerequisite-section">
+  <h2>Prerequisite Knowledge</h2>
+  <p class="prerequisite-intro">This lecture builds on the following
+  concepts from earlier lectures. If any feel unfamiliar, review the
+  linked notes before proceeding.</p>
+  <div class="prerequisite-entry">
+    <h3>Previously Covered in This Subject</h3>
+    <ul>
+      <li><strong>Reading data with SELECT and sorting with ORDER BY</strong> — covered in Lecture 4</li>
+      <li><strong>Filtering rows with WHERE, LIKE pattern matching and FETCH limits</strong> — covered in Lecture 5</li>
+      <li><strong>Updating and deleting rows with UPDATE and DELETE</strong> — covered in Lecture 3</li>
+      <li><strong>Aggregating text with string_agg and numeric aggregates</strong> — covered in Lecture 14</li>
+      <li><strong>Extracting date parts with EXTRACT and datetime functions</strong> — covered in Lecture 15</li>
+    </ul>
+  </div>
+</section>
+
+    <!-- ============================================================
+    MAIN LECTURE-FAITHFUL CONTENT
+    Page title = one h1.lecture-title
+    Each section = one h2.section-title
+    Each subsection = one h3.subsection-title
+    Callout boxes: .key-concept (blue), .important-note (violet),
+      .example-box (green), .warning-box (red), .key-takeaway (amber)
+    Display math: auto-scrolls via mjx-container CSS; .eqbox wrapper optional
+    ============================================================ -->
+    <main>
+<h2 id="36.1-set-based-retrieval-and-the-row-by-row-problem">36.1 Set-Based Retrieval and the Row-by-Row Problem</h2>
+<div class="important-note">
+  <p>Can you execute a standard SQL query and ask the database engine to pause at row 14, jump ahead 3 rows, or step back 5 rows? Standard SQL queries operate on whole collections of data at once, returning an entire batch in one move rather than stepping through records one by one.</p>
+</div>
+<p>In relational database systems, SQL is founded on relational algebra. When a query runs, the database engine scans the requested tables, evaluates filter predicates, and delivers the matching records together as a single unified result set. That result set might contain thousands of rows, exactly one row, or zero rows. Crucially, the relational engine treats the result as an unordered mathematical bag or set. It does not provide an active, client-navigable row pointer inside a plain retrieval statement.</p>
+<div class="important-note">
+  <p>Think of set-based retrieval like receiving a sealed tray of files delivered to your desk. You receive the entire tray all at once. If you need to inspect the third document, mark it, flip back to the first document to verify a reference, and then discard the fifth document, the tray itself does not do this work for you. You need a finger or a bookmark to track your current position across the files. In database programming, a <em>cursor</em> acts as that movable bookmark.</p>
+</div>
+<p>The tension between set-based relational operations and row-at-a-time procedural processing is known in computer science as the <em>impedance mismatch</em>. While the database engine is optimized to process sets in bulk, host applications and complex business rules often require sequential, row-by-row decisions.</p>
+<h3 id="36.1.1-mathematical-formulation-of-result-sets">36.1.1 Mathematical Formulation of Result Sets</h3>
+<p>The core verbal principle is that a query produces a result set as filtered set of table rows. We begin with a database relation, evaluate a selection predicate across every tuple, and return the set of all tuples that satisfy that predicate.</p>
+<p>Formally, let \(T\) denote the relation (table), which is a set or multiset of tuples: \[ T = \{r_1, r_2, \dots, r_m\} \] where each tuple \(r \in T\) represents a single row consisting of an attribute mapping over a defined schema.</p>
+<p>Let \(P: T \to \{\text{true}, \text{false}\}\) be the selection predicate defined in the <code>WHERE</code> clause. The resulting relation \(R\) produced by the query is defined in set-builder notation as: \[ R = \{r \in T \mid P(r)\} \]</p>
+<p>Here:</p>
+<ul>
+  <li>\(T\) is the source table (such as the movies table).</li>
+  <li>\(r\) is an individual tuple or row within the table.</li>
+  <li>\(P(r)\) is the boolean filter condition evaluated on row \(r\).</li>
+  <li>\(R\) is the final result set handed back to the caller.</li>
+  <li>\(n = |R|\) is the cardinality (row count) of the result set, where \(n \ge 0\).</li>
+</ul>
+<p>When \(n = 0\), the result set is the empty set: \[ R = \emptyset \] In pure relational theory, \(R\) has no intrinsic ordering unless an explicit <code>ORDER BY</code> clause imposes a permutation. Even with an <code>ORDER BY</code> clause, the engine emits the entire ordered sequence as a bulk stream. Standard SQL does not provide interactive positional operators like <code>FIRST</code>, <code>NEXT</code>, or <code>PRIOR</code> directly on the <code>SELECT</code> statement itself. To establish a navigable position \(p\), where \(p \in \{1, 2, \dots, n\}\), a cursor must be opened over the result set.</p>
+<h3 id="36.1.2-worked-examples-full-scan-and-empty-result-sets">36.1.2 Worked Examples: Full Scan and Empty Result Sets</h3>
+<p>The following examples demonstrate how the same query construct handles full table sets and empty match sets, highlighting the need for row-level position tracking.</p>
+<div class="example-box">
+  <p><strong>Example 1: Full movies scan then empty movie id filter.</strong></p>
+  <p>Consider a database table named <code>movies</code> containing film catalog data with columns <code>movie_id</code> (integer primary key), <code>movie_name</code> (text), <code>release_date</code> (date), and <code>movie_length</code> (integer minutes).</p>
+  <p><strong>Step 1: The full table scan.</strong> We execute a query without any restrictive predicate:</p>
+  <pre><code>SELECT * FROM movies;</code></pre>
+  <p>Here, the filter condition evaluates to true for all rows: \[ P(r) = \text{true}, \quad \forall r \in T \] The engine scans the entire storage relation \(T\). If the table stores 53 movies, the resulting set \(R\) contains all 53 tuples: \[ |R| = 53 \] The database engine transmits all 53 rows to the client buffer in one operation. The result set empty match movies test is not met here because rows exist.</p>
+  <p><strong>Step 2: The empty match filter.</strong> Next, we run a query targeting a specific non-existent record:</p>
+  <pre><code>SELECT * FROM movies WHERE movie_id = 1000;</code></pre>
+  <p>Here, the predicate is: \[ P(r) = (r.\text{movie\_id} = 1000) \] The storage engine evaluates the predicate across all records. Because the highest identifier in the sample database is below 1000, no row satisfies the condition: \[ R = \{r \in T \mid r.\text{movie\_id} = 1000\} = \emptyset \] The engine returns an empty result set with cardinality: \[ |R| = 0 \] This demonstrates that standard retrieval statements return sets of arbitrary size, from complete tables down to zero rows, governed strictly by the filter predicate.</p>
+  <p><strong>Step 3: The row-by-row navigation gap.</strong> Suppose an application client receives the 53 rows from the full scan and now needs to execute the following sequence:</p>
+  <ol>
+    <li>Inspect row 1.</li>
+    <li>Read row 2 and evaluate an external API check.</li>
+    <li>Step backward to row 1 to modify a status flag based on row 2's outcome.</li>
+    <li>Advance to row 5.</li>
+  </ol>
+  <p>A plain <code>SELECT</code> statement cannot perform this navigation. Standard SQL provides no syntax such as <code>SELECT NEXT</code> or <code>SELECT PRIOR 5</code> over an existing query execution. The client either has to load all 53 records into client-side RAM or declare a database cursor with a movable pointer \(p \in [1, n]\) to traverse the rows.</p>
+</div>
+<h3 id="36.1.3-cross-database-engine-architecture">36.1.3 Cross-Database Engine Architecture</h3>
+<p>Understanding how different database engines balance set-based operations and row-by-row processing helps engineers make sound architectural choices:</p>
+<table>
+  <thead>
+    <tr>
+      <th>Database System</th>
+      <th>Processing Paradigm</th>
+      <th>Row-by-Row Cursor Support</th>
+      <th>Architectural Guidance</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><strong>PostgreSQL</strong></td>
+      <td>Relational / Hybrid</td>
+      <td>Native <code>refcursor</code>, bound cursors, positioned <code>WHERE CURRENT OF</code> updates</td>
+      <td>Cursors are ideal for batching large queries in memory-constrained transactions or procedural PL/pgSQL routines.</td>
+    </tr>
+    <tr>
+      <td><strong>MySQL</strong></td>
+      <td>Relational OLTP</td>
+      <td>Stored procedure cursors (read-only, forward-only)</td>
+      <td>Cursors are forward-only and lack scrollability; set-based queries or client-side batching are preferred.</td>
+    </tr>
+    <tr>
+      <td><strong>Snowflake</strong></td>
+      <td>Cloud OLAP (Columnar)</td>
+      <td>Supported in Snowflake Scripting (<code>CURSOR FOR SELECT</code>)</td>
+      <td>Cloud data warehouses rely on vectorized SIMD execution across micro-partitions. Row-by-row cursor loops bypass vectorization and degrade performance; use set-based SQL or window functions where possible.</td>
+    </tr>
+    <tr>
+      <td><strong>Databricks / Spark SQL</strong></td>
+      <td>Distributed Cluster (MPP)</td>
+      <td>No traditional row-level transactional cursors</td>
+      <td>Spark processes data in distributed partitions via Resilient Distributed Datasets (RDDs) and DataFrames. Row-by-row operations are handled via vectorized PySpark UDFs or window functions, while table changes use set-based <code>MERGE INTO</code>.</td>
+    </tr>
+  </tbody>
+</table>
+<div class="warning-box">
+  <p><strong>Scope & Assumptions:</strong> Set-based SQL assumes that operations are declarative and order-independent unless an explicit <code>ORDER BY</code> is specified. In pure relational theory, sets have no duplicate rows and no inherent positional order. When using row-by-row processing, you assume the underlying data stream has a deterministic sequence; otherwise, fetching row \(p\) on two consecutive runs may return completely different records.</p>
+</div>
+<h3 id="36.1.4-visualizing-set-retrieval-versus-cursor-navigation">36.1.4 Visualizing Set Retrieval versus Cursor Navigation</h3>
+<p>Imagine a two-dimensional grid where the horizontal axis represents table attributes (columns) and the vertical axis represents individual tuples (rows):</p>
+<pre><code>Table T:
+  Row 1: [ movie_id: 1  | "A Clockwork Orange" | 1971-12-19 | 136 ]
+  Row 2: [ movie_id: 2  | "Apocalypse Now"      | 1979-08-15 | 153 ]
+  Row 3: [ movie_id: 3  | "Battle Royale"       | 2000-12-16 | 122 ]
+  ...
+  Row 53: [ movie_id: 53 | "Wild Strawberries"  | 1957-12-26 | 91  ]
+
+Set-Based Query (SELECT * FROM movies):
+  --&gt; Engine buffers and emits all 53 rows as a single block to the client.
+
+Cursor View (Movable Pointer p):
+  [p = 1] -&gt; Row 1  (FETCH NEXT)
+  [p = 2] -&gt; Row 2  (FETCH NEXT)
+  [p = 1] &lt;- Row 1  (FETCH PRIOR - requires SCROLL)</code></pre>
+<p>The landmark takeaway is that set-based queries transmit the entire block of rows matching the predicate across the network wire. A cursor, in contrast, maintains an internal pointer \(p\) on the database server, advancing or retreating along the vertical axis one tuple at a time.</p>
+<div class="warning-box">
+  <p><strong>Common Pitfalls:</strong></p>
+  <ol>
+    <li><strong>Confusing Row Numbers with Identity:</strong> Believing that row 1 will always be the same row across separate query executions without an explicit <code>ORDER BY</code> clause. Database engines return rows according to physical disk layout or parallel scan threads unless an ordering key is established.</li>
+    <li><strong>Defaulting to Row-by-Row Loops:</strong> Using a cursor to perform simple transformations or filters that could be accomplished 100 times faster with a single set-based <code>UPDATE</code> or <code>WHERE</code> clause.</li>
+    <li><strong>Ignoring Empty Result Sets:</strong> Assuming a cursor will always fetch at least one row, leading to null pointer exceptions or improper loop initialization when a query matches zero rows.</li>
+  </ol>
+</div>
+<h3 id="36.1.5-student-questions-and-answers">36.1.5 Student Questions and Answers</h3>
+<div class="important-note">
+  <p><strong>Q:</strong> With a plain SELECT, how do I fetch the first row, then move to the next row or back five rows inside the same result?</p>
+  <p><strong>A:</strong> A plain SELECT cannot do that. It executes declaratively and returns the whole matching set at once. To step forward, step back, or grab a small group of rows interactively, you must encapsulate the query inside a cursor. The cursor creates an active server-side pointer that allows you to step through rows sequentially or arbitrarily using directional fetch commands.</p>
+</div>
+<h3 id="36.1.6-real-world-applications-and-field-placement">36.1.6 Real-World Applications and Field Placement</h3>
+<p>In enterprise database engineering, set-based operations are the default choice for data transformations, reporting queries, and high-throughput transaction processing. However, real-world batch data-change passes over large result sets frequently require procedural coordination. For instance, in financial payroll systems, an application might fetch five payroll records, calculate variable tax deductions using external payroll microservices, update the salary ledgers, and then step back to re-verify an audit hash before committing.</p>
+<p>Procedural host environments such as Python, Java, Go, and legacy systems in COBOL or Fortran operate natively on sequential collections and arrays. Cursors provide the vital bridge connecting the set-based relational database engine to these row-at-a-time host environments.</p>
+<div class="key-takeaway">
+  <p><strong>Recap & Bridge:</strong> A standard SQL query returns an entire result set defined by \(R = \{r \in T \mid P(r)\}\), with no built-in mechanism to navigate between individual records. When business requirements demand sequential row inspection, procedural languages step in to manage ordered row-level logic.</p>
+</div>
+
+<h2 id="36.2-procedural-and-non-procedural-languages">36.2 Procedural and Non-Procedural Languages</h2>
+<div class="important-note">
+  <p>Why do database developers combine declarative SQL with procedural code? If SQL can filter and aggregate millions of records with a single query, why do we need loops, conditional branching, and temporary variables?</p>
+</div>
+<p>In computer programming, languages generally fall into two broad execution models: declarative (non-procedural) and imperative (procedural). A <em>non-procedural language</em> specifies <em>what</em> result is desired while leaving the underlying algorithms, access paths, and execution sequence entirely to the database optimizer. Standard SQL is the quintessential non-procedural language. Conversely, a <em>procedural language</em> specifies <em>what</em> to do and <em>how</em> to do it step by step, dictating an explicit sequence of instructions, variable assignments, and flow control.</p>
+<div class="important-note">
+  <p>Think of it like handing over a tray of files analogy for set handoff. SQL acts as the research clerk who gathers all relevant documents from the archives and fills a physical tray. The clerk hands the whole tray to your desk at once. A procedural program then sits at the desk, picks up file one, inspects the date, stamps approval, picks up file two, detects a missing invoice, flags it for deletion, and moves systematically through the stack. SQL fills the tray; the procedural language conducts the orderly, step-by-step processing.</p>
+</div>
+<p>Because relational engines work on whole sets while applications frequently need row-by-row procedural sequence array host logic, database vendors build procedural extensions directly into their database engines.</p>
+<h3 id="36.2.1-mathematical-formulation-of-set-to-sequence-mapping">36.2.1 Mathematical Formulation of Set-to-Sequence Mapping</h3>
+<p>The transition from a declarative query to a procedural program represents a mathematical mapping from an unordered set (or multiset) of tuples into an ordered sequence or indexed list.</p>
+<p>Let \(R\) be the relational result set defined in Section 36.1: \[ R = \{r \in T \mid P(r)\} \] where \(|R| = n\). In pure set theory, elements of \(R\) have no fixed positional index.</p>
+<p>When a procedural language opens a cursor over \(R\), it imposes a bijective indexing function \(\pi: \{1, 2, \dots, n\} \to R\), transforming the set into an ordered tuple sequence: \[ L = [r_1, r_2, \dots, r_n] \] where each row \(r_i = \pi(i)\) occupies a discrete position \(i \in \{1, 2, \dots, n\}\).</p>
+<p>The procedural execution state can be modeled as a state machine: \[ S_i = \langle i, \sigma_i, \text{action}(r_i) \rangle \] Here:</p>
+<ul>
+  <li>\(L\) is the ordered sequence or list of rows exposed to the procedural runtime.</li>
+  <li>\(i\) is the current step index, with \(1 \le i \le n\).</li>
+  <li>\(\sigma_i\) represents the program memory state (variables, flags, accumulators) at step \(i\).</li>
+  <li>\(\text{action}(r_i)\) represents an imperative operation applied to row \(r_i\), such as updating a status field, calling a web service, or appending to an output buffer.</li>
+</ul>
+<p>The procedural runtime dictates the order of step index \(i\): advancing forward (\(i \leftarrow i + 1\)), jumping to arbitrary indices, or terminating early based on intermediate state checks.</p>
+<h3 id="36.2.2-worked-examples-procedural-control-flows">36.2.2 Worked Examples: Procedural Control Flows</h3>
+<p>The following examples highlight scenarios where declarative SQL alone is insufficient and procedural orchestration is required.</p>
+<div class="example-box">
+  <p><strong>Example 1: Dependent multi-step data modifications.</strong> Consider a workflow that must process customer order cancellations:</p>
+  <ol>
+    <li><code>SELECT</code> all pending orders older than 30 days into a cursor.</li>
+    <li>For each order row \(r_i\):</li>
+  </ol>
+  <ul>
+    <li>Check an external inventory service to verify if items were restocked.</li>
+    <li>If restocked, <code>INSERT</code> an audit record into <code>restock_log</code>.</li>
+    <li><code>UPDATE</code> the order status to <code>'CANCELLED'</code>.</li>
+    <li>If the customer had VIP status, <code>INSERT</code> a loyalty credit coupon into <code>customer_promos</code>.</li>
+    <li>If the total amount was zero, <code>DELETE</code> the stale draft order.</li>
+  </ul>
+  <p>Each verb executes in turn. Step \(k+1\) depends directly on the result of step \(k\). Plain SQL cannot easily branch across heterogeneous external dependencies without procedural control logic.</p>
+  <p><strong>Example 2: Array hand-off to host languages.</strong> A database query pulls a candidate set of 1,000 film records from PostgreSQL. The result set is passed to a host program (such as Python, PHP, Java, or legacy business environments in COBOL and Fortran) as an array or collection of row objects.</p>
+  <ul>
+    <li>In Python:</li>
+  </ul>
+  <pre><code>  cursor.execute("SELECT movie_name, release_date FROM movies")
+  for row in cursor.fetchall():
+      formatted = clean_title(row[0])
+      push_to_elastic(formatted, row[1])</code></pre>
+  <ul>
+    <li>In COBOL / Fortran: The host program defines a fixed record structure, steps through the retrieved array using indexed memory offsets, applies formatting rules, and submits follow-up transactional writes to the mainframe database.</li>
+  </ul>
+  <p><strong>Example 3: Declarative "what" versus procedural "how".</strong></p>
+  <ul>
+    <li><em>Declarative (SQL):</em> <code>SELECT AVG(movie_length) FROM movies WHERE release_date >= '2000-01-01';</code></li>
+  </ul>
+  <p>You specify what value you want (the average length). The optimizer chooses whether to use an index scan, a parallel sequential scan, or a hash aggregate.</p>
+  <ul>
+    <li><em>Procedural (PL/pgSQL):</em></li>
+  </ul>
+  <p>Initialize <code>total := 0; count := 0;</code> Loop through rows, adding each length to <code>total</code> and incrementing <code>count</code>. Compute <code>avg := total / count;</code> You specify every operational step and memory allocation manually.</p>
+</div>
+<h3 id="36.2.3-cross-database-engine-procedural-implementations">36.2.3 Cross-Database Engine Procedural Implementations</h3>
+<p>Database engines differ significantly in how they integrate procedural execution with their core SQL engines:</p>
+<table>
+  <thead>
+    <tr>
+      <th>DBMS</th>
+      <th>Procedural Language</th>
+      <th>Key Architectural Characteristics</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><strong>PostgreSQL</strong></td>
+      <td><strong>PL/pgSQL</strong></td>
+      <td>Block-structured (<code>DECLARE ... BEGIN ... END;</code>), supports cursor variables (<code>refcursor</code>), dynamic SQL via <code>EXECUTE</code>, explicit transaction management in procedures (<code>CALL</code>), and row-level triggers.</td>
+    </tr>
+    <tr>
+      <td><strong>MySQL</strong></td>
+      <td><strong>SQL/PSM Stored Programs</strong></td>
+      <td>Stored procedures and functions defined with <code>BEGIN ... END</code>. Cursors are read-only and forward-only. Loop exit conditions use explicit condition handlers (<code>DECLARE CONTINUE HANDLER FOR NOT FOUND</code>).</td>
+    </tr>
+    <tr>
+      <td><strong>Oracle</strong></td>
+      <td><strong>PL/SQL</strong></td>
+      <td>The industry standard for procedural database code. Features explicit cursor attributes (<code>%ISOPEN</code>, <code>%FOUND</code>, <code>%NOTFOUND</code>, <code>%ROWCOUNT</code>), cursor <code>FOR</code> loops, and <code>BULK COLLECT</code> for batch fetching.</td>
+    </tr>
+    <tr>
+      <td><strong>SQL Server</strong></td>
+      <td><strong>Transact-SQL (T-SQL)</strong></td>
+      <td>Dialect supporting <code>WHILE</code> loops, <code>TRY...CATCH</code> blocks, global/local cursors, and explicit cursor cleanup with <code>CLOSE</code> and <code>DEALLOCATE</code>.</td>
+    </tr>
+    <tr>
+      <td><strong>Snowflake</strong></td>
+      <td><strong>Snowflake Scripting</strong></td>
+      <td>Embedded procedural blocks (<code>EXECUTE IMMEDIATE '...'</code>) supporting variables, loops (<code>FOR</code>, <code>WHILE</code>), and cursors for administrative operations, though set-based SQL is strongly recommended for data processing.</td>
+    </tr>
+    <tr>
+      <td><strong>Databricks</strong></td>
+      <td><strong>PySpark / Scala / SQL UDFs</strong></td>
+      <td>Does not use an embedded procedural SQL engine. Distributed cluster transformations are written in PySpark or Scala DataFrames. Iterative logic across partitions uses vectorized Pandas UDFs or window specifications.</td>
+    </tr>
+  </tbody>
+</table>
+<div class="warning-box">
+  <p><strong>Scope & Assumptions:</strong> Procedural language extensions are ideal for transaction orchestration, complex validation routines, and ETL batch loops. However, they assume that row-by-row procedural processing is genuinely necessary. Running heavy row-by-row loops in an OLTP or OLAP engine incurs significant CPU overhead, context switches between the SQL parser and procedural interpreter, and locks table resources longer than set-based operations.</p>
+</div>
+<h3 id="36.2.4-visualizing-the-declarative-procedural-pipeline">36.2.4 Visualizing the Declarative-Procedural Pipeline</h3>
+<p>The diagram below illustrates how declarative SQL and procedural logic collaborate across the cursor bridge:</p>
+<pre><code>[ Relational Storage Engine (Tables) ]
+                  |
+                  |  Declarative Query: SELECT * FROM movies WHERE ...
+                  v
+[ Result Set R (Unordered Relational Bag) ]
+                  |
+                  |  Cursor Declaration &amp; Open (Establishes Sequence L)
+                  v
+[ Cursor Pointer p: L = [r_1, r_2, ..., r_n] ]
+                  |
+         +--------+--------+
+         |                 |
+         v                 v
+[ Fetch Row r_i ]    [ Update / Delete WHERE CURRENT OF ]
+         |                 |
+         v                 |
+[ Host Procedural Logic ] -+
+  (Branching, APIs,
+   Loops, Logging)</code></pre>
+<p>The database query optimizer resolves physical table scans into the intermediate result set \(R\). The cursor then imposes the positional coordinate \(p\), allowing procedural host logic to step through tuples one at a time.</p>
+<div class="warning-box">
+  <p><strong>Common Pitfalls:</strong></p>
+  <ol>
+    <li><strong>Context Switching Overhead:</strong> Executing SQL queries inside an iterative procedural loop (the "N+1 query problem") instead of performing a single set-based <code>JOIN</code> or <code>IN</code> subquery.</li>
+    <li><strong>Re-implementing Aggregations:</strong> Writing procedural loops to calculate sums, averages, or counts that the declarative engine can compute in a single pass using vector instructions.</li>
+    <li><strong>Ignoring Engine Capabilities:</strong> Writing procedural code in environments like Databricks or Snowflake where distributed columnar engines provide blazing speed for set operations but crawl when forced into serial loops.</li>
+  </ol>
+</div>
+<h3 id="36.2.5-student-questions-and-answers">36.2.5 Student Questions and Answers</h3>
+<div class="important-note">
+  <p><strong>Q:</strong> If SQL can already fetch rows, why bring in a procedural language at all?</p>
+  <p><strong>A:</strong> SQL fetches groups of rows efficiently, but it has no native step-by-step procedural instruction logic. Operational checks on individual cell values, complex branching across external business rules, interleaved insert/update/delete passes, and order-dependent calculations require an imperative language that executes instructions sequentially across the rows.</p>
+</div>
+<h3 id="36.2.6-real-world-applications-and-industry-placement">36.2.6 Real-World Applications and Industry Placement</h3>
+<p>Modern software architectures balance declarative retrieval with procedural processing daily. In microservice ecosystems, a high-performance database query pulls a candidate set of customer accounts. A procedural service written in Python, Go, or Java consumes that array, performs credit scoring, validates fraud models against external REST APIs, and issues targeted transactional updates back to the database.</p>
+<p>In legacy banking and insurance mainframes, similar batch workflows were constructed using COBOL and Fortran reading cursor streams. Across all eras, cursors provide the runtime conduit allowing non-procedural database engines and procedural application logic to exchange data smoothly.</p>
+<div class="key-takeaway">
+  <p><strong>Recap & Bridge:</strong> Non-procedural SQL specifies <em>what</em> data to retrieve, whereas procedural languages specify <em>how</em> to process records step by step. Cursors map relational sets into ordered sequences \(L = [r_1, \dots, r_n]\), preparing the foundation for the four-stage cursor lifecycle.</p>
+</div>
+
+<h2 id="36.3-cursor-lifecycle-of-declare-open-fetch-close">36.3 Cursor Lifecycle of Declare Open Fetch Close</h2>
+<div class="important-note">
+  <p>What happens behind the scenes on the database server when you declare a cursor versus when you open it? Many developers assume declaring a cursor immediately queries the disk and locks table rows. In reality, declaring merely registers an execution plan; the actual data movement happens during the lifecycle stages that follow.</p>
+</div>
+<p>A database cursor is not a static object; it is an active server-side control structure that progresses through four strictly ordered lifecycle phases: <strong>Declare</strong>, <strong>Open</strong>, <strong>Fetch</strong>, and <strong>Close</strong>. Mastering this state progression is essential for both correct procedural programming and sound database memory management.</p>
+<div class="important-note">
+  <p>A reliable memory hook to remember these four verbs in order is: <strong>name it, fill it, read it, free it</strong>.</p>
+  <ol>
+    <li><strong>Declare</strong> (Name it): Define the cursor identifier and attach it to a specific <code>SELECT</code> statement.</li>
+    <li><strong>Open</strong> (Fill it): Execute the query, evaluate parameters, and allocate server working memory.</li>
+    <li><strong>Fetch</strong> (Read it): Retrieve the current record into target variables and reposition the cursor pointer.</li>
+    <li><strong>Close</strong> (Free it): Release the temporary result set and return working memory back to the database engine.</li>
+  </ol>
+</div>
+<p>Once a cursor is declared, it can be opened, fetched to completion, closed, and then reopened multiple times within the same procedural scope to re-evaluate the query against the latest table data.</p>
+<h3 id="36.3.1-mathematical-state-machine-formulation">36.3.1 Mathematical State-Machine Formulation</h3>
+<p>The cursor lifecycle can be formalized as a finite state automaton \(\mathcal{M} = \langle S, \Sigma, \delta, s_0, F \rangle\).</p>
+<p>The state space consists of four discrete states: \[ S = \{\text{UNINITIALIZED}, \text{DECLARED}(Q), \text{OPEN}(R(Q), p), \text{CLOSED}(\emptyset)\} \]</p>
+<p>The state transition function \(\delta: S \times \Sigma \to S\) is defined by the following formal rules: \[ \begin{aligned} \delta(\text{UNINITIALIZED}, \text{DECLARE}(Q)) &= \text{DECLARED}(Q) \\ \delta(\text{DECLARED}(Q), \text{OPEN}(\theta)) &= \text{OPEN}(R(Q, \theta), p_0) \\ \delta(\text{OPEN}(R, p), \text{FETCH}(d)) &= \text{OPEN}(R, p') \\ \delta(\text{OPEN}(R, p), \text{CLOSE}) &= \text{CLOSED}(\emptyset) \\ \delta(\text{CLOSED}(\emptyset), \text{OPEN}(\theta')) &= \text{OPEN}(R(Q, \theta'), p_0) \end{aligned} \]</p>
+<p>Here:</p>
+<ul>
+  <li>\(Q\) represents the declarative SQL query specification.</li>
+  <li>\(\theta\) represents the input parameter vector evaluated at open time.</li>
+  <li>\(R(Q, \theta)\) is the active result set relation instantiated in server memory, with cardinality \(n = |R|\).</li>
+  <li>\(p\) is the positional coordinate of the cursor pointer.</li>
+  <li>\(p_0\) is the initial pointer position parked immediately <em>before</em> the first row (commonly modeled as index \(p = 0\)).</li>
+  <li>\(d\) is the fetch directional displacement (such as <code>NEXT</code> or <code>PRIOR</code>), producing new position \(p'\).</li>
+  <li>\(\emptyset\) denotes the null store where working buffers and server locks are released.</li>
+</ul>
+<p>Calling <code>FETCH</code> on a cursor in the <code>DECLARED</code> or <code>CLOSED</code> state raises a runtime exception. Similarly, issuing <code>OPEN</code> on an already <code>OPEN</code> cursor triggers an error in standard SQL environments.</p>
+<h3 id="36.3.2-worked-examples-of-the-lifecycle-stages">36.3.2 Worked Examples of the Lifecycle Stages</h3>
+<p>The following examples trace the internal state of the server during each lifecycle stage.</p>
+<div class="example-box">
+  <p><strong>Example 1: Declare performs zero table I/O.</strong> Consider the declaration:</p>
+  <pre><code>DECLARE cur_movies CURSOR FOR SELECT * FROM movies;</code></pre>
+  <p>When this line executes, the PL/pgSQL parser registers the name <code>cur_movies</code>, verifies table and column identifiers against system catalogs, and stores the parse tree. <strong>No disk I/O occurs, no table blocks are read into buffer cache, and zero rows move.</strong> The cursor sits in state \(\text{DECLARED}(Q)\).</p>
+  <p><strong>Example 2: Open executes the query and allocates memory.</strong> When the procedural block executes:</p>
+  <pre><code>OPEN cur_movies;</code></pre>
+  <p>The database engine invokes the query planner, binds any runtime parameters, allocates working memory (such as PostgreSQL <code>work_mem</code>), and prepares the result set \(R\). The pointer is initialized to \(p_0 = 0\) (before the first tuple). Server resources are actively held from this instant.</p>
+  <p><strong>Example 3: Fetch advances the pointer and retrieves data.</strong> Suppose the result set contains \(n = 3\) films:</p>
+  <ol>
+    <li><code>FETCH NEXT FROM cur_movies INTO v_movie;</code></li>
+  </ol>
+  <p>Pointer advances: \(p \leftarrow 0 + 1 = 1\). Tuple \(r_1\) is copied into variable <code>v_movie</code>. The status flag <code>FOUND</code> becomes <code>TRUE</code>.</p>
+  <ol>
+    <li><code>FETCH NEXT FROM cur_movies INTO v_movie;</code></li>
+  </ol>
+  <p>Pointer advances: \(p \leftarrow 1 + 1 = 2\). Tuple \(r_2\) is copied. <code>FOUND</code> remains <code>TRUE</code>.</p>
+  <ol>
+    <li><code>FETCH NEXT FROM cur_movies INTO v_movie;</code></li>
+  </ol>
+  <p>Pointer advances: \(p \leftarrow 2 + 1 = 3\). Tuple \(r_3\) is copied. <code>FOUND</code> remains <code>TRUE</code>.</p>
+  <ol>
+    <li><code>FETCH NEXT FROM cur_movies INTO v_movie;</code></li>
+  </ol>
+  <p>Pointer advances beyond end of set: \(p \leftarrow 4 > n\). No row is retrieved. The engine sets <code>NOT FOUND = TRUE</code> (or <code>FOUND = FALSE</code>).</p>
+  <p><strong>Example 4: Close frees memory, preparing for safe reopen.</strong></p>
+  <pre><code>CLOSE cur_movies;</code></pre>
+  <p>The engine deallocates the working memory buffer, releases temporary spool files, and invalidates pointer \(p\). If subsequent code issues:</p>
+  <pre><code>OPEN cur_movies;</code></pre>
+  <p>The cursor re-enters state \(\text{OPEN}\), executing a fresh query snapshot against the base table. Any rows inserted or committed by concurrent transactions since the previous close are now visible.</p>
+</div>
+<h3 id="36.3.3-cross-database-cursor-lifecycle-variations">36.3.3 Cross-Database Cursor Lifecycle Variations</h3>
+<p>While the Declare-Open-Fetch-Close pattern is standard, different database engines impose unique lifecycle requirements:</p>
+<table>
+  <thead>
+    <tr>
+      <th>DBMS</th>
+      <th>Lifecycle Steps</th>
+      <th>Key Dialect Differences</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><strong>PostgreSQL</strong></td>
+      <td><code>DECLARE</code> \(\to\) <code>OPEN</code> \(\to\) <code>FETCH</code> \(\to\) <code>CLOSE</code></td>
+      <td>Unbound <code>refcursor</code> can be passed between functions and across transactions if created <code>WITH HOLD</code>. Cursors close automatically on transaction commit unless held.</td>
+    </tr>
+    <tr>
+      <td><strong>MySQL</strong></td>
+      <td><code>DECLARE</code> \(\to\) <code>OPEN</code> \(\to\) <code>FETCH</code> \(\to\) <code>CLOSE</code></td>
+      <td>Cursors must be declared strictly after variable declarations and before condition handlers in stored programs. MySQL cursors are forward-only and read-only.</td>
+    </tr>
+    <tr>
+      <td><strong>Oracle</strong></td>
+      <td><code>CURSOR ... IS</code> \(\to\) <code>OPEN</code> \(\to\) <code>FETCH</code> \(\to\) <code>CLOSE</code></td>
+      <td>Oracle provides explicit cursor attributes: <code>%ISOPEN</code> (checks if open), <code>%FOUND</code> (last fetch had row), <code>%NOTFOUND</code> (fetch was empty), and <code>%ROWCOUNT</code> (cumulative rows fetched).</td>
+    </tr>
+    <tr>
+      <td><strong>SQL Server (T-SQL)</strong></td>
+      <td><code>DECLARE</code> \(\to\) <code>OPEN</code> \(\to\) <code>FETCH</code> \(\to\) <code>CLOSE</code> \(\to\) <code>DEALLOCATE</code></td>
+      <td><strong>Five-step lifecycle!</strong> <code>CLOSE</code> releases the active result set and locks, but retains the cursor definition. <code>DEALLOCATE</code> is mandatory to permanently remove the cursor reference from memory.</td>
+    </tr>
+    <tr>
+      <td><strong>Snowflake</strong></td>
+      <td><code>DECLARE</code> \(\to\) <code>OPEN</code> \(\to\) <code>FETCH</code> \(\to\) <code>CLOSE</code></td>
+      <td>Supported in Snowflake Scripting. Alternatively, <code>FOR &lt;record&gt; IN &lt;cursor&gt; DO ... END FOR</code> manages Open, Fetch, and Close automatically.</td>
+    </tr>
+  </tbody>
+</table>
+<div class="warning-box">
+  <p><strong>Scope & Assumptions:</strong> A cursor's result set is evaluated according to the transaction isolation level of the host session. In Read Committed isolation, opening a cursor takes a snapshot of the committed data at the exact moment of the <code>OPEN</code> call. Rows modified after the <code>OPEN</code> statement will not be seen during subsequent <code>FETCH</code> commands of that active cursor instance.</p>
+</div>
+<h3 id="36.3.4-visualizing-the-lifecycle-state-machine">36.3.4 Visualizing the Lifecycle State Machine</h3>
+<p>The state transition flow below maps the legal and illegal operations across the cursor lifecycle:</p>
+<pre><code>                  +--------------------------------+
+                  |         UNINITIALIZED          |
+                  +--------------------------------+
+                                  |
+                                  |  DECLARE cur_name CURSOR FOR ...
+                                  v
+                  +--------------------------------+
+                  |           DECLARED             |&lt;---------+
+                  +--------------------------------+          |
+                                  |                           |
+                                  |  OPEN cur_name            |
+                                  v                           |
+                  +--------------------------------+          |
+                  |             OPEN               |          |
+                  |  (Pointer p = 0, Memory Active)|          |
+                  +--------------------------------+          |
+                        |                    ^                |
+                        | FETCH NEXT / PRIOR |                |
+                        +--------------------+                |
+                                  |                           |
+                                  |  CLOSE cur_name           |
+                                  v                           |
+                  +--------------------------------+          |
+                  |            CLOSED              |----------+
+                  |  (Memory Freed, Pointer Null)  |   OPEN cur_name
+                  +--------------------------------+   (Refill with fresh data)</code></pre>
+<p>The diagram highlights that a closed cursor can loop back directly to the <code>OPEN</code> state, repopulating its working buffer from the underlying tables without needing a redundant <code>DECLARE</code> statement.</p>
+<div class="warning-box">
+  <p><strong>Common Pitfalls:</strong></p>
+  <ol>
+    <li><strong>The Leaked Cursor:</strong> Forgetting to issue <code>CLOSE</code> before exiting a long-running procedure or loop. Unclosed cursors tie up database server connection memory, buffer handles, and shared locks.</li>
+    <li><strong>Double Opening:</strong> Calling <code>OPEN</code> on an already open cursor without closing it first, resulting in an immediate SQL state error (<code>cursor already open</code>).</li>
+    <li><strong>Fetching After Exhaustion:</strong> Failing to test the loop exit condition (<code>EXIT WHEN NOT FOUND</code>) immediately after a <code>FETCH</code>, which leads to processing stale duplicate data from the previous iteration.</li>
+  </ol>
+</div>
+<h3 id="36.3.5-student-questions-and-answers">36.3.5 Student Questions and Answers</h3>
+<div class="important-note">
+  <p><strong>Q:</strong> Does declare already pull data from the table?</p>
+  <p><strong>A:</strong> No. The declare stage only defines the cursor identifier, verifies the query syntax, and establishes parameter specifications. No disk I/O occurs and no data moves into memory until you issue the explicit <code>OPEN</code> command. Data access happens incrementally during <code>FETCH</code>, and working memory is released upon <code>CLOSE</code>.</p>
+</div>
+<h3 id="36.3.6-practical-engineering-tips-and-resource-management">36.3.6 Practical Engineering Tips and Resource Management</h3>
+<p>In production database systems, cursors consume dedicated memory inside the database server process. When building batch extraction jobs:</p>
+<ul>
+  <li>Always ensure that every code path that opens a cursor contains a corresponding <code>CLOSE</code> command. In languages with exception handling, place the <code>CLOSE</code> statement in a <code>FINALLY</code> block or exception trap.</li>
+  <li>In SQL Server (T-SQL), remember to issue both <code>CLOSE</code> and <code>DEALLOCATE</code> to avoid ghost cursor structures accumulating in memory.</li>
+  <li>When processing large datasets in PostgreSQL, consider whether an unbound <code>refcursor</code> returned to a client application (which fetches chunks of 500 rows at a time) is preferable to buffering all records in client RAM.</li>
+</ul>
+<div class="key-takeaway">
+  <p><strong>Recap & Bridge:</strong> The cursor lifecycle follows the four foundational verbs: <strong>Declare</strong>, <strong>Open</strong>, <strong>Fetch</strong>, and <strong>Close</strong>. Having examined the complete lifecycle, we now examine the concrete syntax for creating bound and unbound cursors in PostgreSQL.</p>
+</div>
+
+<h2 id="36.4-creating-cursors-in-postgresql">36.4 Creating Cursors in PostgreSQL</h2>
+<div class="important-note">
+  <p>Can a single cursor variable point to completely different queries during the execution of a function, or must every cursor be permanently hardcoded to one specific SQL statement? PostgreSQL supports both patterns, giving engineers flexibility between static query optimization and dynamic query redirection.</p>
+</div>
+<p>In PostgreSQL and PL/pgSQL, cursors are created during the <code>DECLARE</code> section of a block or function. There are two primary architectural styles for cursor creation:</p>
+<ol>
+  <li><strong>Unbound Cursor (<code>REFCURSOR</code>):</strong> Declares a generic cursor variable that carries no predefined SQL query. The query is attached dynamically at execution time when the cursor is opened.</li>
+  <li><strong>Bound Cursor (<code>CURSOR FOR query</code>):</strong> Binds a unique cursor identifier directly to a specific <code>SELECT</code> statement at declaration time, optionally specifying parameter arguments and scrollability constraints.</li>
+</ol>
+<div class="important-note">
+  <p>Think of the distinction like shipping containers. An unbound <code>refcursor</code> is an empty, generic container. You can load it with cargo from warehouse A today, and later load it with completely different cargo from warehouse B. A bound cursor is a specialized, refrigerated container permanently configured and labeled for one specific route; it knows exactly what cargo it carries, though you can still adjust the destination temperature using input parameters.</p>
+</div>
+<h3 id="36.4.1-mathematical-formulation-of-bound-and-unbound-cursors">36.4.1 Mathematical Formulation of Bound and Unbound Cursors</h3>
+<p>In formal programming language semantics, an unbound cursor represents a polymorphic reference pointer, whereas a bound cursor represents an evaluated triple comprising a name identifier, a query expression, and a parameter schema.</p>
+<p>We define the bound cursor as name query params triple: \[ C_{\text{bound}} = \langle \text{identifier}, Q, \Theta \rangle \] where:</p>
+<ul>
+  <li>\(\text{identifier}\) is the unique name of the cursor within the transaction session.</li>
+  <li>\(Q\) is the declarative query expression <code>SELECT ... FROM ... WHERE ...</code>.</li>
+  <li>\(\Theta = \langle \theta_1: \tau_1, \theta_2: \tau_2, \dots, \theta_k: \tau_k \rangle\) is an ordered vector of formal parameters, where \(\theta_j\) is a parameter variable and \(\tau_j\) is its PostgreSQL data type.</li>
+</ul>
+<p>For an unbound cursor, the query and parameter bindings are undefined during declaration: \[ C_{\text{unbound}} = \text{refcursor} \]</p>
+<p>#### Scrollability Constraints The cursor declaration specifies how pointer coordinate \(p_t\) may transition at step \(t+1\):</p>
+<ul>
+  <li>Under <code>NO SCROLL</code> (the default behavior):</li>
+</ul>
+<p>\[ p_{t+1} \ge p_t \] The pointer can only advance monotonically forward.</p>
+<ul>
+  <li>Under <code>SCROLL</code>:</li>
+</ul>
+<p>\[ p_{t+1} \in \{1, 2, \dots, n\} \] The pointer can jump to any arbitrary valid row index within the cardinality \(n = |R|\), permitting backward traversing (<code>PRIOR</code>, <code>BACKWARD</code>) and absolute index jumps (<code>FIRST</code>, <code>LAST</code>, <code>ABSOLUTE</code>).</p>
+<h3 id="36.4.2-creation-style-one-refcursor-variable">36.4.2 Creation Style One: Refcursor Variable</h3>
+<p>The syntax to declare an unbound cursor is:</p>
+<pre><code>DECLARE
+  cur_all_movies REFCURSOR;</code></pre>
+<p>Here:</p>
+<ul>
+  <li><code>cur_all_movies</code> is the variable identifier.</li>
+  <li><code>REFCURSOR</code> is the built-in PostgreSQL data type representing a cursor reference.</li>
+</ul>
+<p>An unbound <code>REFCURSOR</code> variable stores a string reference to an underlying server cursor portal. It can be passed as an argument between PL/pgSQL functions or returned directly to an external client (such as a Python or Java application) across transaction boundaries. At the point of declaration, no query is executed and no query text is associated with the variable.</p>
+<h3 id="36.4.3-creation-style-two-bound-cursor-and-column-projection">36.4.3 Creation Style Two: Bound Cursor and Column Projection</h3>
+<p>A bound cursor attaches a query directly to the cursor identifier:</p>
+<pre><code>DECLARE
+  cur_all_movies CURSOR FOR SELECT * FROM movies;</code></pre>
+<p>While writing <code>SELECT *</code> is syntactically legal, production database standards strongly discourage wildcards in cursor definitions.</p>
+<div class="warning-box">
+  <p><strong>Star Query Warning on Wide Tables:</strong> Avoid declaring cursors with <code>SELECT * FROM table</code>. On wide enterprise tables containing dozens of columns, large text descriptions, JSONB payloads, or binary objects (TOAST data), a star query forces the database engine to pull all column attributes into the cursor working memory. This creates severe memory strain, exhausts server <code>work_mem</code>, triggers disk-based temporary file spilling, and increases serialization overhead. Always specify an explicit, minimal projection list:</p>
+  <pre><code>DECLARE
+  cur_all_movies CURSOR FOR
+    SELECT movie_name, movie_length FROM movies;</code></pre>
+</div>
+<h3 id="36.4.4-creation-with-query-parameters">36.4.4 Creation With Query Parameters</h3>
+<p>A bound cursor can accept formal arguments in parentheses immediately following the cursor name.</p>
+<div class="example-box">
+  <p><strong>Worked Example: Year filtered cursor with custom year param.</strong></p>
+  <p>Consider an application requirement to inspect films released during a specific calendar year. Rather than declaring multiple cursors or assembling raw SQL strings, we define a parameterized bound cursor.</p>
+  <p><strong>Step 1: The parameterized cursor declaration.</strong></p>
+  <pre><code>DECLARE
+  cur_movies_by_year CURSOR (custom_year integer) FOR
+    SELECT movie_name, movie_length
+    FROM movies
+    WHERE EXTRACT(YEAR FROM release_date) = custom_year;</code></pre>
+  <p><strong>Step 2: Analysis of components.</strong></p>
+  <ul>
+    <li><code>cur_movies_by_year</code>: The unique cursor identifier.</li>
+    <li><code>(custom_year integer)</code>: The parameter signature \(\Theta = \langle \text{custom\_year}: \text{integer} \rangle\). The parameter acts as a scoped constant inside the attached query.</li>
+    <li><code>FOR SELECT ...</code>: The bound query specification \(Q\).</li>
+    <li><code>EXTRACT(YEAR FROM release_date) = custom_year</code>: The selection predicate \(P(r, \theta)\) that filters rows based on the supplied parameter value.</li>
+  </ul>
+  <p><strong>Step 3: Parameter binding evaluation.</strong> When the cursor is later opened with an argument such as <code>2010</code>: \[ \theta = (\text{custom\_year} \leftarrow 2010) \] The query engine substitutes 2010 into the plan: \[ R = \{r \in \text{movies} \mid \text{EXTRACT}(\text{YEAR FROM } r.\text{release\_date}) = 2010\} \] If the table has 8 movies from 2010, \(|R| = 8\). If reopened with <code>custom_year := 2011</code>, the same cursor structure refills with the 2011 cohort without recompiling the function.</p>
+</div>
+<h3 id="36.4.5-cross-database-cursor-creation-comparison">36.4.5 Cross-Database Cursor Creation Comparison</h3>
+<p>The table below contrasts cursor declaration capabilities across major database management systems:</p>
+<table>
+  <thead>
+    <tr>
+      <th>DBMS</th>
+      <th>Unbound / Ref Cursor</th>
+      <th>Parameterized Cursors</th>
+      <th>Scrollability Options</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><strong>PostgreSQL</strong></td>
+      <td><code>refcursor</code> variable; can be returned to client or passed across routines.</td>
+      <td>Supported directly in header: <code>CURSOR (param type) FOR SELECT ...</code>.</td>
+      <td>Explicit `[NO SCROLL \</td>
+      <td>SCROLL]` in cursor header.</td>
+    </tr>
+    <tr>
+      <td><strong>Oracle (PL/SQL)</strong></td>
+      <td><code>SYS_REFCURSOR</code> (weak) or strongly typed user-defined <code>REF CURSOR</code>.</td>
+      <td>Supported directly: <code>CURSOR c (p_yr NUMBER) IS SELECT ... WHERE yr = p_yr;</code>.</td>
+      <td>Controlled via environment settings or client drivers.</td>
+    </tr>
+    <tr>
+      <td><strong>MySQL</strong></td>
+      <td>Not supported natively; cursors cannot be passed as variables.</td>
+      <td><strong>Not supported in declaration.</strong> Must bind against in-scope local procedure variables.</td>
+      <td>Read-only, forward-only (<code>NO SCROLL</code> only).</td>
+    </tr>
+    <tr>
+      <td><strong>SQL Server (T-SQL)</strong></td>
+      <td>Not supported as an unbound variable. Table variables or temp tables are used instead.</td>
+      <td><strong>Not supported in header.</strong> Must reference local T-SQL variables (<code>@custom_year</code>).</td>
+      <td>Extensive: <code>FORWARD_ONLY</code>, <code>SCROLL</code>, <code>STATIC</code>, <code>KEYSET</code>, <code>DYNAMIC</code>, <code>FAST_FORWARD</code>.</td>
+    </tr>
+    <tr>
+      <td><strong>Snowflake</strong></td>
+      <td>Cursor variables are bound to statements (<code>CURSOR FOR SELECT ... WHERE yr = :var</code>).</td>
+      <td>Uses colon binding (<code>:custom_year</code>) against in-scope procedure variables.</td>
+      <td>Forward-only iteration over result partitions.</td>
+    </tr>
+  </tbody>
+</table>
+<div class="warning-box">
+  <p><strong>Scope & Assumptions:</strong> In PostgreSQL, cursor names declared inside PL/pgSQL blocks exist within the transaction's cursor portal namespace. Cursor identifiers must be unique across all active cursors in that session. Declaring two cursors with the exact same portal name in the same transaction will result in name collision errors during execution.</p>
+</div>
+<h3 id="36.4.6-visualizing-scrollability-and-pointer-constraints">36.4.6 Visualizing Scrollability and Pointer Constraints</h3>
+<p>Consider the pointer movement constraints along the discrete row coordinates \([1, n]\):</p>
+<pre><code>NO SCROLL (Default):
+  Coordinate:   [ 1 ] ---&gt; [ 2 ] ---&gt; [ 3 ] ---&gt; ... ---&gt; [ n ]
+  Rule:         p(t+1) &gt;= p(t)  (Monotone forward only. PRIOR / LAST illegal)
+
+SCROLL:
+  Coordinate:   [ 1 ] &lt;---&gt; [ 2 ] &lt;---&gt; [ 3 ] &lt;---&gt; ... &lt;---&gt; [ n ]
+                  ^                                             |
+                  |============= ABSOLUTE / FIRST ==============|
+  Rule:         p(t+1) can be any index from 1 to n.</code></pre>
+<p>When <code>NO SCROLL</code> is active, the database engine can stream records from disk or network buffers and immediately discard previously read rows. When <code>SCROLL</code> is specified, the engine must materialize and preserve the entire result set in a temporary disk or memory spool so that backward navigation remains valid.</p>
+<div class="warning-box">
+  <p><strong>Common Pitfalls:</strong></p>
+  <ol>
+    <li><strong>Unnecessary SCROLL Specifications:</strong> Adding <code>SCROLL</code> to every cursor by habit. This forces the server to buffer the entire result set, creating disk I/O bottlenecks on large datasets when only a forward pass was needed.</li>
+    <li><strong>Parameter Name Collisions:</strong> Naming a cursor parameter identically to an existing column in the table without table qualifying, leading to ambiguous column resolution bugs.</li>
+    <li><strong>Omitting Variable Semicolons:</strong> Omitting the terminating semicolon in the <code>DECLARE</code> section of PL/pgSQL blocks, causing syntax errors at the subsequent <code>BEGIN</code> token.</li>
+  </ol>
+</div>
+<div class="key-takeaway">
+  <p><strong>Exam note:</strong> Expect to write the complete cursor header from memory: cursor identifier, optional <code>SCROLL</code> keyword, bracket parameters with data types <code>(param_name data_type)</code>, the <code>FOR</code> keyword, and the declarative <code>SELECT</code> statement. Ensure parameter names match identically between the bracket list and the <code>WHERE</code> clause.</p>
+</div>
+<p>These structural conventions ensure that PL/pgSQL can construct unambiguous query plans before the block enters its execution phase.</p>
+<div class="key-takeaway">
+  <p><strong>Recap & Bridge:</strong> PostgreSQL supports unbound <code>refcursor</code> variables and bound parameterized cursors formalized as \(C_{\text{bound}} = \langle \text{identifier}, Q, \Theta \rangle\). Once declared, cursors must be opened to evaluate queries and prepare data for retrieval.</p>
+</div>
+
+<h2 id="36.5-opening-cursors-bound-unbound-and-dynamic">36.5 Opening Cursors Bound Unbound and Dynamic</h2>
+<div class="important-note">
+  <p>When a cursor opens, where does the data live? Does the database engine load every matching row directly into application memory, or does it construct an isolated server-side query portal? The answer determines how database memory scales under thousands of concurrent users.</p>
+</div>
+<p>The <code>OPEN</code> statement transitions a cursor from an idle definition into an active execution state. When <code>OPEN</code> executes, the database engine compiles the execution plan, evaluates argument expressions, binds parameters into query filters, allocates server-side buffer handles (known in PostgreSQL as a <em>portal</em>), and sets the pointer position immediately before the first tuple.</p>
+<div class="important-note">
+  <p>Think of <code>OPEN</code> like turning the key in an automobile's ignition. Declaring the cursor assembled the mechanical chassis and mapped out the navigation route. However, until you turn the key (<code>OPEN</code>), no electrical power flows, no fuel burns, and the wheels cannot turn. Once the engine starts, the vehicle sits in park with its odometer at zero (\(p = 0\)), ready to advance into traffic on the first tap of the accelerator pedal (<code>FETCH</code>).</p>
+</div>
+<p>PL/pgSQL accommodates three distinct operational opening patterns:</p>
+<ol>
+  <li>Opening an unbound <code>refcursor</code> with a fixed SQL query.</li>
+  <li>Opening an unbound <code>refcursor</code> with dynamic SQL generated as text at runtime using <code>EXECUTE</code>.</li>
+  <li>Opening a bound cursor, passing values into its declared parameter slots.</li>
+</ol>
+<h3 id="36.5.1-mathematical-formulation-of-query-binding-on-open">36.5.1 Mathematical Formulation of Query Binding on Open</h3>
+<p>The act of opening a cursor evaluates the stored query expression against a parameter vector and instantiates the result relation.</p>
+<p>Mathematically, the opening operator maps a cursor handle, a query specification, and a parameter vector into an active server portal: \[ \text{open}(C, Q, \Theta) \to \langle R(Q, \Theta), p_0 \rangle \]</p>
+<p>We distinguish three formal evaluation mappings:</p>
+<p>#### 1. Bound Cursor Evaluation For a bound cursor \(C_{\text{bound}} = \langle \text{name}, Q, \Theta \rangle\), the query \(Q\) is already fixed. Opening binds runtime arguments \(\vec{a} = \langle a_1, \dots, a_k \rangle\) into \(\Theta\): \[ \text{open}(C_{\text{bound}}, \vec{a}): R = \{r \in T \mid P(r, \vec{a})\}, \quad p \leftarrow 0 \]</p>
+<p>#### 2. Unbound Cursor With Fixed Query For an unbound cursor \(C_{\text{unbound}} = \text{refcursor}\), the open statement supplies the declarative query \(Q_{\text{fixed}}\): \[ \text{open}(C_{\text{unbound}}, Q_{\text{fixed}}): R = \{r \in T \mid P_{\text{fixed}}(r)\}, \quad p \leftarrow 0 \]</p>
+<p>#### 3. Dynamic Cursor Evaluation via EXECUTE When query text is assembled at runtime, the query string \(S_{\text{dyn}}\) is parsed dynamically, substituting bind parameters \(\vec{u} = \langle u_1, \dots, u_m \rangle\) passed through the <code>USING</code> clause: \[ \text{open}(C_{\text{unbound}}, \text{EXECUTE}(S_{\text{dyn}}, \vec{u})): R = \text{eval}(\text{parse}(S_{\text{dyn}}), \vec{u}), \quad p \leftarrow 0 \]</p>
+<p>In all three cases, the initial pointer position is anchored at the origin coordinate \(p_0 = 0\), parked before the first record.</p>
+<h3 id="36.5.2-opening-an-unbound-cursor-with-a-fixed-query">36.5.2 Opening an Unbound Cursor With a Fixed Query</h3>
+<p>An unbound <code>refcursor</code> variable can be attached to any standard <code>SELECT</code> query when opened.</p>
+<div class="example-box">
+  <p><strong>Worked Example: American directors unbound open with fixed query.</strong></p>
+  <p>Consider the directors table storing biographical information for film directors with columns: <code>director_id</code> (integer), <code>first_name</code> (varchar), <code>last_name</code> (varchar), <code>date_of_birth</code> (date), and <code>nationality</code> (varchar).</p>
+  <p><strong>Step 1: Declaration.</strong></p>
+  <pre><code>DECLARE
+  cur_directors_us REFCURSOR;</code></pre>
+  <p><strong>Step 2: Opening with fixed query.</strong></p>
+  <pre><code>OPEN cur_directors_us FOR
+  SELECT first_name, last_name, date_of_birth
+  FROM directors
+  WHERE nationality = 'American';</code></pre>
+  <p><strong>Step 3: Execution mechanics.</strong></p>
+  <ul>
+    <li>Prior to this statement, <code>cur_directors_us</code> held no query association.</li>
+    <li>On execution, the engine evaluates the predicate \(r.\text{nationality} = \text{'American'}\).</li>
+    <li>If the table contains 28 American directors out of 100 total directors, the server portal instantiates the 28-row result relation:</li>
+  </ul>
+  <p>\[ R = \{r \in \text{directors} \mid r.\text{nationality} = \text{'American'}\}, \quad |R| = 28 \]</p>
+  <ul>
+    <li>To restrict movement to forward-only passes and minimize buffering overhead, <code>NO SCROLL</code> can be specified before <code>FOR</code>:</li>
+  </ul>
+  <pre><code>  OPEN cur_directors_us NO SCROLL FOR
+    SELECT first_name, last_name, date_of_birth
+    FROM directors
+    WHERE nationality = 'American';</code></pre>
+</div>
+<h3 id="36.5.3-opening-an-unbound-cursor-with-a-dynamic-query">36.5.3 Opening an Unbound Cursor With a Dynamic Query</h3>
+<p>In reporting workflows and administrative utilities, the table name, filtering predicate, or sorting column may only be known at runtime. PL/pgSQL enables dynamic query execution via the <code>EXECUTE</code> clause.</p>
+<pre><code>DECLARE
+  cur_directors_nat REFCURSOR;
+  query_text text;
+  filter_country text := 'American';
+  sort_field text := 'last_name';
+  -- Construct parameterized query string using bind-variable notation
+  query_text := 'SELECT first_name, last_name, date_of_birth FROM directors ' ||
+                'WHERE nationality = ' || quote_literal(filter_country) ||
+                ' ORDER BY ' || quote_ident(sort_field);
+
+  -- Open cursor dynamically
+  OPEN cur_directors_nat FOR EXECUTE query_text;
+END;</code></pre>
+<p>In this syntax:</p>
+<ul>
+  <li><code>query_text</code>: A text variable storing the dynamically assembled SQL statement.</li>
+  <li><code>quote_literal(filter_country)</code>: Safely sanitizes string literals to prevent SQL injection vulnerabilities.</li>
+  <li><code>quote_ident(sort_field)</code>: Safely sanitizes identifiers (such as column names) that cannot be passed as standard literals.</li>
+</ul>
+<h3 id="36.5.4-opening-bound-cursors-with-and-without-parameters">36.5.4 Opening Bound Cursors With and Without Parameters</h3>
+<p>A bound cursor already encapsulates its query, so the <code>OPEN</code> statement requires no <code>FOR</code> clause.</p>
+<p>#### Opening Without Parameters If the cursor was declared without arguments:</p>
+<pre><code>OPEN cur_all_movies;</code></pre>
+<p>The engine immediately evaluates the stored query and prepares the cursor portal.</p>
+<p>#### Opening With Parameters When opening a parameterized cursor, argument values can be passed positionally or using named parameter syntax (<code>:=</code>):</p>
+<pre><code>-- Positional argument binding
+OPEN cur_movies_by_year(2010);
+
+-- Named argument binding
+OPEN cur_movies_by_year(custom_year := 2010);</code></pre>
+<p>Named binding (<code>custom_year := 2010</code>) provides code clarity, especially when cursors accept multiple optional arguments with default values. The query engine substitutes the integer <code>2010</code> into the <code>WHERE</code> clause, restricting the cursor to the 2010 movie records.</p>
+<h3 id="36.5.5-cross-database-dynamic-and-parameterized-opening">36.5.5 Cross-Database Dynamic and Parameterized Opening</h3>
+<p>Different database systems enforce strict constraints on how cursors can be opened dynamically:</p>
+<table>
+  <thead>
+    <tr>
+      <th>DBMS</th>
+      <th>Fixed Unbound Open</th>
+      <th>Dynamic SQL Open</th>
+      <th>Parameterized Open</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><strong>PostgreSQL</strong></td>
+      <td><code>OPEN rc FOR SELECT ...;</code></td>
+      <td><code>OPEN rc FOR EXECUTE txt USING val;</code></td>
+      <td><code>OPEN cur(val);</code> or <code>OPEN cur(p := val);</code></td>
+    </tr>
+    <tr>
+      <td><strong>Oracle</strong></td>
+      <td><code>OPEN rc FOR SELECT ...;</code></td>
+      <td><code>OPEN rc FOR txt USING val;</code></td>
+      <td><code>OPEN cur(val);</code></td>
+    </tr>
+    <tr>
+      <td><strong>MySQL</strong></td>
+      <td><strong>Not supported.</strong> Cursors must be statically bound in <code>DECLARE</code>.</td>
+      <td><strong>Not supported.</strong> Dynamic queries cannot be opened into cursors in standard stored programs.</td>
+      <td>Must assign values to local session variables before <code>OPEN cur;</code>.</td>
+    </tr>
+    <tr>
+      <td><strong>SQL Server</strong></td>
+      <td>Table variables or <code>sp_executesql</code>.</td>
+      <td>Requires dynamic SQL strings wrapped inside <code>sp_executesql</code> outputting a cursor.</td>
+      <td>References T-SQL local variables directly.</td>
+    </tr>
+    <tr>
+      <td><strong>Snowflake</strong></td>
+      <td><code>OPEN cur;</code></td>
+      <td>Supported via <code>EXECUTE IMMEDIATE</code> into result variables.</td>
+      <td><code>OPEN cur USING (val);</code> in Snowflake Scripting.</td>
+    </tr>
+  </tbody>
+</table>
+<div class="warning-box">
+  <p><strong>Scope & Assumptions:</strong> Opening a cursor locks underlying data rows only if the query explicitly specifies <code>FOR UPDATE</code> or <code>FOR SHARE</code>. A standard <code>OPEN</code> executes under the current transaction snapshot. In PostgreSQL Read Committed isolation, if another concurrent transaction commits updates to the table while your cursor is open, those changes are invisible to the already opened cursor.</p>
+</div>
+<h3 id="36.5.6-visualizing-the-query-compilation-and-opening-process">36.5.6 Visualizing the Query Compilation and Opening Process</h3>
+<p>The internal server mechanics triggered during an <code>OPEN</code> call follow a three-stage pipeline:</p>
+<pre><code>[ OPEN Command Invoked ]
+         |
+         |---&gt; 1. Parameter Resolution:
+         |        Binds argument values or (custom_year := 2010) into query plan
+         |
+         |---&gt; 2. Server Portal Creation:
+         |        Allocates working memory in server buffer pool
+         |        Executes table scan / index scan to build result set R
+         |
+         v
+[ Cursor Portal Initialized ]
+  State: OPEN
+  Row Cardinality: |R| = n
+  Pointer Coordinate: p = 0  (Parked before row 1)</code></pre>
+<p>The pointer coordinate \(p = 0\) guarantees that the first subsequent <code>FETCH NEXT</code> command cleanly targets index \(p = 1\).</p>
+<div class="warning-box">
+  <p><strong>Common Pitfalls:</strong></p>
+  <ol>
+    <li><strong>Unsanitized Dynamic SQL Concatenation:</strong> Concatenating user inputs directly into <code>query_text</code> instead of using the <code>USING</code> clause, creating severe SQL injection risks.</li>
+    <li><strong>Reopening Without Closing:</strong> Executing <code>OPEN cur;</code> twice consecutively in a loop. PostgreSQL raises <code>ERROR: cursor "cur" already in use</code>.</li>
+    <li><strong>Data Type Mismatches in Parameters:</strong> Passing a varchar or text value to an integer cursor parameter, resulting in runtime cast errors on <code>OPEN</code>.</li>
+  </ol>
+</div>
+<div class="key-takeaway">
+  <p><strong>Recap & Bridge:</strong> The <code>OPEN</code> command brings cursors to life by compiling query plans, binding arguments, and setting pointer coordinate \(p = 0\). Once a cursor is open, the procedural application can begin reading rows and navigating records using <code>FETCH</code> and <code>MOVE</code>.</p>
+</div>
+
+<h2 id="36.6-using-a-cursor-with-fetch-and-move">36.6 Using a Cursor With Fetch and Move</h2>
+<div class="important-note">
+  <p>What is the difference between fetching a row and moving across rows in a database cursor? While both instructions alter the active pointer position within the result set, one transfers data across memory buffers while the other executes a zero-copy pointer shift.</p>
+</div>
+<p>Once a cursor is in the <code>OPEN</code> state, the procedural program navigates and inspects records using two primary commands:</p>
+<ul>
+  <li><strong><code>FETCH</code>:</strong> Evaluates a directional offset, updates the pointer coordinate to the target row, and copies the column attributes into target variables or record structures.</li>
+  <li><strong><code>MOVE</code>:</strong> Repositions the internal cursor pointer to the target row without retrieving or copying any attribute data.</li>
+</ul>
+<div class="important-note">
+  <p>Think of the distinction as the pick up file versus slide finger intuition. Imagine standing in front of a cabinet filled with paper folders. Executing <code>FETCH</code> means reaching in, pulling the folder out of the cabinet, opening it, and copying data into your ledger. Executing <code>MOVE</code> means simply sliding your finger along the folder tabs to a new position without lifting a single sheet of paper. When you only need to reposition the pointer or test for existence, <code>MOVE</code> avoids the memory allocation and copying cost of a <code>FETCH</code>.</p>
+</div>
+<h3 id="36.6.1-mathematical-formulation-of-fetch-and-move-pointer-updates">36.6.1 Mathematical Formulation of Fetch and Move Pointer Updates</h3>
+<p>The verbal rule is that <code>FETCH</code> performs a pointer update with target copy, while <code>MOVE</code> performs a pointer update alone.</p>
+<p>Formally, let \(R = [r_1, r_2, \dots, r_n]\) be the materialized tuple sequence with cardinality \(n = |R|\). Let \(p \in \{0, 1, \dots, n, n+1\}\) be the pointer coordinate, where \(p = 0\) is before the first row and \(p = n+1\) is beyond the last row.</p>
+<p>The formal update operators are defined as: \[ \text{fetch}(C, \text{direction}): \quad p \leftarrow \text{shift}(p, \text{direction}), \quad \text{target} \leftarrow r_p \] \[ \text{move}(C, \text{direction}): \quad p \leftarrow \text{shift}(p, \text{direction}) \]</p>
+<p>The directional shift function \(\text{shift}(p, \text{dir})\) resolves coordinates as follows:</p>
+<ul>
+  <li><strong><code>NEXT</code> (default):</strong> \(p' = p + 1\)</li>
+  <li><strong><code>PRIOR</code>:</strong> \(p' = p - 1\)</li>
+  <li><strong><code>FIRST</code>:</strong> \(p' = 1\)</li>
+  <li><strong><code>LAST</code>:</strong> \(p' = n\)</li>
+  <li><strong>`ABSOLUTE } k\):</strong></li>
+</ul>
+<p>\[ p' = \begin{cases} k & \text{if } k > 0 \\ n + k + 1 & \text{if } k < 0 \\ 0 & \text{if } k = 0 \end{cases} \]</p>
+<ul>
+  <li><strong>`RELATIVE } k\):</strong> \(p' = p + k\)</li>
+  <li><strong>`FORWARD } k\):</strong> \(p' = p + k \quad (k \ge 0)\)</li>
+  <li><strong>`BACKWARD } k\):</strong> \(p' = p - k \quad (k \ge 0)\)</li>
+</ul>
+<p>If the resulting coordinate \(p' < 1\) or \(p' > n\), the pointer is positioned out of bounds. In that event, <code>target</code> remains unchanged (or is set to null), and the runtime status variable <code>FOUND</code> is set to <code>FALSE</code> (<code>NOT FOUND</code> is set to <code>TRUE</code>).</p>
+<h3 id="36.6.2-fetch-syntax-and-target-variables">36.6.2 Fetch Syntax and Target Variables</h3>
+<p>PL/pgSQL supports copying fetched data into either an ordered list of scalar variables or a single unified <code>RECORD</code> variable.</p>
+<div class="example-box">
+  <p><strong>Worked Example: Fetch last row into title and date targets.</strong></p>
+  <p>Consider a cursor <code>cur_all_movies</code> declared with the <code>SCROLL</code> option over the <code>movies</code> table containing 53 film records.</p>
+  <p><strong>Step 1: Fetching into scalar targets.</strong></p>
+  <pre><code>DECLARE
+  cur_all_movies SCROLL CURSOR FOR
+    SELECT movie_name, release_date FROM movies ORDER BY release_date;
+  movie_title text;
+  movie_release_date date;
+BEGIN
+  OPEN cur_all_movies;
+
+  -- Jump directly to the final record and copy attributes
+  FETCH LAST FROM cur_all_movies INTO movie_title, movie_release_date;
+
+  RAISE NOTICE 'Latest film: % released on %', movie_title, movie_release_date;
+  CLOSE cur_all_movies;
+END;</code></pre>
+  <p>Execution trace:</p>
+  <ol>
+    <li><code>OPEN</code> initializes \(p = 0\) over \(n = 53\) rows.</li>
+    <li><code>FETCH LAST</code> evaluates \(\text{shift}(0, \text{LAST}) = 53\). The pointer jumps directly to coordinate \(p = 53\).</li>
+    <li>The engine copies tuple \(r_{53}\)'s <code>movie_name</code> into <code>movie_title</code> and <code>release_date</code> into <code>movie_release_date</code>.</li>
+    <li>The notice displays the final movie.</li>
+  </ol>
+  <p><strong>Step 2: Fetching into a RECORD target.</strong> Rather than declaring separate scalar variables for every column, a single <code>RECORD</code> variable can receive the entire tuple:</p>
+  <pre><code>DECLARE
+  rec_movie RECORD;
+BEGIN
+  FETCH PRIOR FROM cur_all_movies INTO rec_movie;
+  -- Access fields using dot notation
+  RAISE NOTICE 'Prior movie: %', rec_movie.movie_name;
+END;</code></pre>
+  <p>Here, <code>FETCH PRIOR</code> decrements \(p \leftarrow 53 - 1 = 52\), loading row 52 into <code>rec_movie</code>.</p>
+</div>
+<h3 id="36.6.3-move-syntax-for-zero-copy-pointer-adjustments">36.6.3 Move Syntax for Zero-Copy Pointer Adjustments</h3>
+<p>When an application needs to skip records, verify that a minimum batch size exists, or rewind the pointer without paying the data serialization cost, <code>MOVE</code> is the optimal tool:</p>
+<pre><code>-- Advance one row forward (p &lt;- p + 1)
+MOVE cur_all_movies;
+
+-- Jump pointer directly to the final record (p &lt;- n)
+MOVE LAST FROM cur_all_movies;
+
+-- Step backward one row from current position (p &lt;- p - 1)
+MOVE RELATIVE -1 FROM cur_all_movies;
+
+-- Skip four rows ahead from current position (p &lt;- p + 4)
+MOVE FORWARD 4 FROM cur_all_movies;</code></pre>
+<p>Because <code>MOVE</code> omits the <code>INTO</code> clause, no string copies or memory allocations occur on the client or procedural stack.</p>
+<h3 id="36.6.4-the-scrollability-requirement-matrix">36.6.4 The Scrollability Requirement Matrix</h3>
+<p>A frequent source of errors in PL/pgSQL is invoking a non-forward directional fetch on a cursor declared without <code>SCROLL</code>. The table below outlines the exact requirements:</p>
+<table>
+  <thead>
+    <tr>
+      <th>Direction Clause</th>
+      <th>Movement Coordinate</th>
+      <th>Requires <code>SCROLL</code>?</th>
+      <th>Permitted on <code>NO SCROLL</code>?</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><code>NEXT</code></td>
+      <td>\(p \leftarrow p + 1\)</td>
+      <td>No</td>
+      <td><strong>Yes</strong> (Default)</td>
+    </tr>
+    <tr>
+      <td><code>FORWARD</code> / <code>FORWARD k</code></td>
+      <td>\(p \leftarrow p + k \quad (k \ge 0)\)</td>
+      <td>No</td>
+      <td><strong>Yes</strong></td>
+    </tr>
+    <tr>
+      <td><code>PRIOR</code></td>
+      <td>\(p \leftarrow p - 1\)</td>
+      <td><strong>Yes</strong></td>
+      <td><strong>No</strong> (Raises Error)</td>
+    </tr>
+    <tr>
+      <td><code>BACKWARD</code> / <code>BACKWARD k</code></td>
+      <td>\(p \leftarrow p - k \quad (k \ge 0)\)</td>
+      <td><strong>Yes</strong></td>
+      <td><strong>No</strong> (Raises Error)</td>
+    </tr>
+    <tr>
+      <td><code>FIRST</code></td>
+      <td>\(p \leftarrow 1\)</td>
+      <td><strong>Yes</strong></td>
+      <td><strong>No</strong> (Raises Error)</td>
+    </tr>
+    <tr>
+      <td><code>LAST</code></td>
+      <td>\(p \leftarrow n\)</td>
+      <td><strong>Yes</strong></td>
+      <td><strong>No</strong> (Raises Error)</td>
+    </tr>
+    <tr>
+      <td><code>ABSOLUTE k</code></td>
+      <td>\(p \leftarrow k\)</td>
+      <td><strong>Yes</strong></td>
+      <td><strong>No</strong> (Raises Error)</td>
+    </tr>
+    <tr>
+      <td><code>RELATIVE k (k < 0)</code></td>
+      <td>\(p \leftarrow p + k \quad (k < 0)\)</td>
+      <td><strong>Yes</strong></td>
+      <td><strong>No</strong> (Raises Error)</td>
+    </tr>
+    <tr>
+      <td><code>RELATIVE k (k > 0)</code></td>
+      <td>\(p \leftarrow p + k \quad (k > 0)\)</td>
+      <td>No</td>
+      <td><strong>Yes</strong></td>
+    </tr>
+  </tbody>
+</table>
+<p>Attempting to execute <code>FETCH PRIOR</code> or <code>FETCH LAST</code> on a <code>NO SCROLL</code> cursor causes PostgreSQL to abort the transaction with: <code>ERROR: cursor can only scan forward</code>.</p>
+<h3 id="36.6.5-cross-database-fetch-and-move-support">36.6.5 Cross-Database Fetch and Move Support</h3>
+<table>
+  <thead>
+    <tr>
+      <th>DBMS</th>
+      <th>Bidirectional / Scrollable Fetch</th>
+      <th>Pointer Move Support</th>
+      <th>Loop Termination Check</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><strong>PostgreSQL</strong></td>
+      <td>Supported with <code>SCROLL</code>. Supports <code>NEXT</code>, <code>PRIOR</code>, <code>FIRST</code>, <code>LAST</code>, <code>ABSOLUTE</code>, <code>RELATIVE</code>.</td>
+      <td>Native <code>MOVE</code> statement.</td>
+      <td><code>EXIT WHEN NOT FOUND;</code></td>
+    </tr>
+    <tr>
+      <td><strong>Oracle (PL/SQL)</strong></td>
+      <td>Explicit cursors in PL/SQL are forward-only (<code>FETCH c INTO</code>). Scrollable cursors require client APIs.</td>
+      <td>No native <code>MOVE</code>. Must fetch into dummy record.</td>
+      <td><code>EXIT WHEN c%NOTFOUND;</code></td>
+    </tr>
+    <tr>
+      <td><strong>MySQL</strong></td>
+      <td>Forward-only (<code>FETCH cur INTO</code>). No scroll support.</td>
+      <td>No <code>MOVE</code> keyword.</td>
+      <td><code>DECLARE CONTINUE HANDLER FOR NOT FOUND</code>.</td>
+    </tr>
+    <tr>
+      <td><strong>SQL Server (T-SQL)</strong></td>
+      <td>Supported with <code>SCROLL</code>. Supports <code>FETCH NEXT</code>, <code>PRIOR</code>, <code>FIRST</code>, <code>LAST</code>, <code>ABSOLUTE</code>, <code>RELATIVE</code>.</td>
+      <td>No <code>MOVE</code>. Must fetch into dummy <code>@variables</code>.</td>
+      <td><code>WHILE @@FETCH_STATUS = 0</code></td>
+    </tr>
+    <tr>
+      <td><strong>Snowflake</strong></td>
+      <td>Forward-only in Snowflake Scripting.</td>
+      <td>No <code>MOVE</code> keyword.</td>
+      <td>Checked via loop condition.</td>
+    </tr>
+  </tbody>
+</table>
+<div class="warning-box">
+  <p><strong>Scope & Assumptions:</strong> <code>FETCH</code> and <code>MOVE</code> commands operate strictly within the bounds of the active transaction snapshot. If rows matching the query are deleted by concurrent transactions, a scrollable cursor's behavior depends on whether it is a <code>STATIC</code> (spooled) cursor or a <code>KEYSET</code> cursor. In PostgreSQL, cursors are static snapshot views of the query result at the moment of <code>OPEN</code>.</p>
+</div>
+<h3 id="36.6.6-visualizing-the-discrete-coordinate-shift">36.6.6 Visualizing the Discrete Coordinate Shift</h3>
+<p>The diagram below tracks pointer \(p\) along the index axis of 53 movie records:</p>
+<pre><code>Index:    0       1       2       3    ...   51      52      53      54
+Tuples: [Start] [Film1] [Film2] [Film3] ... [Film51][Film52][Film53] [End]
+           ^                                                   ^
+           |                                                   |
+      OPEN (p=0)                                        FETCH LAST (p=53)
+           |                                                   |
+           +---- FETCH NEXT (p=1)                              |
+                    |                                          |
+                    +---- MOVE FORWARD 2 (p=3)                 |
+                             ^                                 |
+                             |------- MOVE RELATIVE -1 (p=52) -+</code></pre>
+<p>Each command shifts the coordinate along the discrete integer lattice. The status flag <code>FOUND</code> remains <code>TRUE</code> as long as coordinate \(p \in [1, 53]\).</p>
+<div class="warning-box">
+  <p><strong>Common Pitfalls:</strong></p>
+  <ol>
+    <li><strong>Target Count Mismatch:</strong> Supplying fewer target variables in the <code>INTO</code> clause than columns projected in the query, causing runtime assignment exceptions.</li>
+    <li><strong>Missing SCROLL on Backward Navigation:</strong> Using <code>FETCH PRIOR</code> in a loop when the cursor header omitted the <code>SCROLL</code> keyword.</li>
+    <li><strong>Reading Variables After Invalidation:</strong> Using target variables without checking <code>FOUND</code> when the cursor has stepped past the final row (\(p = n+1\)).</li>
+  </ol>
+</div>
+<div class="key-takeaway">
+  <p><strong>Exam note:</strong> Be prepared to list all FETCH directions from memory: <code>NEXT</code>, <code>PRIOR</code>, <code>FIRST</code>, <code>LAST</code>, <code>ABSOLUTE count</code>, <code>RELATIVE count</code>, <code>FORWARD count</code>, and <code>BACKWARD count</code>. State that <code>PRIOR</code>, <code>FIRST</code>, <code>LAST</code>, <code>BACKWARD</code>, <code>ABSOLUTE</code>, and negative <code>RELATIVE</code> strictly require <code>SCROLL</code> at declaration time.</p>
+</div>
+<p>Understanding directional movement allows developers to position the cursor at arbitrary records, setting up row-specific mutations.</p>
+<div class="key-takeaway">
+  <p><strong>Recap & Bridge:</strong> <code>FETCH</code> shifts the pointer and copies data into target variables, whereas <code>MOVE</code> shifts the pointer with zero data copy. Once positioned on a specific row, a cursor can execute positioned updates and deletions directly through <code>WHERE CURRENT OF</code>.</p>
+</div>
+
+<h2 id="36.7-updating-and-deleting-the-positioned-row">36.7 Updating and Deleting the Positioned Row</h2>
+<div class="important-note">
+  <p>How can you modify or delete the exact database row your cursor is currently inspecting without performing a redundant primary key search or risking a concurrency race condition? SQL provides a specialized clause designed specifically for cursor-positioned mutations: <code>WHERE CURRENT OF</code>.</p>
+</div>
+<p>When a cursor is positioned on a specific record through a previous <code>FETCH</code> command, that row can be altered or deleted directly using the clause:</p>
+<pre><code>WHERE CURRENT OF cursor_name;</code></pre>
+<p>This clause tells the database engine to resolve the physical storage address (in PostgreSQL, the Tuple Identifier or <code>ctid</code>) of the current row directly from the cursor portal. It bypasses primary key indexing and eliminates the need to execute a secondary <code>SELECT</code> or search filter.</p>
+<div class="important-note">
+  <p>Think of <code>WHERE CURRENT OF</code> like pointing your finger at a specific file folder on your desk and instructing an assistant: "Stamp approval on this exact folder." You do not need to read out the 16-digit serial number, search through the master catalog, and verify the file index again. You act directly where your finger is currently pointing.</p>
+</div>
+<p>Positioned updates and deletions are especially valuable in transactional batch cleaning routines where individual rows are inspected, validated against complex business rules, and conditionally updated in place.</p>
+<h3 id="36.7.1-mathematical-formulation-of-positioned-mutations">36.7.1 Mathematical Formulation of Positioned Mutations</h3>
+<p>In relational storage systems, each tuple in relation \(T\) is associated with a physical disk locator \(\text{tid} \in \mathcal{T}\) (known as the Tuple ID or RowID). When a cursor opens over relation \(T\), it maintains a direct reference mapping \(\tau: [1, n] \to \mathcal{T}\) linking pointer coordinate \(p\) to its underlying physical record locator \(\tau(p)\).</p>
+<p>We formalize positioned update and delete operators as follows:</p>
+<p>#### Positioned Update \[ \text{update}(T, r_p, \Delta): \quad T \leftarrow (T \setminus \{\tau(p)\}) \cup \{\tau(p) \oplus \Delta\} \] where:</p>
+<ul>
+  <li>\(T\) is the base table being modified.</li>
+  <li>\(r_p\) is the row currently addressed at pointer position \(p\).</li>
+  <li>\(\tau(p)\) is the physical tuple identifier of row \(r_p\).</li>
+  <li>\(\Delta\) is the attribute assignment mapping (such as <code>release_date = custom_year_value</code>).</li>
+  <li>\(\oplus\) represents the tuple replacement operation on the storage page.</li>
+</ul>
+<p>#### Positioned Delete \[ \text{delete}(T, r_p): \quad T \leftarrow T \setminus \{\tau(p)\} \] The engine removes the physical tuple \(\tau(p)\) from relation \(T\). Following a positioned deletion, the cursor pointer remains anchored at coordinate \(p\), but subsequent operations on the current row must account for the removal.</p>
+<h3 id="36.7.2-worked-examples-of-positioned-modifications">36.7.2 Worked Examples of Positioned Modifications</h3>
+<p>The examples below illustrate the complete implementation of positioned updates and deletions in PL/pgSQL.</p>
+<div class="example-box">
+  <p><strong>Example 1: Positioned update.</strong> Suppose cursor <code>cur_all_movies</code> is declared with <code>FOR UPDATE</code> and is currently positioned on row 3:</p>
+  <pre><code>DECLARE
+  cur_all_movies CURSOR FOR
+    SELECT movie_id, movie_name, release_date
+    FROM movies
+    FOR UPDATE;
+  rec_movie RECORD;
+BEGIN
+  OPEN cur_all_movies;
+  FETCH cur_all_movies INTO rec_movie; -- row 1
+  FETCH cur_all_movies INTO rec_movie; -- row 2
+  FETCH cur_all_movies INTO rec_movie; -- row 3
+
+  -- Update only row 3 directly in place
+  UPDATE movies
+  SET release_date = '2025-01-01'
+  WHERE CURRENT OF cur_all_movies;
+
+  CLOSE cur_all_movies;
+END;</code></pre>
+  <p>Execution mechanics: The engine resolves the physical disk address of row 3 and writes the new <code>release_date</code> directly to the storage block. Rows 1, 2, and 4 through 53 remain completely untouched.</p>
+  <p><strong>Example 2: Positioned delete.</strong> Suppose an audit check flags row 6 for removal:</p>
+  <pre><code>-- Step pointer forward to row 6
+MOVE ABSOLUTE 6 FROM cur_all_movies;
+
+-- Delete the positioned row
+DELETE FROM movies
+WHERE CURRENT OF cur_all_movies;</code></pre>
+  <p>The engine deletes row 6 from the <code>movies</code> table without needing <code>WHERE movie_id = 6</code>.</p>
+  <p><strong>Example 3: Read, validate, and write pattern.</strong></p>
+  <pre><code>LOOP
+  FETCH cur_all_movies INTO rec_movie;
+  EXIT WHEN NOT FOUND;
+
+  IF rec_movie.release_date IS NULL THEN
+    -- Correct missing release dates
+    UPDATE movies
+    SET release_date = '2000-01-01'
+    WHERE CURRENT OF cur_all_movies;
+  ELSIF rec_movie.movie_name LIKE '%Deprecated%' THEN
+    -- Remove deprecated test entries
+    DELETE FROM movies
+    WHERE CURRENT OF cur_all_movies;
+  END IF;
+END LOOP;</code></pre>
+</div>
+<h3 id="36.7.3-cross-database-support-for-where-current-of">36.7.3 Cross-Database Support for WHERE CURRENT OF</h3>
+<p>The capability to perform positioned mutations varies across database engines:</p>
+<table>
+  <thead>
+    <tr>
+      <th>DBMS</th>
+      <th>Supports <code>WHERE CURRENT OF</code>?</th>
+      <th>Locking Requirements</th>
+      <th>Alternative Implementation</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><strong>PostgreSQL</strong></td>
+      <td><strong>Yes</strong></td>
+      <td>Cursor query must specify <code>FOR UPDATE</code> or <code>FOR NO KEY UPDATE</code>.</td>
+      <td>Standard <code>UPDATE ... WHERE pk = var;</code></td>
+    </tr>
+    <tr>
+      <td><strong>Oracle (PL/SQL)</strong></td>
+      <td><strong>Yes</strong></td>
+      <td>Cursor declaration must specify `FOR UPDATE [NOWAIT \</td>
+      <td>WAIT n]`.</td>
+      <td>Standard update via primary key.</td>
+    </tr>
+    <tr>
+      <td><strong>MySQL</strong></td>
+      <td><strong>No</strong></td>
+      <td><strong>MySQL stored cursors are READ-ONLY.</strong></td>
+      <td>Must fetch primary key column into a local variable and execute <code>UPDATE tbl SET ... WHERE id = v_id;</code>.</td>
+    </tr>
+    <tr>
+      <td><strong>SQL Server (T-SQL)</strong></td>
+      <td><strong>Yes</strong></td>
+      <td>Cursor must be updatable (<code>DYNAMIC</code> or <code>KEYSET</code> with optimistic or scroll locks).</td>
+      <td>Direct key update.</td>
+    </tr>
+    <tr>
+      <td><strong>Snowflake</strong></td>
+      <td><strong>No</strong></td>
+      <td>Cloud data warehouses do not support positioned row mutation cursors.</td>
+      <td>Set-based <code>UPDATE</code> or <code>MERGE INTO</code> statements.</td>
+    </tr>
+    <tr>
+      <td><strong>Databricks</strong></td>
+      <td><strong>No</strong></td>
+      <td>Distributed Delta Lake tables do not support positioned cursors.</td>
+      <td>Distributed set-based <code>MERGE INTO</code> or Delta table delete APIs.</td>
+    </tr>
+  </tbody>
+</table>
+<div class="warning-box">
+  <p><strong>Scope & Assumptions:</strong> To use <code>WHERE CURRENT OF</code>, the cursor's query must be updatable. A query is updatable only if:</p>
+  <ol>
+    <li>It queries exactly one base table (no joins).</li>
+    <li>It does not contain grouping or aggregation clauses (<code>GROUP BY</code>, <code>HAVING</code>, <code>SUM</code>, <code>AVG</code>).</li>
+    <li>It does not use <code>DISTINCT</code>, <code>LIMIT</code>, <code>OFFSET</code>, or set operations (<code>UNION</code>, <code>INTERSECT</code>, <code>EXCEPT</code>).</li>
+    <li>The cursor is opened within an active transaction block and declared with <code>FOR UPDATE</code>.</li>
+  </ol>
+</div>
+<h3 id="36.7.4-visualizing-tuple-locators-on-storage-blocks">36.7.4 Visualizing Tuple Locators on Storage Blocks</h3>
+<p>The diagram below shows how <code>WHERE CURRENT OF</code> maps directly to physical disk pages:</p>
+<pre><code>[ Cursor Pointer p = 3 ]
+         |
+         |  Internal Tuple Locator: ctid = (Block 4, Offset 12)
+         v
++-------------------------------------------------------+
+| Disk Page (Block 4)                                   |
+|   Offset 10: [ movie_id: 1 | "A Clockwork Orange" ]   |
+|   Offset 11: [ movie_id: 2 | "Apocalypse Now" ]       |
+|   Offset 12: [ movie_id: 3 | "Battle Royale" ] &lt;------+-- Modified directly
+|   Offset 13: [ movie_id: 4 | "Chinatown" ]            |    without index scan
++-------------------------------------------------------+</code></pre>
+<p>Because the database engine already holds the active disk page reference in memory, positioned mutations eliminate the index tree traversal and lock acquisition delays that accompany standard primary key <code>UPDATE</code> statements.</p>
+<div class="warning-box">
+  <p><strong>Common Pitfalls:</strong></p>
+  <ol>
+    <li><strong>Omitting FOR UPDATE:</strong> Forgetting to append <code>FOR UPDATE</code> to the cursor query declaration. In PostgreSQL, attempting <code>WHERE CURRENT OF</code> on a non-update cursor produces <code>ERROR: cursor does not hold a FOR UPDATE lock</code>.</li>
+    <li><strong>Mutating After Pointer Exhaustion:</strong> Issuing <code>WHERE CURRENT OF</code> when the cursor has moved beyond the final row or is positioned before the first row, causing a null pointer error.</li>
+    <li><strong>Complex Join Queries:</strong> Attempting positioned updates on cursors that join multiple tables, which causes relational ambiguity regarding which table to modify.</li>
+  </ol>
+</div>
+<div class="key-takeaway">
+  <p><strong>Recap & Bridge:</strong> The <code>WHERE CURRENT OF cursor_name</code> clause performs high-performance in-place updates and deletions directly at the pointer's physical storage address. After row processing concludes, the cursor must be closed to release server resources.</p>
+</div>
+
+<h2 id="36.8-closing-cursors-and-resource-handling">36.8 Closing Cursors and Resource Handling</h2>
+<div class="important-note">
+  <p>What occurs inside the database server when an application opens a thousand cursors in a continuous loop and neglects to close them? In database administration, unclosed cursors are silent memory leaks that consume server working memory, retain row locks, and eventually exhaust system connection resources.</p>
+</div>
+<p>The <code>CLOSE</code> statement terminates the active state of an open cursor and relinquishes all associated server-side resources. The syntax is concise:</p>
+<pre><code>CLOSE cursor_name;</code></pre>
+<p>When <code>CLOSE</code> executes, the database engine destroys the active portal, releases temporary spool files from disk or memory buffers, and frees any metadata locks held on underlying relations. Closing a cursor does not destroy the cursor definition; the cursor remains declared and can be reopened immediately with identical or modified parameter values.</p>
+<div class="important-note">
+  <p>Think of closing a cursor like checking out of a hotel room. While you occupy the room (<code>OPEN</code>), the hotel cannot reassign the room to anyone else, utilities are active, and operating costs accrue. Checking out (<code>CLOSE</code>) hands back the key, clears the room, and ends the billing. If your business brings you back to town next month, you can check in again (<code>OPEN</code>), but holding onto the room while away wastes hotel capacity.</p>
+</div>
+<p>Because cursor execution holds dedicated memory allocations inside the database process, pairing every <code>OPEN</code> with a guaranteed <code>CLOSE</code> is a fundamental engineering discipline.</p>
+<h3 id="36.8.1-mathematical-formulation-of-resource-deallocation-and-reopening">36.8.1 Mathematical Formulation of Resource Deallocation and Reopening</h3>
+<p>Let \(C\) denote an active cursor handle, and let \(M(C)\) represent the working memory (RAM buffers, work_mem, temporary spool blocks) allocated by the database engine to maintain the cursor portal.</p>
+<p>When cursor \(C\) is in the <code>OPEN</code> state: \[ M(C) = M_{\text{portal}} + M_{\text{spool}}(n) > 0, \quad p \in [0, n+1] \] where \(n = |R|\) is the cardinality of the result relation.</p>
+<p>The <code>CLOSE</code> operator maps the active portal to the empty store \(\emptyset\): \[ \text{close}(C): \quad \text{portal}(C) \leftarrow \emptyset, \quad M(C) \leftarrow 0, \quad p \leftarrow \bot \] where \(\bot\) represents the undefined pointer coordinate.</p>
+<p>The cursor definition \(C_{\text{bound}} = \langle \text{identifier}, Q, \Theta \rangle\) remains registered in the procedural symbol table. Consequently, calling <code>reopen</code> invokes the <code>OPEN</code> transition again: \[ \text{reopen}(C, \Theta'): \quad \text{portal}(C) \leftarrow R(Q, \Theta'), \quad p \leftarrow 0 \] where \(\Theta'\) is a new parameter vector. Reopening queries the underlying tables anew, capturing any commits that occurred between <code>CLOSE</code> and the subsequent <code>OPEN</code>.</p>
+<h3 id="36.8.2-worked-examples-of-cursor-closure-and-reopening">36.8.2 Worked Examples of Cursor Closure and Reopening</h3>
+<p>The examples below illustrate proper resource cleanup and safe cursor reuse.</p>
+<div class="example-box">
+  <p><strong>Example 1: Basic close after single traversal.</strong></p>
+  <pre><code>DECLARE
+  cur_all_movies CURSOR FOR SELECT movie_name FROM movies;
+  v_title text;
+BEGIN
+  OPEN cur_all_movies;
+  LOOP
+    FETCH cur_all_movies INTO v_title;
+    EXIT WHEN NOT FOUND;
+    -- Process movie title
+  END LOOP;
+
+  -- Free server resources immediately upon loop completion
+  CLOSE cur_all_movies;
+END;</code></pre>
+  <p><strong>Example 2: Reopening a cursor to process multiple cohorts.</strong> A batch routine processes movies year by year using a single parameterized cursor:</p>
+  <pre><code>DECLARE
+  cur_by_year CURSOR (p_year integer) FOR
+    SELECT movie_name FROM movies
+    WHERE EXTRACT(YEAR FROM release_date) = p_year;
+  v_title text;
+  yr integer;
+BEGIN
+  FOR yr IN 2010..2012 LOOP
+    OPEN cur_by_year(p_year := yr);
+    RAISE NOTICE '--- PROCESSING YEAR % ---', yr;
+    LOOP
+      FETCH cur_by_year INTO v_title;
+      EXIT WHEN NOT FOUND;
+      RAISE NOTICE 'Title: %', v_title;
+    END LOOP;
+    -- Close cursor before next iteration opens it with a new year
+    CLOSE cur_by_year;
+  END LOOP;
+END;</code></pre>
+  <p>Execution trace:</p>
+  <ol>
+    <li>Iteration 1 (<code>yr = 2010</code>): Opens cursor, fetches 2010 movies, closes cursor. Memory is completely freed.</li>
+    <li>Iteration 2 (<code>yr = 2011</code>): Reopens the same cursor structure for 2011 movies, walks rows, closes.</li>
+    <li>Iteration 3 (<code>yr = 2012</code>): Reopens for 2012 movies, walks rows, closes.</li>
+  </ol>
+  <p>This pattern reuses execution plans while keeping peak server memory footprint at the size of a single year's cohort.</p>
+</div>
+<h3 id="36.8.3-cross-database-resource-cleanup-requirements">36.8.3 Cross-Database Resource Cleanup Requirements</h3>
+<p>Database engines handle cursor closing and cleanup with significant differences in syntax and resource limits:</p>
+<table>
+  <thead>
+    <tr>
+      <th>DBMS</th>
+      <th>Close Syntax</th>
+      <th>Secondary Cleanup Required?</th>
+      <th>Resource Failure Mode</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><strong>PostgreSQL</strong></td>
+      <td><code>CLOSE cur;</code></td>
+      <td>No. Portals close automatically at transaction end unless created <code>WITH HOLD</code>.</td>
+      <td>Server process bloat, exhaustion of shared memory buffers.</td>
+    </tr>
+    <tr>
+      <td><strong>Oracle (PL/SQL)</strong></td>
+      <td><code>CLOSE cur;</code></td>
+      <td>No. Unclosed explicit cursors remain open until session termination.</td>
+      <td><strong><code>ORA-01000: maximum open cursors exceeded</code></strong> when exceeding <code>OPEN_CURSORS</code> parameter limit.</td>
+    </tr>
+    <tr>
+      <td><strong>SQL Server (T-SQL)</strong></td>
+      <td><code>CLOSE cur;</code></td>
+      <td><strong>YES: <code>DEALLOCATE cur;</code></strong> <code>CLOSE</code> only drops locks and temp tables; <code>DEALLOCATE</code> is mandatory to remove the cursor object.</td>
+      <td>Accumulated ghost cursor references, tempdb memory exhaustion.</td>
+    </tr>
+    <tr>
+      <td><strong>MySQL</strong></td>
+      <td><code>CLOSE cur;</code></td>
+      <td>No. Automatically closed at end of compound <code>BEGIN ... END</code> block if omitted.</td>
+      <td>Memory consumption within connection thread.</td>
+    </tr>
+    <tr>
+      <td><strong>Snowflake</strong></td>
+      <td><code>CLOSE cur;</code></td>
+      <td>No. Closed automatically when stored procedure completes.</td>
+      <td>Negligible, but forward-only best practices apply.</td>
+    </tr>
+  </tbody>
+</table>
+<div class="warning-box">
+  <p><strong>Scope & Assumptions:</strong> In PostgreSQL, all standard cursors are automatically closed when the surrounding transaction commits or aborts (<code>COMMIT</code> or <code>ROLLBACK</code>). If you require a cursor to remain navigable across multiple transactions, you must declare it with the <code>WITH HOLD</code> clause (<code>DECLARE cur CURSOR WITH HOLD FOR SELECT ...</code>). However, held cursors persist until explicit closure or session disconnect, amplifying the danger of connection memory leaks.</p>
+</div>
+<h3 id="36.8.4-visualizing-the-memory-allocation-and-deallocation-cycle">36.8.4 Visualizing the Memory Allocation and Deallocation Cycle</h3>
+<p>The diagram below maps server memory allocation over time during cursor execution:</p>
+<pre><code>Memory (MB)
+  ^
+  |                     +-----------------------------+
+  |                     |  Active Cursor Portal       |
+  |                     |  (Holds spool buffers &amp;     |
+  |                     |   work_mem allocations)     |
+  |                     |                             |
+  |             OPEN    |                             |   CLOSE
+  |          +---------&gt;|                             |----------+
+  |          |          |                             |          |
+  |  DECLARE |          |                             |          v
+--+----------+----------+-----------------------------+----------+-------&gt; Time
+  |  M = 0   |                Memory Allocated (M &gt; 0)           | M = 0</code></pre>
+<p>The resource usage spikes strictly at <code>OPEN</code> and drops back to baseline at <code>CLOSE</code>. Keeping the horizontal duration (time between <code>OPEN</code> and <code>CLOSE</code>) as short as possible ensures optimal database throughput.</p>
+<div class="warning-box">
+  <p><strong>Common Pitfalls:</strong></p>
+  <ol>
+    <li><strong>Closing Inside Loop by Accident:</strong> Placing <code>CLOSE</code> inside the <code>LOOP</code> body, causing the second iteration's <code>FETCH</code> to fail on a closed cursor.</li>
+    <li><strong>Missing Deallocate in T-SQL:</strong> Migrating PL/pgSQL code to Microsoft SQL Server and writing <code>CLOSE cur;</code> while forgetting <code>DEALLOCATE cur;</code>, which causes persistent server resource leaks.</li>
+    <li><strong>Closing Non-Existent Cursors:</strong> Issuing <code>CLOSE</code> on a cursor variable that was never opened, triggering a cursor does not exist exception.</li>
+  </ol>
+</div>
+<div class="key-takeaway">
+  <p><strong>Recap & Bridge:</strong> <code>CLOSE cursor_name</code> releases server portal memory and drops temporary buffers while leaving the query definition intact for future reopenings. With the complete lifecycle mastered, we now assemble our first full end-to-end PL/pgSQL program.</p>
+</div>
+
+<h2 id="36.9-block-that-lists-all-movie-names-row-by-row">36.9 Block That Lists All Movie Names Row by Row</h2>
+<div class="important-note">
+  <p>How do you assemble an end-to-end procedural routine that coordinates variable declarations, cursor initialization, iterative row fetching, boundary termination, and output reporting? An anonymous PL/pgSQL block provides the ideal testbed for examining cursor mechanics in action.</p>
+</div>
+<p>An anonymous block (executed with the <code>DO</code> block syntax) allows developers to run procedural scripts directly without storing a permanent function in the database catalog. This complete program ties together all earlier concepts:</p>
+<ol>
+  <li>Declaring a text accumulator, a record variable, and a bound cursor.</li>
+  <li>Opening the cursor portal.</li>
+  <li>Executing an iterative <code>LOOP</code> with <code>FETCH</code> into the record.</li>
+  <li>Evaluating the <code>EXIT WHEN NOT FOUND</code> guard condition.</li>
+  <li>Concatenating attributes into the master accumulator.</li>
+  <li>Closing the cursor and printing the aggregated report using <code>RAISE NOTICE</code>.</li>
+</ol>
+<div class="important-note">
+  <p>Think of this title accumulator loop like stringing beads onto a necklace. You begin with an empty cord (\(\text{output\_text} = \text{''}\)). In each cycle of the loop, your hand reaches into the container (<code>FETCH</code>), verifies that beads remain (<code>EXIT WHEN NOT FOUND</code>), slips a spacer knot onto the string (<code>', '</code>), and slides the next bead into place (<code>|| rec_movie.movie_name</code>). When the container is empty, you tie off the clasp and display the completed necklace (<code>RAISE NOTICE</code>).</p>
+</div>
+<h3 id="36.9.1-mathematical-formulation-of-recurrence-accumulation">36.9.1 Mathematical Formulation of Recurrence Accumulation</h3>
+<p>The procedural loop formalizes a title accumulator loop over cursor rows, modeling string assembly as a recurrence relation over the sequence of tuples \(L = [r_1, r_2, \dots, r_n]\).</p>
+<p>Let \(\text{out}_i\) represent the accumulated string buffer after processing \(i\) records: \[ \text{out}_0 = \epsilon \] \[ \text{out}_i = \begin{cases} t_1 & \text{for } i = 1 \\ \text{out}_{i-1} \mathbin{\Vert} \text{sep} \mathbin{\Vert} t_i & \text{for } 2 \le i \le n \end{cases} \]</p>
+<p>where:</p>
+<ul>
+  <li>\(\epsilon\) represents the initial empty string (<code>DEFAULT ''</code>).</li>
+  <li>\(t_i = \pi_{\text{movie\_name}}(r_i)\) is the extracted film title attribute of tuple \(r_i\).</li>
+  <li>\(\text{sep}\) is the delimiter string literal (such as <code>', '</code> or <code>' | '</code>).</li>
+  <li>\(\Vert\) is the standard SQL string concatenation operator (<code>||</code>).</li>
+  <li>\(n = |R|\) is the total row count of the result set.</li>
+</ul>
+<p>#### Loop Invariant and Termination The loop performs \(n + 1\) fetch evaluations in total:</p>
+<ul>
+  <li>For steps \(i = 1, 2, \dots, n\): <code>FETCH</code> retrieves row \(r_i\), the system status flag <code>FOUND</code> evaluates to <code>TRUE</code>, and the loop executes its body.</li>
+  <li>At step \(i = n + 1\): <code>FETCH</code> attempts to read past the final row. The engine sets <code>FOUND = FALSE</code> and <code>NOT FOUND = TRUE</code>. The condition <code>EXIT WHEN NOT FOUND</code> triggers immediately, breaking the loop before string concatenation occurs.</li>
+</ul>
+<h3 id="36.9.2-declare-section-architecture">36.9.2 Declare Section Architecture</h3>
+<p>The anonymous block requires three distinct variables declared before the execution block begins:</p>
+<pre><code>DECLARE
+  output_text text DEFAULT '';
+  rec_movie RECORD;
+  cur_all_movies CURSOR FOR
+    SELECT * FROM movies ORDER BY movie_name;</code></pre>
+<p>Analysis of declaration components:</p>
+<ul>
+  <li><code>output_text text DEFAULT ''</code>: A variable-length string buffer initialized to empty.</li>
+  <li><code>rec_movie RECORD</code>: A dynamically typed record structure that adapts its schema to match whatever columns are returned by the cursor query.</li>
+  <li><code>cur_all_movies CURSOR FOR ...</code>: A bound cursor querying all records from the <code>movies</code> relation, sorted deterministically by title.</li>
+</ul>
+<h3 id="36.9.3-execution-body-open-fetch-loop-close-and-notice">36.9.3 Execution Body: Open, Fetch Loop, Close, and Notice</h3>
+<p>The complete procedural execution body proceeds through a strictly ordered sequence of statements:</p>
+<div class="example-box">
+  <p><strong>Worked Example: Loop fetch titles into accumulator with notice.</strong></p>
+  <pre><code>BEGIN
+  -- 1. Initialize cursor portal and position pointer at p = 0
+  OPEN cur_all_movies;
+
+  -- 2. Traverse rows iteratively
+  LOOP
+    FETCH cur_all_movies INTO rec_movie;
+
+    -- Exit guard: must immediately follow FETCH
+    EXIT WHEN NOT FOUND;
+
+    -- String concatenation logic
+    IF output_text = '' THEN
+      output_text := rec_movie.movie_name;
+    ELSE
+      output_text := output_text || ', ' || rec_movie.movie_name;
+    END IF;
+  END LOOP;
+
+  -- 3. Release server portal memory
+  CLOSE cur_all_movies;
+
+  -- 4. Emit diagnostic output to client console
+  RAISE NOTICE 'ALL MOVIE NAMES: %', output_text;
+END;</code></pre>
+  <p><strong>Execution Trace:</strong></p>
+  <ol>
+    <li><code>OPEN</code> compiles the query and prepares 53 movie records.</li>
+    <li>Iteration 1: Fetches "A Clockwork Orange". <code>output_text</code> becomes <code>'A Clockwork Orange'</code>.</li>
+    <li>Iteration 2: Fetches "Apocalypse Now". <code>output_text</code> becomes <code>'A Clockwork Orange, Apocalypse Now'</code>.</li>
+    <li>Iteration 3: Fetches "Battle Royale". Concatenates title.</li>
+    <li>... continues for all 53 films.</li>
+    <li>Iteration 54: <code>FETCH</code> reaches end-of-file. <code>NOT FOUND</code> becomes <code>TRUE</code>. <code>EXIT</code> terminates the loop.</li>
+    <li><code>CLOSE</code> releases memory buffers.</li>
+    <li><code>RAISE NOTICE</code> outputs the single combined string containing all 53 movie names to the PostgreSQL message log.</li>
+  </ol>
+</div>
+<h3 id="36.9.4-procedural-loops-versus-set-based-string-aggregation">36.9.4 Procedural Loops versus Set-Based String Aggregation</h3>
+<p>While this procedural loop demonstrates fundamental cursor navigation, production database engineers evaluate whether a declarative set-based equivalent exists:</p>
+<pre><code>-- Declarative Set-Based Equivalent (PostgreSQL)
+SELECT string_agg(movie_name, ', ' ORDER BY movie_name) AS all_movies
+FROM movies;</code></pre>
+<p>The table below contrasts the procedural cursor approach with native string aggregation functions across major database engines:</p>
+<table>
+  <thead>
+    <tr>
+      <th>DBMS</th>
+      <th>Procedural Loop Implementation</th>
+      <th>Declarative Set-Based Function</th>
+      <th>Performance Recommendation</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><strong>PostgreSQL</strong></td>
+      <td><code>LOOP FETCH ... EXIT WHEN NOT FOUND ... END LOOP;</code></td>
+      <td><code>string_agg(movie_name, ', ' ORDER BY movie_name)</code></td>
+      <td>Use <code>string_agg</code> for pure reporting (up to 50x faster); use cursors when each row triggers external procedural logic or conditional writes.</td>
+    </tr>
+    <tr>
+      <td><strong>MySQL</strong></td>
+      <td><code>REPEAT FETCH cur INTO ... UNTIL done END REPEAT;</code></td>
+      <td><code>GROUP_CONCAT(movie_name ORDER BY movie_name SEPARATOR ', ')</code></td>
+      <td><code>GROUP_CONCAT</code> is highly optimized; be aware of the <code>group_concat_max_len</code> buffer limit.</td>
+    </tr>
+    <tr>
+      <td><strong>Oracle</strong></td>
+      <td><code>FOR rec IN cur LOOP ... END LOOP;</code></td>
+      <td><code>LISTAGG(movie_name, ', ') WITHIN GROUP (ORDER BY movie_name)</code></td>
+      <td><code>LISTAGG</code> avoids procedural context switches; supported up to 4,000 bytes (or 32K with <code>ON OVERFLOW TRUNCATE</code>).</td>
+    </tr>
+    <tr>
+      <td><strong>SQL Server</strong></td>
+      <td><code>WHILE @@FETCH_STATUS = 0 BEGIN FETCH ... END</code></td>
+      <td><code>STRING_AGG(movie_name, ', ') WITHIN GROUP (ORDER BY movie_name)</code></td>
+      <td><code>STRING_AGG</code> (introduced in SQL Server 2017) is vastly superior to T-SQL cursor loops.</td>
+    </tr>
+    <tr>
+      <td><strong>Snowflake</strong></td>
+      <td><code>FOR rec IN cur DO ... END FOR;</code></td>
+      <td><code>LISTAGG(movie_name, ', ') WITHIN GROUP (ORDER BY movie_name)</code></td>
+      <td>Always use <code>LISTAGG</code> in Snowflake to take advantage of columnar vectorized clustering.</td>
+    </tr>
+    <tr>
+      <td><strong>Databricks</strong></td>
+      <td>Distributed Python/UDF loop</td>
+      <td><code>array_join(collect_list(movie_name), ', ')</code></td>
+      <td>Vectorized Spark Catalyst expressions process distributed partitions in parallel.</td>
+    </tr>
+  </tbody>
+</table>
+<div class="warning-box">
+  <p><strong>Scope & Assumptions:</strong> Repeated string concatenation inside PL/pgSQL loops (<code>str := str || new_val</code>) reallocates memory on every iteration. On small datasets (50–500 rows), this overhead is negligible. On large datasets with tens of thousands of rows, repeated concatenation leads to quadratic memory churn (\(O(n^2)\)). For massive string assembly, native set-based aggregations or array accumulators (<code>array_agg</code>) should be chosen.</p>
+</div>
+<h3 id="36.9.5-visualizing-the-row-accumulation-loop">36.9.5 Visualizing the Row Accumulation Loop</h3>
+<p>The trace diagram below illustrates the pointer state and string buffer growth across consecutive iterations:</p>
+<pre><code>Step 0 (OPEN):   p = 0  | output_text = ""
+Step 1 (FETCH):  p = 1  | "A Clockwork Orange"
+Step 2 (FETCH):  p = 2  | "A Clockwork Orange, Apocalypse Now"
+Step 3 (FETCH):  p = 3  | "A Clockwork Orange, Apocalypse Now, Battle Royale"
+...
+Step 53 (FETCH): p = 53 | "... , Wild Strawberries"
+Step 54 (FETCH): p = 54 | NOT FOUND = TRUE  --&gt; [ EXIT LOOP ]
+                          CLOSE cur_all_movies
+                          RAISE NOTICE --&gt; Terminal Display</code></pre>
+<p>The exit guard <code>EXIT WHEN NOT FOUND</code> is placed immediately following <code>FETCH</code> to prevent row 53 from being processed twice.</p>
+<div class="warning-box">
+  <p><strong>Common Pitfalls:</strong></p>
+  <ol>
+    <li><strong>Misplacing the Exit Guard:</strong> Placing <code>EXIT WHEN NOT FOUND</code> <em>after</em> the concatenation statement instead of immediately after <code>FETCH</code>. This causes the final row to be appended twice or appends null values.</li>
+    <li><strong>Missing Initialization:</strong> Forgetting to initialize <code>output_text DEFAULT ''</code>. In SQL, concatenating anything to <code>NULL</code> yields <code>NULL</code> (<code>NULL || 'text' = NULL</code>), resulting in an empty report.</li>
+    <li><strong>Leaking the Cursor on Early Exit:</strong> Exiting the block via an exception without an explicit <code>CLOSE</code> or allowing the block end to manage the portal.</li>
+  </ol>
+</div>
+<div class="key-takeaway">
+  <p><strong>Exam note:</strong> Be prepared to write this complete anonymous block from memory in correct syntactic order:</p>
+  <ol>
+    <li><code>DECLARE</code> section: <code>text</code> accumulator initialized to <code>''</code>, <code>RECORD</code> variable, and <code>CURSOR FOR SELECT ...</code>.</li>
+    <li><code>BEGIN</code> section: <code>OPEN</code> cursor.</li>
+    <li><code>LOOP</code> body: <code>FETCH ... INTO rec</code>, immediate <code>EXIT WHEN NOT FOUND</code>, string glue assignment with <code>||</code>, and <code>END LOOP</code>.</li>
+    <li>Cleanup & reporting: <code>CLOSE</code> cursor, followed by <code>RAISE NOTICE '...', output_text;</code> and <code>END;</code>.</li>
+  </ol>
+</div>
+<p>Understanding the mechanics of an anonymous procedural block provides the building blocks to parameterize this logic into reusable stored functions.</p>
+<div class="key-takeaway">
+  <p><strong>Recap & Bridge:</strong> The anonymous movie listing block demonstrates how <code>OPEN</code>, <code>LOOP</code>, <code>FETCH</code>, <code>EXIT WHEN NOT FOUND</code>, and <code>CLOSE</code> orchestrate procedural row-by-row traversal. In our final section, we encapsulate this workflow inside a parameterized stored function with conditional filtering.</p>
+</div>
+
+<h2 id="36.10-parametric-cursor-function-that-finds-star-titles-by-year">36.10 Parametric Cursor Function That Finds Star Titles by Year</h2>
+<div class="important-note">
+  <p>Can you encapsulate cursor processing inside a reusable, callable database function that accepts runtime parameters and returns a compiled report? In PL/pgSQL, stored functions allow developers to package parameterized cursors into clean, modular database APIs.</p>
+</div>
+<p>In this capstone implementation, we wrap cursor logic into a permanent PostgreSQL stored function named <code>get_movie_names_by_year</code>. The function accepts a single integer input representing a target release year, opens a parameterized cursor to filter films from that year, applies an imperative procedural filter using <code>LIKE '%Star%'</code> to identify titles containing the keyword "Star", and returns a formatted text string containing title and year pairs.</p>
+<div class="important-note">
+  <p>Think of this workflow as a two-stage sifting process. The first stage uses the cursor's <code>WHERE</code> clause to perform a coarse mechanical sift, gathering all films released in the specified calendar year. The second stage uses a fine procedural mesh inside the loop (<code>IF ... LIKE '%Star%'</code>) to inspect individual titles, keeping only franchise entries that match the keyword.</p>
+</div>
+<p>During the development of this function, an essential teaching moment occurs: a runtime crash caused by an alias mismatch between the query projection and the record variable field reads. Resolving this issue highlights the strict structural contract between SQL expressions and procedural records.</p>
+<h3 id="36.10.1-mathematical-formulation-of-two-stage-filtering">36.10.1 Mathematical Formulation of Two-Stage Filtering</h3>
+<p>The function formalizes a year slice then Star title subset filter across the relation \(T\) (<code>movies</code>).</p>
+<p>Let \(y \in \mathbb{N}\) denote the input parameter <code>custom_year</code>. The two-stage filtering process is defined as:</p>
+<p>#### Stage 1: The Year Slice (Database Optimizer Filter) \[ R_1 = \{r \in \text{movies} \mid \text{yr}(r) = y\} \] where \(\text{yr}(r) = \text{EXTRACT}(\text{YEAR FROM } r.\text{release\_date})\). This filter is pushed down directly to the storage engine through the cursor parameter.</p>
+<p>#### Stage 2: The Keyword Subset (Procedural Loop Filter) \[ R_2 = \{r \in R_1 \mid \text{title}(r) \text{ LIKE } \text{'\%Star\%'}\} \] where \(\text{title}(r) = r.\text{movie\_name}\), and the SQL <code>LIKE '%Star%'</code> pattern matches any title containing "Star" at the beginning, middle, or end.</p>
+<p>#### Output Formatting Recurrence Let \(\text{out}_k\) represent the formatted text buffer after inspecting \(k\) matching films from \(R_2\): \[ \text{out}_0 = \epsilon \] \[ \text{out}_k = \text{out}_{k-1} \mathbin{\Vert} \text{' | '} \mathbin{\Vert} \text{title}(r_k) \mathbin{\Vert} \text{' : '} \mathbin{\Vert} \text{yr}(r_k) \] The final returned text string concatenates each title and its release year separated by pipe and colon delimiters.</p>
+<h3 id="36.10.2-function-header-and-declaration-contract">36.10.2 Function Header and Declaration Contract</h3>
+<p>The function is defined using standard PostgreSQL DDL:</p>
+<pre><code>CREATE OR REPLACE FUNCTION get_movie_names_by_year(custom_year integer)
+RETURNS text AS
+DECLARE
+  movie_names text DEFAULT '';
+  rec_movie RECORD;
+  cur_movies_by_year CURSOR (custom_year integer) FOR
+    SELECT movie_name, EXTRACT(YEAR FROM release_date) AS release_year
+    FROM movies
+    WHERE EXTRACT(YEAR FROM release_date) = custom_year;</code></pre>
+<p>Notice the query projection: <code>EXTRACT(YEAR FROM release_date) AS release_year</code></p>
+<div class="warning-box">
+  <p><strong>The Alias Spelling Contract:</strong> When a query projects a computed expression (such as a date extraction or mathematical formula), it <em>must</em> assign an explicit column alias using <code>AS alias_name</code>. A PL/pgSQL dynamic <code>RECORD</code> variable inspects the query's column metadata at runtime to establish its field names. If you define the alias as <code>release_year</code> in the query, you <em>must</em> access it as <code>rec_movie.release_year</code> in procedural code. Any discrepancy between the query alias spelling and the procedural field read causes PostgreSQL to abort execution with a runtime missing field exception.</p>
+</div>
+<h3 id="36.10.3-body-architecture-open-filter-loop-close-and-return">36.10.3 Body Architecture: Open, Filter Loop, Close, and Return</h3>
+<p>The body orchestrates cursor initialization, procedural keyword testing, and resource cleanup:</p>
+<pre><code>BEGIN
+  -- Open cursor, passing the function parameter custom_year
+  OPEN cur_movies_by_year(custom_year);
+
+  LOOP
+    FETCH cur_movies_by_year INTO rec_movie;
+    EXIT WHEN NOT FOUND;
+
+    -- Procedural pattern match for titles containing 'Star'
+    IF rec_movie.movie_name LIKE '%Star%' THEN
+      movie_names := movie_names || ' | ' || rec_movie.movie_name
+                     || ' : ' || rec_movie.release_year;
+    END IF;
+  END LOOP;
+
+  -- Free server memory
+  CLOSE cur_movies_by_year;
+
+  -- Return final assembled report
+  RETURN movie_names;
+END;
+LANGUAGE plpgsql;</code></pre>
+<p>This clean architecture exemplifies the function year alias Star match structure.</p>
+<h3 id="36.10.4-live-runs-alias-bug-resolution-and-test-verification">36.10.4 Live Runs, Alias Bug Resolution, and Test Verification</h3>
+<p>To observe the function in operation, we test it across multiple release cohorts.</p>
+<div class="example-box">
+  <p><strong>Worked Example: Star title search by year with 2000 1977 runs.</strong></p>
+  <p><strong>Step 1: Test call with no matching keyword.</strong> We invoke the function for calendar year 2000:</p>
+  <pre><code>SELECT get_movie_names_by_year(2000);</code></pre>
+  <p>Output: <code>""</code> (Empty string) <em>Reasoning:</em> While the year 2000 contains releases such as "Battle Royale", none of the 2000 film titles contain the substring "Star". The loop completes, finds zero keyword matches, and returns an empty buffer.</p>
+  <p><strong>Step 2: The live runtime bug.</strong> Next, we invoke the function for 1977, expecting to find the original science fiction classic:</p>
+  <pre><code>SELECT get_movie_names_by_year(1977);</code></pre>
+  <p>Initial execution failure: <code>ERROR: record "rec_movie" has no field "release_year"</code> <code>CONTEXT: PL/pgSQL function get_movie_names_by_year(integer) line 10 at assignment</code></p>
+  <p><em>Diagnosis:</em> In the initial draft of the query, the developer wrote: <code>SELECT movie_name, EXTRACT(YEAR FROM release_date) FROM movies ...</code> Because no <code>AS release_year</code> alias was declared, PostgreSQL defaulted the column name to <code>date_part</code>. When procedural line 10 attempted to read <code>rec_movie.release_year</code>, the field did not exist.</p>
+  <p><strong>Step 3: The bug fix and rerun calls.</strong> The developer aligns the alias spelling contract by explicitly adding <code>AS release_year</code> to the cursor query. With the alias mismatch fixed rerun calls succeed:</p>
+  <pre><code>-- Call for 1977
+SELECT get_movie_names_by_year(1977);
+-- Output: " | Star Wars: Episode IV - A New Hope : 1977"
+
+-- Call for 1980
+SELECT get_movie_names_by_year(1980);
+-- Output: " | Star Wars: Episode V - The Empire Strikes Back : 1980"</code></pre>
+  <p>The test calls confirm that the function filters correctly by year, evaluates keyword matches in sequence, formats output cleanly, and manages cursor memory without leaks.</p>
+</div>
+<h3 id="36.10.5-cross-database-procedural-functions-comparison">36.10.5 Cross-Database Procedural Functions Comparison</h3>
+<p>The table below contrasts how stored functions and parameterized cursor routines are implemented across major platforms:</p>
+<table>
+  <thead>
+    <tr>
+      <th>DBMS</th>
+      <th>Function Declaration</th>
+      <th>Parameterized Cursor Binding</th>
+      <th>Dynamic Field Resolution</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><strong>PostgreSQL</strong></td>
+      <td><code>CREATE FUNCTION ... RETURNS text AS '...' LANGUAGE plpgsql;</code></td>
+      <td>In cursor header: <code>CURSOR (p int) FOR ...</code></td>
+      <td>Field names on <code>RECORD</code> variables are bound dynamically from query column aliases.</td>
+    </tr>
+    <tr>
+      <td><strong>Oracle</strong></td>
+      <td><code>CREATE OR REPLACE FUNCTION ... RETURN VARCHAR2 AS ...</code></td>
+      <td>In cursor specification: <code>CURSOR c (p NUMBER) IS ...</code></td>
+      <td><code>%ROWTYPE</code> records require identical column alias matching.</td>
+    </tr>
+    <tr>
+      <td><strong>MySQL</strong></td>
+      <td><code>CREATE FUNCTION ... RETURNS TEXT DETERMINISTIC ...</code></td>
+      <td>Parameters bound via local stored procedure variables.</td>
+      <td>Values mapped into explicit scalar target variables.</td>
+    </tr>
+    <tr>
+      <td><strong>SQL Server</strong></td>
+      <td><code>CREATE FUNCTION ... RETURNS NVARCHAR(MAX) AS ...</code></td>
+      <td>Parameters bound via T-SQL local <code>@variables</code>.</td>
+      <td>Column values fetched into scalar <code>@variables</code>.</td>
+    </tr>
+    <tr>
+      <td><strong>Snowflake</strong></td>
+      <td><code>CREATE PROCEDURE ... RETURNS STRING LANGUAGE SQL AS '...';</code></td>
+      <td>Arguments referenced with colon syntax (<code>:param</code>).</td>
+      <td>Iterated via <code>FOR rec IN cur DO ... END FOR</code>.</td>
+    </tr>
+  </tbody>
+</table>
+<div class="warning-box">
+  <p><strong>Scope & Assumptions:</strong> Stored functions that execute read-only queries should be marked <code>STABLE</code> in PostgreSQL to enable the optimizer to cache query plans across repetitive invocations. Functions that modify tables via cursors must execute in procedures (<code>CREATE PROCEDURE</code>) rather than functions, as PostgreSQL functions are restricted from managing independent transactional commits.</p>
+</div>
+<h3 id="36.10.6-visualizing-the-two-stage-filtering-pipeline">36.10.6 Visualizing the Two-Stage Filtering Pipeline</h3>
+<p>The diagram below tracks how raw database records flow through the two-stage filter:</p>
+<pre><code>[ Table: movies (All 53 Rows) ]
+               |
+               |  STAGE 1: Cursor Query WHERE EXTRACT(YEAR FROM ...) = 1977
+               v
+[ Intermediate Result Set R1: 1977 Cohort (e.g., 3 Films) ]
+               |
+               |  STAGE 2: Procedural Loop Iteration
+               |           FETCH cur_movies_by_year INTO rec_movie
+               |
+    +----------+----------+
+    |                     |
+    v                     v
+[ rec_movie: "Annie Hall" ]  [ rec_movie: "Star Wars: Episode IV" ]
+  LIKE '%Star%' -&gt; FALSE        LIKE '%Star%' -&gt; TRUE
+  (Discarded)                   (Appended to movie_names buffer)
+                                          |
+                                          v
+                               [ RETURN " | Star Wars... : 1977" ]</code></pre>
+<p>The database engine handles the coarse relational slice, while PL/pgSQL applies fine-grained conditional rules.</p>
+<div class="warning-box">
+  <p><strong>Common Pitfalls:</strong></p>
+  <ol>
+    <li><strong>Case-Sensitive LIKE Matches:</strong> Writing <code>LIKE '%star%'</code> (lowercase) when database titles are capitalized, resulting in zero matches. Use <code>ILIKE '%star%'</code> in PostgreSQL for case-insensitive keyword searches.</li>
+    <li><strong>Missing Param Argument at Open:</strong> Calling <code>OPEN cur_movies_by_year;</code> without passing the parameter <code>custom_year</code>, triggering a parameter count mismatch error.</li>
+    <li><strong>Omitting RETURN Statement:</strong> Forgetting the final <code>RETURN movie_names;</code> line at the end of the function body, producing a null return warning.</li>
+  </ol>
+</div>
+<h3 id="36.10.7-student-questions-and-answers">36.10.7 Student Questions and Answers</h3>
+<div class="important-note">
+  <p><strong>Q:</strong> Function fails with no field release year. What went wrong?</p>
+  <p><strong>A:</strong> The alias defined in the SELECT and the field name read from the record do not match. When a cursor query computes an expression such as an <code>EXTRACT</code> or function call, you must supply an explicit alias (<code>AS release_year</code>). The dynamic <code>RECORD</code> variable inherits its attribute names directly from those query aliases. To resolve the error, ensure the alias in the <code>SELECT</code> matches the record read identically, recompile the function, and rerun the test calls.</p>
+</div>
+<div class="key-takeaway">
+  <p><strong>Recap & Bridge:</strong> Parameterized cursor functions encapsulate complex data extraction, boundary checking, and custom formatting into reusable database routines. Always maintain strict alias parity between your declarative queries and procedural record variables.</p>
+</div>
+
+<h2 id="exam-guidance-summary">Exam Guidance Summary</h2>
+<p>This summary consolidates the durable examination topics, syntax requirements, and architectural rules covered throughout this lecture on SQL cursors.</p>
+<h3 id="core-architectural-concepts-to-master">Core Architectural Concepts to Master</h3>
+<ol>
+  <li><strong>The Four-Stage Cursor Lifecycle:</strong></li>
+</ol>
+<ul>
+  <li><strong>Declare:</strong> Defines the cursor identifier, parameter signature, scrollability options, and attaches the query plan. Performs zero disk I/O.</li>
+  <li><strong>Open:</strong> Compiles the query plan, binds argument values, instantiates the server portal, allocates working buffer memory, and positions pointer coordinate at \(p = 0\).</li>
+  <li><strong>Fetch:</strong> Advances the pointer along directional coordinates and copies column values into target variables or records.</li>
+  <li><strong>Close:</strong> Destroys the active portal and frees temporary server memory while retaining the cursor declaration for potential reopening.</li>
+</ul>
+<ol>
+  <li><strong>Creation Syntax Variations:</strong></li>
+</ol>
+<ul>
+  <li><strong>Unbound <code>refcursor</code>:</strong> <code>DECLARE cur_name REFCURSOR;</code> (Attached to queries later via <code>OPEN cur_name FOR SELECT ...;</code> or <code>OPEN cur_name FOR EXECUTE ... USING ...;</code>).</li>
+  <li><strong>Bound Cursor:</strong> <code>DECLARE cur_name CURSOR FOR SELECT ...;</code></li>
+  <li><strong>Parameterized Bound Cursor:</strong></li>
+</ul>
+<pre><code>     DECLARE cur_name CURSOR (param_name data_type) FOR
+       SELECT ... FROM ... WHERE column_name = param_name;</code></pre>
+<ol>
+  <li><strong>Directional Movement and the SCROLL Rule:</strong></li>
+</ol>
+<ul>
+  <li>Cursors default to <code>NO SCROLL</code>, which permits only forward monotonic progression (<code>NEXT</code>, <code>FORWARD count</code>).</li>
+  <li><code>SCROLL</code> is mandatory if your routine executes: <code>PRIOR</code>, <code>FIRST</code>, <code>LAST</code>, <code>BACKWARD count</code>, <code>ABSOLUTE count</code>, or negative <code>RELATIVE count</code>.</li>
+  <li><code>FETCH</code> updates the pointer coordinate and copies data into target variables. <code>MOVE</code> shifts the pointer coordinate with zero memory copy.</li>
+</ul>
+<ol>
+  <li><strong>Positioned Updates and Deletions (<code>WHERE CURRENT OF</code>):</strong></li>
+</ol>
+<ul>
+  <li>Syntax: <code>UPDATE table_name SET col = val WHERE CURRENT OF cursor_name;</code> and <code>DELETE FROM table_name WHERE CURRENT OF cursor_name;</code>.</li>
+  <li>Requires single-table queries declared with <code>FOR UPDATE</code>.</li>
+  <li>Note engine differences: Supported in PostgreSQL, Oracle, and SQL Server; <strong>not supported in MySQL</strong> (where cursors are strictly read-only) or in distributed engines (Snowflake, Databricks).</li>
+</ul>
+<ol>
+  <li><strong>Complete Program Structure (Anonymous Blocks and Stored Functions):</strong></li>
+</ol>
+<ul>
+  <li>Anonymous block layout: <code>DECLARE ... BEGIN OPEN ... LOOP FETCH ... EXIT WHEN NOT FOUND; ... END LOOP; CLOSE ... RAISE NOTICE ... END;</code>.</li>
+  <li>Stored function parameterization: <code>CREATE OR REPLACE FUNCTION func(param int) RETURNS text AS ... LANGUAGE plpgsql;</code>.</li>
+  <li>The Alias Spelling Contract: Ensure column aliases projected in the cursor query match field reads on dynamic <code>RECORD</code> variables identically (<code>AS release_year</code> \(\to\) <code>rec_movie.release_year</code>).</li>
+</ul>
+
+<h2 id="key-industry-applications">Key Industry Applications</h2>
+<p>In enterprise software engineering and database administration, cursors serve as specialized tools for scenarios where pure declarative SQL cannot easily fulfill business or architectural constraints.</p>
+<h3 id="1.-large-scale-etl-and-memory-constrained-batch-processing">1. Large-Scale ETL and Memory-Constrained Batch Processing</h3>
+<p>When extracting millions of records from an OLTP database for ingestion into analytical lakes or search indexes (such as Elasticsearch), loading the entire result set into application RAM can exhaust server memory. By opening a server-side cursor and streaming chunks of 500 to 1,000 records at a time, microservices written in Python, Java, or Go maintain a constant, minimal memory footprint regardless of total table volume.</p>
+<h3 id="2.-mainframe-batch-modernization-and-procedural-host-integration">2. Mainframe Batch Modernization and Procedural Host Integration</h3>
+<p>Legacy banking, insurance, and telecommunications platforms built in COBOL and Fortran process transactional ledgers sequentially. During modernization initiatives, database cursors provide the exact interface required to bridge modern relational databases (such as PostgreSQL) with host application arrays, enabling row-by-row validation, tax calculation, and compliance stamping before final commitment.</p>
+<h3 id="3.-precision-data-remediation-and-positioned-in-place-fixing">3. Precision Data Remediation and Positioned In-Place Fixing</h3>
+<p>In production database maintenance, data corruption or schema migration errors occasionally require targeted, conditional remediation. When scripts must validate each record against an external API or complex heuristic before modifying data, using <code>WHERE CURRENT OF</code> enables safe, in-place updates without the latency, index scans, and lock contention of independent <code>UPDATE</code> statements.</p>
+<h3 id="4.-dynamic-administrative-reporting-and-ad-hoc-analytics">4. Dynamic Administrative Reporting and Ad-Hoc Analytics</h3>
+<p>Database administrative consoles and reporting engines frequently allow users to sort by arbitrary columns or toggle filtering criteria dynamically. Utilizing dynamic cursors with <code>OPEN ... FOR EXECUTE ... USING</code> enables database engines to compile optimized execution plans on the fly while safeguarding against SQL injection attacks through parameterized bind variables.</p>
+    </main>
+
+    <!-- ============================================================
+    EXAM REVISION NOTES
+    Generated AFTER the main lecture-faithful content is complete. Each entry
+    distills one major concept into its most examinable elements.
+    Built FROM the core — never invented independently.
+
+    Each entry is a <div class="exam-revision-entry"> containing:
+      - .revision-topic (h3) — concept name
+      - .revision-mustknow — the single most examinable takeaway
+      - .revision-formula — central formula(s) in \[ ... \] MathJax
+      - .revision-pitfall — the #1 exam mistake
+      - .revision-check — one self-check question (no options)
+      - .revision-connections — linked concepts within this lecture
+    ============================================================ -->
+    <section class="exam-revision-section">
+      <h2>Exam Revision Notes</h2>
+      <p class="revision-intro">Below is the distilled, exam-ready core.
+      Every entry comes from the full explanation above. Use this section
+      for rapid review; return to the main notes when a point needs more context.</p>
+<div class="exam-revision-entry">
+  <h3 class="revision-topic">Set-Based Retrieval and the Row-by-Row Problem</h3>
+  <p class="revision-mustknow"><strong>Must-know:</strong> SQL SELECT statements deliver entire result sets at once; interactive row-by-row movement requires holding the result in a cursor.</p>
+  <p class="revision-formula">\[R = \{r \in T \mid P(r)\}\]</p>
+  <p class="revision-pitfall"><strong>Top pitfall:</strong> Assuming standard SELECT allows FIRST, NEXT, or PRIOR row navigation without an explicit cursor.</p>
+  <p class="revision-check"><strong>Self-check:</strong> Can a plain SELECT statement fetch the first row, then move forward to the next row and back five rows?</p>
+  <p class="revision-connections"><strong>Connects to:</strong> 36.2, 36.3</p>
+</div>
+<div class="exam-revision-entry">
+  <h3 class="revision-topic">Procedural and Non-Procedural Languages</h3>
+  <p class="revision-mustknow"><strong>Must-know:</strong> Declarative SQL defines the target result set without execution order; procedural languages provide sequential flow control, loops, and conditional logic.</p>
+  <p class="revision-formula">\[L = [r_1, r_2, \dots, r_n]\]</p>
+  <p class="revision-pitfall"><strong>Top pitfall:</strong> Writing procedural row-by-row cursor loops for operations that standard set-based SQL can compute orders of magnitude faster.</p>
+  <p class="revision-check"><strong>Self-check:</strong> Why is a procedural language required if SQL already has the ability to retrieve rows from tables?</p>
+  <p class="revision-connections"><strong>Connects to:</strong> 36.1, 36.3</p>
+</div>
+<div class="exam-revision-entry">
+  <h3 class="revision-topic">Cursor Lifecycle of Declare Open Fetch Close</h3>
+  <p class="revision-mustknow"><strong>Must-know:</strong> Declare performs no table I/O; query execution and memory allocation occur strictly on Open. Cursors can be reopened after being closed.</p>
+  <p class="revision-formula">\[state: \text{declared}(Q) \to \text{open}(R(Q), p) \to \text{closed}(\emptyset)\]</p>
+  <p class="revision-pitfall"><strong>Top pitfall:</strong> Attempting to fetch rows from a declared or closed cursor, or neglecting to close open cursors causing memory leaks.</p>
+  <p class="revision-check"><strong>Self-check:</strong> Does the DECLARE statement pull any data from the table or perform disk I/O?</p>
+  <p class="revision-connections"><strong>Connects to:</strong> 36.2, 36.4, 36.8</p>
+</div>
+<div class="exam-revision-entry">
+  <h3 class="revision-topic">Creating Cursors in PostgreSQL</h3>
+  <p class="revision-mustknow"><strong>Must-know:</strong> Expect to write cursor headers from memory with name, typed bracket parameters, FOR, and SELECT query. Always narrow projection over SELECT *.</p>
+  <p class="revision-formula">\[C_{\text{bound}} = \langle \text{identifier}, Q, \Theta \rangle\]</p>
+  <p class="revision-pitfall"><strong>Top pitfall:</strong> Using SELECT * on wide tables, exhausting server work_mem, or failing to match parameter names between brackets and query body.</p>
+  <p class="revision-check"><strong>Self-check:</strong> How do you declare a cursor that accepts an integer year parameter and filters release_date?</p>
+  <p class="revision-connections"><strong>Connects to:</strong> 36.3, 36.5, 36.6</p>
+</div>
+<div class="exam-revision-entry">
+  <h3 class="revision-topic">Opening Cursors Bound Unbound and Dynamic</h3>
+  <p class="revision-mustknow"><strong>Must-know:</strong> Unbound cursors receive their query at OPEN time using FOR SELECT or FOR EXECUTE ... USING; bound cursors open directly and accept argument values.</p>
+  <p class="revision-formula">\[\text{open}(C, Q, \Theta) \to \langle R(Q, \Theta), p_0 \rangle\]</p>
+  <p class="revision-pitfall"><strong>Top pitfall:</strong> Calling OPEN on an already open cursor without issuing CLOSE first, or concatenating unsanitized text into dynamic EXECUTE statements.</p>
+  <p class="revision-check"><strong>Self-check:</strong> How do you open an unbound refcursor using dynamic SQL with parameterized substitution values in PL/pgSQL?</p>
+  <p class="revision-connections"><strong>Connects to:</strong> 36.4, 36.6, 36.8</p>
+</div>
+<div class="exam-revision-entry">
+  <h3 class="revision-topic">Using a Cursor With Fetch and Move</h3>
+  <p class="revision-mustknow"><strong>Must-know:</strong> FETCH copies data into targets while MOVE only shifts the pointer. PRIOR, FIRST, LAST, BACKWARD, ABSOLUTE, and negative RELATIVE require SCROLL.</p>
+  <p class="revision-formula">\[\text{fetch}(C, \text{direction}): p \leftarrow \text{shift}(p, \text{direction}), \quad \text{target} \leftarrow r_p\]</p>
+  <p class="revision-pitfall"><strong>Top pitfall:</strong> Attempting to use FETCH PRIOR or FETCH LAST on a default NO SCROLL cursor, resulting in a runtime scan error.</p>
+  <p class="revision-check"><strong>Self-check:</strong> Which FETCH directions can be used when a cursor is declared without the SCROLL keyword?</p>
+  <p class="revision-connections"><strong>Connects to:</strong> 36.4, 36.5, 36.7</p>
+</div>
+<div class="exam-revision-entry">
+  <h3 class="revision-topic">Updating and Deleting the Positioned Row</h3>
+  <p class="revision-mustknow"><strong>Must-know:</strong> WHERE CURRENT OF cursor_name enables positioned updates and deletions on single-table queries declared FOR UPDATE, eliminating primary key searches.</p>
+  <p class="revision-formula">\[\text{update}(T, r_p, \Delta): T \leftarrow (T \setminus \{\tau(p)\}) \cup \{\tau(p) \oplus \Delta\}\]</p>
+  <p class="revision-pitfall"><strong>Top pitfall:</strong> Attempting WHERE CURRENT OF on cursors declared without FOR UPDATE, or on queries involving joins, distinct, or aggregates.</p>
+  <p class="revision-check"><strong>Self-check:</strong> Does MySQL support positioned updates using the WHERE CURRENT OF cursor_name clause?</p>
+  <p class="revision-connections"><strong>Connects to:</strong> 36.6, 36.8</p>
+</div>
+<div class="exam-revision-entry">
+  <h3 class="revision-topic">Closing Cursors and Resource Handling</h3>
+  <p class="revision-mustknow"><strong>Must-know:</strong> CLOSE destroys the active server portal and releases temporary memory buffers; the cursor can be reopened immediately to query fresh table data.</p>
+  <p class="revision-formula">\[\text{close}(C) = \emptyset, \quad \text{reopen}(C) = R(Q, \theta)\]</p>
+  <p class="revision-pitfall"><strong>Top pitfall:</strong> Leaking cursors by omitting CLOSE in long-running batch sessions, or forgetting DEALLOCATE in SQL Server environments.</p>
+  <p class="revision-check"><strong>Self-check:</strong> What happens to the cursor declaration after issuing CLOSE cursor_name?</p>
+  <p class="revision-connections"><strong>Connects to:</strong> 36.3, 36.5, 36.9</p>
+</div>
+<div class="exam-revision-entry">
+  <h3 class="revision-topic">Block That Lists All Movie Names Row by Row</h3>
+  <p class="revision-mustknow"><strong>Must-know:</strong> Place DECLARE, OPEN, LOOP, FETCH, EXIT WHEN NOT FOUND, string concatenation with ||, CLOSE, and RAISE NOTICE in exact operational sequence.</p>
+  <p class="revision-formula">\[\text{out}_i = \text{out}_{i-1} \mathbin{\Vert} \text{sep} \mathbin{\Vert} t_i\]</p>
+  <p class="revision-pitfall"><strong>Top pitfall:</strong> Placing the EXIT WHEN NOT FOUND condition after the concatenation line instead of immediately after FETCH, resulting in duplicate or null data processing.</p>
+  <p class="revision-check"><strong>Self-check:</strong> How many times does the FETCH statement execute in an anonymous block processing 53 records?</p>
+  <p class="revision-connections"><strong>Connects to:</strong> 36.3, 36.6, 36.10</p>
+</div>
+<div class="exam-revision-entry">
+  <h3 class="revision-topic">Parametric Cursor Function That Finds Star Titles by Year</h3>
+  <p class="revision-mustknow"><strong>Must-know:</strong> Column aliases in the cursor SELECT query form a strict contract with dynamic RECORD variables; any spelling mismatch causes a runtime missing field exception.</p>
+  <p class="revision-formula">\[R_1 = \{r \in \text{movies} \mid \text{yr}(r) = y\}, \quad R_2 = \{r \in R_1 \mid \text{title}(r) \text{ LIKE } \text{'\%Star\%'}\]</p>
+  <p class="revision-pitfall"><strong>Top pitfall:</strong> Omitting the AS alias in the query projection or mismatching the alias spelling when reading attributes from a RECORD variable.</p>
+  <p class="revision-check"><strong>Self-check:</strong> What error occurs if the cursor projects EXTRACT(YEAR FROM release_date) without an alias but procedural code reads rec_movie.release_year?</p>
+  <p class="revision-connections"><strong>Connects to:</strong> 36.4, 36.5, 36.9</p>
+</div>
+    </section>
+  </div>
+</body>
+</html>

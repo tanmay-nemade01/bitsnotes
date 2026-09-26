@@ -79,6 +79,7 @@ const FOLDER_SUBJECTS = {
   SEML: ['Software Engineering for Machine Learning'],
   SP: ['Systems Programming'],
   SPA: ['Stream Processing and Analytics'],
+  SQL: ['SQL'],
   UDL: ['Unsupervised Deep Learning'],
   VA: ['Video Analysis'],
 };

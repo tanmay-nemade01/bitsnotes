@@ -46,4 +46,28 @@ test.describe('support page', () => {
     await page.goto('/');
     await expect(page.getByRole('link', { name: /support/i }).first()).toBeVisible();
   });
+
+  // Tamper-evidence: the receiver VPA + bank-verified name are rendered in
+  // multiple places so a swapped QR is visible to donors and to monitors.
+  test('donation receiver is tamper-evident', async ({ page }) => {
+    const EXPECTED_UPI_ID = 'tanmaynemade-3@okicici';
+    const EXPECTED_PAYEE = 'Tanmay Nemade';
+    await page.goto('/support');
+
+    const widget = page.locator('#donate-widget');
+    await expect(widget).toBeVisible();
+    await expect(widget).toHaveAttribute('data-upi-id', EXPECTED_UPI_ID);
+    await expect(widget).toHaveAttribute('data-payee-name', EXPECTED_PAYEE);
+
+    // Visible to donors (not hidden behind copy-only).
+    await expect(widget.locator('[data-upi-id-text]')).toContainText(EXPECTED_UPI_ID);
+    await expect(widget.locator('[data-payee-name-text]').first()).toContainText(EXPECTED_PAYEE);
+    await expect(widget.locator('[data-verify-payee-notice]')).toContainText(EXPECTED_PAYEE);
+
+    // Pay deeplink + QR both encode the same receiver.
+    const href = await widget.locator('#upi-pay-btn').getAttribute('href');
+    expect(href ?? '').toContain(`pa=${encodeURIComponent(EXPECTED_UPI_ID)}`);
+    await expect(page.locator('#donate-qr')).toBeVisible();
+    await expect(page.locator('#donate-tamper-warning')).toBeHidden();
+  });
 });

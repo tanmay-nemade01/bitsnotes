@@ -1,0 +1,1312 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+  <!-- Primary SEO -->
+  <title>Managing Tables | SQL | BitsNotes</title>
+  <meta name="description" content="SQL notes on managing tables: SELECT INTO, table duplication, CSV import/export, deduplication, MVCC bloat, VACUUM maintenance, and generated columns.">
+  <meta name="keywords" content="SQL, PostgreSQL, Managing Tables, SELECT INTO, CREATE TABLE AS, WITH NO DATA, COPY FROM, COPY TO, CSV Import, CSV Export, Duplicate Rows, CTID, Self-Join, Window Functions, Table Bloat, MVCC, Dead Tuples, Autovacuum, VACUUM FULL, Generated Columns">
+  <meta name="author" content="BitsNotes">
+  <meta name="robots" content="index, follow">
+  <link rel="canonical" href="https://bitsnotes.com/view/sql/managing-tables">
+
+  <!-- Open Graph / Facebook -->
+  <meta property="og:type" content="article">
+  <meta property="og:title" content="Managing Tables | SQL">
+  <meta property="og:description" content="SQL notes on managing tables: SELECT INTO, table duplication, CSV import/export, deduplication, MVCC bloat, VACUUM maintenance, and generated columns.">
+  <meta property="og:url" content="https://bitsnotes.com/view/sql/managing-tables">
+  <meta property="og:image" content="https://bitsnotes.com/og-default.png">
+  <meta property="og:image:width" content="1200">
+  <meta property="og:image:height" content="630">
+  <meta property="og:site_name" content="BitsNotes">
+
+  <!-- Twitter Card -->
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="Managing Tables | SQL">
+  <meta name="twitter:description" content="SQL notes on managing tables: SELECT INTO, table duplication, CSV import/export, deduplication, MVCC bloat, VACUUM maintenance, and generated columns.">
+  <meta name="twitter:image" content="https://bitsnotes.com/og-default.png">
+  <meta name="twitter:site" content="@BitsNotes">
+
+  <!-- Stylesheet -->
+  <link rel="stylesheet" href="/lecture-notes.css">
+
+  <!-- Structured Data: JSON-LD -->
+  <script type="application/ld+json">
+{"@context":"https://schema.org","@type":"Article","headline":"Managing Tables | SQL","description":"SQL notes on managing tables: SELECT INTO, table duplication, CSV import/export, deduplication, MVCC bloat, VACUUM maintenance, and generated columns.","author":{"@type":"Organization","name":"BitsNotes"},"about":["SELECT INTO","CREATE TABLE AS","WITH NO DATA","COPY FROM","COPY TO","Duplicate Rows","CTID","Self-Join","MVCC Table Bloat","pg_total_relation_size","Autovacuum","VACUUM FULL","GENERATED ALWAYS AS STORED"]}
+</script>
+
+  <!-- Lecture Metadata (for the BitsNotes platform viewer) -->
+  <!-- IMPORTANT: This is the ONLY metadata source. No companion .json file
+       is created. The viewer reads everything from this embedded script.
+       Required fields: title, subject, gradeLevel, datePublished,
+       targetAudience, sections (array), examRevisionNotes (array).
+       Optional fields: prerequisites (array of {subject, lecture, topics}).
+       NOT included (removed): summary, keyConcepts, quiz. -->
+  <script type="application/json" id="lecture-metadata">
+{
+  "title": "Managing Tables",
+  "subject": "SQL",
+  "gradeLevel": "postgraduate",
+  "datePublished": "2026-09-23",
+  "targetAudience": "Postgraduate and undergraduate students learning PostgreSQL database administration and SQL table management",
+  "sections": [
+    {
+      "title": "46.1 Creating New Tables With SELECT INTO and WHERE",
+      "description": "SELECT INTO creates and fills a new table from a query result in one step, copying names, types, and filtered rows."
+    },
+    {
+      "title": "46.2 SELECT INTO With JOIN, Computed Columns, ORDER BY, and Subqueries",
+      "description": "SELECT INTO freezes any shaped query (joins, computed total revenue, ordered with NULLS LAST, limited) into a table via an aliased subquery."
+    },
+    {
+      "title": "46.3 Duplicating a Table With and Without Data",
+      "description": "CREATE TABLE AS duplicates a table with data, or with WITH NO DATA as an empty frame; constraints and indexes never carry over."
+    },
+    {
+      "title": "46.4 Importing Data From CSV Files",
+      "description": "CSV import is a two-stage create-then-load using client-side \\copy with column list, delimiter, and header flags."
+    },
+    {
+      "title": "46.5 Exporting Data From a Table to CSV",
+      "description": "COPY TO / \\copy TO exports a table or query to CSV with delimiter and header flags; import and export counts must match."
+    },
+    {
+      "title": "46.6 Finding and Deleting Duplicate Rows",
+      "description": "Grouped HAVING COUNT(*) > 1 proves single-column repeats; ROW_NUMBER partitioned listing proves full-row repeats; self-join delete keeps one survivor."
+    },
+    {
+      "title": "46.7 How Inserts, Updates, and Deletes Change Table Size",
+      "description": "Inserts add live bytes while updates and deletes leave dead-row images behind until vacuum cleanup."
+    },
+    {
+      "title": "46.8 Tracking Table Size Through Insert and Update",
+      "description": "Size functions track insert growth as proportional and a single full-table update as a near-doubling from dead rows."
+    },
+    {
+      "title": "46.9 The Autovacuum Background Process",
+      "description": "Autovacuum wakes about every minute, reuses dead-row space inside the table, pairs with auto-analyze, but never shrinks the file."
+    },
+    {
+      "title": "46.10 Reclaiming Space With Hand-Run VACUUM",
+      "description": "Plain VACUUM marks dead space reusable inside; VACUUM FULL rewrites the table and returns bytes at the cost of an exclusive lock."
+    },
+    {
+      "title": "46.11 Auto Generated Columns",
+      "description": "GENERATED ALWAYS AS (expr) STORED automatically calculates and synchronizes row-local attributes on write, replacing slow triggers with immutable engine-evaluated logic."
+    },
+    {
+      "title": "Exam Guidance Summary",
+      "description": "Comprehensive examination review of table management, data migration, deduplication algorithms, MVCC storage bloat, vacuum maintenance mechanics, and generated column architecture."
+    },
+    {
+      "title": "Key Industry Applications",
+      "description": "Survey of production industrial implementations: isolated BI reporting marts, automated reference ETL pipelines, MDM golden-record deduplication, SRE write-mix telemetry, controlled maintenance compaction, and declarative search indexing."
+    }
+  ],
+  "examRevisionNotes": [
+    {
+      "topic": "Creating New Tables With SELECT INTO and WHERE",
+      "mustKnow": "SELECT INTO creates and fills a new table in one step; it copies names, types, and matching rows but no constraints or indexes",
+      "keyFormula": "",
+      "commonPitfall": "Re-running SELECT INTO fails because the target table now exists; inside PL/pgSQL, INTO means variable assignment, not table creation",
+      "quickCheck": "What happens to the source table when SELECT INTO copies some of its rows?",
+      "connections": [
+        "46.2",
+        "46.3"
+      ]
+    },
+    {
+      "topic": "SELECT INTO With JOIN, Computed Columns, ORDER BY, and Subqueries",
+      "mustKnow": "Any shaped query (joins, arithmetic, ORDER BY NULLS LAST, LIMIT) can be frozen into a table via SELECT INTO FROM (subquery) AS alias",
+      "keyFormula": "\\[total\\_revenue = revenues\\_domestic + revenues\\_international\\]",
+      "commonPitfall": "Forgetting the subquery alias, or using ORDER BY positions that shift when columns are added",
+      "quickCheck": "Why must the subquery in FROM carry an alias?",
+      "connections": [
+        "46.1",
+        "46.3"
+      ]
+    },
+    {
+      "topic": "Duplicating a Table With and Without Data",
+      "mustKnow": "CREATE TABLE AS copies structure plus rows; WITH NO DATA copies structure only; neither copies constraints or indexes",
+      "keyFormula": "",
+      "commonPitfall": "Assuming constraints, keys, and indexes carry over; they do not",
+      "quickCheck": "How do you make an empty structural copy of a table?",
+      "connections": [
+        "46.1",
+        "46.2"
+      ]
+    },
+    {
+      "topic": "Importing Data From CSV Files",
+      "mustKnow": "CSV import is create-then-\\copy with explicit column list, DELIMITER, and CSV HEADER; \\copy is client-side, COPY is server-side",
+      "keyFormula": "",
+      "commonPitfall": "Forgetting CSV HEADER loads header names as a fake data row; wrong delimiter stuffs whole lines into one column",
+      "quickCheck": "Why does the \\copy column list leave out the SERIAL key?",
+      "connections": [
+        "46.5"
+      ]
+    },
+    {
+      "topic": "Exporting Data From a Table to CSV",
+      "mustKnow": "COPY/\\copy TO with DELIMITER and CSV HEADER mirrors import; counts in and out must match on a full round trip",
+      "keyFormula": "",
+      "commonPitfall": "Using server-side COPY to a client-only path fails; omitting HEADER ships a headerless file",
+      "quickCheck": "When should you use \\copy TO instead of COPY TO?",
+      "connections": [
+        "46.4"
+      ]
+    },
+    {
+      "topic": "Finding and Deleting Duplicate Rows",
+      "mustKnow": "HAVING COUNT(*) > 1 proves single-column repeats; ROW_NUMBER partitioned listing proves full-row repeats; DELETE USING with < keeps the later copy",
+      "keyFormula": "\\[count(\\ast) > 1\\]",
+      "commonPitfall": "Deleting before proving repeats; forgetting that NULLs group together",
+      "quickCheck": "What does dup_row > 1 select in the window-function lister?",
+      "connections": [
+        "46.7"
+      ]
+    },
+    {
+      "topic": "How Inserts, Updates, and Deletes Change Table Size",
+      "mustKnow": "UPDATE writes a new row image and keeps the old as a dead row; DELETE hides the row but leaves its image until vacuum",
+      "keyFormula": "",
+      "commonPitfall": "Sizing disk for live rows only while updates quietly double the footprint",
+      "quickCheck": "After updating every row once, how many stored images exist per visible row?",
+      "connections": [
+        "46.6",
+        "46.8",
+        "46.9"
+      ]
+    },
+    {
+      "topic": "Tracking Table Size Through Insert and Update",
+      "mustKnow": "Inserts grow size proportionally; one full-table UPDATE nearly doubles bytes by adding a dead image per row",
+      "keyFormula": "\\[s\\_pretty = pg\\_size\\_pretty(pg\\_total\\_relation\\_size('table\\_vacuum'))\\]",
+      "commonPitfall": "Reading equal row counts as equal bytes when dead rows differ",
+      "quickCheck": "Why did 160000 updated rows nearly double the table instead of adding a little?",
+      "connections": [
+        "46.7",
+        "46.9"
+      ]
+    },
+    {
+      "topic": "The Autovacuum Background Process",
+      "mustKnow": "Autovacuum runs about every minute, marks dead space reusable inside, pairs with auto-analyze, and never returns bytes to the OS",
+      "keyFormula": "",
+      "commonPitfall": "Expecting autovacuum to shrink the file; it only reuses space inside",
+      "quickCheck": "After two autovacuum passes the table still reads 11 MB. Why?",
+      "connections": [
+        "46.8",
+        "46.10"
+      ]
+    },
+    {
+      "topic": "Reclaiming Space With Hand-Run VACUUM",
+      "mustKnow": "Plain VACUUM reuses space inside with light locking; VACUUM FULL rewrites the table, returns bytes, needs exclusive lock, permission, and no enclosing transaction",
+      "keyFormula": "",
+      "commonPitfall": "Running database-wide VACUUM FULL on a live system or wrapping VACUUM in a transaction block",
+      "quickCheck": "Why did size stay 11 MB after plain VACUUM but drop to 5664 kB after VACUUM FULL?",
+      "connections": [
+        "46.9",
+        "46.8"
+      ]
+    },
+    {
+      "topic": "Auto Generated Columns",
+      "mustKnow": "GENERATED ALWAYS AS (expr) STORED requires PostgreSQL 12+, must be row-local and immutable, cannot chain generated columns, allows B-tree indexing but prohibits partition keys, and requires SELECT-wrapping for COPY/dump export.",
+      "keyFormula": "\\[area = w \\times h\\]",
+      "commonPitfall": "Attempting direct insertion into generated columns, using volatile functions like now(), or expecting COPY/pg_dump to output generated values without a query wrapper.",
+      "quickCheck": "Why does standard COPY t TO STDOUT omit generated columns by default, and how do you include them?",
+      "connections": [
+        "46.1",
+        "46.2",
+        "46.10"
+      ]
+    },
+    {
+      "topic": "Exam Guidance Summary",
+      "mustKnow": "Key examinable facts: SELECT INTO copies data without constraints, subqueries in FROM require aliases, UPDATE doubles table footprint under MVCC, autovacuum reuses FSM space without OS return, VACUUM FULL takes exclusive locks and cannot run in transactions, and GENERATED ALWAYS AS STORED requires immutable row-local logic.",
+      "keyFormula": "\\[total\\_revenue = revenues\\_domestic + revenues\\_international\\]",
+      "commonPitfall": "Running VACUUM FULL during live production traffic, executing VACUUM inside a transaction, or attempting to chain generated columns.",
+      "quickCheck": "Why does a table updated across all rows nearly double in physical storage size?",
+      "connections": [
+        "46.1",
+        "46.2",
+        "46.6",
+        "46.8",
+        "46.10",
+        "46.11"
+      ]
+    },
+    {
+      "topic": "Key Industry Applications",
+      "mustKnow": "Real-world database systems depend on SELECT INTO for reporting marts, \\copy for automated reference data seeding, window deduplication for golden records, write-mix capacity planning for MVCC bloat control, off-peak VACUUM FULL maintenance for storage reclamation, and generated columns for trigger-free search indexing.",
+      "keyFormula": "",
+      "commonPitfall": "Ignoring write-amplification and dead-tuple accumulation in update-heavy OLTP workloads or running uncoordinated VACUUM FULL during peak hours.",
+      "quickCheck": "Why do enterprise DBRE teams redirect read traffic to read replicas before executing VACUUM FULL?",
+      "connections": [
+        "46.2",
+        "46.4",
+        "46.6",
+        "46.8",
+        "46.10",
+        "46.11"
+      ]
+    }
+  ]
+}
+</script>
+</head>
+<body>
+  <div class="container">
+    <!-- ============================================================
+    HERO HEADER
+    ============================================================ -->
+    <header class="hero-header">
+      <span class="subject-badge">SQL</span>
+      <h1 class="lecture-title">Managing Tables</h1>
+      <div class="meta-info">
+        <div class="meta-item"><strong>Published:</strong> 2026-09-23</div>
+        <div class="meta-item"><strong>Level:</strong> postgraduate</div>
+        <div class="meta-item"><strong>Audience:</strong> Postgraduate and undergraduate students learning PostgreSQL database administration and SQL table management</div>
+      </div>
+    </header>
+
+    <!-- ============================================================
+    PREREQUISITE KNOWLEDGE
+    Optional section listing concepts from previous lectures that this
+    lecture builds on. Populated by Agent 3 from topic_mappings/*.yaml.
+    If no prerequisites exist, this section is omitted entirely.
+    ============================================================ -->
+        <section class="prerequisite-section">
+      <h2>Prerequisite Knowledge</h2>
+      <p class="prerequisite-intro">This lecture builds on the following
+      concepts from earlier lectures. If any feel unfamiliar, review the
+      linked notes before proceeding.</p>
+
+      <div class="prerequisite-entry">
+        <h3>Previously Covered in This Subject</h3>
+        <ul>
+          <li><strong>Creating and Modifying Base Tables</strong> — covered in Lecture 2</li>
+          <li><strong>Updating and Deleting Rows Safely</strong> — covered in Lecture 3</li>
+          <li><strong>Filtering Aggregated Groups with GROUP BY and HAVING</strong> — covered in Lecture 16</li>
+          <li><strong>Self-Joins for Duplicate Detection</strong> — covered in Lecture 17</li>
+          <li><strong>Database and Relation Size Functions</strong> — covered in Lecture 45</li>
+          <li><strong>MVCC Architecture, Live and Dead Tuples, and Table Bloat</strong> — covered in Lecture 45</li>
+        </ul>
+      </div>
+    </section>
+
+    <!-- ============================================================
+    MAIN LECTURE-FAITHFUL CONTENT
+    Page title = one h1.lecture-title
+    Each section = one h2.section-title
+    Each subsection = one h3.subsection-title
+    Callout boxes: .key-concept (blue), .important-note (violet),
+      .example-box (green), .warning-box (red), .key-takeaway (amber)
+    Display math: auto-scrolls via mjx-container CSS; .eqbox wrapper optional
+    ============================================================ -->
+    <main>
+<p class="lecture-intro">Managing Tables: creating tables with SELECT INTO, duplicating schemas with CREATE TABLE AS, importing and exporting CSV data, deduplicating records, diagnosing MVCC bloat, running VACUUM, and defining generated columns.</p>
+
+<h2 id="46.1-creating-new-tables-with-select-into-and-where">46.1 Creating New Tables With SELECT INTO and WHERE</h2>
+<h3 id="46.1.1-idea-and-syntax">46.1.1 Idea and Syntax</h3>
+<div class="important-note">
+  <p>What if a query could leave a brand-new table behind as its answer, instead of just flashing rows on the screen?</p>
+</div>
+<p>A common task is to make a new table straight from the rows returned by a query. In PostgreSQL the <code>SELECT ... INTO</code> form does two jobs at once. It creates a fresh table and fills it with the query result. No separate <code>CREATE TABLE</code> step is needed first.</p>
+<div class="important-note">
+  <p>Think of taking a photo of a bookshelf and getting an actual second bookshelf holding copies of just the books you pointed at. The original shelf keeps every book. The new shelf holds only the copies. That is <code>SELECT INTO</code>: a snapshot query that leaves a real table behind. The picture breaks down in one place: unlike a photo, the copy is live data you can update, join, and index on its own.</p>
+</div>
+<div class="key-concept">
+  <p>The shape of the statement is simple. List the columns wanted after <code>SELECT</code>. Put <code>INTO</code> plus the new table name next. Then give the source with <code>FROM</code> plus the old table name. Add <code>WHERE</code> plus a condition when only some rows should move over.</p>
+  <pre><code>SELECT column_list
+INTO new_table_name
+FROM original_table_name
+WHERE condition;</code></pre>
+  <p>An asterisk <code>*</code> means all columns. A new table gets the same column names, matching column types, and the stored values from the rows that pass the filter. Later queries can read that new table like any other table.</p>
+</div>
+<p>What exactly carries over, and what does not? Column names, data types, and the copied row values carry over. Constraints, primary keys, foreign keys, indexes, and default values do <strong>not</strong> carry over. The new table is a plain table with plain columns. If the new <code>movies_pg</code> table needs its own primary key or index later, add it with a separate <code>ALTER TABLE</code> or <code>CREATE INDEX</code> step.</p>
+<p>Across database systems the same idea wears different names, which helps when moving between them. PostgreSQL and SQL Server both accept <code>SELECT ... INTO new_table FROM ...</code>. MySQL does <strong>not</strong> use <code>SELECT INTO</code> for making tables; it uses <code>CREATE TABLE new_table AS SELECT ...</code> instead (in MySQL, <code>SELECT ... INTO</code> means writing into variables or an output file). Snowflake and Databricks also use the <code>CREATE TABLE ... AS SELECT</code> form, usually called CTAS. Oracle uses CTAS as well. So <code>SELECT INTO</code> in this lecture is the PostgreSQL spelling of a widely shared idea.</p>
+<div class="warning-box">
+  <p><strong>Scope:</strong> <code>SELECT INTO</code> works when the target table does <strong>not</strong> exist yet. If <code>movies_pg</code> already exists, the statement stops with an error instead of appending. To add rows to an existing table, use <code>INSERT INTO ... SELECT ...</code> instead. <strong>Assumption:</strong> the role running the command has permission to create tables in the current schema, and the new table lands in the same schema as the session default unless the name is schema-qualified.</p>
+</div>
+<div class="warning-box">
+  <p>Two traps catch beginners. First, running the statement twice fails the second time, because the table now exists; drop the table or pick a new name before re-running. Second, inside a PL/pgSQL code block, <code>SELECT ... INTO</code> takes a different meaning: it stores values into declared variables instead of making a table. Keep the table-making form in plain SQL sessions, and use <code>CREATE TABLE AS</code> inside procedural code when a real table is wanted.</p>
+</div>
+<div class="key-takeaway">
+  <p><code>SELECT INTO</code> builds a fresh table from a query result in one step, copying column names, types, and matching rows, but no constraints or indexes. Next, the same form stretches to joins, computed columns, sorting, and saved subqueries.</p>
+</div>
+<h3 id="46.1.2-worked-example-filtering-english-movies-rated-pg">46.1.2 Worked Example Filtering English Movies Rated PG</h3>
+<p>The <code>movies</code> table holds one row per film. One of its columns is <code>age_certificate</code>, which stores values such as PG. The goal is a smaller table called <code>movies_pg</code> that holds only English-language films whose age rating is PG.</p>
+<div class="example-box">
+  <p>First the full table is inspected, to see the certificate values before filtering:</p>
+  <pre><code>SELECT * FROM movies;</code></pre>
+  <p>The output shows every movie plus its age certificate column. The rows of interest are the ones where that column equals PG.</p>
+  <p>Then the new table is built in one step:</p>
+  <pre><code>SELECT *
+INTO movies_pg
+FROM movies
+WHERE age_certificate = 'PG';</code></pre>
+  <p>The command reports success. A check of the table list shows <code>movies_pg</code> sitting next to the other tables, with the same columns carried over.</p>
+  <p>Its content is confirmed with:</p>
+  <pre><code>SELECT * FROM movies_pg;</code></pre>
+  <p>Every row returned carries a PG rating. The rest of the films stay only in the original <code>movies</code> table. Nothing is removed from the source. The operation copies matching rows into the new home. <strong>Sense-check:</strong> counting rows in both tables shows the new table holds fewer rows than the source, and every certificate value in the new table reads PG.</p>
+</div>
+<p>Picture the result as a bar chart of film counts by certificate, with one bar per rating. The source table shows the full chart. The new table shows only the PG bar, lifted out into its own chart with the same column labels. The takeaway: filtering plus saving gives a stable slice that later queries can read without repeating the filter.</p>
+<p>Reporting teams use this pattern daily. A marketing analyst pulls this week's PG-rated English titles into a small table, then builds charts and follow-up joins from that stable slice while the main catalog keeps changing underneath.</p>
+<h3 id="46.1.3-student-questions-and-answers">46.1.3 Student Questions and Answers</h3>
+<div class="important-note">
+  <p><strong>Q:</strong> Does <code>SELECT INTO</code> delete or move rows out of the old table?</p>
+  <p><strong>A:</strong> No. The source table keeps all its rows. Matching rows are copied into the new table. The source stays complete. The word <code>INTO</code> describes where copies land, not a move. To remove rows from the source, a separate <code>DELETE</code> statement is needed.</p>
+</div>
+
+<h2 id="46.2-select-into-with-join-computed-columns-order-by-and-subqueries">46.2 SELECT INTO With JOIN, Computed Columns, ORDER BY, and Subqueries</h2>
+<h3 id="46.2.1-combining-tables-and-shaping-the-result-before-saving">46.2.1 Combining Tables and Shaping the Result Before Saving</h3>
+<div class="important-note">
+  <p>What if the saved table needs columns that exist nowhere yet, like a total that must be computed first?</p>
+</div>
+<p><code>SELECT INTO</code> is not limited to one table plus <code>WHERE</code>. Joins, column arithmetic, sorting, null handling, limits, and subqueries all work inside it. That makes it a short path from an analytic question to a saved result table.</p>
+<p>The pattern used here has three parts. An inner query joins sources, builds a computed column, sorts, and trims. An outer <code>SELECT * INTO new_table FROM (inner_query) AS alias</code> wrapper saves that shaped result.</p>
+<div class="key-concept">
+  <p>The computed column in this part is <em>total revenue</em> (domestic plus overseas takings for one film), written <code>total_revenue</code>. The verbal rule is total revenue equals domestic revenue plus international revenue. With \(revenues\_domestic\) for home-market takings and \(revenues\_international\) for overseas takings, both in money units, and \(total\_revenue\) for their sum, also in money units:</p>
+  <p>\[total\_revenue = revenues\_domestic + revenues\_international\]</p>
+  <p>Take a tiny case: a film with \(revenues\_domestic = 100\) and \(revenues\_international = 50\) gives \(total\_revenue = 100 + 50 = 150\). When either input is missing (<code>NULL</code>), the sum is missing too, which is why null placement in sorting matters below.</p>
+</div>
+<p>Sorting uses a column position number, with <code>NULLS LAST</code> pushing missing values to the end, and <code>LIMIT 10</code> keeping only the first ten rows. The alias on the subquery is required. Without it PostgreSQL stops with an error.</p>
+<p>Why does <code>NULLS LAST</code> matter here? A film with no reported revenue would otherwise float into the top ten on some systems and push a real earner out. The professor's point is that missing revenue must never crowd the top ten, so nulls are pinned to the bottom. Note a cross-system detail that helps when switching databases: null ordering defaults differ. In PostgreSQL, nulls sort first on descending sorts unless told otherwise; in MySQL, nulls sort first on ascending sorts. Writing <code>NULLS LAST</code> out in full keeps the intent fixed on every system that accepts the keywords. On MySQL, which lacks the keywords, the same effect takes an <code>ORDER BY total_revenue IS NULL, total_revenue DESC</code> shape.</p>
+<div class="warning-box">
+  <p><strong>Scope:</strong> positional sorting such as <code>ORDER BY 5</code> counts columns left to right in the select list, starting at 1. It works in PostgreSQL, but it is fragile: adding one column shifts every position after it, exactly as happens in this lecture when the sort key moves from 7 to 8. <strong>Assumption:</strong> the inner query returns its columns in a fixed order, so the position number points at the intended column. Prefer naming the alias (<code>ORDER BY total_revenue DESC NULLS LAST</code>) in saved work, since names survive column additions.</p>
+</div>
+<div class="key-takeaway">
+  <p>Any full query, including joins, arithmetic, sorting, and limits, can be wrapped in <code>SELECT INTO</code> to freeze its answer as a table. Next, that pattern runs on real movie and revenue tables.</p>
+</div>
+<h3 id="46.2.2-worked-example-top-ten-movies-by-total-revenue">46.2.2 Worked Example Top Ten Movies by Total Revenue</h3>
+<p>Two tables matter here. The <code>movies</code> table is aliased <code>mv</code> and holds identifiers such as <code>movie_id</code> and <code>movie_name</code>. The <code>movies_revenues</code> table is aliased <code>r</code> and holds <code>movie_id</code>, <code>revenues_domestic</code>, and <code>revenues_international</code>. The shared key is the movie identifier.</p>
+<div class="example-box">
+  <p>The join is built first with <code>SELECT *</code> to confirm the link works:</p>
+  <pre><code>SELECT *
+FROM movies AS mv
+INNER JOIN movies_revenues AS r
+  ON mv.movie_id = r.movie_id;</code></pre>
+  <p>The combined rows show names beside their domestic and overseas figures. Every movie identifier on the left finds its money row on the right.</p>
+  <p>Then the column list is narrowed and the computed column is added:</p>
+  <pre><code>SELECT
+  mv.movie_id,
+  mv.movie_name,
+  r.revenues_domestic,
+  r.revenues_international,
+  r.revenues_domestic + r.revenues_international AS total_revenue
+FROM movies AS mv
+INNER JOIN movies_revenues AS r
+  ON mv.movie_id = r.movie_id
+ORDER BY 5 DESC NULLS LAST
+LIMIT 10;</code></pre>
+  <p>Position 5 is the new <code>total_revenue</code> column. <code>DESC</code> puts the biggest earners first. <code>NULLS LAST</code> sends rows with missing revenue to the bottom so they never crowd the top ten. <code>LIMIT 10</code> cuts the list after ten rows, ending at the film Jaws in this data set. Trace one row: if a film shows domestic 200 and international 120, its stored total reads <strong>320</strong>.</p>
+  <p>That finished query becomes the inner part of a save step:</p>
+  <pre><code>SELECT *
+INTO top_ten_movies
+FROM (
+  SELECT
+    mv.movie_id,
+    mv.movie_name,
+    r.revenues_domestic,
+    r.revenues_international,
+    r.revenues_domestic + r.revenues_international AS total_revenue
+  FROM movies AS mv
+  INNER JOIN movies_revenues AS r
+    ON mv.movie_id = r.movie_id
+  ORDER BY 5 DESC NULLS LAST
+  LIMIT 10
+) AS top_movies;</code></pre>
+  <p>After a refresh the table <code>top_ten_movies</code> appears. Browsing it with <code>SELECT * FROM top_ten_movies;</code> shows the ten rows up to Jaws, including the stored <code>total_revenue</code> values. <strong>Sense-check:</strong> the saved table holds exactly ten rows, and reading its totals from top to bottom shows values falling, with no missing total in the list.</p>
+</div>
+<h3 id="46.2.3-worked-example-top-ten-directors-with-joined-names">46.2.3 Worked Example Top Ten Directors With Joined Names</h3>
+<p>The same revenue logic extends to three tables by adding <code>directors</code>, aliased <code>d</code>. The link from films to people is the director identifier: <code>mv.director_id</code> matches the director key in <code>d</code>. One early attempt wrote the join against the wrong alias, then fixed it to join movies to directors on the director identifier. That fix connects all three sources: movies, revenues, and directors.</p>
+<div class="example-box">
+  <p>Director columns are added beside the film columns:</p>
+  <pre><code>SELECT
+  mv.movie_id,
+  mv.movie_name,
+  d.director_id,
+  d.director_first_name,
+  r.revenues_domestic,
+  r.revenues_international,
+  r.revenues_domestic + r.revenues_international AS total_revenue
+FROM movies AS mv
+INNER JOIN movies_revenues AS r
+  ON mv.movie_id = r.movie_id
+INNER JOIN directors AS d
+  ON mv.director_id = d.director_id
+ORDER BY 7 DESC NULLS LAST
+LIMIT 10;</code></pre>
+  <p>When a last-name column joins the list, the computed total shifts one place to the right, so the sort key moves from position 7 to position 8:</p>
+  <pre><code>SELECT
+  mv.movie_id,
+  mv.movie_name,
+  d.director_id,
+  d.director_first_name,
+  d.director_last_name,
+  r.revenues_domestic,
+  r.revenues_international,
+  r.revenues_domestic + r.revenues_international AS total_revenue
+FROM movies AS mv
+INNER JOIN movies_revenues AS r
+  ON mv.movie_id = r.movie_id
+INNER JOIN directors AS d
+  ON mv.director_id = d.director_id
+ORDER BY 8 DESC NULLS LAST
+LIMIT 10;</code></pre>
+  <p>This shift is the live demo of why positional sorting is fragile: one added name column renumbers the total.</p>
+  <p>The save wrapper follows the same shape, this time into <code>top_ten_directors</code>:</p>
+  <pre><code>SELECT *
+INTO top_ten_directors
+FROM (
+  SELECT
+    mv.movie_id,
+    mv.movie_name,
+    d.director_id,
+    d.director_first_name,
+    d.director_last_name,
+    r.revenues_domestic,
+    r.revenues_international,
+    r.revenues_domestic + r.revenues_international AS total_revenue
+  FROM movies AS mv
+  INNER JOIN movies_revenues AS r
+    ON mv.movie_id = r.movie_id
+  INNER JOIN directors AS d
+    ON mv.director_id = d.director_id
+  ORDER BY 8 DESC NULLS LAST
+  LIMIT 10
+) AS top_dirs;</code></pre>
+  <p>A first try left off the alias after the closing bracket. PostgreSQL answered with an error of the form subquery in FROM must have an alias. Adding <code>AS top_dirs</code> makes the same statement succeed. Refreshing the table list shows <code>top_ten_directors</code>, and <code>SELECT * FROM top_ten_directors;</code> returns the ten director rows with names and totals. <strong>Sense-check:</strong> ten rows, names present beside each total, totals falling down the list.</p>
+</div>
+<p>The alias rule travels well: PostgreSQL and MySQL both demand an alias on every subquery in <code>FROM</code>. SQL Server, Snowflake, and Databricks Spark SQL accept the same aliased form, so writing the alias always keeps the query portable.</p>
+<h3 id="46.2.4-student-questions-and-answers">46.2.4 Student Questions and Answers</h3>
+<div class="important-note">
+  <p><strong>Q:</strong> Can <code>SELECT INTO</code> combine joins, sorting, computed columns, and limits in one step?</p>
+  <p><strong>A:</strong> Yes. The inner query can hold joins, arithmetic such as domestic plus international revenue, <code>ORDER BY</code> with <code>NULLS LAST</code>, and <code>LIMIT</code>. The outer <code>SELECT INTO</code> then saves that whole shaped result. Several students asked versions of this, and the answer is the same each time: shape first, save second.</p>
+</div>
+<div class="important-note">
+  <p><strong>Q:</strong> Why did the subquery version fail with a missing alias error?</p>
+  <p><strong>A:</strong> PostgreSQL requires every subquery in <code>FROM</code> to carry an alias. Adding a name such as <code>AS top_dirs</code> after the closing bracket fixes it. The query then runs and the new table is created. The alias gives the database a name for the temporary result it must read from.</p>
+</div>
+<h3 id="46.2.5-practical-notes">46.2.5 Practical Notes</h3>
+<p>Saving a top-ten profitable-films table is a standard reporting step. Analysts keep the query result as a table so charts and follow-up joins read from stable data while the source catalog keeps changing. A dashboard that reads <code>top_ten_movies</code> never slows down the live revenue feed, and re-running the month-end report gives the same frozen ten.</p>
+<div class="warning-box">
+  <p>One caution carries over from the source: <code>SELECT INTO</code> in its plain SQL form behaves differently inside procedural code blocks, where <code>INTO</code> takes another meaning. In PL/pgSQL, <code>SELECT ... INTO some_variable</code> stores one row into a variable instead of creating a table. Keep the table-making form in plain SQL sessions. Inside functions and procedures, prefer <code>CREATE TABLE ... AS SELECT ...</code> for making tables, and reserve <code>SELECT INTO</code> for variable assignment.</p>
+</div>
+<div class="key-takeaway">
+  <p>Joins, arithmetic, ordering with null control, limits, and aliased subqueries all fit inside a saved query, so the analytic question and the stored answer stay one step. Next, a second copy form duplicates tables with or without their rows.</p>
+</div>
+
+<h2 id="46.3-duplicating-a-table-with-and-without-data">46.3 Duplicating a Table With and Without Data</h2>
+<h3 id="46.3.1-create-table-as-and-with-no-data">46.3.1 CREATE TABLE AS and WITH NO DATA</h3>
+<div class="important-note">
+  <p>Need a practice copy of a table to try risky operations on, without touching the real data?</p>
+</div>
+<p>A second way to copy a table is <code>CREATE TABLE ... AS</code> followed by a <code>SELECT</code>. With a plain <code>SELECT *</code> the structure and all rows move over. With <code>WITH NO DATA</code> added at the end, only the structure moves over and the new table starts empty.</p>
+<div class="key-concept">
+  <pre><code>CREATE TABLE new_table AS
+SELECT * FROM original_table;</code></pre>
+  <pre><code>CREATE TABLE new_table AS
+SELECT * FROM original_table
+WITH NO DATA;</code></pre>
+  <p>Think of the first as photocopying pages plus words, and the second as photocopying blank lined paper with the same margins. Column names and types carry across in both cases. Like <code>SELECT INTO</code>, this form copies names, types, and values, but not constraints, keys, indexes, or defaults.</p>
+</div>
+<p>How do the two copy forms compare? <code>SELECT INTO new_table FROM ...</code> and <code>CREATE TABLE new_table AS SELECT ...</code> do nearly the same job in PostgreSQL. <code>CREATE TABLE AS</code> is the more standard spelling across systems, and it alone offers extras such as <code>WITH NO DATA</code> and <code>IF NOT EXISTS</code>. For an empty framed copy on systems without <code>WITH NO DATA</code>, the portable trick from the SQL Cookbook is a condition that is never true: <code>CREATE TABLE jobs3 AS SELECT * FROM jobs WHERE 1 = 0;</code>. On SQL Server the matching empty-copy trick is <code>SELECT * INTO jobs3 FROM jobs WHERE 1 = 0;</code>. IBM Db2 offers a dedicated <code>CREATE TABLE ... LIKE</code> form for copying structure. And MySQL, which lacks <code>SELECT INTO</code> for tables, uses <code>CREATE TABLE ... AS SELECT ...</code> or <code>CREATE TABLE ... LIKE ...</code> for both jobs. Snowflake and Databricks use CTAS widely, with options such as <code>CREATE TABLE ... CLONE</code> (Snowflake zero-copy clone) going even further.</p>
+<div class="warning-box">
+  <p><strong>Scope:</strong> <code>WITH NO DATA</code> copies the shape but runs the query without moving rows, so it is cheap even on huge tables. <strong>Assumption:</strong> the target name is free, and constraints must be re-added by hand afterward if the copy needs them.</p>
+</div>
+<div class="warning-box">
+  <p>The common trap is assuming the copy is a full twin. It is not: no primary key, no foreign keys, no unique rules, no defaults, and no indexes come along. A duplicate built for load testing may run slower than the original simply because its indexes are missing.</p>
+</div>
+<div class="key-takeaway">
+  <p><code>CREATE TABLE AS</code> clones a table with or without its rows, giving a safe sandbox or an empty frame on demand. Next, outside data enters through CSV import.</p>
+</div>
+<h3 id="46.3.2-worked-example-copying-the-jobs-table-both-ways">46.3.2 Worked Example Copying the Jobs Table Both Ways</h3>
+<div class="example-box">
+  <p>The <code>jobs</code> table is the source. A look first confirms 19 rows:</p>
+  <pre><code>SELECT * FROM jobs;</code></pre>
+  <p>A full copy called <code>jobs2</code> is made with:</p>
+  <pre><code>CREATE TABLE jobs2 AS
+SELECT * FROM jobs;</code></pre>
+  <p>After refresh, <code>jobs2</code> sits in the table list with matching columns such as the job identifier. Reading it back:</p>
+  <pre><code>SELECT * FROM jobs2;</code></pre>
+  <p>returns the same 19 rows. Structure and content both match: 19 source rows in, <strong>19 copy rows</strong> out.</p>
+  <p>A structure-only copy called <code>jobs3</code> is made with:</p>
+  <pre><code>CREATE TABLE jobs3 AS
+SELECT * FROM jobs
+WITH NO DATA;</code></pre>
+  <p>Its columns match the source exactly. Reading it back:</p>
+  <pre><code>SELECT * FROM jobs3;</code></pre>
+  <p>returns zero rows. The frame is there with no rows inside: same columns, <strong>0 rows</strong>. <strong>Sense-check:</strong> comparing counts gives 19 for the source, 19 for <code>jobs2</code>, and 0 for <code>jobs3</code>, which is exactly the expected pattern.</p>
+  <p>Cleanup uses drops to keep the database tidy:</p>
+  <pre><code>DROP TABLE jobs2;
+DROP TABLE jobs3;</code></pre>
+</div>
+<p>Test copies like <code>jobs2</code> serve real duty: trying a bulk update or a schema change on the copy first shows what would break, while the live table stays safe.</p>
+<h3 id="46.3.3-student-questions-and-answers">46.3.3 Student Questions and Answers</h3>
+<div class="important-note">
+  <p><strong>Q:</strong> How do we check that a full copy worked and an empty copy stayed empty?</p>
+  <p><strong>A:</strong> Compare row counts. <code>SELECT * FROM jobs2</code> should return 19 rows like the source. <code>SELECT * FROM jobs3</code> should return zero rows with matching columns. A count query such as <code>SELECT COUNT(*) FROM jobs2;</code> gives the same proof in one number.</p>
+</div>
+
+<h2 id="46.4-importing-data-from-csv-files">46.4 Importing Data From CSV Files</h2>
+<h3 id="46.4.1-steps-and-preparation">46.4.1 Steps and Preparation</h3>
+<div class="important-note">
+  <p>A vendor sends 249 country codes in a spreadsheet file. How do those rows get inside the database without 249 hand-typed inserts?</p>
+</div>
+<p>Bringing comma-separated values into PostgreSQL takes two stages. First create a receiving table with fitting types. Then load the file with the <code>psql</code> meta-command <code>\copy</code>, giving the target columns, the file path, the delimiter, and a header flag when the first line holds names.</p>
+<div class="key-concept">
+  <p>The two stages are: <strong>(1)</strong> <em>create the receiving table</em> (choose a key plus columns with types sized to the data), and <strong>(2)</strong> <em>run the load</em> (name the table, name the columns, point at the file, state the delimiter, and say whether a header line leads the file). The sample file is <code>country_iso_code.csv</code>, taken from the course resource attachment. It holds about 268 rows, one per place, with the last row for Zimbabwe reading as name Zimbabwe, two-letter code ZW, three-letter code ZWE, region Africa, and subregion Sub-Saharan Africa. Its first line is a header row, so the load must skip it as names rather than read it as data.</p>
+</div>
+<p>A practical tip runs through the whole task. Know the file path before opening the terminal. The simplest path is to start the terminal in the folder that holds the downloaded file, so the file name alone is enough. Paths look different on Windows and Mac, so quote the full path when one is needed.</p>
+<p>The <code>\copy</code> versus <code>COPY</code> split deserves a plain telling, since it confuses every beginner once. <code>COPY</code> is a server-side SQL command: the database server reads the file, so the file must sit where the server can reach it, and only privileged roles may run it. <code>\copy</code> is a <code>psql</code> client-side helper: the terminal session reads the file from the user's own machine and streams the rows to the server, so any role with insert rights can load its own files. In class, <code>\copy</code> is the right call.</p>
+<p>Across systems the loader changes name but the two-stage shape stays. MySQL uses <code>LOAD DATA INFILE 'file.csv' INTO TABLE ... FIELDS TERMINATED BY ',' IGNORE 1 LINES;</code>. Snowflake loads from named stages with <code>COPY INTO countries FROM @my_stage/country_iso_code.csv FILE_FORMAT = (TYPE = CSV SKIP_HEADER = 1);</code>. Databricks Spark SQL uses <code>COPY INTO countries FROM 'path/country_iso_code.csv' FILEFORMAT = CSV FORMAT_OPTIONS ('header' = 'true');</code>. Learning the PostgreSQL flags first makes each of these read as the same idea: file, delimiter, header, target columns.</p>
+<div class="warning-box">
+  <p><strong>Scope:</strong> the column list in the <code>\copy</code> call must match the file's columns in order, and types must fit: a two-letter code column of width 2 rejects a three-letter value. <strong>Assumption:</strong> the file uses one row per line, commas between values, and quoted fields where a value itself holds a comma.</p>
+</div>
+<div class="warning-box">
+  <p>Three traps recur. A wrong delimiter loads whole lines into the first column. A missing <code>HEADER</code> flag loads the header names as a bogus country row. A wrong file path fails before any row moves, so confirm the path with a directory listing before launching the load.</p>
+</div>
+<div class="key-takeaway">
+  <p>CSV import is create-then-load: fit the table to the file, then stream the file in with delimiter and header flags. Next, that flow runs end to end on real country data.</p>
+</div>
+<h3 id="46.4.2-worked-example-building-and-loading-the-country-code-table">46.4.2 Worked Example Building and Loading the Country Code Table</h3>
+<div class="example-box">
+  <p>The receiving table is created with a serial key plus text fields sized to the codes:</p>
+  <pre><code>CREATE TABLE countries_iso_code (
+  country_id SERIAL PRIMARY KEY,
+  country_name VARCHAR(255),
+  iso_code_2 VARCHAR(2),
+  iso_code_3 VARCHAR(3),
+  region VARCHAR(200),
+  sub_region VARCHAR(200)
+);</code></pre>
+  <p>Note the column list in the load below leaves out <code>country_id</code>: the serial key fills itself, so the file needs only the five data columns.</p>
+  <p>After refresh the empty <code>countries_iso_code</code> table appears under the movies database. Then a terminal session connects to the right database:</p>
+  <pre><code>psql -h localhost -d movies -U postgres</code></pre>
+  <p>with password <code>welcome</code> in this setup. Inside that session the load names the table, the columns, the file, the comma delimiter, and the header flag:</p>
+  <pre><code>\copy countries_iso_code(country_name, iso_code_2, iso_code_3, region, sub_region)
+FROM 'country_iso_code.csv'
+DELIMITER ','
+CSV HEADER;</code></pre>
+  <p>The report says 249 rows copied into the table. A read-back confirms it:</p>
+  <pre><code>SELECT * FROM countries_iso_code;</code></pre>
+  <p>The rows include identifiers plus names, two-letter and three-letter codes, regions, and subregions. The final rows show Zimbabwe with ZW, ZWE, Africa, and Sub-Saharan Africa. <strong>Sense-check:</strong> the serial keys run unbroken from 1 upward, every two-letter code is exactly two characters, and the last row reads Zimbabwe, so the file landed in the right columns.</p>
+</div>
+<p>Picture a funnel diagram: the wide top is the raw CSV file, the narrow neck is the five named columns plus delimiter and header flags, and the clean stream below is 249 typed rows landing in the table. The takeaway: the flags are the neck of the funnel, and each one must match the file.</p>
+<p>This two-stage create-then-copy flow is the normal way teams seed reference tables such as country codes. A data team downloads the vendor file, fits a lookup table to it once, and reloads the file on each vendor update.</p>
+<h3 id="46.4.3-student-questions-and-answers">46.4.3 Student Questions and Answers</h3>
+<div class="important-note">
+  <p><strong>Q:</strong> Must the terminal be able to reach the CSV file path?</p>
+  <p><strong>A:</strong> Yes. Start the terminal in the file folder or pass the full quoted path in the <code>FROM</code> string. Without a reachable path the <code>\copy</code> step cannot find the file. A quick directory listing before the load proves the file is visible.</p>
+</div>
+<div class="important-note">
+  <p><strong>Q:</strong> How does the loader know the first line is a header?</p>
+  <p><strong>A:</strong> Add <code>CSV HEADER</code>. That tells the loader to treat the first line as column names and start reading data from the second line. Without it, the header names land as a fake first country row.</p>
+</div>
+
+<h2 id="46.5-exporting-data-from-a-table-to-csv">46.5 Exporting Data From a Table to CSV</h2>
+<h3 id="46.5.1-copy-to-with-delimiter-and-header">46.5.1 COPY TO With Delimiter and Header</h3>
+<div class="important-note">
+  <p>The country table is clean and curated. How does a copy of it reach a colleague who only has a spreadsheet?</p>
+</div>
+<p>Export is the mirror of import. The <code>COPY</code> command names the table, gives <code>TO</code> plus a quoted file path, and sets the delimiter and header choice. With <code>DELIMITER ','</code> values are separated by commas. With <code>CSV HEADER</code> the first output line holds column names taken from the table.</p>
+<div class="key-concept">
+  <pre><code>COPY countries_iso_code
+TO 'my_countries_iso_code.csv'
+DELIMITER ','
+CSV HEADER;</code></pre>
+  <p>In an interactive terminal session the same call starts with <code>\copy</code> instead of <code>COPY</code>:</p>
+  <pre><code>\copy countries_iso_code
+TO 'my_countries_iso_code.csv'
+DELIMITER ','
+CSV HEADER;</code></pre>
+  <p>Use <code>\copy</code> when working inside <code>psql</code> as an ordinary user: the file lands on the client machine, where it can be opened at once. Use server-side <code>COPY</code> only when the file should land on the database server's own disk and the role holds the needed privilege. To export a filtered slice instead of the whole table, replace the table name with a query: <code>COPY (SELECT * FROM countries_iso_code WHERE region = 'Africa') TO 'africa.csv' DELIMITER ',' CSV HEADER;</code>.</p>
+</div>
+<p>Other systems mirror the idea with their own verbs. MySQL writes files with <code>SELECT * FROM countries INTO OUTFILE 'my_countries.csv' FIELDS TERMINATED BY ',' ENCLOSED BY '\"' LINES TERMINATED BY '\n';</code>. Snowflake unloads with <code>COPY INTO @my_stage/my_countries.csv FROM countries FILE_FORMAT = (TYPE = CSV HEADER = TRUE);</code>. Databricks writes with <code>COPY (SELECT * FROM countries) TO 'path/my_countries' FILEFORMAT = CSV</code>. Same mirror, different spelling.</p>
+<div class="warning-box">
+  <p><strong>Scope:</strong> server-side <code>COPY TO</code> needs a path the server process can write and rights to write there; client-side <code>\copy TO</code> needs only a path the terminal user can write. <strong>Assumption:</strong> commas inside values are quoted on write so the round trip reads them back correctly.</p>
+</div>
+<div class="warning-box">
+  <p>Two traps: exporting with server-side <code>COPY</code> to a client-only path fails with a permission error, and exporting without <code>HEADER</code> hands the colleague a file whose first data row looks like headings. Match the command to the machine and keep the header flag.</p>
+</div>
+<div class="key-takeaway">
+  <p>Export mirrors import: name the table or query, point <code>TO</code> a path, and set delimiter plus header. Next, attention turns to cleaning repeats out of tables.</p>
+</div>
+<h3 id="46.5.2-worked-example-writing-249-country-rows-to-a-new-file">46.5.2 Worked Example Writing 249 Country Rows to a New File</h3>
+<div class="example-box">
+  <p>Logged into the movies database from the terminal, the export of the full country table is run as above. The report says 249 rows copied out. Listing files shows <code>my_countries_iso_code.csv</code> now present. Opening it in an editor such as Vim shows the header line first, then comma-separated data rows from the table. <strong>Sense-check:</strong> the file's line count equals 249 data lines plus 1 header line, and the import count (249) matches the export count (249), closing the round trip exactly.</p>
+  <p>That round trip, CSV in, table work, CSV out, keeps outside tools and the database in step. Teams export reference extracts this way before sharing them with spreadsheet users or loading them elsewhere.</p>
+</div>
+
+<h2 id="46.6-finding-and-deleting-duplicate-rows">46.6 Finding and Deleting Duplicate Rows</h2>
+<h3 id="46.6.1-spotting-repeats-with-group-by-and-having">46.6.1 Spotting Repeats With GROUP BY and HAVING</h3>
+<div class="important-note">
+  <p>A customer table holds the same email twice. Before deleting anything, how do you prove which values repeat?</p>
+</div>
+<p>A repeat means the same value appears in more than one row. The quick detector groups by the value column, counts rows per group with \(count(\ast)\), and keeps groups whose count is greater than one:</p>
+<p>\[count(\ast) > 1\]</p>
+<p>In words, keep only colors whose row count is greater than one. That shortlist names the duplicated values without yet touching them.</p>
+<div class="key-concept">
+  <p>The detector reads in three moves: <code>GROUP BY color</code> gathers one bucket per value, <code>COUNT(*)</code> counts rows inside each bucket (here \(count(\ast)\) counts every row in the bucket), and <code>HAVING COUNT(*) > 1</code> keeps only buckets with at least two rows. <code>HAVING</code> filters groups after grouping, while <code>WHERE</code> filters rows before grouping, which is why the count test belongs in <code>HAVING</code>.</p>
+</div>
+<p>Why prove first? Deleting by hunch risks wiping rows that only look alike. The grouped count is the proof: it returns the duplicated values and their counts, so the delete step that follows has a named target and an expected survivor count.</p>
+<div class="warning-box">
+  <p><strong>Scope:</strong> this detector answers "which single-column values repeat". When sameness spans several columns, group by the full column set or switch to the window-function lister in 46.6.3. <strong>Assumption:</strong> <code>NULL</code> values group together in PostgreSQL, so two missing colors count as a repeated group; decide beforehand whether missing values are true repeats.</p>
+</div>
+<div class="key-takeaway">
+  <p>Group, count, and keep counts above one: that shortlist is the safe target list for every delete that follows. Next, the detector and the delete run on a tiny table.</p>
+</div>
+<h3 id="46.6.2-worked-example-small-colors-table-and-self-join-delete">46.6.2 Worked Example Small Colors Table and Self-Join Delete</h3>
+<div class="example-box">
+  <p>A tiny demo table is built:</p>
+  <pre><code>CREATE TABLE colors (
+  color_id SERIAL PRIMARY KEY,
+  color VARCHAR(100)
+);</code></pre>
+  <p>It starts empty. Inserts add blue once, green twice, red once, and yellow once:</p>
+  <pre><code>INSERT INTO colors (color) VALUES
+  ('blue'),
+  ('green'),
+  ('green'),
+  ('red'),
+  ('yellow');</code></pre>
+  <p>Reading it back:</p>
+  <pre><code>SELECT * FROM colors;</code></pre>
+  <p>shows blue on identifier 1, then green on identifiers 2 and 3, then red on 4 and yellow on 5.</p>
+  <p>The detector query is:</p>
+  <pre><code>SELECT color, COUNT(*)
+FROM colors
+GROUP BY color
+HAVING COUNT(*) &gt; 1
+ORDER BY color;</code></pre>
+  <p>It returns one row: green with count <strong>2</strong>. That matches the two green rows seen above. Every other color counts 1 and drops out.</p>
+  <p>Removal on a small table uses <code>DELETE ... USING</code> as a self-join. Table <code>a</code> is the candidate to delete. Table <code>b</code> is the same table used as a partner. Rows drop when the first identifier is smaller and the color matches:</p>
+  <pre><code>DELETE FROM colors AS a
+USING colors AS b
+WHERE a.color_id &lt; b.color_id
+  AND a.color = b.color;</code></pre>
+  <p>Trace the green pair: row 2 finds partner row 3 with a smaller identifier, so row 2 drops. Row 3 finds no partner with a larger identifier, so row 3 stays. After success, <code>SELECT * FROM colors;</code> shows one green left, and it carries the larger identifier 3. The smaller identifier went away because the condition kept the later copy. The kept-versus-removed choice follows straight from the less-than direction: flip <code><</code> to <code>></code> and the earlier copy survives instead. <strong>Sense-check:</strong> four rows remain, one per color, and the surviving green carries identifier 3.</p>
+</div>
+<p>Picture the pair as two numbered tickets for the same seat. The rule tears up the lower-numbered ticket and keeps the higher one. The takeaway: the comparison direction picks the survivor.</p>
+<p>Other systems delete repeats with their own spelling. MySQL joins the table to itself in a multi-table delete: <code>DELETE a FROM colors a JOIN colors b ON a.color = b.color AND a.color_id < b.color_id;</code>. SQL Server and Snowflake typically number rows in a common table expression and delete the extras: <code>WITH d AS (SELECT color_id, ROW_NUMBER() OVER (PARTITION BY color ORDER BY color_id) AS n FROM colors) DELETE FROM d WHERE n > 1;</code> (SQL Server form). Databricks Delta Lake uses <code>MERGE</code> or a rewrite for the same job. The PostgreSQL <code>DELETE ... USING</code> here is one dialect of a shared pattern: pair up equal values, keep one, drop the rest.</p>
+<div class="warning-box">
+  <p>Always back up before a delete: <code>CREATE TABLE colors_backup AS SELECT * FROM colors;</code> costs one line and buys back every mistake. On a live table, test the pairing as a <code>SELECT</code> first, then convert it to the <code>DELETE</code>.</p>
+</div>
+<h3 id="46.6.3-worked-example-listing-repeats-in-larger-tables-with-a-window-function">46.6.3 Worked Example Listing Repeats in Larger Tables With a Window Function</h3>
+<p>For wider tables the grouped count is less handy, because all columns matter, not one. The stronger lister numbers rows inside each value group with the <code>ROW_NUMBER</code> window function, partitioned by the target columns and ordered by the identifier:</p>
+<div class="example-box">
+  <pre><code>SELECT *
+FROM (
+  SELECT
+    color_id,
+    color,
+    ROW_NUMBER() OVER (
+      PARTITION BY color
+      ORDER BY color_id ASC
+    ) AS dup_row
+  FROM colors
+) AS dupes
+WHERE dupes.dup_row &gt; 1;</code></pre>
+  <p>In words, restart numbering at 1 for each color, in identifier order, and keep numbered rows greater than one. Those kept rows are the extra copies. Here \(dup\_row\) is the position number inside each color group: the first green gets 1, the second gets 2, and only numbers above 1 are extras.</p>
+  <p>Trace it on greens at identifiers 3, 6, and 7: the numbering gives 3 a <code>dup_row</code> of 1, 6 a <code>dup_row</code> of 2, and 7 a <code>dup_row</code> of 3, so the outer filter returns identifiers <strong>6 and 7</strong> as the extra copies.</p>
+  <p>To show it, another green is inserted, so greens sit on identifiers 3, 6, and 7. Running the window lister flags the later copies. Targeted deletes then clear chosen extras one by one:</p>
+  <pre><code>DELETE FROM colors WHERE color_id = 7;</code></pre>
+  <pre><code>SELECT * FROM colors;</code></pre>
+  <p>now shows greens on 3 and 6 only. Repeating the delete for identifier 6 leaves one green. <strong>Sense-check:</strong> one green remains with the smallest identifier, and the grouped detector now returns zero rows. The table is dropped at the end for tidy housekeeping:</p>
+  <pre><code>DROP TABLE colors;</code></pre>
+</div>
+<h3 id="46.6.4-student-questions-and-answers">46.6.4 Student Questions and Answers</h3>
+<div class="important-note">
+  <p><strong>Q:</strong> How do we first prove which values repeat before deleting anything?</p>
+  <p><strong>A:</strong> Run the grouped count with <code>HAVING COUNT(*) > 1</code> for one column, or the <code>ROW_NUMBER</code> partitioned list for full-row repeats. Both return only the extra copies, so the delete step stays safe. Prove first, delete second, verify third.</p>
+</div>
+<div class="important-note">
+  <p><strong>Q:</strong> Why did one green survive with the larger identifier after the self-join delete?</p>
+  <p><strong>A:</strong> The condition <code>a.color_id < b.color_id</code> deletes the earlier partner and keeps the later one. The survivor holds the larger identifier by design. Reversing the comparison would keep the earlier copy instead.</p>
+</div>
+<div class="key-takeaway">
+  <p>Duplicates fall to a fixed routine: prove with a count or a window listing, delete the extras, verify one survivor. Next, the lecture turns to why tables grow even when rows are removed.</p>
+</div>
+
+<h2 id="46.7-how-inserts-updates-and-deletes-change-table-size">46.7 How Inserts, Updates, and Deletes Change Table Size</h2>
+<h3 id="46.7.1-three-operations-and-why-size-moves">46.7.1 Three Operations and Why Size Moves</h3>
+<div class="important-note">
+  <p>A table loses a thousand rows to a delete, yet its file size does not shrink. Where did the space go?</p>
+</div>
+<p>Everyday table work falls into three kinds: adding rows with insert, changing values with update, and removing rows with delete. Each kind touches storage, so table size answers by growing or, less directly, holding steady.</p>
+<div class="key-concept">
+  <p><em>Insert</em> (adding brand-new rows) is the plain case. New rows land on disk, so size grows with the added data. <em>Update</em> (changing values in existing rows) and <em>delete</em> (removing rows) behave less directly in PostgreSQL. An update keeps the old row image and adds a fresh row image with the new value. A delete hides the row from later reads yet leaves its image on disk for a while. The leftover images have a name: <em>dead rows</em> (also called <em>dead tuples</em>, since a tuple is the internal name for a stored row). They linger because concurrent transactions, rollback, and savepoints may still need older versions.</p>
+</div>
+<p>The design reason is multi-version concurrency: readers must keep seeing a steady snapshot while writers change values. So PostgreSQL writes the new version beside the old one instead of overwriting in place. Old versions turn invisible to new readers the moment no running transaction can still see them, but their bytes wait for the cleaner.</p>
+<p>That is why a delete may not hand space back at once, and why a small logical change can still push physical size up. More dead rows mean a bigger footprint until cleanup runs.</p>
+<p>Other systems handle old versions differently, which explains why this story is PostgreSQL-flavored. MySQL's InnoDB keeps old versions in a rollback area and purges them with a background purge thread rather than leaving dead rows inside the table file. Snowflake stores data in immutable micro-partitions and rewrites them on change, with all cleanup automatic and invisible. Databricks Delta Lake writes new file versions on change and cleans old files with its own <code>VACUUM</code> retention command, which is a different command with the same name. The shared lesson holds everywhere: updates cost more storage than their new values suggest.</p>
+<div class="warning-box">
+  <p><strong>Scope:</strong> dead-row buildup applies to write-heavy PostgreSQL tables; read-mostly lookup tables barely accumulate any. <strong>Assumption:</strong> concurrent transactions and rollback support stay on, which is the normal running state.</p>
+</div>
+<div class="warning-box">
+  <p>The classic trap is sizing disk for live rows only. A table with heavy daily updates can hold nearly twice its live data in dead images, so capacity plans must use the write mix, not just the row count.</p>
+</div>
+<div class="key-takeaway">
+  <p>Inserts add live bytes; updates and deletes leave dead images beside the live ones until cleanup. Next, a tiny picture makes the doubling concrete.</p>
+</div>
+<h3 id="46.7.2-worked-picture-of-an-update-leaving-two-images">46.7.2 Worked Picture of an Update Leaving Two Images</h3>
+<div class="example-box">
+  <p>Picture one live row holding a value. An update that adds one to it writes a second image with the raised value. Readers see only the new image. Storage for a time holds both: the old dead image plus the new live image. So one row becomes two stored images holding one visible value.</p>
+  <p>A later delete follows the same pattern from the reader side: the row vanishes from results, while its disk image waits as a dead row until the engine reclaims it. Zero visible rows, one stored image. <strong>Sense-check:</strong> visible rows and stored images are different counts, and only the cleaner reunites them.</p>
+</div>
+<h3 id="46.7.3-student-questions-and-answers">46.7.3 Student Questions and Answers</h3>
+<div class="important-note">
+  <p><strong>Q:</strong> Why does deleting rows not shrink the table right away?</p>
+  <p><strong>A:</strong> Deleted images stay on disk as dead rows until cleanup. They are unseen by queries but still take space. Later vacuum work reclaims that space for reuse. The delete hides rows from readers at once but frees bytes only when the cleaner runs.</p>
+</div>
+<div class="key-takeaway">
+  <p>Every update doubles one row's footprint for a while, and every delete hides without freeing, which sets up the measuring tools next.</p>
+</div>
+
+<h2 id="46.8-tracking-table-size-through-insert-and-update">46.8 Tracking Table Size Through Insert and Update</h2>
+<h3 id="46.8.1-size-functions-and-a-test-table">46.8.1 Size Functions and a Test Table</h3>
+<div class="important-note">
+  <p>By what number can you watch a table swell and prove the dead-row story is real?</p>
+</div>
+<div class="key-concept">
+  <p>Two functions report size. The verbal rule is the pretty size equals the formatted total relation size for the named table. With \(s\_bytes\) for the raw byte count from \(pg\_total\_relation\_size\) and \(s\_pretty\) for the human text from \(pg\_size\_pretty\):</p>
+  <p>\[s\_pretty = pg\_size\_pretty(pg\_total\_relation\_size('table\_vacuum'))\]</p>
+  <p>\(pg\_total\_relation\_size\) counts the table plus its helper objects such as indexes and free-space maps, in bytes. \(pg\_size\_pretty\) turns a byte count into text such as 736 kB or 11 MB. Raw bytes suit checks. The pretty text suits eyes, showing values such as 0 bytes, 736 kB, 2152 kB, 5688 kB, and 11 MB.</p>
+</div>
+<p>Two companion functions round out the family for later reference: \(pg\_relation\_size\) counts only the main table file, and \(pg\_table\_size\) counts the table plus its free-space map and visibility map but not indexes. The lecture's choice, the total, is the fullest measure and the right one for capacity watching.</p>
+<p>A minimal test table isolates the effect:</p>
+<pre><code>CREATE TABLE table_vacuum (
+  id INTEGER
+);</code></pre>
+<p>It starts with one integer column and zero rows:</p>
+<pre><code>SELECT * FROM table_vacuum;</code></pre>
+<p>Both size calls agree at the start:</p>
+<pre><code>SELECT pg_total_relation_size('table_vacuum');
+SELECT pg_size_pretty(pg_total_relation_size('table_vacuum'));</code></pre>
+<p>Each reports 0 bytes on the empty table. An empty table with no pages yet costs nothing measurable, which gives a clean zero baseline.</p>
+<div class="warning-box">
+  <p><strong>Scope:</strong> these functions report physical bytes, not row counts; equal row counts can still differ in bytes when widths or dead rows differ. <strong>Assumption:</strong> the name passed is the exact table name in the current schema.</p>
+</div>
+<div class="key-takeaway">
+  <p>Two calls give the full physical size in bytes and in readable text, starting from zero. Next, inserts walk the size upward.</p>
+</div>
+<h3 id="46.8.2-worked-example-inserts-grow-size-step-by-step">46.8.2 Worked Example Inserts Grow Size Step by Step</h3>
+<div class="example-box">
+  <p>Rows are added in bulk with <code>generate_series</code>, which produces a run of numbers to insert. Here \(generate\_series(1, 20000)\) is a number generator yielding the integers 1 through 20000 as rows:</p>
+  <pre><code>INSERT INTO table_vacuum
+SELECT * FROM generate_series(1, 20000);</code></pre>
+  <p>Size climbs to 736 kB. A second similar load lifts it to 2152 kB. A larger push toward about 100000 rows and beyond lifts it to 5688 kB. Each insert adds live rows, so growth tracks the added data. Reads at this stage show around 160000 rows of plain numbers. <strong>Sense-check:</strong> every load raises the size, and no load doubles it, because each insert adds only live images with no dead ones.</p>
+</div>
+<p>Picture a staircase chart with load number on the horizontal axis and table size on the vertical: three steps rising to 5688 kB, each step sized by its fresh rows. The takeaway: insert growth is steady and proportional.</p>
+<h3 id="46.8.3-worked-example-one-small-update-nearly-doubles-size">46.8.3 Worked Example One Small Update Nearly Doubles Size</h3>
+<div class="example-box">
+  <p>With size sitting at 5688 kB, a single statement adds one to every identifier:</p>
+  <pre><code>UPDATE table_vacuum SET id = id + 1;</code></pre>
+  <p>Values shift by one: 1 becomes 2, 2 becomes 3, and so on. Nothing else changes in meaning. Yet size jumps to about 11 MB, close to double. The old images remain as dead rows beside the new live images, so one logical pass costs nearly one full extra copy on disk: about 160000 live images plus about 160000 dead images. Heavier expressions or wider rows would push the cost higher still. <strong>Sense-check:</strong> the values moved by exactly one, the row count did not change, but the bytes nearly doubled, which fingerprints dead rows as the cause.</p>
+</div>
+<p>The lesson is practical. On tables with frequent updates, dead-row storage can climb fast enough to need watching. Without monitoring, growth can press toward server strain. Backend and database roles plan capacity around write mix, not just live row counts.</p>
+<div class="key-takeaway">
+  <p><strong>Exam note:</strong> expect questions that link update to dead rows and near-doubling of size, plus the contrast that insert growth tracks new rows while update growth keeps old plus new images.</p>
+</div>
+
+<h2 id="46.9-the-autovacuum-background-process">46.9 The Autovacuum Background Process</h2>
+<h3 id="46.9.1-what-runs-when-and-why-it-should-stay-on">46.9.1 What Runs, When, and Why It Should Stay On</h3>
+<div class="important-note">
+  <p>Who cleans up dead rows at 3 a.m. when nobody is logged in?</p>
+</div>
+<p>PostgreSQL ships a background cleaner called autovacuum. It wakes on its own, by default about every minute, and tidies bookkeeping when many rows changed. It needs no hand trigger. Settings can shift its timing or switch it off for special clusters and scheduled-maintenance designs, but the guidance is to leave it on. Switching it off without a replacement plan invites bloat.</p>
+<div class="key-concept">
+  <p><em>Autovacuum</em> (the automatic background cleaner) watches each table's churn and runs a <code>VACUUM</code> pass plus an <code>ANALYZE</code> pass when thresholds trip. <em>ANALYZE</em> (the statistics gatherer) samples table contents so the query planner can pick fast execution plans. Autovacuum has no visual panel. Its footprints live in statistics views. It also runs analyze work beside cleaning, gathering table content facts that help the planner pick fast execution plans.</p>
+</div>
+<p>Why the paired analyze? Cleaning changes what the table looks like, and the planner's old row-count guesses go stale. Refreshing the facts in the same pass keeps later queries on good plans for free.</p>
+<div class="warning-box">
+  <p><strong>Scope:</strong> autovacuum marks dead-row space reusable inside the table; it does not hand bytes back to the operating system. Tables stay the same file size after its pass. <strong>Assumption:</strong> default settings with no long-stuck transaction blocking cleanup; an open transaction that never closes can pin dead rows no cleaner can touch.</p>
+</div>
+<div class="warning-box">
+  <p>The standing trap is switching autovacuum off to "save" background work. The cleanup debt then compounds: queries slow on bloated pages, transaction IDs age toward wraparound danger, and the eventual manual cleanup takes far longer than the background passes would have.</p>
+</div>
+<div class="key-takeaway">
+  <p>Autovacuum plus auto-analyze run on their own about every minute, keeping space reusable and planner facts fresh. Next, its footprints show up in the statistics view.</p>
+</div>
+<h3 id="46.9.2-worked-example-watching-autovacuum-on-the-test-table">46.9.2 Worked Example Watching Autovacuum on the Test Table</h3>
+<div class="example-box">
+  <p>The view <code>pg_stat_all_tables</code> holds per-table facts across 168 tables in this database, including indexes, tuple counts, and storage notes. The columns of interest are the table name, last hand-run vacuum time, last autovacuum time, last hand-run analyze time, last auto analyze time, hand vacuum count, and auto vacuum count:</p>
+  <pre><code>SELECT
+  relname,
+  last_vacuum,
+  last_autovacuum,
+  last_analyze,
+  last_autoanalyze,
+  vacuum_count,
+  autovacuum_count
+FROM pg_stat_all_tables
+WHERE relname = 'table_vacuum';</code></pre>
+  <p>One reading shows last autovacuum around 11:30:28 with timezone offset minus five, auto vacuum count 1, and a matching auto analyze stamp. The story fits the workload. Fresh inserts add only live rows, so no dead-row load appears. The later full-table update creates dead images, which prompts the single autovacuum pass plus its paired analyze.</p>
+  <p>Running the same broad update again, then waiting past the one-minute rhythm and re-reading the view, shows a second autovacuum stamp near 11:55:30 with auto vacuum count 2 and a fresh auto analyze stamp. The cleaner did wake twice. <strong>Sense-check:</strong> each full-table update is followed, after about a minute, by one more autovacuum count plus a matching auto-analyze stamp.</p>
+  <p>Yet size still reads 11 MB after both passes. Autovacuum marked dead-row space as reusable for later writes without handing the bytes back to the operating system. That split, tidy inside, same size outside, sets up the next part on hand-run vacuum forms.</p>
+</div>
+<h3 id="46.9.3-student-questions-and-answers">46.9.3 Student Questions and Answers</h3>
+<div class="important-note">
+  <p><strong>Q:</strong> If autovacuum ran twice, why is the table still 11 MB?</p>
+  <p><strong>A:</strong> Autovacuum frees dead-row space for future rows inside the table but does not return disk bytes to the system. Size stays level until a stronger form such as <code>VACUUM FULL</code> rewrites the table. Inside-tidy and outside-smaller are two different jobs.</p>
+</div>
+<div class="important-note">
+  <p><strong>Q:</strong> Why does auto analyze appear beside autovacuum stamps?</p>
+  <p><strong>A:</strong> The background pass gathers content facts at the same time. Those facts feed the planner so later queries get better execution plans. Cleaning and fact-gathering travel together by design.</p>
+</div>
+<div class="key-takeaway">
+  <p>The background cleaner reuses space inside and refreshes planner facts, but shrinking the file takes the stronger hand-run form next.</p>
+</div>
+
+<h2 id="46.10-reclaiming-space-with-hand-run-vacuum">46.10 Reclaiming Space With Hand-Run VACUUM</h2>
+<h3 id="46.10.1-syntax-choices-full-freeze-verbose-and-analyze">46.10.1 Syntax Choices FULL, FREEZE, VERBOSE, and ANALYZE</h3>
+<div class="important-note">
+  <p>Autovacuum tidies inside but never shrinks the file. What command actually hands bytes back?</p>
+</div>
+<p>The hand-run form names options plus an optional target:</p>
+<pre><code>VACUUM [FULL | FREEZE | VERBOSE] [ANALYZE] table_name;</code></pre>
+<div class="key-concept">
+  <p><em><code>FULL</code></em> (the rewriting form) rebuilds the full table content into a new file, drops dead images, and gives bytes back. It needs an exclusive lock, so writes wait while it holds the table. <em><code>FREEZE</code></em> (the version-freezing form) aggressively freezes old row versions so later cleanup can drop them. Freezing already happens under <code>FULL</code>, so naming both adds nothing. <em><code>VERBOSE</code></em> (the reporting flag) prints a per-table activity report, including removable and non-removable row counts, page counts, and dead-row notes. <em><code>ANALYZE</code></em> (the fact-refreshing flag) refreshes planner facts during the same pass, and column names can narrow which columns it studies. Leaving off the table name aims the command at every table in the database, which is heavy on a 30-plus-table movies database and calls for care.</p>
+</div>
+<p>Two guardrails matter. A role needs vacuum permission on the target; a superuser naturally has it, while narrower roles need grants. And vacuum cannot run inside a transaction block or function transaction. It must run as its own command.</p>
+<p>How does this map to other systems? MySQL has no <code>VACUUM</code>: routine InnoDB purge runs automatically, and <code>OPTIMIZE TABLE</code> rebuilds a table the way <code>VACUUM FULL</code> does, also locking it. Snowflake needs no vacuum at all: micro-partition maintenance is fully automatic. Databricks has a <code>VACUUM</code> command with a different meaning: it deletes old data files past a retention window (default seven days) and never touches live rows, so running it to "shrink after an update" would be a category error there.</p>
+<div class="warning-box">
+  <p><strong>Scope:</strong> plain <code>VACUUM</code> is the safe routine pass with light locking; <code>VACUUM FULL</code> is the heavy rewrite with an exclusive lock that blocks writers. <strong>Assumption:</strong> no long-open transaction pins the dead rows, and the session runs the command outside any transaction block.</p>
+</div>
+<div class="warning-box">
+  <p>Two mistakes hurt most. Running a database-wide <code>VACUUM FULL</code> on a live system locks every table it rewrites. And wrapping <code>VACUUM</code> with other writes inside <code>BEGIN ... COMMIT</code> fails outright, since the command refuses to run inside a transaction.</p>
+</div>
+<div class="key-takeaway">
+  <p>Plain vacuum reuses space gently; <code>FULL</code> rewrites and returns bytes at the price of an exclusive lock. Next, both run on the test table.</p>
+</div>
+<h3 id="46.10.2-worked-example-from-plain-vacuum-to-vacuum-full">46.10.2 Worked Example From Plain VACUUM to VACUUM FULL</h3>
+<div class="example-box">
+  <p>Starting size is 11 MB with hand-run counts at zero. A first pass asks for a report on the test table:</p>
+  <pre><code>VACUUM VERBOSE table_vacuum;</code></pre>
+  <p>Output notes items such as zero removable rows in one line, counts of non-removable versions, page totals near 1416 pages, and dead-row detail. The stats view now shows a hand-run stamp near 12:02 with vacuum count 1, while auto analyze history stays as before. Running once more lifts the hand count to 2 with a fresh stamp. Size still reads 11 MB. The plain form marked space reusable inside without returning bytes.</p>
+  <p>The stronger form follows:</p>
+  <pre><code>VACUUM VERBOSE FULL table_vacuum;</code></pre>
+  <p>It reports success. The stats view shows a new hand stamp near 12:20 with an updated count. Size now reads 5664 kB, close to the pre-update level. The dead images are gone and only live rows remain: <strong>11 MB down to 5664 kB</strong>, about half. <strong>Sense-check:</strong> the size after <code>FULL</code> lands near the pre-update 5688 kB mark, confirming the extra copy was the dead images.</p>
+  <p>A database-wide rewrite would be:</p>
+  <pre><code>VACUUM FULL;</code></pre>
+  <p>It is not run here because it would lock and rewrite many tables at once. The maintenance pattern for live systems is to warn users, allow an hour or two, serve reads from a backup copy, run the full pass, then switch work back to the cleaned copy.</p>
+</div>
+<h3 id="46.10.3-student-questions-and-answers">46.10.3 Student Questions and Answers</h3>
+<div class="important-note">
+  <p><strong>Q:</strong> When should we pick plain <code>VACUUM</code> and when <code>VACUUM FULL</code>?</p>
+  <p><strong>A:</strong> Pick plain vacuum for routine marking of dead-row space for reuse with light locking. Pick <code>VACUUM FULL</code> when disk bytes must come back, accepting longer time and an exclusive table lock.</p>
+</div>
+<div class="important-note">
+  <p><strong>Q:</strong> Can <code>VACUUM</code> run inside a transaction block with other writes?</p>
+  <p><strong>A:</strong> No. It must run outside a transaction. It also needs vacuum permission on the target table.</p>
+</div>
+<p>Production teams schedule full rewrites as maintenance windows with standby serving, since the exclusive lock blocks updates on the target table.</p>
+<div class="key-takeaway">
+  <p><strong>Exam note:</strong> expect items on option meanings, the lock cost of <code>FULL</code>, the permission need, and the bar on running vacuum inside a transaction.</p>
+</div>
+
+<h2 id="46.11-auto-generated-columns">46.11 Auto Generated Columns</h2>
+<h3 id="46.11.1-generated-always-as-stored-on-one-row">46.11.1 GENERATED ALWAYS AS STORED on One Row</h3>
+<div class="important-note">
+  <p>What if a column could automatically calculate and update its own value whenever other fields in the row change, without writing a single line of trigger code?</p>
+</div>
+<p>Some columns should always mirror other columns in the same row. A generated column states that rule once in the table definition, and the database engine guarantees that rule stays true on every insert and update. People also call these <em>computed columns</em> or <em>virtual columns</em>, and the mental model is a view narrowed to a single column inside a table. Support in PostgreSQL arrived with PostgreSQL version 12 and later.</p>
+<div class="important-note">
+  <p>Think of a live spreadsheet formula cell inside each row, such as <code>=A2*B2</code>. Whenever you type new numbers into cells A2 or B2, the product cell instantly recalculates. Generated columns bring this exact automated calculation inside the database engine. The analogy breaks in one key physical detail: unlike a spreadsheet where formulas compute in memory on the fly, PostgreSQL physically serializes the evaluated bytes onto disk inside each row tuple during write operations because of the <code>STORED</code> keyword.</p>
+</div>
+<div class="key-concept">
+  <p>The column definition names the column, specifies its data type, adds the clause <code>GENERATED ALWAYS AS</code> with an enclosing bracketed expression, and ends with the mandatory keyword <code>STORED</code>:</p>
+  <pre><code>CREATE TABLE t (
+  w REAL,
+  h REAL,
+  area REAL GENERATED ALWAYS AS (w * h) STORED
+);</code></pre>
+  <p>In words, <em>area</em> (the two-dimensional surface measurement), written \(area\), equals <em>width</em> (horizontal dimension), written \(w\), multiplied by <em>height</em> (vertical dimension), written \(h\), evaluated strictly on the same row. With \(w\) and \(h\) representing real-number dimensions, and \(area\) representing their product:</p>
+  <p>\[area = w \times h\]</p>
+  <p>Every symbol in this governing expression is row-local:</p>
+  <ul>
+    <li>\(w \in \mathbb{R}\) is the input width column.</li>
+    <li>\(h \in \mathbb{R}\) is the input height column.</li>
+    <li>\(area \in \mathbb{R}\) is the resulting stored product.</li>
+  </ul>
+  <p>Historically, maintaining derived values required writing custom <code>BEFORE INSERT OR UPDATE</code> PL/pgSQL triggers. Triggers carried noticeable overhead: each insert or update invoked a procedural function context switch, multiplied maintenance complexity, and introduced potential transaction latency. Generated columns replace slower trigger logic cleanly, embedding the calculation directly into PostgreSQL's core tuple-forming C routines.</p>
+</div>
+<p>Different database engines handle computed columns with distinct syntax and storage defaults:</p>
+<table>
+  <thead>
+    <tr>
+      <th>Database Engine</th>
+      <th>Syntax Keyword</th>
+      <th>Storage Mode Support</th>
+      <th>Default Behavior</th>
+      <th>Can Act as Partition Key?</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><strong>PostgreSQL (12+)</strong></td>
+      <td><code>GENERATED ALWAYS AS (expr) STORED</code></td>
+      <td><code>STORED</code> only</td>
+      <td>Requires explicit <code>STORED</code></td>
+      <td>No (prohibited)</td>
+    </tr>
+    <tr>
+      <td><strong>MySQL (5.7+ / 8.0+)</strong></td>
+      <td>`[GENERATED ALWAYS] AS (expr) [VIRTUAL \</td>
+      <td>STORED]`</td>
+      <td><code>VIRTUAL</code> or <code>STORED</code></td>
+      <td><code>VIRTUAL</code> (computed on read, 0 disk bytes)</td>
+      <td>Yes (with restrictions)</td>
+    </tr>
+    <tr>
+      <td><strong>SQL Server (T-SQL)</strong></td>
+      <td><code>AS (expr) [PERSISTED]</code></td>
+      <td>Virtual or <code>PERSISTED</code></td>
+      <td>Virtual (computed on read)</td>
+      <td>Yes (when <code>PERSISTED</code>)</td>
+    </tr>
+    <tr>
+      <td><strong>Oracle</strong></td>
+      <td><code>[GENERATED ALWAYS] AS (expr) [VIRTUAL]</code></td>
+      <td><code>VIRTUAL</code> (default)</td>
+      <td><code>VIRTUAL</code></td>
+      <td>Yes</td>
+    </tr>
+    <tr>
+      <td><strong>Databricks (Spark SQL)</strong></td>
+      <td><code>GENERATED ALWAYS AS (expr)</code></td>
+      <td>Stored in Delta Lake parquet</td>
+      <td>Stored metadata / files</td>
+      <td>Yes (standard for date partitioning)</td>
+    </tr>
+  </tbody>
+</table>
+<p>Notice the practical differences:</p>
+<ul>
+  <li>In <strong>MySQL</strong>, computed columns default to <code>VIRTUAL</code>, meaning they consume zero disk storage and compute dynamically during queries; specifying <code>STORED</code> physically writes them.</li>
+  <li>In <strong>SQL Server</strong>, omitting <code>PERSISTED</code> keeps the column virtual; adding <code>PERSISTED</code> writes it to disk like PostgreSQL's <code>STORED</code>.</li>
+  <li>In <strong>Databricks / Delta Lake</strong>, generated columns are routinely used as partition keys (e.g., deriving <code>event_date DATE GENERATED ALWAYS AS (CAST(event_time AS DATE))</code> to partition large data lakes). In contrast, <strong>PostgreSQL explicitly bars generated columns from being partition keys</strong> for partitioned tables.</li>
+</ul>
+<div class="warning-box">
+  <p><strong>Scope:</strong> In PostgreSQL, the value must persist with <code>STORED</code>. On-the-fly computation at read time (<code>VIRTUAL</code>) is not supported. <strong>Assumption:</strong> The generating expression must be strictly <code>IMMUTABLE</code>. It must always return the exact same output for the same input values. It cannot call volatile functions (such as <code>random()</code> or <code>clock_timestamp()</code>) or stable functions (such as <code>CURRENT_DATE</code> or <code>now()</code>), cannot execute subqueries, and cannot reach into adjacent rows using window functions or aggregate functions. Also, a generated column cannot reference another generated column, so chaining one generated result into another is barred.</p>
+</div>
+<p>Picture the physical storage layout on disk: PostgreSQL writes 8 KB heap pages where each tuple contains a 23-byte <code>HeapTupleHeader</code> followed by attribute columns. Because <code>STORED</code> is specified, the engine allocates physical bytes for \(area\) in every tuple alongside \(w\) and \(h\). When you read rows, the engine performs zero math—it simply reads the pre-calculated bytes directly from disk or shared buffers.</p>
+<div class="warning-box">
+  <p>Common pitfalls catch developers:</p>
+  <ol>
+    <li><strong>Direct Value Assignment</strong>: Attempting to supply a value directly in an insert statement (<code>INSERT INTO t (w, h, area) VALUES (2, 5, 10);</code>) fails with an error: <code>cannot insert into column "area" (detail: Column "area" is a generated column)</code>. Always omit generated columns from insert lists, or supply <code>DEFAULT</code>.</li>
+    <li><strong>Volatile Functions</strong>: Attempting to generate a timestamp column using <code>now()</code> or <code>CURRENT_TIMESTAMP</code> fails at creation time because the function is not immutable.</li>
+    <li><strong>Attempted Chaining</strong>: Writing <code>col_c GENERATED ALWAYS AS (col_b * 2) STORED</code> where <code>col_b</code> is itself generated fails because generated columns cannot read other generated columns.</li>
+  </ol>
+</div>
+<div class="key-takeaway">
+  <p>Generated columns automate row-local calculations directly within the storage engine, replacing complex triggers with declarative, immutable expressions. Next, we verify this behavior with real numerical inputs.</p>
+</div>
+<h3 id="46.11.2-worked-example-area-from-width-and-height">46.11.2 Worked Example Area From Width and Height</h3>
+<p>To observe automatic evaluation, table <code>t</code> is created with width and height inputs:</p>
+<pre><code>CREATE TABLE t (
+  w REAL,
+  h REAL,
+  area REAL GENERATED ALWAYS AS (w * h) STORED
+);</code></pre>
+<div class="example-box">
+  <p>Inspect the empty table:</p>
+  <pre><code>SELECT * FROM t;</code></pre>
+  <p>Column metadata confirms the area expression is active. We insert real dimensions without naming <code>area</code>:</p>
+  <pre><code>INSERT INTO t (w, h) VALUES (1, 2);</code></pre>
+  <p>Reading back the row:</p>
+  <pre><code>SELECT * FROM t;</code></pre>
+  <p>Output:</p>
+  <pre><code> w | h | area 
+---+---+------
+ 1 | 2 |    2</code></pre>
+  <p>Since \(1 \times 2 = \mathbf{2}\), the engine computed and stored <strong>2</strong>.</p>
+  <p>Now insert a second row with equal dimensions:</p>
+  <pre><code>INSERT INTO t (w, h) VALUES (2, 2);</code></pre>
+  <p>Output:</p>
+  <pre><code> w | h | area 
+---+---+------
+ 1 | 2 |    2
+ 2 | 2 |    4</code></pre>
+  <p>Since \(2 \times 2 = \mathbf{4}\), the engine stored <strong>4</strong>.</p>
+  <p>Next, test update synchronization by updating the width of the first row from 1 to 10:</p>
+  <pre><code>UPDATE t SET w = 10 WHERE w = 1;</code></pre>
+  <p>Reading back the table:</p>
+  <pre><code>SELECT * FROM t;</code></pre>
+  <p>Output:</p>
+  <pre><code> w  | h | area 
+----+---+------
+  2 | 2 |    4
+ 10 | 2 |   20</code></pre>
+  <p>The touched row automatically refreshed from 2 to <strong>20</strong> (\(10 \times 2 = \mathbf{20}\)). No manual recalculation or trigger was invoked. <strong>Sense-check:</strong> Every stored <code>area</code> value matches the mathematical product of <code>w</code> and <code>h</code> on that exact row.</p>
+</div>
+<h3 id="46.11.3-worked-example-price-times-volume-and-search-vectors">46.11.3 Worked Example Price Times Volume and Search Vectors</h3>
+<p>A market analytics pattern pairs trade ticks with total dollar value. With <em>closing price</em>, written \(close\), <em>traded share volume</em>, written \(volume\), and <em>dollar trade volume</em>, written \(price\_volume\):</p>
+<p>\[price\_volume = close \times volume\]</p>
+<p>Where:</p>
+<ul>
+  <li>\(close \in \mathbb{R}^+\) is the closing asset price per unit.</li>
+  <li>\(volume \in \mathbb{N}\) is the quantity of units exchanged.</li>
+  <li>\(price\_volume \in \mathbb{R}^+\) is the total transacted value.</li>
+</ul>
+<div class="example-box">
+  <p>Consider a securities table storing daily trading records:</p>
+  <pre><code>CREATE TABLE daily_stock_trades (
+  trade_date DATE,
+  ticker VARCHAR(10),
+  close NUMERIC(10, 2),
+  volume BIGINT,
+  price_volume NUMERIC(18, 2) GENERATED ALWAYS AS (close * volume) STORED
+);</code></pre>
+  <p>Inserting a row with \(close = 150.50\) and \(volume = 1000\):</p>
+  <pre><code>INSERT INTO daily_stock_trades (trade_date, ticker, close, volume)
+VALUES ('2026-09-22', 'GOOGL', 150.50, 1000);</code></pre>
+  <p>The stored <code>price_volume</code> immediately evaluates to <strong>150500.00</strong> (\(150.50 \times 1000 = \mathbf{150500.00}\)). Analytics queries aggregate total transacted volume directly without executing runtime multiplication across millions of records. <strong>Sense-check:</strong> Dividing \(150500.00\) by \(1000\) recovers the original closing price of \(150.50\).</p>
+</div>
+<p>In text search applications, generated columns maintain pre-parsed lexeme dictionaries alongside raw prose. On a presidential speeches table named <code>docs_president</code>, an added column holds <code>tsvector</code> values built from the <code>speech_text</code> column:</p>
+<pre><code>ALTER TABLE docs_president
+ADD COLUMN speech_text_tsv TSVECTOR
+GENERATED ALWAYS AS (to_tsvector('english', speech_text)) STORED;</code></pre>
+<div class="example-box">
+  <p>In words, the new column equals the English text-search vector of the speech text on the same row. In earlier database versions, keeping search vectors synchronized required application-level updates or complex triggers.</p>
+  <p>With this generated definition, whenever an analyst inserts a speech or edits speech text in <code>speech_text</code>, PostgreSQL automatically parses the English words, strips stop words, normalizes stems, and writes the resulting <code>tsvector</code> into <code>speech_text_tsv</code>. A Generalized Inverted Index (GIN) can then be created directly on <code>speech_text_tsv</code> for sub-millisecond full-text queries:</p>
+  <pre><code>CREATE INDEX idx_docs_president_tsv ON docs_president USING GIN(speech_text_tsv);</code></pre>
+  <p>Querying <code>SELECT * FROM docs_president;</code> shows the raw text sitting beside its lexeme vector, ready for fast full-text matching using the <code>@@</code> match operator.</p>
+</div>
+<h3 id="46.11.4-copy-and-dump-behavior">46.11.4 Copy and Dump Behavior</h3>
+<p>Backup and bulk-copy operations handle generated columns with specific conventions. Because generated values are fully deterministic and can be reconstructed from input columns, utilities prioritize compact transfer:</p>
+<ul>
+  <li>Standard <code>COPY t TO STDOUT</code> skips generated columns by default.</li>
+  <li>Standard <code>pg_dump</code> omits generated column data from <code>INSERT</code> or copy streams, restoring only the schema definition and source data to minimize dump size and avoid insertion errors.</li>
+</ul>
+<p>When an export must include generated values (e.g., for external ingestion into business intelligence tools or spreadsheets), copy a query result instead of the bare table:</p>
+<pre><code>COPY (SELECT * FROM t) TO STDOUT;</code></pre>
+<p>This select-then-copy path forces the engine to serialize all projected attributes, including generated columns, into the resulting CSV or text stream.</p>
+<h3 id="46.11.5-student-questions-and-answers">46.11.5 Student Questions and Answers</h3>
+<div class="important-note">
+  <p><strong>Q:</strong> Can a generated column read the row above or chain from another generated column?</p>
+  <p><strong>A:</strong> No to both. Expressions stay strictly on the current row and read plain base columns only. They cannot look across rows (no window functions, self-joins, or lag/lead offsets) and cannot name another generated column in their expression definition.</p>
+</div>
+<div class="important-note">
+  <p><strong>Q:</strong> Can generated columns be indexed or used as partition keys?</p>
+  <p><strong>A:</strong> Yes to indexing; no to partitioning. Because PostgreSQL generated columns are <code>STORED</code>, you can create standard B-tree, Hash, or GIN indexes directly on them (e.g., <code>CREATE INDEX ON t(area);</code>). However, PostgreSQL explicitly prohibits using a generated column as a table partition key.</p>
+</div>
+<p>Real-world: Enterprise schemas rely on generated columns for row-local derived facts such as physical dimensions, price times volume in financial ledgers, and text-search vectors that must remain perfectly synchronized with source data without procedural trigger maintenance.</p>
+<div class="key-takeaway">
+  <p><strong>Exam note:</strong> Memorize the exact definition syntax <code>GENERATED ALWAYS AS (...) STORED</code> and the PostgreSQL version 12 baseline. Remember the core rules: expressions must be immutable and row-local, chaining generated columns is prohibited, standard B-tree indexing is permitted, but serving as a partition key is strictly forbidden. Finally, remember that standard <code>COPY</code> and <code>pg_dump</code> omit generated values, requiring the <code>COPY (SELECT * FROM table) TO ...</code> pattern when complete output is needed.</p>
+</div>
+
+<h2 id="exam-guidance-summary">Exam Guidance Summary</h2>
+<p>Table management, data import/export, deduplication algorithms, and PostgreSQL physical storage mechanics represent high-yield practical exam topics. Review the following high-frequency examination areas:</p>
+<ul>
+  <li><strong>Table Creation via Query Results (<code>SELECT INTO</code> vs <code>CTAS</code>)</strong>:</li>
+  <li>Understand that <code>SELECT column_list INTO new_table FROM source WHERE condition;</code> creates and populates a new relation in a single atomic step.</li>
+  <li>Memorize what carries over: column names, underlying data types, and matching row values. Memorize what does <strong>not</strong> carry over: primary keys, foreign keys, constraints, default values, and indexes.</li>
+  <li>Remember the subquery rule: when wrapping complex queries (joins, computed columns, <code>ORDER BY NULLS LAST</code>, <code>LIMIT</code>), PostgreSQL strictly requires an explicit table alias for the subquery in the <code>FROM</code> clause (e.g., <code>FROM (...) AS subq;</code>).</li>
+  <li>Contrast <code>CREATE TABLE new_table AS SELECT * FROM source;</code> (full data copy) with <code>CREATE TABLE new_table AS SELECT * FROM source WITH NO DATA;</code> (schema-only structural skeleton returning zero rows).</li>
+</ul>
+<ul>
+  <li><strong>Data Ingestion and Egestion Mechanics (<code>COPY</code> vs <code>\copy</code>)</strong>:</li>
+  <li>Distinguish execution environments: standard <code>COPY</code> runs server-side (requiring server filesystem access and superuser/elevated permissions), whereas <code>\copy</code> is a client-side <code>psql</code> meta-command running with client privileges.</li>
+  <li>Know the mandatory syntax parameters: <code>DELIMITER ','</code> and <code>CSV HEADER</code>. Remember that omitting <code>CSV HEADER</code> on import erroneously ingests column header labels as a data row, and omitting it on export generates a headless CSV file.</li>
+  <li>When loading into tables with <code>SERIAL PRIMARY KEY</code>, provide an explicit column list in <code>\copy</code> omitting the auto-increment column so the sequence generator assigns unique keys automatically.</li>
+</ul>
+<ul>
+  <li><strong>Duplicate Detection and Deletion Algorithms</strong>:</li>
+  <li>For single-column duplication checks, use aggregate grouping: <code>SELECT col, COUNT(*) FROM t GROUP BY col HAVING COUNT(*) > 1;</code>.</li>
+  <li>For comprehensive multi-column duplicate identification, employ window ranking: <code>ROW_NUMBER() OVER (PARTITION BY col1, col2 ORDER BY id ASC) AS dup_row</code>, filtering where <code>dup_row > 1</code>.</li>
+  <li>In self-join deletions (<code>DELETE FROM colors a USING colors b WHERE a.color = b.color AND a.color_id < b.color_id;</code>), understand the direction of inequality: <code>a.color_id < b.color_id</code> removes the earlier/lower identifier and preserves the later/larger identifier.</li>
+</ul>
+<ul>
+  <li><strong>Physical Storage, MVCC Bloat, and Update Amplification</strong>:</li>
+  <li>Understand PostgreSQL's Multi-Version Concurrency Control (MVCC) write model: <code>UPDATE</code> does not overwrite data in place; it writes a new live row version and flags the previous version as a <em>dead tuple</em>. <code>DELETE</code> simply flags tuples as dead.</li>
+  <li>In exam questions addressing table size changes, link a full-table <code>UPDATE</code> to an immediate <strong>near-doubling of physical disk storage</strong> (e.g., 5.6 MB expanding to ~11 MB), because both dead and live tuples coexist in heap pages.</li>
+  <li>Measure table footprint using <code>pg_total_relation_size('table_name')</code> for raw bytes and format human-readable outputs using <code>pg_size_pretty(...)</code>.</li>
+</ul>
+<ul>
+  <li><strong>Autovacuum Daemon and Hand-Run Maintenance</strong>:</li>
+  <li>Remember that the autovacuum daemon awakens about once per minute, tracks modification thresholds in <code>pg_stat_all_tables</code>, cleans dead tuples, and updates query planner statistics via paired auto-analyze.</li>
+  <li>Critical distinction: <strong>standard <code>VACUUM</code> and autovacuum do NOT return disk space to the operating system</strong>. They reclaim dead space internally within the Free Space Map (FSM) so future inserts and updates can reuse those slots without growing the file.</li>
+  <li>Memorize the constraints and costs of <code>VACUUM FULL</code>:</li>
+  <li><code>VACUUM FULL</code> physically rewrites the entire relation into new disk files, returning unused blocks to the host OS.</li>
+  <li>It requires an aggressive <code>ACCESS EXCLUSIVE</code> table lock that blocks all reads and writes for the duration of the rewrite.</li>
+  <li>It requires explicit table ownership or superuser permissions.</li>
+  <li><strong><code>VACUUM</code> cannot run inside a multi-statement transaction block</strong> (<code>BEGIN ... COMMIT</code>); attempting to do so triggers an immediate execution error.</li>
+</ul>
+<ul>
+  <li><strong>Generated Columns Architecture (PostgreSQL 12+)</strong>:</li>
+  <li>Memorize the definition signature: <code>col_name data_type GENERATED ALWAYS AS (expression) STORED</code>.</li>
+  <li>Note the version baseline: introduced in PostgreSQL 12.</li>
+  <li>Enforce the four strict operational constraints:</li>
+</ul>
+<ol>
+  <li>Expressions must be strictly <code>IMMUTABLE</code> (deterministic; functions like <code>now()</code> or <code>random()</code> are forbidden).</li>
+  <li>Expressions are strictly row-local (no window functions, aggregates, or cross-row references).</li>
+  <li>Chaining generated columns (referencing another generated column) is barred.</li>
+  <li>Prohibited from serving as a partition key for partitioned tables.</li>
+</ol>
+<ul>
+  <li>Understand export behavior: standard <code>COPY t TO STDOUT</code> and <code>pg_dump</code> omit generated column values to optimize transfer. To force export of generated values, execute a query-based copy: <code>COPY (SELECT * FROM t) TO STDOUT;</code>.</li>
+</ul>
+
+<h2 id="key-industry-applications">Key Industry Applications</h2>
+<p>Table creation patterns, high-throughput bulk ingestion, deduplication pipelines, MVCC storage management, and declarative generated columns serve as the structural backbone of enterprise data platforms, Site Reliability Engineering (SRE), and analytical systems:</p>
+<ul>
+  <li><strong>Materialized Analytic Snapshots & Isolated Reporting Marts</strong>:</li>
+  <li>In enterprise Business Intelligence (BI) environments (e.g., Tableau, Power BI, Looker), generating reporting tables via <code>SELECT INTO</code> or <code>CREATE TABLE AS SELECT</code> (CTAS) freezes complex multi-table joins, revenue computations, and filtered subsets into dedicated tables.</li>
+  <li>This architecture isolates resource-intensive reporting queries from primary Online Transaction Processing (OLTP) databases, providing analysts with consistent, immutable snapshot data while eliminating repeated join overhead across millions of rows.</li>
+</ul>
+<ul>
+  <li><strong>Automated Reference Data Provisioning & Cloud ETL Pipelines</strong>:</li>
+  <li>In microservice provisioning and automated cloud deployments (using Docker, Kubernetes, Terraform, or Flyway), seeding standard lookup tables (such as ISO country codes, currency mappings, and geographic zones) is performed via client-side <code>\copy</code>.</li>
+  <li>Data engineering workflows routinely bridge relational databases and cloud object stores (Amazon S3, Google Cloud Storage, Azure Blob Storage) by running <code>COPY ... TO '...' CSV HEADER</code> to dump clean tabular extracts that feed downstream data lake engines such as Snowflake, Databricks Delta Lake, or BigQuery.</li>
+</ul>
+<ul>
+  <li><strong>Master Data Management (MDM) & Automated Deduplication Engines</strong>:</li>
+  <li>Customer 360, e-commerce catalog syncs, and financial reconciliation engines frequently ingest redundant records from third-party vendor APIs or distributed event streams.</li>
+  <li>Data quality frameworks use partitioned ranking (<code>ROW_NUMBER() OVER (PARTITION BY ... ORDER BY ...)</code>) and targeted self-join deletions (<code>DELETE ... USING</code>) to eliminate duplicate customer identities, order items, or inventory entries, preserving the single most recent or authoritative "golden record" prior to downstream analytics.</li>
+</ul>
+<ul>
+  <li><strong>SRE Capacity Planning & MVCC Bloat Telemetry</strong>:</li>
+  <li>Database Reliability Engineers (DBREs) continuously monitor table footprints using <code>pg_total_relation_size()</code> and <code>pg_stat_all_tables</code>.</li>
+  <li>In update-heavy transactional systems (such as ride-sharing driver location tracking, order fulfillment state machines, or auction bidding platforms), high-frequency <code>UPDATE</code> operations produce massive dead-tuple volume, causing relations to double in physical footprint. Engineers tune autovacuum thresholds (<code>autovacuum_vacuum_scale_factor</code>, <code>autovacuum_vacuum_cost_limit</code>) to ensure continuous in-place space reuse and prevent catastrophic disk exhaustion.</li>
+</ul>
+<ul>
+  <li><strong>Production Maintenance Windows & Physical Storage Reclamation</strong>:</li>
+  <li>Following massive historical data purges (such as multi-million-row GDPR compliance deletions, quarterly audit log expiries, or financial year-end partition drops), standard vacuuming marks pages reusable but cannot shrink the OS file.</li>
+  <li>Enterprise infrastructure teams coordinate off-peak maintenance windows, redirecting application read traffic to warm standby replicas while executing <code>VACUUM FULL</code> on primary tables. This operation physically rewrites relations, eliminates filesystem fragmentation, reclaims hundreds of gigabytes of cloud block storage, and rebuilds bloated indexes.</li>
+</ul>
+<ul>
+  <li><strong>Declarative Financial Analytics & Automated Full-Text Search</strong>:</li>
+  <li>Quantitative finance ledgers and algorithmic trading databases use <code>GENERATED ALWAYS AS (close * volume) STORED</code> to maintain exact transaction value metrics directly inside heap tuples, avoiding application-side calculation drift and trigger latency.</li>
+  <li>Document management systems, enterprise knowledge bases, and legal archives (such as presidential speech corpuses or customer support logs) use <code>GENERATED ALWAYS AS (to_tsvector('english', speech_text)) STORED</code> paired with Generalized Inverted Indexes (GIN). This declarative approach guarantees that text-search vectors remain perfectly synchronized with raw text inputs upon every write without custom trigger maintenance.</li>
+</ul>
+    </main>
+
+    <!-- ============================================================
+    EXAM REVISION NOTES
+    Generated AFTER the main lecture-faithful content is complete. Each entry
+    distills one major concept into its most examinable elements.
+    Built FROM the core — never invented independently.
+
+    Each entry is a <div class="exam-revision-entry"> containing:
+      - .revision-topic (h3) — concept name
+      - .revision-mustknow — the single most examinable takeaway
+      - .revision-formula — central formula(s) in \[ ... \] MathJax
+      - .revision-pitfall — the #1 exam mistake
+      - .revision-check — one self-check question (no options)
+      - .revision-connections — linked concepts within this lecture
+    ============================================================ -->
+    <section class="exam-revision-section">
+      <h2>Exam Revision Notes</h2>
+      <p class="revision-intro">Below is the distilled, exam-ready core.
+      Every entry comes from the full explanation above. Use this section
+      for rapid review; return to the main notes when a point needs more context.</p>
+
+      <div class="exam-revision-entry">
+        <h3 class="revision-topic">Creating New Tables With SELECT INTO and WHERE</h3>
+        <p class="revision-mustknow"><strong>Must-know:</strong> SELECT INTO creates and fills a new table in one step; it copies names, types, and matching rows but no constraints or indexes</p>
+        <p class="revision-pitfall"><strong>⚠️ Top pitfall:</strong> Re-running SELECT INTO fails because the target table now exists; inside PL/pgSQL, INTO means variable assignment, not table creation</p>
+        <p class="revision-check"><strong>Self-check:</strong> What happens to the source table when SELECT INTO copies some of its rows?</p>
+        <p class="revision-connections"><strong>Connects to:</strong> 46.2, 46.3</p>
+      </div>
+      <div class="exam-revision-entry">
+        <h3 class="revision-topic">SELECT INTO With JOIN, Computed Columns, ORDER BY, and Subqueries</h3>
+        <p class="revision-mustknow"><strong>Must-know:</strong> Any shaped query (joins, arithmetic, ORDER BY NULLS LAST, LIMIT) can be frozen into a table via SELECT INTO FROM (subquery) AS alias</p>
+        <p class="revision-formula">\[total\_revenue = revenues\_domestic + revenues\_international\]</p>
+        <p class="revision-pitfall"><strong>⚠️ Top pitfall:</strong> Forgetting the subquery alias, or using ORDER BY positions that shift when columns are added</p>
+        <p class="revision-check"><strong>Self-check:</strong> Why must the subquery in FROM carry an alias?</p>
+        <p class="revision-connections"><strong>Connects to:</strong> 46.1, 46.3</p>
+      </div>
+      <div class="exam-revision-entry">
+        <h3 class="revision-topic">Duplicating a Table With and Without Data</h3>
+        <p class="revision-mustknow"><strong>Must-know:</strong> CREATE TABLE AS copies structure plus rows; WITH NO DATA copies structure only; neither copies constraints or indexes</p>
+        <p class="revision-pitfall"><strong>⚠️ Top pitfall:</strong> Assuming constraints, keys, and indexes carry over; they do not</p>
+        <p class="revision-check"><strong>Self-check:</strong> How do you make an empty structural copy of a table?</p>
+        <p class="revision-connections"><strong>Connects to:</strong> 46.1, 46.2</p>
+      </div>
+      <div class="exam-revision-entry">
+        <h3 class="revision-topic">Importing Data From CSV Files</h3>
+        <p class="revision-mustknow"><strong>Must-know:</strong> CSV import is create-then-\copy with explicit column list, DELIMITER, and CSV HEADER; \copy is client-side, COPY is server-side</p>
+        <p class="revision-pitfall"><strong>⚠️ Top pitfall:</strong> Forgetting CSV HEADER loads header names as a fake data row; wrong delimiter stuffs whole lines into one column</p>
+        <p class="revision-check"><strong>Self-check:</strong> Why does the \copy column list leave out the SERIAL key?</p>
+        <p class="revision-connections"><strong>Connects to:</strong> 46.5</p>
+      </div>
+      <div class="exam-revision-entry">
+        <h3 class="revision-topic">Exporting Data From a Table to CSV</h3>
+        <p class="revision-mustknow"><strong>Must-know:</strong> COPY/\copy TO with DELIMITER and CSV HEADER mirrors import; counts in and out must match on a full round trip</p>
+        <p class="revision-pitfall"><strong>⚠️ Top pitfall:</strong> Using server-side COPY to a client-only path fails; omitting HEADER ships a headerless file</p>
+        <p class="revision-check"><strong>Self-check:</strong> When should you use \copy TO instead of COPY TO?</p>
+        <p class="revision-connections"><strong>Connects to:</strong> 46.4</p>
+      </div>
+      <div class="exam-revision-entry">
+        <h3 class="revision-topic">Finding and Deleting Duplicate Rows</h3>
+        <p class="revision-mustknow"><strong>Must-know:</strong> HAVING COUNT(*) > 1 proves single-column repeats; ROW_NUMBER partitioned listing proves full-row repeats; DELETE USING with < keeps the later copy</p>
+        <p class="revision-formula">\[count(\ast) > 1\]</p>
+        <p class="revision-pitfall"><strong>⚠️ Top pitfall:</strong> Deleting before proving repeats; forgetting that NULLs group together</p>
+        <p class="revision-check"><strong>Self-check:</strong> What does dup_row > 1 select in the window-function lister?</p>
+        <p class="revision-connections"><strong>Connects to:</strong> 46.7</p>
+      </div>
+      <div class="exam-revision-entry">
+        <h3 class="revision-topic">How Inserts, Updates, and Deletes Change Table Size</h3>
+        <p class="revision-mustknow"><strong>Must-know:</strong> UPDATE writes a new row image and keeps the old as a dead row; DELETE hides the row but leaves its image until vacuum</p>
+        <p class="revision-pitfall"><strong>⚠️ Top pitfall:</strong> Sizing disk for live rows only while updates quietly double the footprint</p>
+        <p class="revision-check"><strong>Self-check:</strong> After updating every row once, how many stored images exist per visible row?</p>
+        <p class="revision-connections"><strong>Connects to:</strong> 46.6, 46.8, 46.9</p>
+      </div>
+      <div class="exam-revision-entry">
+        <h3 class="revision-topic">Tracking Table Size Through Insert and Update</h3>
+        <p class="revision-mustknow"><strong>Must-know:</strong> Inserts grow size proportionally; one full-table UPDATE nearly doubles bytes by adding a dead image per row</p>
+        <p class="revision-formula">\[s\_pretty = pg\_size\_pretty(pg\_total\_relation\_size('table\_vacuum'))\]</p>
+        <p class="revision-pitfall"><strong>⚠️ Top pitfall:</strong> Reading equal row counts as equal bytes when dead rows differ</p>
+        <p class="revision-check"><strong>Self-check:</strong> Why did 160000 updated rows nearly double the table instead of adding a little?</p>
+        <p class="revision-connections"><strong>Connects to:</strong> 46.7, 46.9</p>
+      </div>
+      <div class="exam-revision-entry">
+        <h3 class="revision-topic">The Autovacuum Background Process</h3>
+        <p class="revision-mustknow"><strong>Must-know:</strong> Autovacuum runs about every minute, marks dead space reusable inside, pairs with auto-analyze, and never returns bytes to the OS</p>
+        <p class="revision-pitfall"><strong>⚠️ Top pitfall:</strong> Expecting autovacuum to shrink the file; it only reuses space inside</p>
+        <p class="revision-check"><strong>Self-check:</strong> After two autovacuum passes the table still reads 11 MB. Why?</p>
+        <p class="revision-connections"><strong>Connects to:</strong> 46.8, 46.10</p>
+      </div>
+      <div class="exam-revision-entry">
+        <h3 class="revision-topic">Reclaiming Space With Hand-Run VACUUM</h3>
+        <p class="revision-mustknow"><strong>Must-know:</strong> Plain VACUUM reuses space inside with light locking; VACUUM FULL rewrites the table, returns bytes, needs exclusive lock, permission, and no enclosing transaction</p>
+        <p class="revision-pitfall"><strong>⚠️ Top pitfall:</strong> Running database-wide VACUUM FULL on a live system or wrapping VACUUM in a transaction block</p>
+        <p class="revision-check"><strong>Self-check:</strong> Why did size stay 11 MB after plain VACUUM but drop to 5664 kB after VACUUM FULL?</p>
+        <p class="revision-connections"><strong>Connects to:</strong> 46.9, 46.8</p>
+      </div>
+      <div class="exam-revision-entry">
+        <h3 class="revision-topic">Auto Generated Columns</h3>
+        <p class="revision-mustknow"><strong>Must-know:</strong> GENERATED ALWAYS AS (expr) STORED requires PostgreSQL 12+, must be row-local and immutable, cannot chain generated columns, allows B-tree indexing but prohibits partition keys, and requires SELECT-wrapping for COPY/dump export.</p>
+        <p class="revision-formula">\[area = w \times h\]</p>
+        <p class="revision-pitfall"><strong>⚠️ Top pitfall:</strong> Attempting direct insertion into generated columns, using volatile functions like now(), or expecting COPY/pg_dump to output generated values without a query wrapper.</p>
+        <p class="revision-check"><strong>Self-check:</strong> Why does standard COPY t TO STDOUT omit generated columns by default, and how do you include them?</p>
+        <p class="revision-connections"><strong>Connects to:</strong> 46.1, 46.2, 46.10</p>
+      </div>
+      <div class="exam-revision-entry">
+        <h3 class="revision-topic">Exam Guidance Summary</h3>
+        <p class="revision-mustknow"><strong>Must-know:</strong> Key examinable facts: SELECT INTO copies data without constraints, subqueries in FROM require aliases, UPDATE doubles table footprint under MVCC, autovacuum reuses FSM space without OS return, VACUUM FULL takes exclusive locks and cannot run in transactions, and GENERATED ALWAYS AS STORED requires immutable row-local logic.</p>
+        <p class="revision-formula">\[total\_revenue = revenues\_domestic + revenues\_international\]</p>
+        <p class="revision-pitfall"><strong>⚠️ Top pitfall:</strong> Running VACUUM FULL during live production traffic, executing VACUUM inside a transaction, or attempting to chain generated columns.</p>
+        <p class="revision-check"><strong>Self-check:</strong> Why does a table updated across all rows nearly double in physical storage size?</p>
+        <p class="revision-connections"><strong>Connects to:</strong> 46.1, 46.2, 46.6, 46.8, 46.10, 46.11</p>
+      </div>
+      <div class="exam-revision-entry">
+        <h3 class="revision-topic">Key Industry Applications</h3>
+        <p class="revision-mustknow"><strong>Must-know:</strong> Real-world database systems depend on SELECT INTO for reporting marts, \copy for automated reference data seeding, window deduplication for golden records, write-mix capacity planning for MVCC bloat control, off-peak VACUUM FULL maintenance for storage reclamation, and generated columns for trigger-free search indexing.</p>
+        <p class="revision-pitfall"><strong>⚠️ Top pitfall:</strong> Ignoring write-amplification and dead-tuple accumulation in update-heavy OLTP workloads or running uncoordinated VACUUM FULL during peak hours.</p>
+        <p class="revision-check"><strong>Self-check:</strong> Why do enterprise DBRE teams redirect read traffic to read replicas before executing VACUUM FULL?</p>
+        <p class="revision-connections"><strong>Connects to:</strong> 46.2, 46.4, 46.6, 46.8, 46.10, 46.11</p>
+      </div>
+    </section>
+  </div>
+</body>
+</html>
