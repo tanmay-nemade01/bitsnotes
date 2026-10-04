@@ -100,7 +100,7 @@ src/content/notes/<Subject>/<LectureFolder>/
 └── notes.json    # optional — summary, quiz, keyConcepts, examRevisionNotes, …
 ```
 
-Styles in lecture HTML are scoped to `.lecture-notes-wrapper` at parse time. Without `notes.json`, a basic study guide is derived from the folder name. Add subject metadata in `src/data/subjects.ts` when introducing a new subject folder.
+Styles in lecture HTML are scoped to `.lecture-notes-wrapper` at parse time. Without `notes.json`, a basic study guide is derived from the folder name. Subject metadata (semester, code, description, order) lives in `src/content/notes/<Subject>/subject.json` and syncs to production automatically when running `npm run upload-notes`.
 
 ### Cross-lecture resources
 

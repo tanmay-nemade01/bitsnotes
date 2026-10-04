@@ -348,6 +348,50 @@ let totalLectures = 0;
 
 for (const subjectName of subjectFolders) {
   const subjectPath = path.join(NOTES_DIR, subjectName);
+
+  // Read subject.json if present; auto-create starter template if missing
+  const subjectJsonPath = path.join(subjectPath, 'subject.json');
+  let subjectMeta = null;
+  if (fs.existsSync(subjectJsonPath)) {
+    try {
+      subjectMeta = JSON.parse(fs.readFileSync(subjectJsonPath, 'utf-8'));
+    } catch (err) {
+      console.warn(`${YELLOW}Warning: Failed to parse ${subjectJsonPath}: ${err.message}${RESET}`);
+    }
+  }
+
+  if (!subjectMeta) {
+    const autoShort = subjectName.split(/\s+/).map(w => w[0]).join('').toUpperCase();
+    subjectMeta = {
+      name: subjectName,
+      shortName: autoShort,
+      code: autoShort,
+      description: `Lecture notes and study resources for ${subjectName}.`,
+      order: 999,
+      semester: null,
+    };
+    try {
+      fs.writeFileSync(subjectJsonPath, JSON.stringify(subjectMeta, null, 2) + '\n', 'utf-8');
+      console.log(`${GREEN}Created template ${subjectJsonPath}. Update semester/description if needed.${RESET}`);
+    } catch { /* ignore write failure */ }
+  }
+
+  // Queue subject.json for upload to R2 if changed
+  if (fs.existsSync(subjectJsonPath)) {
+    const subjectJsonHash = getFileMd5(subjectJsonPath);
+    const remoteSubjectJsonKey = `notes/${subjectName}/subject.json`;
+    if (FORCE_UPLOAD || getCachedHash(remoteSubjectJsonKey) !== subjectJsonHash) {
+      uploadQueue.push({
+        localPath: subjectJsonPath,
+        remoteKey: remoteSubjectJsonKey,
+        contentType: 'application/json',
+        hash: subjectJsonHash,
+      });
+    } else {
+      skippedCount++;
+    }
+  }
+
   const lectureFolders = fs.readdirSync(subjectPath, { withFileTypes: true })
     .filter(dirent => dirent.isDirectory())
     .map(dirent => dirent.name);
@@ -553,6 +597,11 @@ for (const subjectName of subjectFolders) {
 
   subjects.push({
     name: subjectName,
+    shortName: subjectMeta.shortName || subjectName,
+    code: subjectMeta.code || subjectMeta.shortName || subjectName,
+    description: subjectMeta.description || `Lecture notes and study resources for ${subjectName}.`,
+    order: typeof subjectMeta.order === 'number' ? subjectMeta.order : 999,
+    semester: typeof subjectMeta.semester === 'number' ? subjectMeta.semester : undefined,
     lectureCount: lecturesList.length,
     lectures: lecturesList
   });
