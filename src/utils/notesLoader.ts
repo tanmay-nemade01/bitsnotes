@@ -3,12 +3,18 @@ import { getFallbackMetadata } from './metadata';
 import type { DocumentMetadata, ResourceKind, AvailableMode, ResourceScope, MetadataSource } from './metadata';
 import { normalizeCatalogEntry, type RawCatalogEntry, slugify } from './lectureDisplay';
 import { renderMathInHtml } from './mathRender';
+import { getSubjectInfo, type SubjectInfo } from '../data/subjects';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
 export interface SubjectSummary {
   name: string;
   lectureCount: number;
+  shortName?: string;
+  description?: string;
+  order?: number;
+  code?: string;
+  semester?: number;
 }
 
 export interface LectureSummary {
@@ -55,7 +61,23 @@ interface LectureEntry {
 interface SubjectEntry {
   name: string;
   lectureCount: number;
+  shortName?: string;
+  description?: string;
+  order?: number;
+  code?: string;
+  semester?: number;
   lectures: LectureEntry[];
+}
+
+export interface CatalogSubject {
+  subject: string;
+  shortName?: string;
+  description?: string;
+  order?: number;
+  code?: string;
+  semester?: number;
+  lectureCount: number;
+  lectures: CatalogLecture[];
 }
 
 interface NotesManifest {
@@ -324,8 +346,27 @@ async function buildLocalManifest(): Promise<NotesManifest> {
       })
       .sort((a, b) => a.sortOrder - b.sortOrder || a.displayTitle.localeCompare(b.displayTitle));
 
+    const subjectJsonPath = `/src/content/notes/${subjectName}/subject.json`;
+    let subjectMeta: any = null;
+    if (jsonFiles[subjectJsonPath]) {
+      try {
+        subjectMeta = await resolveGlobEntry(jsonFiles[subjectJsonPath]);
+      } catch { /* optional */ }
+    }
+    const fallback = getSubjectInfo(subjectName);
+    const shortName = subjectMeta?.shortName || fallback.shortName;
+    const description = subjectMeta?.description || fallback.description;
+    const order = typeof subjectMeta?.order === 'number' ? subjectMeta.order : fallback.order;
+    const code = subjectMeta?.code || fallback.code;
+    const semester = typeof subjectMeta?.semester === 'number' ? subjectMeta.semester : fallback.semester;
+
     subjectsList.push({
       name: subjectName,
+      shortName,
+      description,
+      order,
+      code,
+      semester,
       lectureCount: catalogLectures.length,
       lectures: catalogLectures as unknown as LectureEntry[]
     });
@@ -344,12 +385,17 @@ async function buildLocalManifest(): Promise<NotesManifest> {
 
 // ─── Public API ──────────────────────────────────────────────────────────────
 
-/** List all subjects with their lecture counts. */
+/** List all subjects with their lecture counts and metadata. */
 export async function listSubjects(): Promise<SubjectSummary[]> {
   const manifest = await getManifest();
   return manifest.subjects.map(s => ({
     name: s.name,
-    lectureCount: s.lectureCount
+    lectureCount: s.lectureCount,
+    shortName: s.shortName,
+    description: s.description,
+    order: s.order,
+    code: s.code,
+    semester: s.semester,
   }));
 }
 
@@ -358,6 +404,25 @@ export async function getSubjectByNameOrSlug(nameOrSlug: string): Promise<Subjec
   const subjects = await listSubjects();
   const matched = subjects.find(s => slugify(s.name) === slugify(nameOrSlug) || s.name === nameOrSlug);
   return matched || null;
+}
+
+/** Returns full subject info (from manifest if present, falling back to static config). */
+export async function getSubjectDetails(subjectName: string): Promise<SubjectInfo> {
+  const manifest = await getManifest();
+  const s = manifest.subjects.find(
+    (item) => item.name === subjectName || slugify(item.name) === slugify(subjectName)
+  );
+  if (s && (s.description || s.shortName || s.semester !== undefined)) {
+    return {
+      name: s.name,
+      shortName: s.shortName || s.name,
+      description: s.description || 'Lecture notes and study resources for this subject.',
+      order: s.order,
+      code: s.code,
+      semester: s.semester,
+    };
+  }
+  return getSubjectInfo(subjectName);
 }
 
 /** List all lectures within a subject, as normalized catalog entries. */
@@ -390,10 +455,15 @@ export async function listLectures(subjectName: string): Promise<CatalogLecture[
  * resources) in a single manifest read. Prefer this over repeated
  * `listSubjects()` + `listLectures()` calls.
  */
-export async function listCatalog(): Promise<Array<{ subject: string; lectureCount: number; lectures: CatalogLecture[] }>> {
+export async function listCatalog(): Promise<CatalogSubject[]> {
   const manifest = await getManifest();
   return manifest.subjects.map((s) => ({
     subject: s.name,
+    shortName: s.shortName,
+    description: s.description,
+    order: s.order,
+    code: s.code,
+    semester: s.semester,
     lectureCount: s.lectureCount,
     lectures: s.lectures.map((l: any) => ({
       name: l.name,

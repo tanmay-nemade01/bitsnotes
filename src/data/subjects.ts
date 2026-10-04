@@ -118,6 +118,15 @@ export const SUBJECTS: SubjectInfo[] = [
     code: 'VA',
     semester: 2,
   },
+  {
+    name: 'Computer Vision',
+    shortName: 'CV',
+    description:
+      'Image formation, feature extraction, motion analysis, object detection, segmentation, and visual recognition architectures.',
+    order: 11,
+    code: 'CV',
+    semester: 2,
+  },
 
   // Semester 1 Subjects
   {
@@ -162,12 +171,6 @@ const SUBJECT_MAP = new Map(SUBJECTS.map((s) => [s.name, s]));
 
 /** Neutral fallback used when a content folder has no curated entry. */
 function fallbackSubject(name: string): SubjectInfo {
-  if (import.meta.env.DEV) {
-    console.warn(
-      `[subjects] No curated entry for content folder "${name}". ` +
-        `Add it to src/data/subjects.ts for a proper description.`,
-    );
-  }
   return {
     name,
     shortName: name,
