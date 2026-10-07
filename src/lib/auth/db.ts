@@ -17,6 +17,8 @@ export interface AuthUser {
   created_at: number;
   updated_at: number;
   status: string;
+  backup_email?: string | null;
+  backup_email_verified_at?: number | null;
 }
 
 export interface AuthIdentity {
@@ -57,6 +59,41 @@ export async function findUserByEmail(db: AuthDb, email: string): Promise<AuthUs
  */
 export async function findUserById(db: AuthDb, id: string): Promise<AuthUser | null> {
   return db.prepare('SELECT * FROM users WHERE id = ?').bind(id).first<AuthUser>();
+}
+
+/**
+ * Find a user by VERIFIED backup email (lets them sign in with that Google account).
+ */
+export async function findUserByBackupEmail(db: AuthDb, email: string): Promise<AuthUser | null> {
+  return db.prepare(
+    'SELECT * FROM users WHERE backup_email = ? AND backup_email_verified_at IS NOT NULL',
+  ).bind(email.toLowerCase().trim()).first<AuthUser>();
+}
+
+/**
+ * Set (or replace) the backup email directly — no verification step.
+ * `backup_email_verified_at` is just stamped with the time it was set; sign-in
+ * lookups key off it. Returns false if another user already uses this backup email.
+ */
+export async function setBackupEmail(db: AuthDb, userId: string, email: string): Promise<boolean> {
+  const now = Date.now();
+  try {
+    await db.prepare(
+      'UPDATE users SET backup_email = ?, backup_email_verified_at = ?, updated_at = ? WHERE id = ?',
+    ).bind(email.toLowerCase().trim(), now, now, userId).run();
+    return true;
+  } catch {
+    return false; // unique index violation
+  }
+}
+
+/**
+ * Remove the backup email.
+ */
+export async function clearBackupEmail(db: AuthDb, userId: string): Promise<void> {
+  await db.prepare(
+    'UPDATE users SET backup_email = NULL, backup_email_verified_at = NULL, updated_at = ? WHERE id = ?',
+  ).bind(Date.now(), userId).run();
 }
 
 /**
@@ -131,7 +168,7 @@ export async function deleteUserAccount(db: AuthDb, userId: string): Promise<voi
 
   // Soft-delete user row (unique email freed via tombstone)
   await db.prepare(
-    `UPDATE users SET email = ?, display_name = NULL, avatar_url = NULL, status = 'deleted', updated_at = ? WHERE id = ?`,
+    `UPDATE users SET email = ?, display_name = NULL, avatar_url = NULL, backup_email = NULL, backup_email_verified_at = NULL, status = 'deleted', updated_at = ? WHERE id = ?`,
   ).bind(tombstoneEmail, now, userId).run();
 }
 

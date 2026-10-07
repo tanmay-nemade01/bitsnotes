@@ -3,7 +3,9 @@
  * Account settings — self-serve account deletion (GDPR).
  */
 import BaseLayout from '../layouts/BaseLayout.astro';
-import { getUser } from '../lib/apiHelpers';
+import { getUser, getEnv } from '../lib/apiHelpers';
+import { findUserById } from '../lib/auth/db';
+import { isBackupEmailEligible } from '../lib/auth/backupEmail';
 
 export const prerender = false;
 
@@ -11,6 +13,11 @@ const user = getUser(Astro);
 if (!user) {
   return Astro.redirect('/auth/signin?redirect=/account');
 }
+
+const env = await getEnv();
+const row = env.DB ? await findUserById(env.DB, user.id) : null;
+const backupEligible = isBackupEmailEligible(user.email);
+const backupEmail = backupEligible ? (row?.backup_email ?? '') : '';
 ---
 
 <BaseLayout
@@ -27,6 +34,52 @@ if (!user) {
     <p class="text-sm text-[var(--text-muted)] mb-8">
       Signed in as <span class="font-medium text-[var(--text)]">{user.email}</span>
     </p>
+
+
+    <section
+      id="backup-email-section"
+      class={`border border-[var(--border)] rounded-[var(--r-md)] p-5 space-y-4 mb-6 ${backupEligible ? '' : 'opacity-50'}`}
+      aria-disabled={backupEligible ? 'false' : 'true'}
+    >
+      <h2 class="font-display text-lg font-bold text-[var(--text)]">Backup email</h2>
+      <p class="text-sm text-[var(--text-muted)] leading-relaxed">
+        {backupEligible
+          ? 'If your main email stops working, you can sign in to this same account with a Google account that uses your backup email. Make sure it is typed correctly — it is not verified.'
+          : 'Backup email is only available for WILP accounts that start with 2025 (e.g. 2025xxxx@wilp.bits-pilani.ac.in).'}
+      </p>
+      <div class="flex flex-col sm:flex-row gap-2">
+        <input
+          type="email"
+          id="backup-email-input"
+          value={backupEmail}
+          placeholder={backupEligible ? 'you@example.com' : 'Not available'}
+          disabled={!backupEligible}
+          autocomplete="email"
+          class="flex-1 px-3 py-2 text-sm rounded-[var(--r-sm)] border border-[var(--border)] bg-[var(--bg)] text-[var(--text)] disabled:cursor-not-allowed"
+        />
+        <button
+          type="button"
+          id="backup-email-save"
+          disabled={!backupEligible}
+          class="px-4 py-2 text-sm font-semibold rounded-[var(--r-sm)] border border-[var(--accent)] text-[var(--accent)] hover:bg-[var(--bg-subtle)] transition-colors cursor-pointer disabled:cursor-not-allowed disabled:border-[var(--border)] disabled:text-[var(--text-muted)]"
+        >
+          {backupEmail ? 'Update' : 'Save'}
+        </button>
+        {backupEligible && backupEmail && (
+          <button
+            type="button"
+            id="backup-email-remove"
+            class="px-4 py-2 text-sm rounded-[var(--r-sm)] border border-[var(--border)] text-[var(--text-muted)] hover:bg-[var(--bg-subtle)] transition-colors cursor-pointer"
+          >
+            Remove
+          </button>
+        )}
+      </div>
+      {backupEligible && backupEmail && (
+        <p class="text-xs text-[var(--text-muted)]">Backup email saved.</p>
+      )}
+      <p id="backup-email-status" class="text-sm text-[var(--text-muted)] hidden" role="status"></p>
+    </section>
 
     <section class="border border-[var(--border)] rounded-[var(--r-md)] p-5 space-y-4">
       <h2 class="font-display text-lg font-bold text-[var(--text)]">Delete account</h2>
@@ -46,6 +99,44 @@ if (!user) {
     </section>
   </div>
 </BaseLayout>
+
+<script is:inline>
+  (function () {
+    var save = document.getElementById('backup-email-save');
+    var remove = document.getElementById('backup-email-remove');
+    var input = document.getElementById('backup-email-input');
+    var msg = document.getElementById('backup-email-status');
+    function show(t) { if (msg) { msg.classList.remove('hidden'); msg.textContent = t; } }
+    function call(method, body) {
+      return fetch('/api/auth/backup-email', {
+        method: method,
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'same-origin',
+        body: body ? JSON.stringify(body) : undefined,
+      }).then(function (r) { return r.json().then(function (d) { return { ok: r.ok, data: d }; }); });
+    }
+    if (save && input) {
+      save.addEventListener('click', function () {
+        if (save.disabled) return;
+        save.disabled = true;
+        call('POST', { email: input.value }).then(function (res) {
+          save.disabled = false;
+          if (res.ok) { show('Backup email saved.'); setTimeout(function () { location.reload(); }, 800); }
+          else show((res.data && res.data.error) || 'Could not save backup email.');
+        }).catch(function () { save.disabled = false; show('Network error. Please try again.'); });
+      });
+    }
+    if (remove) {
+      remove.addEventListener('click', function () {
+        if (!window.confirm('Remove your backup email?')) return;
+        call('DELETE').then(function (res) {
+          if (res.ok) location.reload();
+          else show((res.data && res.data.error) || 'Could not remove backup email.');
+        }).catch(function () { show('Network error. Please try again.'); });
+      });
+    }
+  })();
+</script>
 
 <script is:inline>
   (function () {

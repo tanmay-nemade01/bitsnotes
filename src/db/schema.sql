@@ -12,7 +12,11 @@ CREATE TABLE IF NOT EXISTS users (
   avatar_url      TEXT,
   created_at      INTEGER NOT NULL,
   updated_at      INTEGER NOT NULL,
-  status          TEXT NOT NULL DEFAULT 'pending'  -- pending|active|suspended|deleted
+  status          TEXT NOT NULL DEFAULT 'pending',  -- pending|active|suspended|deleted
+  -- Backup email (WILP 2025 cohort only). Existing DBs: apply migrations/008_backup_email.sql
+  -- which also creates the partial unique index idx_users_backup_email_verified.
+  backup_email             TEXT,
+  backup_email_verified_at INTEGER
 );
 
 -- ─── Auth: OAuth Identities ─────────────────────────────────────────────────
