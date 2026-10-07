@@ -11,6 +11,7 @@ import {
   setSessionCookie, setRefreshCookie, clearOAuthStateCookie,
   logAuthEvent, sha256Hex, generateToken, hmacVerify,
   getEntitlement,
+  findUserByBackupEmail,
   type OAuthProfile,
 } from '../../../../lib/auth';
 import { sendVerificationEmail } from '../../../../lib/auth/email';
@@ -118,10 +119,19 @@ export const GET: APIRoute = async (context) => {
   } else {
     // Check if email already exists (different provider)
     const existingUser = await findUserByEmail(db, normalizedEmail);
-    if (existingUser) {
-      // Link new provider to existing user
-      await createIdentity(db, existingUser.id, provider, profile.providerUid);
-      user = existingUser;
+    // …or a verified BACKUP email of an existing account (needs a provider-verified
+    // address so nobody can claim an account by merely typing an email).
+    const backupOwner = !existingUser && profile.emailVerified
+      ? await findUserByBackupEmail(db, normalizedEmail)
+      : null;
+    if (existingUser || backupOwner) {
+      const owner = (existingUser ?? backupOwner)!;
+      // Link new provider identity to the existing user
+      await createIdentity(db, owner.id, provider, profile.providerUid);
+      user = owner;
+      if (backupOwner) {
+        await logAuthEvent(db, { userId: owner.id, event: 'backup_email_login', provider, ip, ua: request.headers.get('User-Agent') || '' });
+      }
     } else {
       // Brand new user
       const newUser = await createUser(db, {

@@ -32,7 +32,10 @@ export type AuthEvent =
   | 'admin_supporter_add'
   | 'admin_supporter_update'
   | 'admin_supporter_delete'
-  | 'account_delete';
+  | 'account_delete'
+  | 'backup_email_added'
+  | 'backup_email_removed'
+  | 'backup_email_login';
 
 export interface AuditContext {
   userId?: string;

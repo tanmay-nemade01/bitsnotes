@@ -205,7 +205,11 @@ export const onRequest = defineMiddleware(async (context, next) => {
     // stay no-store so personalized UI is never served from cache (Phase 8.10).
     const isAdmin = pathname.startsWith('/admin');
     const isMutation = request.method !== 'GET' && request.method !== 'HEAD';
-    if (!user && !isAdmin && !isMutation) {
+    // Lecture notes (/view/) are gated per-viewer (verified bot vs anonymous teaser vs
+    // signed-in), so a cached copy could leak full notes to anonymous users or serve
+    // a teaser to Googlebot. Always no-store there.
+    const isGatedNotes = pathname.startsWith('/view/');
+    if (!user && !isAdmin && !isMutation && !isGatedNotes) {
       // Edge-only caching: s-maxage lets Cloudflare cache anonymous page shells,
       // but no `max-age`/`public` means browsers never store HTML — so a page
       // cached while signed-out can never be shown to a just-signed-in user.
