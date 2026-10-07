@@ -96,6 +96,7 @@ export const onRequest = defineMiddleware(async (context, next) => {
                 displayName: dbUser.display_name,
                 avatarUrl: dbUser.avatar_url,
                 status: dbUser.status,
+                backupEmail: dbUser.backup_email ?? null,
               };
               tier = claims.tier;
             }
@@ -119,6 +120,7 @@ export const onRequest = defineMiddleware(async (context, next) => {
                     displayName: dbUser.display_name,
                     avatarUrl: dbUser.avatar_url,
                     status: dbUser.status,
+                    backupEmail: dbUser.backup_email ?? null,
                   };
                   (locals as any).__newSessionToken = newAccessToken;
                   (locals as any).__newRefreshToken = rotated.newToken;

@@ -1,38 +1,21 @@
 /**
  * BitsNotes AI Chatbot — Client-Side Controller
- * Dual-mode: "BitsNotes" (server-proxied, 20/day limit) & "BYOK" (bring your own key)
+ * Server-proxied AI study assistant with daily message quota
  */
 (function () {
   'use strict';
 
-  var STORAGE_KEY = 'bn_chatbot_config';
   var HISTORY_STORAGE_KEY = 'bn_chatbot_history';
-  var MODE_STORAGE_KEY = 'bn_chatbot_mode'; // 'bitsnotes' | 'byok'
-  var memoryConfig = null;
   var conversationHistory = [];
   var isSending = false;
-  var topicMappingCache = {};
   var bitsnotesUsage = { used: 0, limit: 20, remaining: 20 };
   var bitsnotesUser = null; // { displayName, ... } from /api/auth/me
 
-  // ─── Chat mode management ─────────────────────────────────────────────
-  function getChatMode() {
-    try {
-      return sessionStorage.getItem(MODE_STORAGE_KEY) || 'bitsnotes';
-    } catch (e) {
-      return 'bitsnotes';
-    }
-  }
-
-  function setChatMode(mode) {
-    try {
-      sessionStorage.setItem(MODE_STORAGE_KEY, mode);
-    } catch (e) {}
-  }
-
-  function isBitsNotesMode() {
-    return getChatMode() === 'bitsnotes';
-  }
+  // Clean up legacy BYOK sessionStorage keys if present
+  try {
+    sessionStorage.removeItem('bn_chatbot_config');
+    sessionStorage.removeItem('bn_chatbot_mode');
+  } catch (e) {}
 
   // ─── Textbook companion toggle (on by default, persisted per session) ──
   var TEXTBOOK_STORAGE_KEY = 'bn_chatbot_textbook';
@@ -80,69 +63,7 @@
 
   conversationHistory = loadConversationHistory();
 
-  // ─── BYOK Config management (unchanged from original) ─────────────────
-  function getConfig() {
-    if (memoryConfig) return memoryConfig;
-    try {
-      var saved = sessionStorage.getItem(STORAGE_KEY);
-      if (saved) {
-        return JSON.parse(saved);
-      }
-    } catch (e) {
-      console.warn('[chatbot] Could not read sessionStorage', e);
-    }
-    return null;
-  }
-
-  function setConfig(config, remember) {
-    if (remember) {
-      try {
-        sessionStorage.setItem(STORAGE_KEY, JSON.stringify(config));
-        memoryConfig = null;
-      } catch (e) {
-        console.warn('[chatbot] Failed to write to sessionStorage', e);
-        memoryConfig = config;
-      }
-    } else {
-      memoryConfig = config;
-      try {
-        sessionStorage.removeItem(STORAGE_KEY);
-      } catch (e) {}
-    }
-    updateBadge();
-  }
-
-  function clearConfig() {
-    memoryConfig = null;
-    try {
-      sessionStorage.getItem(STORAGE_KEY) && sessionStorage.removeItem(STORAGE_KEY);
-    } catch (e) {}
-    updateBadge();
-  }
-
-  function updateBadge() {
-    var badge = document.getElementById('bn-chatbot-badge');
-    var clearBtn = document.getElementById('bn-clear-key-btn');
-    var config = getConfig();
-    var hasByokKey = config && config.apiKey;
-    var hasBitsNotesAccess = isBitsNotesMode() && bitsnotesUser;
-    if (badge) {
-      if (hasByokKey || hasBitsNotesAccess) {
-        badge.classList.remove('hidden');
-      } else {
-        badge.classList.add('hidden');
-      }
-    }
-    if (clearBtn) {
-      if (hasByokKey && !isBitsNotesMode()) {
-        clearBtn.classList.remove('hidden');
-      } else {
-        clearBtn.classList.add('hidden');
-      }
-    }
-  }
-
-  // ─── Usage tracking for BitsNotes mode ────────────────────────────────
+  // ─── Usage tracking for BitsNotes ─────────────────────────────────────
   async function fetchBitsNotesUsage() {
     try {
       var res = await fetch('/api/chatbot/usage');
@@ -177,7 +98,7 @@
     // Chat header badge
     var usageBadge = document.getElementById('bn-chat-usage-badge');
     if (usageBadge) {
-      if (isBitsNotesMode() && bitsnotesUser) {
+      if (bitsnotesUser) {
         usageBadge.textContent = remaining + '/' + limit;
         usageBadge.classList.remove('hidden');
         if (remaining <= 5) {
@@ -205,165 +126,6 @@
     bitsnotesUser = null;
   }
 
-  // ─── Provider presets (unchanged) ─────────────────────────────────────
-  var PROVIDER_PRESETS = {
-    gemini: {
-      name: 'Google Gemini',
-      url: 'https://generativelanguage.googleapis.com/v1beta/openai/chat/completions'
-    },
-    deepseek: {
-      name: 'DeepSeek',
-      url: 'https://api.deepseek.com/chat/completions'
-    },
-    openai: {
-      name: 'OpenAI',
-      url: 'https://api.openai.com/v1/chat/completions'
-    },
-    groq: {
-      name: 'Groq',
-      url: 'https://api.groq.com/openai/v1/chat/completions'
-    },
-    openrouter: {
-      name: 'OpenRouter',
-      url: 'https://openrouter.ai/api/v1/chat/completions'
-    },
-    xai: {
-      name: 'xAI (Grok)',
-      url: 'https://api.x.ai/v1/chat/completions'
-    },
-    kimi: {
-      name: 'Kimi / Moonshot AI',
-      url: 'https://api.moonshot.cn/v1/chat/completions'
-    },
-    glm: {
-      name: 'Zhipu GLM',
-      url: 'https://open.bigmodel.cn/api/paas/v4/chat/completions'
-    },
-    minimax: {
-      name: 'MiniMax / Mimi',
-      url: 'https://api.minimax.chat/v1/chat/completions'
-    },
-    qwen: {
-      name: 'Qwen / Alibaba DashScope',
-      url: 'https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions'
-    },
-    siliconflow: {
-      name: 'SiliconFlow / 硅基流动',
-      url: 'https://api.siliconflow.cn/v1/chat/completions'
-    },
-    yi: {
-      name: 'Yi / 01.AI / 零一万物',
-      url: 'https://api.lingyiwanwu.com/v1/chat/completions'
-    },
-    stepfun: {
-      name: 'StepFun / 阶跃星辰',
-      url: 'https://api.stepfun.com/v1/chat/completions'
-    },
-    baichuan: {
-      name: 'Baichuan / 百川智能',
-      url: 'https://api.baichuan-ai.com/v1/chat/completions'
-    },
-    together: {
-      name: 'Together AI',
-      url: 'https://api.together.xyz/v1/chat/completions'
-    },
-    mistral: {
-      name: 'Mistral AI',
-      url: 'https://api.mistral.ai/v1/chat/completions'
-    },
-    perplexity: {
-      name: 'Perplexity AI',
-      url: 'https://api.perplexity.ai/chat/completions'
-    },
-    cerebras: {
-      name: 'Cerebras',
-      url: 'https://api.cerebras.ai/v1/chat/completions'
-    },
-    fireworks: {
-      name: 'Fireworks AI',
-      url: 'https://api.fireworks.ai/inference/v1/chat/completions'
-    },
-    sambanova: {
-      name: 'SambaNova',
-      url: 'https://api.sambanova.ai/v1/chat/completions'
-    },
-    huggingface: {
-      name: 'Hugging Face Router',
-      url: 'https://router.huggingface.co/v1/chat/completions'
-    },
-    ollama: {
-      name: 'Ollama (Local)',
-      url: 'http://localhost:11434/v1/chat/completions'
-    },
-    lmstudio: {
-      name: 'LM Studio (Local)',
-      url: 'http://localhost:1234/v1/chat/completions'
-    }
-  };
-
-  function detectProviderFromUrl(url) {
-    if (!url) return '__custom__';
-    var cleanUrl = url.trim().toLowerCase();
-    for (var key in PROVIDER_PRESETS) {
-      if (PROVIDER_PRESETS.hasOwnProperty(key)) {
-        var presetUrl = PROVIDER_PRESETS[key].url.toLowerCase();
-        if (cleanUrl === presetUrl || cleanUrl === presetUrl.replace(/\/chat\/completions$/, '')) {
-          return key;
-        }
-      }
-    }
-    if (cleanUrl.indexOf('googleapis.com') !== -1) return 'gemini';
-    if (cleanUrl.indexOf('deepseek.com') !== -1) return 'deepseek';
-    if (cleanUrl.indexOf('openai.com') !== -1) return 'openai';
-    if (cleanUrl.indexOf('groq.com') !== -1) return 'groq';
-    if (cleanUrl.indexOf('openrouter.ai') !== -1) return 'openrouter';
-    if (cleanUrl.indexOf('x.ai') !== -1) return 'xai';
-    if (cleanUrl.indexOf('moonshot') !== -1) return 'kimi';
-    if (cleanUrl.indexOf('bigmodel.cn') !== -1 || cleanUrl.indexOf('zhipu') !== -1) return 'glm';
-    if (cleanUrl.indexOf('minimax') !== -1) return 'minimax';
-    if (cleanUrl.indexOf('dashscope') !== -1 || cleanUrl.indexOf('aliyuncs') !== -1) return 'qwen';
-    if (cleanUrl.indexOf('siliconflow') !== -1) return 'siliconflow';
-    if (cleanUrl.indexOf('lingyiwanwu') !== -1 || cleanUrl.indexOf('01.ai') !== -1) return 'yi';
-    if (cleanUrl.indexOf('stepfun') !== -1) return 'stepfun';
-    if (cleanUrl.indexOf('baichuan') !== -1) return 'baichuan';
-    if (cleanUrl.indexOf('together') !== -1) return 'together';
-    if (cleanUrl.indexOf('mistral.ai') !== -1) return 'mistral';
-    if (cleanUrl.indexOf('perplexity.ai') !== -1) return 'perplexity';
-    if (cleanUrl.indexOf('cerebras.ai') !== -1) return 'cerebras';
-    if (cleanUrl.indexOf('fireworks.ai') !== -1) return 'fireworks';
-    if (cleanUrl.indexOf('sambanova') !== -1) return 'sambanova';
-    if (cleanUrl.indexOf('huggingface') !== -1) return 'huggingface';
-    if (cleanUrl.indexOf('11434') !== -1) return 'ollama';
-    if (cleanUrl.indexOf('1234') !== -1) return 'lmstudio';
-
-    return '__custom__';
-  }
-
-  // Derive normalized chat completions and models endpoints from any user input URL
-  function deriveEndpoints(inputUrl) {
-    var raw = (inputUrl || 'https://api.openai.com/v1/chat/completions').trim();
-    var clean = raw.replace(/\/$/, '');
-
-    var chatUrl = '';
-    var modelsUrl = '';
-
-    if (/\/chat\/completions$/i.test(clean)) {
-      chatUrl = clean;
-      modelsUrl = clean.replace(/\/chat\/completions$/i, '/models');
-    } else if (/\/models$/i.test(clean)) {
-      modelsUrl = clean;
-      chatUrl = clean.replace(/\/models$/i, '/chat/completions');
-    } else {
-      chatUrl = clean + '/chat/completions';
-      modelsUrl = clean + '/models';
-    }
-
-    return {
-      chatUrl: chatUrl,
-      modelsUrl: modelsUrl
-    };
-  }
-
   // Escape HTML string
   function escapeHtml(str) {
     return str
@@ -376,8 +138,6 @@
 
   // Ensure KaTeX is loaded and available (lazy — only fetched when a chat
   // message actually contains math). Self-hosted; far lighter than MathJax.
-  // auto-render captures `window.katex` at ITS load time, so it must never
-  // initialize before katex.min.js — chain the two loads.
   function ensureKaTeX(cb) {
     var ready = function () {
       return window.katex && window.renderMathInElement;
@@ -627,84 +387,6 @@
     return '';
   }
 
-  async function fetchAvailableModels(apiUrl, apiKey) {
-    if (!apiUrl || !apiKey) return [];
-    var key = apiKey.trim();
-    try {
-      var endpoints = deriveEndpoints(apiUrl);
-      var res = await fetch(endpoints.modelsUrl, {
-        method: 'GET',
-        headers: {
-          'Authorization': 'Bearer ' + key
-        }
-      });
-
-      // Gemini API query param fallback
-      if (!res.ok && /googleapis\.com/i.test(endpoints.modelsUrl)) {
-        var altUrl = endpoints.modelsUrl + (endpoints.modelsUrl.indexOf('?') !== -1 ? '&' : '?') + 'key=' + encodeURIComponent(key);
-        res = await fetch(altUrl, { method: 'GET' });
-      }
-
-      if (!res.ok) return [];
-      var data = await res.json();
-      if (data && Array.isArray(data.data)) {
-        return data.data.map(function (m) { return m.id || m.name; }).filter(Boolean).sort();
-      } else if (data && Array.isArray(data.models)) {
-        return data.models.map(function (m) { return m.name ? m.name.replace(/^models\//, '') : m.id; }).filter(Boolean).sort();
-      }
-    } catch (e) {
-      console.warn('[chatbot] Could not fetch models:', e);
-    }
-    return [];
-  }
-
-  async function handleFetchModels() {
-    var keyInput = document.getElementById('bn-api-key-input');
-    var urlInput = document.getElementById('bn-api-url-input');
-    var statusEl = document.getElementById('bn-model-status');
-    var modelSelect = document.getElementById('bn-model-select');
-    var modelInput = document.getElementById('bn-model-name-input');
-
-    if (!keyInput || !urlInput || !keyInput.value.trim() || !urlInput.value.trim()) {
-      if (statusEl) statusEl.textContent = '🔑 Enter API Key and Endpoint URL above to fetch models.';
-      return;
-    }
-
-    var urlVal = urlInput.value.trim();
-    var currentModel = modelInput ? modelInput.value.trim() : '';
-
-    if (statusEl) statusEl.textContent = '⏳ Fetching live models from endpoint...';
-
-    var models = await fetchAvailableModels(urlVal, keyInput.value.trim());
-
-    if (models.length > 0) {
-      if (modelSelect) {
-        modelSelect.innerHTML = '';
-        models.forEach(function (m) {
-          var opt = document.createElement('option');
-          opt.value = m;
-          opt.textContent = m;
-          modelSelect.appendChild(opt);
-        });
-
-        modelSelect.classList.remove('hidden');
-        if (modelInput) modelInput.classList.add('hidden');
-
-        if (currentModel && models.indexOf(currentModel) !== -1) {
-          modelSelect.value = currentModel;
-        } else {
-          modelSelect.value = models[0];
-          if (modelInput) modelInput.value = models[0];
-        }
-      }
-      if (statusEl) statusEl.textContent = '✅ ' + models.length + ' live models loaded from provider endpoint!';
-    } else {
-      if (modelSelect) modelSelect.classList.add('hidden');
-      if (modelInput) modelInput.classList.remove('hidden');
-      if (statusEl) statusEl.textContent = '💡 Type your model name below (or check provider docs).';
-    }
-  }
-
   function appendMessage(role, content, isHtml) {
     var container = document.getElementById('bn-chatbot-messages');
     if (!container) return;
@@ -731,12 +413,11 @@
 
   function appendWelcomeMessage() {
     var subject = getSubjectName();
-    var modeLabel = isBitsNotesMode() ? ' (Free via BitsNotes)' : '';
     appendMessage(
       'assistant',
       'Hello! 👋 I am your AI study assistant for **' +
         escapeHtml(subject) +
-        '**.' + modeLabel + '\n\nI have the full context of this lecture page. Ask me anything!'
+        '**.\n\nI have the full context of this lecture page. Ask me anything!'
     );
   }
 
@@ -772,20 +453,8 @@
   }
 
   var isLeftSidebarAutoCollapsed = false;
-  var autoFetchTimeout = null;
 
-  function scheduleAutoFetch() {
-    if (autoFetchTimeout) clearTimeout(autoFetchTimeout);
-    autoFetchTimeout = setTimeout(function () {
-      var keyInput = document.getElementById('bn-api-key-input');
-      var urlInput = document.getElementById('bn-api-url-input');
-      if (keyInput && urlInput && keyInput.value.trim().length >= 3 && urlInput.value.trim()) {
-        handleFetchModels();
-      }
-    }, 400);
-  }
-
-  // ─── Build system prompt (shared between both modes) ──────────────────
+  // ─── Build system prompt ──────────────────────────────────────────────
   function buildSystemPrompt() {
     var subjectName = getSubjectName();
     var lectureFolder = getLectureFolderName();
@@ -832,59 +501,23 @@
       '- **Structure:** Markdown headings, bullets, bold — keep it clean and scannable.';
   }
 
-  // ─── Settings view management ─────────────────────────────────────────
+  // ─── Settings / Account view management ───────────────────────────────
   function showSettingsView() {
     var mainView = document.getElementById('bn-chat-view-main');
     var settingsView = document.getElementById('bn-chat-view-settings');
     var backBtn = document.getElementById('bn-chat-back-btn');
 
-    var keyInput = document.getElementById('bn-api-key-input');
-    var urlInput = document.getElementById('bn-api-url-input');
-    var modelInput = document.getElementById('bn-model-name-input');
-    var providerSelect = document.getElementById('bn-provider-preset');
-    var rememberCheck = document.getElementById('bn-remember-key');
-    var config = getConfig();
-
-    // Populate BYOK form if config exists
-    if (config) {
-      if (config.apiKey && keyInput) keyInput.value = config.apiKey;
-      if (config.apiUrl && urlInput) {
-        urlInput.value = config.apiUrl;
-        var detected = detectProviderFromUrl(config.apiUrl);
-        if (providerSelect) providerSelect.value = detected;
-      }
-      if (config.modelName && modelInput) {
-        modelInput.value = config.modelName;
-      }
-      if (rememberCheck) rememberCheck.checked = !!sessionStorage.getItem(STORAGE_KEY);
-
-      if (config.apiKey && config.apiUrl) {
-        handleFetchModels();
-      }
-    } else {
-      var currentUrl = urlInput ? urlInput.value.trim() : '';
-      var currentProvider = detectProviderFromUrl(currentUrl || 'gemini');
-      if (providerSelect) providerSelect.value = currentProvider;
-    }
-
-    // Show/hide back button based on whether user has a working config
     if (backBtn) {
-      var hasAccess = (config && config.apiKey) || (isBitsNotesMode() && bitsnotesUser);
-      backBtn.style.display = hasAccess ? 'flex' : 'none';
+      backBtn.style.display = bitsnotesUser ? 'flex' : 'none';
     }
 
-    // Update BitsNotes mode panel
-    updateBitsNotesModePanel();
-
-    // Switch to correct tab
-    switchSettingsTab(getChatMode());
+    updateBitsNotesAccountPanel();
 
     if (mainView) mainView.classList.remove('active');
     if (settingsView) settingsView.classList.add('active');
-    updateBadge();
   }
 
-  function updateBitsNotesModePanel() {
+  function updateBitsNotesAccountPanel() {
     var loggedIn = document.getElementById('bn-bitsnotes-logged-in');
     var loggedOut = document.getElementById('bn-bitsnotes-logged-out');
     var footer = document.getElementById('bn-bitsnotes-footer');
@@ -903,32 +536,12 @@
     }
   }
 
-  function switchSettingsTab(mode) {
-    var tabBN = document.getElementById('bn-tab-bitsnotes');
-    var tabBYOK = document.getElementById('bn-tab-byok');
-    var panelBN = document.getElementById('bn-mode-bitsnotes');
-    var panelBYOK = document.getElementById('bn-chatbot-config-form');
-
-    if (mode === 'byok') {
-      if (tabBN) tabBN.classList.remove('active');
-      if (tabBYOK) tabBYOK.classList.add('active');
-      if (panelBN) panelBN.classList.remove('active');
-      if (panelBYOK) panelBYOK.classList.add('active');
-    } else {
-      if (tabBN) tabBN.classList.add('active');
-      if (tabBYOK) tabBYOK.classList.remove('active');
-      if (panelBN) panelBN.classList.add('active');
-      if (panelBYOK) panelBYOK.classList.remove('active');
-    }
-  }
-
   function showChatView() {
     var mainView = document.getElementById('bn-chat-view-main');
     var settingsView = document.getElementById('bn-chat-view-settings');
 
     if (settingsView) settingsView.classList.remove('active');
     if (mainView) mainView.classList.add('active');
-    updateBadge();
     updateUsageUI();
 
     setTimeout(function () {
@@ -977,16 +590,7 @@
 
     panel.classList.add('open');
 
-    // Determine if we have a working config for the current mode
-    var hasConfig = false;
-    if (isBitsNotesMode()) {
-      hasConfig = !!bitsnotesUser;
-    } else {
-      var config = getConfig();
-      hasConfig = config && config.apiKey;
-    }
-
-    if (!hasConfig) {
+    if (!bitsnotesUser) {
       showSettingsView();
     } else {
       showChatView();
@@ -1008,7 +612,7 @@
   // load (while /api/auth/me is still in flight) doesn't show the sign-in view
   // to a user who is actually logged in.
   function openPanelWithFreshUser() {
-    if (isBitsNotesMode() && !bitsnotesUser) {
+    if (!bitsnotesUser) {
       fetchBitsNotesUser().then(function () {
         openPanel();
       });
@@ -1056,30 +660,22 @@
     var userQuery = inputEl.value.trim();
     if (!userQuery) return;
 
-    // Check if we have a working config for the current mode
-    if (isBitsNotesMode()) {
-      if (!bitsnotesUser) {
-        await fetchBitsNotesUser();
-      }
-      if (!bitsnotesUser) {
-        openModal();
-        return;
-      }
-      // Check local usage counter
-      if (bitsnotesUsage.remaining <= 0) {
-        appendMessage(
-          'system',
-          '⚠️ <strong>Daily limit reached</strong><br/>You\'ve used all 20 messages for today. Come back tomorrow, or switch to "Bring Your Own Key" mode for unlimited access.',
-          true
-        );
-        return;
-      }
-    } else {
-      var config = getConfig();
-      if (!config || !config.apiKey) {
-        openModal();
-        return;
-      }
+    if (!bitsnotesUser) {
+      await fetchBitsNotesUser();
+    }
+    if (!bitsnotesUser) {
+      openModal();
+      return;
+    }
+
+    // Check local usage counter
+    if (bitsnotesUsage.remaining <= 0) {
+      appendMessage(
+        'system',
+        '⚠️ <strong>Daily limit reached</strong><br/>You\'ve used all ' + bitsnotesUsage.limit + ' messages for today. Please come back tomorrow.',
+        true
+      );
+      return;
     }
 
     inputEl.value = '';
@@ -1098,11 +694,7 @@
     showTypingIndicator();
 
     try {
-      if (isBitsNotesMode()) {
-        await handleBitsNotesSubmit(userQuery);
-      } else {
-        await handleByokSubmit(userQuery);
-      }
+      await handleBitsNotesSubmit(userQuery);
     } finally {
       isSending = false;
       if (sendBtn) sendBtn.disabled = false;
@@ -1110,7 +702,7 @@
     }
   }
 
-  // ─── BitsNotes mode submission (server proxy) ─────────────────────────
+  // ─── BitsNotes submission (server proxy) ──────────────────────────────
 
   // Append a small "Sources" footer to the last assistant bubble (transparency
   // for cross-lecture retrieval). History keeps only the raw reply text.
@@ -1177,7 +769,7 @@
           updateUsageUI();
           appendMessage(
             'system',
-            '⚠️ <strong>Daily limit reached</strong><br/>You\'ve used all ' + bitsnotesUsage.limit + ' messages for today. Come back tomorrow, or switch to "Bring Your Own Key" mode for unlimited access.',
+            '⚠️ <strong>Daily limit reached</strong><br/>You\'ve used all ' + bitsnotesUsage.limit + ' messages for today. Please come back tomorrow.',
             true
           );
         } else {
@@ -1229,231 +821,16 @@
     }
   }
 
-  // ─── BYOK mode submission (direct to provider — unchanged logic) ──────
-
-  // Fetch a pre-formatted textbook context block for BYOK mode (client-direct
-  // provider calls bypass the server chat proxy). Non-fatal: returns {block, snippets}.
-  async function fetchCompanionBlock(userQuery) {
-    var empty = { block: '', snippets: [] };
-    if (!isTextbookEnabled()) return empty;
-    try {
-      var url = '/api/chatbot/companion?subject=' + encodeURIComponent(getSubjectName()) +
-        '&query=' + encodeURIComponent(userQuery);
-      var res = await fetch(url, { method: 'GET' });
-      if (!res.ok) return empty;
-      var data = await res.json();
-      return {
-        block: (data && data.block) || '',
-        snippets: (data && data.snippets) || []
-      };
-    } catch (e) {
-      return empty;
-    }
-  }
-
-  async function handleByokSubmit(userQuery) {
-    var config = getConfig();
-    var systemPrompt = buildSystemPrompt();
-    var companionSources = [];
-    try {
-      var companion = await fetchCompanionBlock(userQuery);
-      if (companion.block) systemPrompt += companion.block;
-      companionSources = companion.snippets;
-    } catch (e) {}
-    var apiMessages = [{ role: 'system', content: systemPrompt }].concat(conversationHistory);
-
-    var sendBtn = document.getElementById('bn-chatbot-send');
-
-    try {
-      var endpoints = deriveEndpoints(config.apiUrl);
-
-      var res = await fetch(endpoints.chatUrl, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': 'Bearer ' + config.apiKey.trim()
-        },
-        body: JSON.stringify({
-          model: config.modelName || 'gemini-2.0-flash',
-          messages: apiMessages,
-          temperature: 0.7
-        })
-      });
-
-      hideTypingIndicator();
-
-      if (!res.ok) {
-        var errBody = '';
-        try {
-          var errJson = await res.json();
-          errBody = errJson.error ? (errJson.error.message || JSON.stringify(errJson.error)) : JSON.stringify(errJson);
-        } catch (e) {
-          errBody = res.statusText;
-        }
-
-        appendMessage(
-          'system',
-          '⚠️ <strong>API Error (' + res.status + '):</strong> ' + escapeHtml(errBody) + '<br/>Please check your OpenAI-compatible API Key & Endpoint settings.',
-          true
-        );
-        // Roll back the unanswered user turn so the next request keeps a valid role alternation
-        if (conversationHistory.length > 0 && conversationHistory[conversationHistory.length - 1].role === 'user') {
-          conversationHistory.pop();
-        }
-        saveConversationHistory();
-        return;
-      }
-
-      var data = await res.json();
-      var reply = '';
-      if (data.choices && data.choices[0] && data.choices[0].message) {
-        reply = data.choices[0].message.content;
-      } else {
-        reply = 'Received unexpected response format from API provider.';
-      }
-
-      appendMessage('assistant', reply);
-      conversationHistory.push({ role: 'assistant', content: reply });
-      saveConversationHistory();
-
-      // Show textbook sources when the companion endpoint returned excerpts
-      if (companionSources && companionSources.length > 0) {
-        appendSourcesFooter(companionSources);
-      }
-    } catch (err) {
-      hideTypingIndicator();
-      console.error('[chatbot] Error during fetch:', err);
-      // Roll back the unanswered user turn so the next request keeps a valid role alternation
-      if (conversationHistory.length > 0 && conversationHistory[conversationHistory.length - 1].role === 'user') {
-        conversationHistory.pop();
-      }
-      saveConversationHistory();
-      appendMessage(
-        'system',
-        '⚠️ <strong>Connection Error:</strong> Could not connect to API endpoint.<br/>' +
-          escapeHtml(err.message || 'Check network or CORS settings.'),
-        true
-      );
-    }
-  }
-
   // ─── Event initialization ─────────────────────────────────────────────
 
   function initEvents() {
-    var fab = document.getElementById('bn-chatbot-fab');
-    var closeBtn = document.getElementById('bn-chat-close-btn');
-    var configBtn = document.getElementById('bn-chat-config-btn');
-    var modalOverlay = document.getElementById('bn-chatbot-modal-overlay');
-    var modalClose = document.getElementById('bn-modal-close-btn');
-    var modalCancel = document.getElementById('bn-modal-cancel-btn');
-    var clearKeyBtn = document.getElementById('bn-clear-key-btn');
-    var configForm = document.getElementById('bn-chatbot-config-form');
     var chatForm = document.getElementById('bn-chatbot-form');
     var inputArea = document.getElementById('bn-chatbot-input');
-    var providerSelect = document.getElementById('bn-provider-preset');
-    var modelSelect = document.getElementById('bn-model-select');
-    var modelInput = document.getElementById('bn-model-name-input');
-    var apiKeyInput = document.getElementById('bn-api-key-input');
-    var apiUrlInput = document.getElementById('bn-api-url-input');
-
-    // ─── Mode tab switching ───────────────────────────────────────────
-    var tabBN = document.getElementById('bn-tab-bitsnotes');
-    var tabBYOK = document.getElementById('bn-tab-byok');
-
-    if (tabBN && !tabBN.dataset.bnInited) {
-      tabBN.dataset.bnInited = 'true';
-      tabBN.addEventListener('click', function () {
-        switchSettingsTab('bitsnotes');
-        setChatMode('bitsnotes');
-        updateBitsNotesModePanel();
-      });
-    }
-
-    if (tabBYOK && !tabBYOK.dataset.bnInited) {
-      tabBYOK.dataset.bnInited = 'true';
-      tabBYOK.addEventListener('click', function () {
-        switchSettingsTab('byok');
-        setChatMode('byok');
-      });
-    }
-
-    // ─── BitsNotes "Start Chatting" button ────────────────────────────
     var bitsnotesStartBtn = document.getElementById('bn-bitsnotes-start-btn');
+
     if (bitsnotesStartBtn && !bitsnotesStartBtn.dataset.bnInited) {
       bitsnotesStartBtn.dataset.bnInited = 'true';
       bitsnotesStartBtn.addEventListener('click', function () {
-        setChatMode('bitsnotes');
-        closeModal();
-        openPanel();
-      });
-    }
-
-    // ─── BYOK provider / model / key events (unchanged) ──────────────
-    if (providerSelect && apiUrlInput && !providerSelect.dataset.bnInited) {
-      providerSelect.dataset.bnInited = 'true';
-      providerSelect.addEventListener('change', function () {
-        var selectedProvider = providerSelect.value;
-        if (selectedProvider !== '__custom__' && PROVIDER_PRESETS[selectedProvider]) {
-          var preset = PROVIDER_PRESETS[selectedProvider];
-          apiUrlInput.value = preset.url;
-          scheduleAutoFetch();
-        }
-      });
-    }
-
-    if (modelSelect && modelInput && !modelSelect.dataset.bnInited) {
-      modelSelect.dataset.bnInited = 'true';
-      modelSelect.addEventListener('change', function () {
-        if (modelSelect.value) {
-          modelInput.value = modelSelect.value;
-        }
-      });
-    }
-
-    if (apiKeyInput && !apiKeyInput.dataset.bnInited) {
-      apiKeyInput.dataset.bnInited = 'true';
-      apiKeyInput.addEventListener('input', scheduleAutoFetch);
-    }
-
-    if (apiUrlInput && !apiUrlInput.dataset.bnInited) {
-      apiUrlInput.dataset.bnInited = 'true';
-      apiUrlInput.addEventListener('input', function () {
-        if (providerSelect) {
-          var detected = detectProviderFromUrl(apiUrlInput.value);
-          providerSelect.value = detected;
-        }
-        scheduleAutoFetch();
-      });
-    }
-
-    if (configForm && !configForm.dataset.bnInited) {
-      configForm.dataset.bnInited = 'true';
-      configForm.addEventListener('submit', function (e) {
-        e.preventDefault();
-        var keyInput = document.getElementById('bn-api-key-input');
-        var urlInput = document.getElementById('bn-api-url-input');
-        var select = document.getElementById('bn-model-select');
-        var customInput = document.getElementById('bn-model-name-input');
-        var rememberCheck = document.getElementById('bn-remember-key');
-
-        var selectedModel = '';
-        if (select && !select.classList.contains('hidden') && select.value) {
-          selectedModel = select.value;
-        } else if (customInput) {
-          selectedModel = customInput.value.trim();
-        }
-
-        var config = {
-          provider: 'openai-compatible',
-          apiKey: keyInput ? keyInput.value.trim() : '',
-          apiUrl: urlInput ? urlInput.value.trim() : 'https://generativelanguage.googleapis.com/v1beta/openai/chat/completions',
-          modelName: selectedModel
-        };
-
-        if (!config.apiKey) return;
-
-        setChatMode('byok');
-        setConfig(config, rememberCheck ? rememberCheck.checked : false);
         closeModal();
         openPanel();
       });
@@ -1478,8 +855,6 @@
         this.style.height = Math.min(this.scrollHeight, 100) + 'px';
       });
     }
-
-    updateBadge();
 
     // Quick Actions Collapsible Toggle
     var quickActionsGroup = document.getElementById('bn-quick-actions-group');
@@ -1533,7 +908,6 @@
 
     // Fetch BitsNotes user status on init
     fetchBitsNotesUser().then(function () {
-      updateBadge();
       updateUsageUI();
     });
   }
@@ -1566,26 +940,10 @@
       return;
     }
 
-    var closeBtn = e.target.closest('#bn-chat-close-btn') || e.target.closest('#bn-chat-close-btn-settings') || e.target.closest('#bn-modal-close-btn');
+    var closeBtn = e.target.closest('#bn-chat-close-btn') || e.target.closest('#bn-chat-close-btn-settings');
     if (closeBtn) {
       e.preventDefault();
       closePanel();
-      return;
-    }
-
-    var modalCancel = e.target.closest('#bn-modal-cancel-btn');
-    if (modalCancel) {
-      e.preventDefault();
-      showChatView();
-      return;
-    }
-
-    var clearKeyBtn = e.target.closest('#bn-clear-key-btn');
-    if (clearKeyBtn) {
-      e.preventDefault();
-      clearConfig();
-      showChatView();
-      appendMessage('system', 'Key cleared. Click settings icon to set a new key.', true);
       return;
     }
 
@@ -1593,13 +951,6 @@
     if (clearChatBtn) {
       e.preventDefault();
       clearChat();
-      return;
-    }
-
-    var fetchBtn = e.target.closest('#bn-fetch-models-btn');
-    if (fetchBtn) {
-      e.preventDefault();
-      handleFetchModels();
       return;
     }
 

@@ -46,6 +46,7 @@ export interface ApiUser {
   displayName: string | null;
   avatarUrl: string | null;
   status: string;
+  backupEmail?: string | null;
 }
 
 /**

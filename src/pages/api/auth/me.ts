@@ -25,6 +25,7 @@ export const GET: APIRoute = async ({ locals }) => {
       email: user.email,
       displayName: user.displayName,
       avatarUrl: user.avatarUrl,
+      backupEmail: user.backupEmail ?? null,
     },
   }), {
     status: 200,

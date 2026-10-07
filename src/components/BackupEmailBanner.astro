@@ -1,0 +1,125 @@
+---
+/**
+ * BackupEmailBanner.astro
+ * 
+ * Shows a banner to WILP students (2025*@wilp.bits-pilani.ac.in) who haven't added
+ * a backup email yet.
+ * 
+ * Supports both SSR-rendered users and client-side hydrated users (via /api/auth/me).
+ * Frequency: Once a day until added (uses localStorage with timestamp).
+ * Can be dismissed for the day via close button.
+ */
+import { getUser } from '../lib/apiHelpers';
+import { isBackupEmailEligible } from '../lib/auth/backupEmail';
+
+const user = getUser(Astro);
+const isEligible = user ? isBackupEmailEligible(user.email) : false;
+const hasBackupEmail = Boolean(user?.backupEmail);
+const isAccountPage = Astro.url.pathname === '/account';
+const initialEligibleMissing = isEligible && !hasBackupEmail && !isAccountPage;
+---
+
+<div
+  id="bn-backup-email-banner"
+  class="hidden relative z-30 bg-amber-500/10 dark:bg-amber-500/15 border-b border-amber-500/30 text-amber-950 dark:text-amber-200 px-4 py-2.5 text-xs sm:text-sm transition-all"
+  role="region"
+  aria-label="Backup email reminder"
+  data-ssr-eligible={initialEligibleMissing ? "true" : "false"}
+  data-ssr-email={user?.email || ""}
+>
+  <div class="max-w-[1560px] mx-auto flex items-center justify-between gap-3">
+    <div class="flex items-center gap-2.5 min-w-0">
+      <svg class="w-4 h-4 shrink-0 text-amber-600 dark:text-amber-400" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+        <path stroke-linecap="round" stroke-linejoin="round" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"/>
+      </svg>
+      <p class="truncate leading-tight">
+        <strong class="font-semibold">WILP Account Notice:</strong> Add a personal backup email so you don't lose access if your college email expires.
+      </p>
+    </div>
+
+    <div class="flex items-center gap-2 shrink-0">
+      <a
+        href="/account"
+        class="font-semibold px-2.5 py-1 rounded-[var(--r-sm)] bg-amber-600 hover:bg-amber-700 dark:bg-amber-500 dark:hover:bg-amber-400 text-white dark:text-amber-950 no-underline transition-colors text-xs whitespace-nowrap shadow-xs"
+      >
+        Add Backup Email
+      </a>
+      <button
+        type="button"
+        id="bn-dismiss-backup-banner"
+        class="p-1 rounded-[var(--r-sm)] hover:bg-amber-500/20 text-amber-900/70 dark:text-amber-300/70 hover:text-amber-950 dark:hover:text-amber-100 transition-colors cursor-pointer"
+        aria-label="Dismiss banner for today"
+        title="Dismiss for today"
+      >
+        <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12"/>
+        </svg>
+      </button>
+    </div>
+  </div>
+</div>
+
+<script is:inline>
+  (function () {
+    var WILP_PATTERN = /^2025[^@\s]*@wilp\.bits-pilani\.ac\.in$/i;
+    var ONE_DAY_MS = 24 * 60 * 60 * 1000;
+
+    function evaluateBackupBanner() {
+      var banner = document.getElementById('bn-backup-email-banner');
+      if (!banner) return;
+
+      // Never show on the /account page itself
+      if (window.location.pathname === '/account') {
+        banner.classList.add('hidden');
+        return;
+      }
+
+      // Check current user from sessionStorage (set by Navbar) or SSR dataset
+      var user = null;
+      var cachedStr = sessionStorage.getItem('bitsnotes-user');
+      if (cachedStr) {
+        try { user = JSON.parse(cachedStr); } catch (e) {}
+      }
+
+      var email = user ? (user.email || '') : banner.getAttribute('data-ssr-email') || '';
+      var hasBackup = user ? Boolean(user.backupEmail) : false;
+
+      // If user info not cached yet, check SSR attribute
+      if (!user && banner.getAttribute('data-ssr-eligible') === 'true') {
+        email = banner.getAttribute('data-ssr-email') || '';
+        hasBackup = false;
+      }
+
+      if (!email || !WILP_PATTERN.test(email) || hasBackup) {
+        banner.classList.add('hidden');
+        return;
+      }
+
+      // Check once-per-day dismissal
+      var storageKey = 'bn-backup-banner-dismissed-' + encodeURIComponent(email);
+      var dismissedAt = localStorage.getItem(storageKey);
+      var now = Date.now();
+
+      if (dismissedAt && (now - parseInt(dismissedAt, 10)) < ONE_DAY_MS) {
+        banner.classList.add('hidden');
+        return;
+      }
+
+      // Display banner
+      banner.classList.remove('hidden');
+
+      var dismissBtn = document.getElementById('bn-dismiss-backup-banner');
+      if (dismissBtn && !dismissBtn.dataset.bound) {
+        dismissBtn.dataset.bound = 'true';
+        dismissBtn.addEventListener('click', function () {
+          localStorage.setItem(storageKey, Date.now().toString());
+          banner.classList.add('hidden');
+        });
+      }
+    }
+
+    evaluateBackupBanner();
+    document.addEventListener('astro:page-load', evaluateBackupBanner);
+    window.addEventListener('bitsnotes:user-updated', evaluateBackupBanner);
+  })();
+</script>
