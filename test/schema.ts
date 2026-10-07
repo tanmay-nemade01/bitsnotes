@@ -16,7 +16,9 @@ CREATE TABLE IF NOT EXISTS users (
   avatar_url      TEXT,
   created_at      INTEGER NOT NULL,
   updated_at      INTEGER NOT NULL,
-  status          TEXT NOT NULL DEFAULT 'pending'
+  status          TEXT NOT NULL DEFAULT 'pending',
+  backup_email    TEXT,
+  backup_email_verified_at INTEGER
 );
 
 CREATE TABLE IF NOT EXISTS entitlements (
