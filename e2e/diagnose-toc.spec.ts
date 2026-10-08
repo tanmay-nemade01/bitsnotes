@@ -3,7 +3,7 @@ import { test, expect } from '@playwright/test';
 test.describe('TOC sidebar diagnosis', () => {
   test('diagnose topic sidebar interactivity', async ({ page }) => {
     await page.addInitScript(() => {
-      localStorage.setItem('bitsnotes-cookie-consent', JSON.stringify({ ads: true, analytics: true, functional: true }));
+      localStorage.setItem('bitsnotes-cookie-consent', JSON.stringify({ analytics: true, functional: true }));
     });
     await page.goto('/view/Deep%20Neural%20Networks/DNN_Lecture_01_notes');
     await page.waitForLoadState('networkidle');

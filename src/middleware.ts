@@ -13,12 +13,12 @@ const securityHeaders: Record<string, string> = {
 
 const cspReportOnly = [
   "default-src 'self'",
-  "script-src 'self' 'unsafe-inline' 'unsafe-eval' https://www.googletagmanager.com https://www.google-analytics.com https://pagead2.googlesyndication.com https://static.cloudflareinsights.com https://cdn.jsdelivr.net https://challenges.cloudflare.com",
+  "script-src 'self' 'unsafe-inline' 'unsafe-eval' https://www.googletagmanager.com https://www.google-analytics.com https://static.cloudflareinsights.com https://cdn.jsdelivr.net https://challenges.cloudflare.com",
   "style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net",
-  "img-src 'self' data: https://www.google-analytics.com https://pagead2.googlesyndication.com https://googleads.g.doubleclick.net",
+  "img-src 'self' data: https://www.google-analytics.com",
   "font-src 'self'",
-  "frame-src 'self' https://pagead2.googlesyndication.com https://googleads.g.doubleclick.net https://challenges.cloudflare.com",
-  "connect-src 'self' https://www.google-analytics.com https://static.cloudflareinsights.com https://pagead2.googlesyndication.com",
+  "frame-src 'self' https://challenges.cloudflare.com",
+  "connect-src 'self' https://www.google-analytics.com https://static.cloudflareinsights.com",
   "manifest-src 'self'",
   "base-uri 'self'",
   "form-action 'self'",
@@ -59,7 +59,6 @@ export const onRequest = defineMiddleware(async (context, next) => {
     || pathname.startsWith('/fonts/')
     || pathname === '/favicon.ico'
     || pathname === '/robots.txt'
-    || pathname === '/ads.txt'
     || pathname === '/sitemap.xml';
 
   // ─── Session resolution (lazy imports to avoid startup errors) ───────

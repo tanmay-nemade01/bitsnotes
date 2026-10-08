@@ -7,6 +7,7 @@ import type { QuizQuestion } from '../../utils/metadata';
 import { listSubjects, listLectures, getLectureContent, getSubjectByNameOrSlug } from '../../utils/notesLoader';
 import { parseLectureHtml } from '../../utils/htmlParser';
 import { splitLectureTopics } from '../../utils/topicSplitter';
+import { getGatedContent } from '../../utils/gatedContent';
 import { getResourceKindLabel, slugify } from '../../utils/lectureDisplay';
 import { renderMathInline } from '../../utils/mathRender';
 import CommentsSection from '../../components/CommentsSection.astro';
@@ -141,18 +142,14 @@ const metadata = customMetadata || getFallbackMetadata(lectureFolderName, subjec
 const lectureName = (lectureContent?.fileName || lectureFolderName).replace(/_/g, ' ');
 
 const { topics: allTopics } = splitLectureTopics(bodyContent);
-// Gated visitors only receive a short preview of the first topic in the HTML payload
-// (first few paragraphs) — never the full text, even for single-topic notes.
-const TEASER_PARAGRAPHS = 4;
-const topics = gated
-  ? allTopics.slice(0, 1).map((t) => {
-      const parts = t.html.split('</p>');
-      const html = parts.length > TEASER_PARAGRAPHS
-        ? parts.slice(0, TEASER_PARAGRAPHS).join('</p>') + '</p>'
-        : parts.slice(0, Math.max(1, Math.ceil(parts.length / 2))).join('</p>') + (parts.length > 1 ? '</p>' : '');
-      return { ...t, html, subtopics: [] };
-    })
-  : allTopics;
+let topics = allTopics;
+let gatedBlurredHtml = '';
+
+if (gated) {
+  const gatedResult = getGatedContent(allTopics);
+  topics = gatedResult.teaserTopics;
+  gatedBlurredHtml = gatedResult.blurredHtml;
+}
 
 // Phase 7: resource-type awareness. Non-lecture (subject-scope) resources must
 // not be labelled "Lecture Notes" and must never fabricate a lecture number.
@@ -458,25 +455,64 @@ const quizJson = quizSchema && !gated ? JSON.stringify(quizSchema) : null;
                     ))}
                   </main>
                   {gated && (
-                    <div id="login-wall" class="relative -mt-24 pt-24 bg-gradient-to-t from-[var(--bg)] via-[var(--bg)] to-transparent">
-                      <div class="border border-[var(--border)] bg-[var(--bg-elevated)] rounded-[var(--r-md)] p-6 text-center shadow-md">
-                        <h2 class="font-display text-xl font-bold text-[var(--text)] mb-2">Sign in to read the full notes</h2>
-                        <p class="text-sm text-[var(--text-muted)] mb-4">
-                          You are reading a preview. Sign in with Google (free) to unlock all {allTopics.length} sections, the exam revision sheet, practice quiz and AI study assistant.
-                        </p>
-                        <a
-                          href={signInUrl}
-                          id="login-wall-cta"
-                          class="inline-flex items-center justify-center gap-2.5 px-6 py-3 text-sm font-semibold rounded-[var(--r-sm)] bg-[var(--accent)] hover:bg-[var(--accent-hover)] text-white !text-white no-underline shadow-sm hover:shadow transition active:scale-[0.98]"
-                        >
-                          <svg class="w-4 h-4 shrink-0" viewBox="0 0 24 24">
-                            <path d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92a5.06 5.06 0 0 1-2.2 3.32v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.1z" fill="#4285F4"/>
-                            <path d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" fill="#34A853"/>
-                            <path d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z" fill="#FBBC05"/>
-                            <path d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z" fill="#EA4335"/>
-                          </svg>
-                          <span>Sign in to continue</span>
-                        </a>
+                    <div id="login-wall-container" class="login-wall-container">
+                      {gatedBlurredHtml && (
+                        <div class="login-wall-blur-preview" aria-hidden="true">
+                          <div class="lecture-section login-wall-blurred-content">
+                            <Fragment set:html={gatedBlurredHtml} />
+                          </div>
+                          <div class="login-wall-blur-fade"></div>
+                        </div>
+                      )}
+                      <div id="login-wall" style={gatedBlurredHtml ? 'margin-top: -130px;' : 'margin-top: 24px;'}>
+                        <div class="login-wall-card">
+                          <div class="login-wall-card-accent-bar"></div>
+                          <div class="login-wall-badge">
+                            <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                              <rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect>
+                              <path d="M7 11V7a5 5 0 0 1 10 0v4"></path>
+                            </svg>
+                            <span>Free Student Access</span>
+                          </div>
+                          <h2 class="login-wall-title">Sign in to read the full notes</h2>
+                          <p class="login-wall-desc">
+                            You are reading a preview. Sign in with Google (free) to unlock all {allTopics.length} sections, the exam revision sheet, practice quiz and AI study assistant.
+                          </p>
+                          <div class="login-wall-features">
+                            <span class="login-wall-feature-chip">
+                              <svg class="w-3.5 h-3.5 text-[var(--accent)]" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><path d="M5 13l4 4L19 7"/></svg>
+                              {allTopics.length} Full Sections
+                            </span>
+                            <span class="login-wall-feature-chip">
+                              <svg class="w-3.5 h-3.5 text-[var(--accent)]" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><path d="M5 13l4 4L19 7"/></svg>
+                              Exam Revision Sheet
+                            </span>
+                            <span class="login-wall-feature-chip">
+                              <svg class="w-3.5 h-3.5 text-[var(--accent)]" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><path d="M5 13l4 4L19 7"/></svg>
+                              Practice Quiz
+                            </span>
+                            <span class="login-wall-feature-chip">
+                              <svg class="w-3.5 h-3.5 text-[var(--accent)]" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><path d="M5 13l4 4L19 7"/></svg>
+                              AI Study Tutor
+                            </span>
+                          </div>
+                          <a
+                            href={signInUrl}
+                            id="login-wall-cta"
+                            class="login-wall-btn"
+                          >
+                            <svg class="w-4 h-4 shrink-0" viewBox="0 0 24 24">
+                              <path d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92a5.06 5.06 0 0 1-2.2 3.32v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.1z" fill="#4285F4"/>
+                              <path d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" fill="#34A853"/>
+                              <path d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z" fill="#FBBC05"/>
+                              <path d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z" fill="#EA4335"/>
+                            </svg>
+                            <span>Sign in with Google</span>
+                          </a>
+                          <p class="login-wall-footer-text">
+                            Instant free access &bull; No credit card &bull; 1-click Google login
+                          </p>
+                        </div>
                       </div>
                     </div>
                   )}
@@ -1368,42 +1404,6 @@ const quizJson = quizSchema && !gated ? JSON.stringify(quizSchema) : null;
       startInit();
     } else {
       document.addEventListener('DOMContentLoaded', startInit);
-    }
-  })();
-</script>
-
-{/*
-  AdSense is deferred: the library is only fetched after the user has granted
-  ad consent AND the page is idle / the ad area is near the viewport. This keeps
-  the third-party script off the critical path (Phase 8.5). There is no ad slot
-  rendered on this page yet, so this simply primes the library when allowed.
-*/}
-<script is:inline data-astro-rerun>
-  (function () {
-    function loadAds() {
-      if (window.__bnAdsLoaded) return;
-      window.__bnAdsLoaded = true;
-      var s = document.createElement('script');
-      s.async = true;
-      s.crossOrigin = 'anonymous';
-      s.src = 'https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js?client=ca-pub-2602136383267308';
-      document.head.appendChild(s);
-    }
-
-    function consentAllowsAds() {
-      try {
-        var c = JSON.parse(localStorage.getItem('bitsnotes-cookie-consent') || '{}');
-        return !!c.ads;
-      } catch (e) { return false; }
-    }
-
-    if (!consentAllowsAds()) return;
-
-    // Load on idle, or after a short delay if requestIdleCallback is missing.
-    if ('requestIdleCallback' in window) {
-      requestIdleCallback(loadAds, { timeout: 4000 });
-    } else {
-      setTimeout(loadAds, 3000);
     }
   })();
 </script>
