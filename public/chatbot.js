@@ -772,10 +772,17 @@
             '⚠️ <strong>Daily limit reached</strong><br/>You\'ve used all ' + bitsnotesUsage.limit + ' messages for today. Please come back tomorrow.',
             true
           );
-        } else {
+        } else if (res.status === 401) {
           appendMessage(
             'system',
-            '⚠️ <strong>Chatbot is under heavy use, please try again later.</strong>',
+            '⚠️ <strong>' + escapeHtml(errData.error || 'Authentication required.') + '</strong><br/><a href="/auth/login" class="bn-chat-link" style="text-decoration:underline; font-weight:600;">Sign in to continue</a>',
+            true
+          );
+        } else {
+          var msg = errData.error ? escapeHtml(errData.error) : 'Chatbot is under heavy use, please try again later.';
+          appendMessage(
+            'system',
+            '⚠️ <strong>' + msg + '</strong>',
             true
           );
         }

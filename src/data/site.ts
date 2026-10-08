@@ -48,16 +48,14 @@ export const EXPECTED_PAYEE_NAME = 'Tanmay Nemade';
 
 export interface SiteConfig {
   support: {
-    buymeacoffee: BuyMeACoffeeConfig | null;
+    buymeacoffee?: BuyMeACoffeeConfig | null;
     upi: UpiConfig;
   };
 }
 
 export const site: SiteConfig = {
   support: {
-    buymeacoffee: {
-      url: 'https://buymeacoffee.com/bitsnotes',
-    },
+    buymeacoffee: null,
     // The live QR is generated in the browser from this config.
     // The UPI ID IS rendered visibly on the page (and in data attributes)
     // on purpose: transparency lets donors + monitors spot a swapped VPA.
@@ -68,10 +66,10 @@ export const site: SiteConfig = {
       upiId: EXPECTED_UPI_ID,
       note: 'Supporting BitsNotes',
       presets: [
-        { label: 'A chai', amount: 20 },
-        { label: 'Study fuel', amount: 50 },
-        { label: 'Full meal', amount: 100 },
-        { label: 'Sponsor a subject', amount: 250 },
+        { label: 'Sponsor 1 lecture', amount: 250 },
+        { label: 'Sponsor 2 lectures', amount: 500 },
+        { label: 'Sponsor 3 lectures', amount: 750 },
+        { label: 'Sponsor 4 lectures', amount: 1000 },
       ],
       maxMessageLength: 50,
     },
