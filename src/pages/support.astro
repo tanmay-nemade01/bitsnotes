@@ -2,6 +2,13 @@
 import BaseLayout from '../layouts/BaseLayout.astro';
 import site from '../data/site.ts';
 import { supporters } from '../data/supporters.ts';
+import { getUser, getEnv } from '../lib/apiHelpers';
+import { countSupporters, listSupporters } from '../lib/supporters';
+
+export const prerender = false;
+
+const user = getUser(Astro);
+const isLoggedIn = Boolean(user);
 
 const { support } = site;
 
@@ -30,15 +37,30 @@ const buymeacoffee = support.buymeacoffee;
 const CARD_LIMIT = 12;
 const CHIP_LIMIT = 300;
 
-// Supporters are displayed with first supporters on top and new supporters at bottom.
-// `supporters.ts` is arranged chronologically.
-const orderedSupporters = [...supporters];
-const featuredSupporters = orderedSupporters.slice(0, CARD_LIMIT);
-const chipSupporters = orderedSupporters.slice(CARD_LIMIT, CARD_LIMIT + CHIP_LIMIT);
-const hiddenSupporterCount = Math.max(0, orderedSupporters.length - CARD_LIMIT - CHIP_LIMIT);
+// Resolve total count and (if logged in) the supporter list.
+// If the user is NOT logged in, we strictly ensure NO names or personal details
+// are leaked into the SSR HTML.
+let totalCount = supporters.length;
+let allSupporters = [...supporters];
 
-// Latest 3 supporters shown in a separate bar below the main list.
-const latestSupporters = [...supporters].slice(-3).reverse();
+try {
+  const env = await getEnv(Astro);
+  if (env?.DB) {
+    totalCount = await countSupporters(env.DB);
+    if (isLoggedIn) {
+      allSupporters = await listSupporters(env.DB, undefined, 'asc');
+    }
+  }
+} catch {
+  // Fall back to static counts/data
+}
+
+// Only populate supporter arrays when the user is authenticated.
+const orderedSupporters = isLoggedIn ? allSupporters : [];
+const featuredSupporters = isLoggedIn ? orderedSupporters.slice(0, CARD_LIMIT) : [];
+const chipSupporters = isLoggedIn ? orderedSupporters.slice(CARD_LIMIT, CARD_LIMIT + CHIP_LIMIT) : [];
+const hiddenSupporterCount = isLoggedIn ? Math.max(0, orderedSupporters.length - CARD_LIMIT - CHIP_LIMIT) : 0;
+const latestSupporters = isLoggedIn ? [...allSupporters].slice(-3).reverse() : [];
 
 const initialsOf = (name: string) =>
   name
@@ -79,23 +101,37 @@ const initialsOf = (name: string) =>
       <div
         class="mt-4 flex flex-wrap items-center gap-3 pt-1"
         data-supporters-hero
-        style={supporters.length === 0 ? 'display:none' : undefined}
+        style={totalCount === 0 ? 'display:none' : undefined}
       >
         <a
           href="#wall-of-gratitude"
           class="inline-flex items-center gap-2.5 px-3.5 py-1.5 rounded-full border border-[var(--border)] bg-[var(--bg-elevated)] hover:border-[var(--accent)] text-xs font-medium text-[var(--text-muted)] transition-colors no-underline group"
         >
           <span class="flex -space-x-1.5 overflow-hidden" data-supporters-hero-stack>
-            {featuredSupporters.slice(0, 3).map((s, i) => (
-              <span class={`inline-flex items-center justify-center w-6 h-6 rounded-full text-[10px] font-bold ring-2 ring-[var(--bg)] ${
-                i % 2 === 0 ? 'bg-[var(--accent)] text-[var(--accent-contrast)]' : 'bg-[var(--bg-interactive)] text-[var(--text)]'
-              }`}>
-                {initialsOf(s.name)}
+            {isLoggedIn ? (
+              featuredSupporters.slice(0, 3).map((s, i) => (
+                <span class={`inline-flex items-center justify-center w-6 h-6 rounded-full text-[10px] font-bold ring-2 ring-[var(--bg)] ${
+                  i % 2 === 0 ? 'bg-[var(--accent)] text-[var(--accent-contrast)]' : 'bg-[var(--bg-interactive)] text-[var(--text)]'
+                }`}>
+                  {initialsOf(s.name)}
+                </span>
+              ))
+            ) : (
+              <span class="inline-flex items-center justify-center w-6 h-6 rounded-full text-[10px] font-bold ring-2 ring-[var(--bg)] bg-[var(--accent-subtle)] text-[var(--accent)]">
+                💛
               </span>
-            ))}
+            )}
           </span>
           <span class="group-hover:text-[var(--text)]" data-supporters-hero-text>
-            Backed by <strong class="text-[var(--text)]">{supporters.length} supporters</strong> including <span class="text-[var(--text)] font-semibold">{orderedSupporters[0]?.name ?? 'our earliest backers'}</span>{orderedSupporters[1] ? ` & ${orderedSupporters[1].name}` : ''}
+            {isLoggedIn && orderedSupporters.length > 0 ? (
+              <>
+                Backed by <strong class="text-[var(--text)]">{totalCount} supporters</strong> including <span class="text-[var(--text)] font-semibold">{orderedSupporters[0]?.name ?? 'our earliest backers'}</span>{orderedSupporters[1] ? ` & ${orderedSupporters[1].name}` : ''}
+              </>
+            ) : (
+              <>
+                Backed by <strong class="text-[var(--text)]">{totalCount} supporters</strong>
+              </>
+            )}
           </span>
           <svg class="w-3.5 h-3.5 text-[var(--accent)] group-hover:translate-y-0.5 transition-transform" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
             <path stroke-linecap="round" stroke-linejoin="round" d="M19 9l-7 7-7-7"/>
@@ -117,15 +153,15 @@ const initialsOf = (name: string) =>
           class="shrink-0 rounded-full border border-[var(--accent)]/20 bg-[var(--accent-subtle)] px-2.5 py-0.5 font-sans text-xs font-semibold text-[var(--accent)]"
           data-supporters-count
         >
-          {supporters.length}
+          {totalCount}
         </span>
       </div>
 
       <!-- Scrollable list: capped height + own scrollbar so a large roster can
            never stretch the page. Focusable + labelled for keyboard users.
-           Server-rendered from the static fallback, then replaced in place by
-           `renderWall()` once /api/supporters responds, so adding a supporter
-           from /admin shows up without a redeploy. -->
+           Server-rendered for authenticated users, or replaced in place by
+           `renderWall()` once /api/supporters responds.
+           Unauthenticated users receive an in-place login prompt with zero names leaked. -->
       <div
         class="mt-3 max-h-[70vh] space-y-2 overflow-y-auto overscroll-contain pr-1 focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--focus-ring)] lg:mt-4 lg:max-h-none lg:min-h-0 lg:flex-1"
         role="region"
@@ -135,53 +171,88 @@ const initialsOf = (name: string) =>
         data-card-limit={CARD_LIMIT}
         data-chip-limit={CHIP_LIMIT}
       >
-        {featuredSupporters.map((s) => (
-          <div class="flex flex-col justify-between rounded-[var(--r-md)] border border-[var(--border)] bg-[var(--bg)] p-3 transition-colors duration-200 hover:border-[var(--border-strong)]">
-            <div class="flex items-center gap-3">
-              <div class="w-9 h-9 rounded-full bg-[var(--accent-subtle)] border border-[var(--accent)]/30 text-[var(--accent)] flex items-center justify-center font-bold text-xs flex-shrink-0">
-                {initialsOf(s.name)}
-              </div>
-              <div class="min-w-0 flex-1">
-                <div class="flex items-center gap-1.5">
-                  <span class="font-bold text-sm text-[var(--text)] truncate">{s.name}</span>
-                  <svg class="w-3.5 h-3.5 text-[var(--accent)] flex-shrink-0" fill="currentColor" viewBox="0 0 20 20" aria-label="Verified Supporter">
-                    <title>Verified Supporter</title>
-                    <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clip-rule="evenodd"/>
-                  </svg>
+        {isLoggedIn ? (
+          <>
+            {featuredSupporters.map((s) => (
+              <div class="flex flex-col justify-between rounded-[var(--r-md)] border border-[var(--border)] bg-[var(--bg)] p-3 transition-colors duration-200 hover:border-[var(--border-strong)]">
+                <div class="flex items-center gap-3">
+                  <div class="w-9 h-9 rounded-full bg-[var(--accent-subtle)] border border-[var(--accent)]/30 text-[var(--accent)] flex items-center justify-center font-bold text-xs flex-shrink-0">
+                    {initialsOf(s.name)}
+                  </div>
+                  <div class="min-w-0 flex-1">
+                    <div class="flex items-center gap-1.5">
+                      <span class="font-bold text-sm text-[var(--text)] truncate">{s.name}</span>
+                      <svg class="w-3.5 h-3.5 text-[var(--accent)] flex-shrink-0" fill="currentColor" viewBox="0 0 20 20" aria-label="Verified Supporter">
+                        <title>Verified Supporter</title>
+                        <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clip-rule="evenodd"/>
+                      </svg>
+                    </div>
+                    <span class="inline-block text-[11px] font-medium text-[var(--text-muted)]">
+                      {s.tierLabel || 'Supporter'}
+                    </span>
+                  </div>
                 </div>
-                <span class="inline-block text-[11px] font-medium text-[var(--text-muted)]">
-                  {s.tierLabel || 'Supporter'}
-                </span>
+                {s.message && (
+                  <p class="mt-2 text-xs text-[var(--text-muted)] italic line-clamp-2">
+                    &ldquo;{s.message}&rdquo;
+                  </p>
+                )}
               </div>
-            </div>
-            {s.message && (
-              <p class="mt-2 text-xs text-[var(--text-muted)] italic line-clamp-2">
-                &ldquo;{s.message}&rdquo;
-              </p>
-            )}
-          </div>
-        ))}
+            ))}
 
-        {chipSupporters.length > 0 && (
-          <div class="border-t border-[var(--border)] pt-3">
-            <h3 class="text-[11px] font-bold uppercase tracking-wider text-[var(--text-faint)]">
-              More supporters
-            </h3>
-            <ul class="mt-2 flex flex-wrap gap-1.5">
-              {chipSupporters.map((s) => (
-                <li
-                  class="rounded-full border border-[var(--border)] bg-[var(--bg-subtle)] px-2 py-0.5 text-[11px] text-[var(--text-muted)]"
-                  title={s.message || undefined}
-                >
-                  {s.name}
-                </li>
-              ))}
-            </ul>
-            {hiddenSupporterCount > 0 && (
-              <p class="mt-2 text-[11px] text-[var(--text-faint)]">
-                and {hiddenSupporterCount} more supporters.
-              </p>
+            {chipSupporters.length > 0 && (
+              <div class="border-t border-[var(--border)] pt-3">
+                <h3 class="text-[11px] font-bold uppercase tracking-wider text-[var(--text-faint)]">
+                  More supporters
+                </h3>
+                <ul class="mt-2 flex flex-wrap gap-1.5">
+                  {chipSupporters.map((s) => (
+                    <li
+                      class="rounded-full border border-[var(--border)] bg-[var(--bg-subtle)] px-2 py-0.5 text-[11px] text-[var(--text-muted)]"
+                      title={s.message || undefined}
+                    >
+                      {s.name}
+                    </li>
+                  ))}
+                </ul>
+                {hiddenSupporterCount > 0 && (
+                  <p class="mt-2 text-[11px] text-[var(--text-faint)]">
+                    and {hiddenSupporterCount} more supporters.
+                  </p>
+                )}
+              </div>
             )}
+          </>
+        ) : (
+          <div
+            class="rounded-[var(--r-md)] border border-[var(--border)] bg-[var(--bg)] p-5 text-center flex flex-col items-center justify-center space-y-3.5 my-auto"
+            data-supporter-login-prompt
+          >
+            <div class="w-11 h-11 rounded-full bg-[var(--accent-subtle)] border border-[var(--accent)]/30 text-[var(--accent)] flex items-center justify-center">
+              <svg class="w-5 h-5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" aria-hidden="true">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"/>
+              </svg>
+            </div>
+            <div class="space-y-1">
+              <h3 class="font-display text-sm font-bold text-[var(--text)]">
+                Supporters list is private
+              </h3>
+              <p class="text-xs text-[var(--text-muted)] leading-relaxed max-w-[240px]">
+                Please log in to view the Wall of Gratitude and our community supporters.
+              </p>
+            </div>
+            <a
+              href="/auth/signin?redirect=/support#wall-of-gratitude"
+              class="inline-flex items-center justify-center gap-1.5 w-full px-4 py-2 rounded-[var(--r-sm)] bg-[var(--accent)] text-[var(--accent-contrast)] hover:bg-[var(--accent-hover)] font-semibold text-xs transition-colors shadow-xs no-underline"
+            >
+              <span>Sign in to view</span>
+              <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M9 5l7 7-7 7"/>
+              </svg>
+            </a>
+            <p class="text-[11px] text-[var(--text-faint)]">
+              Don't have an account? <a href="/auth/signup?redirect=/support#wall-of-gratitude" class="text-[var(--accent)] hover:underline font-medium">Sign up</a>
+            </p>
           </div>
         )}
       </div>
@@ -190,7 +261,7 @@ const initialsOf = (name: string) =>
       <div
         class="mt-3 pt-3 border-t border-[var(--border)] bg-[var(--bg-subtle)]/70 -mx-4 -mb-4 px-4 py-3 rounded-b-[var(--r-md)]"
         data-latest-supporters-bar
-        style={latestSupporters.length === 0 ? 'display:none' : undefined}
+        style={!isLoggedIn || latestSupporters.length === 0 ? 'display:none' : undefined}
       >
         <div class="flex items-center justify-between gap-2 mb-2">
           <div class="flex items-center gap-1.5">
@@ -202,7 +273,7 @@ const initialsOf = (name: string) =>
           <span class="text-[10px] text-[var(--text-faint)] font-medium">Recent 3</span>
         </div>
         <div class="space-y-1.5" data-latest-supporters-list>
-          {latestSupporters.map((s) => (
+          {isLoggedIn && latestSupporters.map((s) => (
             <div class="flex items-center justify-between gap-2 px-2.5 py-1.5 rounded-[var(--r-sm)] bg-[var(--bg-elevated)] border border-[var(--border)] text-xs transition-colors hover:border-[var(--border-strong)]">
               <div class="flex items-center gap-2 min-w-0">
                 <span class="w-5 h-5 rounded-full bg-[var(--accent-subtle)] text-[var(--accent)] font-bold text-[10px] flex items-center justify-center shrink-0">
@@ -801,19 +872,60 @@ const initialsOf = (name: string) =>
       }).join('');
     }
 
-    function renderSummary(supporters, total) {
+    function renderLoginPrompt() {
+      if (latestBarEl) latestBarEl.style.display = 'none';
+      if (latestListEl) latestListEl.innerHTML = '';
+      listEl.innerHTML =
+        '<div class="rounded-[var(--r-md)] border border-[var(--border)] bg-[var(--bg)] p-5 text-center flex flex-col items-center justify-center space-y-3.5 my-auto" data-supporter-login-prompt>' +
+          '<div class="w-11 h-11 rounded-full bg-[var(--accent-subtle)] border border-[var(--accent)]/30 text-[var(--accent)] flex items-center justify-center">' +
+            '<svg class="w-5 h-5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" aria-hidden="true">' +
+              '<path stroke-linecap="round" stroke-linejoin="round" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"/>' +
+            '</svg>' +
+          '</div>' +
+          '<div class="space-y-1">' +
+            '<h3 class="font-display text-sm font-bold text-[var(--text)]">' +
+              'Supporters list is private' +
+            '</h3>' +
+            '<p class="text-xs text-[var(--text-muted)] leading-relaxed max-w-[240px]">' +
+              'Please log in to view the Wall of Gratitude and our community supporters.' +
+            '</p>' +
+          '</div>' +
+          '<a href="/auth/signin?redirect=/support#wall-of-gratitude" class="inline-flex items-center justify-center gap-1.5 w-full px-4 py-2 rounded-[var(--r-sm)] bg-[var(--accent)] text-[var(--accent-contrast)] hover:bg-[var(--accent-hover)] font-semibold text-xs transition-colors shadow-xs no-underline">' +
+            '<span>Sign in to view</span>' +
+            '<svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M9 5l7 7-7 7"/></svg>' +
+          '</a>' +
+          '<p class="text-[11px] text-[var(--text-faint)]">' +
+            'Don&#39;t have an account? <a href="/auth/signup?redirect=/support#wall-of-gratitude" class="text-[var(--accent)] hover:underline font-medium">Sign up</a>' +
+          '</p>' +
+        '</div>';
+    }
+
+    function renderSummary(supporters, total, isAuthenticated) {
       var count = typeof total === 'number' && total >= 0 ? total : supporters.length;
       if (countEl) countEl.textContent = String(count);
 
       if (!heroEl) return;
-      if (!supporters.length) {
-        // Inline style (not the `hidden` attribute) so Tailwind's `flex` can't win.
+      if (count === 0) {
         heroEl.style.display = 'none';
         return;
       }
       heroEl.style.display = '';
 
-      if (heroStackEl) {
+      if (!isAuthenticated) {
+        if (heroStackEl) {
+          heroStackEl.innerHTML =
+            '<span class="inline-flex items-center justify-center w-6 h-6 rounded-full text-[10px] font-bold ring-2 ring-[var(--bg)] bg-[var(--accent-subtle)] text-[var(--accent)]">' +
+              '💛' +
+            '</span>';
+        }
+        if (heroTextEl) {
+          heroTextEl.innerHTML =
+            'Backed by <strong class="text-[var(--text)]">' + count + ' supporters</strong>';
+        }
+        return;
+      }
+
+      if (heroStackEl && supporters.length) {
         heroStackEl.innerHTML = supporters.slice(0, 3).map(function (s, i) {
           var tone = i % 2 === 0
             ? 'bg-[var(--accent)] text-[var(--accent-contrast)]'
@@ -826,9 +938,9 @@ const initialsOf = (name: string) =>
 
       if (heroTextEl) {
         heroTextEl.innerHTML =
-          'Backed by <strong class="text-[var(--text)]">' + count + ' supporters</strong> including ' +
-          '<span class="text-[var(--text)] font-semibold">' + esc(supporters[0].name) + '</span>' +
-          (supporters[1] ? ' &amp; ' + esc(supporters[1].name) : '');
+          'Backed by <strong class="text-[var(--text)]">' + count + ' supporters</strong>' +
+          (supporters.length ? ' including <span class="text-[var(--text)] font-semibold">' + esc(supporters[0].name) + '</span>' +
+          (supporters[1] ? ' &amp; ' + esc(supporters[1].name) : '') : '');
       }
     }
 
@@ -839,16 +951,21 @@ const initialsOf = (name: string) =>
           return r.json();
         })
         .then(function (data) {
+          if (!data || data.authenticated === false) {
+            renderLoginPrompt();
+            renderSummary([], data ? data.total : undefined, false);
+            return;
+          }
           var supporters = Array.isArray(data.supporters) ? data.supporters : [];
           var latest = Array.isArray(data.latest) && data.latest.length > 0
             ? data.latest
             : supporters.slice(-3).reverse();
           renderWall(supporters);
           renderLatest(latest);
-          renderSummary(supporters, data.total);
+          renderSummary(supporters, data.total, true);
         })
         .catch(function () {
-          // Keep the server-rendered static list.
+          // Keep current rendered state on network failure
         });
     }
 
@@ -856,6 +973,16 @@ const initialsOf = (name: string) =>
 
     // Re-run after a view-transition (client-side) navigation back to /support.
     document.addEventListener('astro:after-swap', refresh);
+
+    // Re-evaluate whenever user authentication state changes in navbar/session.
+    window.addEventListener('bitsnotes:user-updated', function (e) {
+      if (!e.detail) {
+        renderLoginPrompt();
+        renderSummary([], undefined, false);
+      } else {
+        refresh();
+      }
+    });
 
     // Pick up a supporter added in another tab without a manual reload.
     document.addEventListener('visibilitychange', function () {
