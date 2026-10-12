@@ -140,6 +140,15 @@ describe('GET /api/supporters (Privacy & Leak Prevention)', () => {
 
     // Only populate arrays when logged in
     expect(src).toContain('const orderedSupporters = isLoggedIn ? allSupporters : [];');
+
+    // Voluntary support section gate
+    expect(src).toContain('data-support-login-prompt');
+    expect(src).toContain('/auth/signin?redirect=/support#voluntary-support');
+    expect(src).toContain('Sign in to support');
+
+    // Payee and UPI details only generated when logged in
+    expect(src).toContain('const upiParams = isLoggedIn ? new URLSearchParams(');
+    expect(src).toContain('const widgetConfig = isLoggedIn ? {');
   });
 });
 
