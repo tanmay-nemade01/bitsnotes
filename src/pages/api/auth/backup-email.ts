@@ -12,7 +12,7 @@ import {
   getEnv, getUser, json, badRequest, unauthorized, forbidden, getClientIp,
 } from '../../../lib/apiHelpers';
 import {
-  findUserById, findUserByEmail, findUserByBackupEmail, setBackupEmail, clearBackupEmail,
+  findUserById, findUserByEmail, findUserByBackupEmail, setBackupEmail,
   logAuthEvent,
 } from '../../../lib/auth';
 import { validateOrigin, csrfForbidden } from '../../../lib/auth/csrf';
@@ -29,6 +29,7 @@ export const GET: APIRoute = async (context) => {
   return json({
     eligible: isBackupEmailEligible(row.email),
     backupEmail: row.backup_email ?? null,
+    isLocked: Boolean(row.backup_email),
   });
 };
 
@@ -44,6 +45,11 @@ export const POST: APIRoute = async (context) => {
   if (!row || row.status !== 'active') return unauthorized();
   if (!isBackupEmailEligible(row.email)) {
     return forbidden('Backup email is not available for this account.');
+  }
+
+  // Backup email is strictly a one-time operation: once added, it cannot be changed.
+  if (row.backup_email) {
+    return badRequest('Backup email has already been set and cannot be changed.');
   }
 
   let body: { email?: unknown };
@@ -67,14 +73,14 @@ export const POST: APIRoute = async (context) => {
   }
 
   const ok = await setBackupEmail(env.DB, row.id, backup);
-  if (!ok) return badRequest('That email is already linked to a BitsNotes account.');
+  if (!ok) return badRequest('Backup email could not be set or has already been configured.');
 
   await logAuthEvent(env.DB, {
     userId: row.id, event: 'backup_email_added', ip: getClientIp(request),
     ua: request.headers.get('User-Agent') || '',
   });
 
-  return json({ success: true, backupEmail: backup });
+  return json({ success: true, backupEmail: backup, isLocked: true });
 };
 
 export const DELETE: APIRoute = async (context) => {
@@ -85,10 +91,6 @@ export const DELETE: APIRoute = async (context) => {
   const sessionUser = getUser(context);
   if (!sessionUser) return unauthorized();
 
-  await clearBackupEmail(env.DB, sessionUser.id);
-  await logAuthEvent(env.DB, {
-    userId: sessionUser.id, event: 'backup_email_removed', ip: getClientIp(request),
-    ua: request.headers.get('User-Agent') || '',
-  });
-  return json({ success: true });
+  // Backup email is one-time and cannot be removed once configured.
+  return badRequest('Backup email cannot be removed or changed once set.');
 };
