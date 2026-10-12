@@ -44,10 +44,11 @@ const reportOnly = process.argv.includes('--report');
 // prefix (matched at the start of the detected color). Prefixes cover rgba()
 // values whose alpha varies (e.g. rgba(255, 255, 255, 0.35) vs 0.10).
 
-// 1. Official brand logo fills (Google "G", GitHub mark). Fixed brand colors.
+// 1. Official brand logo fills (Google "G", GitHub mark, Buy Me a Coffee). Fixed brand colors.
 const BRAND_LOGO_PATTERNS = [
   '#4285F4', '#34A853', '#FBBC05', '#EA4335', // Google
   '#24292f', '#2f3337',                        // GitHub button treatment
+  '#FFDD00', '#1E1E1E',                        // Buy Me a Coffee brand yellow & dark text
 ];
 
 // 2. Permanent dark Pomodoro break overlay (intentional, never themed).

@@ -160,8 +160,9 @@ function toPublic(row: SupporterRow): PublicSupporter {
 }
 
 /** Convert the static fallback list into the public shape. */
-export function fallbackSupporterList(): PublicSupporter[] {
-  return fallbackSupporters.map((s, index) => {
+export function fallbackSupporterList(order: 'asc' | 'desc' = 'asc'): PublicSupporter[] {
+  const source = order === 'desc' ? [...fallbackSupporters].reverse() : fallbackSupporters;
+  return source.map((s, index) => {
     const tier: SupporterTier = s.tier ?? 'supporter';
     const supporter: PublicSupporter = {
       id: s.id || `static-${index}`,
@@ -180,15 +181,20 @@ export function fallbackSupporterList(): PublicSupporter[] {
 // ─── Reads ───────────────────────────────────────────────────────────────────
 
 /**
- * List supporters newest-first. Throws if the table is unavailable so the
- * caller can decide whether to fall back to the static list.
+ * List supporters. Defaults to newest-first (desc).
+ * Throws if the table is unavailable so the caller can fall back.
  */
-export async function listSupporters(db: AuthDb, limit = MAX_SUPPORTERS): Promise<PublicSupporter[]> {
+export async function listSupporters(
+  db: AuthDb,
+  limit = MAX_SUPPORTERS,
+  order: 'asc' | 'desc' = 'desc',
+): Promise<PublicSupporter[]> {
+  const orderClause = order === 'asc' ? 'ORDER BY created_at ASC, id ASC' : 'ORDER BY created_at DESC, id DESC';
   const rows = await db
     .prepare(
       `SELECT id, name, tier, tier_label, message, avatar_url, supporter_date, created_at
          FROM supporters
-        ORDER BY created_at DESC, id DESC
+        ${orderClause}
         LIMIT ?`,
     )
     .bind(Math.min(Math.max(1, limit), MAX_SUPPORTERS))

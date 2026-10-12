@@ -117,7 +117,7 @@ describe('supporters data layer', () => {
     expect(await countSupporters(db)).toBe(1);
   });
 
-  it('lists supporters newest first', async () => {
+  it('lists supporters newest first by default and chronological when asc requested', async () => {
     // created_at comes from Date.now(); pin distinct timestamps to make order deterministic.
     await db
       .prepare(
@@ -132,8 +132,11 @@ describe('supporters data layer', () => {
       .bind('s2', 'Newest', 'supporter', 'Supporter', 3000)
       .run();
 
-    const list = await listSupporters(db);
-    expect(list.map((s) => s.name)).toEqual(['Newest', 'Oldest']);
+    const newestFirst = await listSupporters(db);
+    expect(newestFirst.map((s) => s.name)).toEqual(['Newest', 'Oldest']);
+
+    const oldestFirst = await listSupporters(db, undefined, 'asc');
+    expect(oldestFirst.map((s) => s.name)).toEqual(['Oldest', 'Newest']);
   });
 
   it('omits absent optional fields from the public payload', async () => {
