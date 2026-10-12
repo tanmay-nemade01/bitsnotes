@@ -23,13 +23,17 @@ export const GET: APIRoute = async (context) => {
 
   try {
     if (!env.DB) throw new Error('DB binding unavailable');
-    const supporters = await listSupporters(env.DB);
+    // First supporters on top, new supporters at bottom (chronological)
+    const supporters = await listSupporters(env.DB, undefined, 'asc');
+    // Dedicated bar below: latest 3 supporters (newest first)
+    const latest = await listSupporters(env.DB, 3, 'desc');
     const total = await countSupporters(env.DB);
-    return json({ supporters, total }, 200, { 'Cache-Control': 'no-store' });
+    return json({ supporters, latest, total }, 200, { 'Cache-Control': 'no-store' });
   } catch (err) {
     console.error('[api/supporters] falling back to static list:', err);
-    const supporters = fallbackSupporterList();
-    return json({ supporters, total: supporters.length, fallback: true }, 200, {
+    const supporters = fallbackSupporterList('asc');
+    const latest = fallbackSupporterList('desc').slice(0, 3);
+    return json({ supporters, latest, total: supporters.length, fallback: true }, 200, {
       'Cache-Control': 'no-store',
     });
   }

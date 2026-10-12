@@ -55,7 +55,9 @@ export interface SiteConfig {
 
 export const site: SiteConfig = {
   support: {
-    buymeacoffee: null,
+    buymeacoffee: {
+      url: 'https://buymeacoffee.com/bitsnotes',
+    },
     // The live QR is generated in the browser from this config.
     // The UPI ID IS rendered visibly on the page (and in data attributes)
     // on purpose: transparency lets donors + monitors spot a swapped VPA.

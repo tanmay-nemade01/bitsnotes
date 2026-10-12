@@ -40,4 +40,12 @@ describe('donation receiver integrity', () => {
   it('orphan static QR stays deleted (single live-generated source)', () => {
     expect(existsSync(path.resolve('public/support-upi-qr.png'))).toBe(false);
   });
+
+  it('buymeacoffee config and support page integration', () => {
+    expect(site.support.buymeacoffee?.url).toBe('https://buymeacoffee.com/bitsnotes');
+    const src = readFileSync(path.resolve('src/pages/support.astro'), 'utf8');
+    expect(src).toContain('buymeacoffee');
+    expect(src).toContain('data-latest-supporters-bar');
+    expect(src).toContain('data-latest-supporters-list');
+  });
 });
