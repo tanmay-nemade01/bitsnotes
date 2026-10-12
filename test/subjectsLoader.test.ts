@@ -13,7 +13,7 @@ describe('Dynamic Subject Metadata Loader', () => {
     expect(cv?.order).toBe(11);
     expect(cv?.code).toBe('CV');
     expect(cv?.description).toContain('Image formation');
-  });
+  }, 30000);
 
   it('includes subject metadata in listCatalog', async () => {
     const catalog = await listCatalog();

@@ -108,24 +108,31 @@ export const GET: APIRoute = async (context) => {
   const normalizedEmail = normalizeEmail(profile.email);
 
   // Upsert user + identity
-  let user: { id: string; status: string };
+  let user: { id: string; status: string; email: string };
   let isNewUser = false;
 
   const existingIdentity = await findIdentity(db, provider, profile.providerUid);
   if (existingIdentity) {
     // Existing user — find by id
     const { findUserById } = await import('../../../../lib/auth/db');
-    user = (await findUserById(db, existingIdentity.user_id))!;
+    const existing = await findUserById(db, existingIdentity.user_id);
+    if (!existing) {
+      return badRequest('User account not found');
+    }
+    user = existing;
   } else {
     // Check if email already exists (different provider)
     const existingUser = await findUserByEmail(db, normalizedEmail);
     // …or a verified BACKUP email of an existing account (needs a provider-verified
     // address so nobody can claim an account by merely typing an email).
-    const backupOwner = !existingUser && profile.emailVerified
+    const backupOwner = !existingUser
       ? await findUserByBackupEmail(db, normalizedEmail)
       : null;
     if (existingUser || backupOwner) {
       const owner = (existingUser ?? backupOwner)!;
+      if (backupOwner && !profile.emailVerified) {
+        return badRequest(`Please verify your email address on ${provider} before signing in.`);
+      }
       // Link new provider identity to the existing user
       await createIdentity(db, owner.id, provider, profile.providerUid);
       user = owner;
@@ -203,7 +210,7 @@ export const GET: APIRoute = async (context) => {
   const { token: newRefreshToken, tokenHash: rtHash } = await createRefreshToken(db, user.id);
 
   const accessToken = await signJwt(
-    { sub: user.id, email: normalizedEmail, tier, rt: rtHash },
+    { sub: user.id, email: user.email, tier, rt: rtHash },
     env.SESSION_SIGNING_KEY,
   );
 

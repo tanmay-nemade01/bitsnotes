@@ -68,6 +68,7 @@ CREATE TABLE IF NOT EXISTS auth_events (
 
 CREATE INDEX IF NOT EXISTS idx_identities_provider_uid ON identities(provider, provider_uid);
 CREATE INDEX IF NOT EXISTS idx_users_email ON users(email);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_users_backup_email_verified ON users(backup_email) WHERE backup_email_verified_at IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_auth_events_user ON auth_events(user_id, created_at);
 CREATE INDEX IF NOT EXISTS idx_refresh_tokens_user ON refresh_tokens(user_id);
 

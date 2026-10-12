@@ -71,17 +71,18 @@ export async function findUserByBackupEmail(db: AuthDb, email: string): Promise<
 }
 
 /**
- * Set (or replace) the backup email directly — no verification step.
- * `backup_email_verified_at` is just stamped with the time it was set; sign-in
- * lookups key off it. Returns false if another user already uses this backup email.
+ * Set the backup email. This is a one-time operation: once set, it cannot be changed or overwritten.
+ * Returns false if the user already has a backup email set, or if the email is already used as another
+ * user's verified backup email.
  */
 export async function setBackupEmail(db: AuthDb, userId: string, email: string): Promise<boolean> {
   const now = Date.now();
   try {
-    await db.prepare(
-      'UPDATE users SET backup_email = ?, backup_email_verified_at = ?, updated_at = ? WHERE id = ?',
+    const res = await db.prepare(
+      'UPDATE users SET backup_email = ?, backup_email_verified_at = ?, updated_at = ? WHERE id = ? AND backup_email IS NULL',
     ).bind(email.toLowerCase().trim(), now, now, userId).run();
-    return true;
+    const changes = (res as any)?.meta?.changes ?? (res as any)?.changes ?? 0;
+    return changes > 0;
   } catch {
     return false; // unique index violation
   }
