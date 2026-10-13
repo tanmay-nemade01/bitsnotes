@@ -452,8 +452,6 @@
     if (el) el.remove();
   }
 
-  var isLeftSidebarAutoCollapsed = false;
-
   // ─── Build system prompt ──────────────────────────────────────────────
   function buildSystemPrompt() {
     var subjectName = getSubjectName();
@@ -566,28 +564,9 @@
     var panel = document.getElementById('bn-chatbot-panel');
     if (!panel) return;
 
-    panel.classList.add('docked-mode');
-    void panel.offsetWidth;
-
+    // Pure overlay: never touch page layout or sidebars.
+    panel.classList.remove('docked-mode');
     document.body.classList.add('bn-chatbot-open');
-
-    // Collapse left lecture menu to free up space
-    var leftSidebar = document.getElementById('lecture-sidebar');
-    if (leftSidebar) {
-      if (!leftSidebar.classList.contains('collapsed')) {
-        leftSidebar.classList.add('collapsed');
-        isLeftSidebarAutoCollapsed = true;
-      } else {
-        isLeftSidebarAutoCollapsed = false;
-      }
-    }
-
-    // Hide topic sidebar to take its right-sidebar space
-    var topicSidebar = document.getElementById('topic-sidebar');
-    if (topicSidebar) {
-      topicSidebar.classList.add('bn-chat-active-hide');
-    }
-
     panel.classList.add('open');
 
     if (!bitsnotesUser) {
@@ -624,28 +603,10 @@
   function closePanel() {
     var panel = document.getElementById('bn-chatbot-panel');
     if (panel) {
-      panel.classList.remove('open');
-      setTimeout(function () {
-        if (!panel.classList.contains('open')) {
-          panel.classList.remove('docked-mode');
-        }
-      }, 350);
+      panel.classList.remove('open', 'docked-mode');
     }
 
     document.body.classList.remove('bn-chatbot-open');
-
-    // Restore left lecture menu if it was auto-collapsed
-    var leftSidebar = document.getElementById('lecture-sidebar');
-    if (leftSidebar && isLeftSidebarAutoCollapsed) {
-      leftSidebar.classList.remove('collapsed');
-      isLeftSidebarAutoCollapsed = false;
-    }
-
-    // Restore topic sidebar
-    var topicSidebar = document.getElementById('topic-sidebar');
-    if (topicSidebar) {
-      topicSidebar.classList.remove('bn-chat-active-hide');
-    }
   }
 
   // ─── Message submission ───────────────────────────────────────────────
@@ -982,15 +943,6 @@
       var panel = document.getElementById('bn-chatbot-panel');
       if (panel) {
         panel.classList.remove('open', 'docked-mode');
-      }
-      var topicSidebar = document.getElementById('topic-sidebar');
-      if (topicSidebar) {
-        topicSidebar.classList.remove('bn-chat-active-hide');
-      }
-      var leftSidebar = document.getElementById('lecture-sidebar');
-      if (leftSidebar && isLeftSidebarAutoCollapsed) {
-        leftSidebar.classList.remove('collapsed');
-        isLeftSidebarAutoCollapsed = false;
       }
     });
   }
