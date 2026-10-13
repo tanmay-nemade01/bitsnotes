@@ -1,0 +1,460 @@
+---
+/**
+ * BannerCarousel.astro
+ *
+ * Rotating site-announcement carousel. Shows ONE banner at a time and slides
+ * sideways to the next — the page never stacks multiple banners.
+ *
+ * Behaviour:
+ * - Latest banner first (DOM order = display order; prepend new slides at the TOP).
+ * - Auto-advances every 15s when more than one banner is eligible; loops.
+ * - Closing a banner dismisses THAT banner (with its own cooldown) and reveals
+ *   the next one. When none remain, the carousel collapses entirely.
+ * - Dots + "1 / N" counter show position; both are hidden when only one banner.
+ * - Hover / focus pauses rotation; swipe works on touch.
+ * - Animation is transform-only on the track (GPU-friendly).
+ *
+ * TO ADD A NEW BANNER:
+ *  1. Prepend a new `.bn-banner-slide` div (with a unique `data-banner-id`) as
+ *     the FIRST child of `#bn-banner-track` so it shows first.
+ *  2. Copy the inner row pattern (icon + text on the left; CTA + `.bn-banner-nav`
+ *     + `.bn-banner-close[data-close-banner="<id>"]` on the right).
+ *  3. Add an `isXEligible(root, user)` function + wire it in `eligibleIds()`.
+ *  4. Add dismissal persistence in `dismissBanner(id)` (keep the localStorage
+ *     key namespaced, e.g. `bn-<id>-banner-dismissed...`).
+ *  5. If the banner needs SSR data, add `data-ssr-*` attrs on
+ *     `#bn-banner-carousel` and read them as fallback before sessionStorage
+ *     hydrates (same pattern as the existing two banners).
+ */
+import { getUser } from '../lib/apiHelpers';
+import { isBackupEmailEligible } from '../lib/auth/backupEmail';
+
+const user = getUser(Astro);
+const path = Astro.url.pathname;
+const isSupportPage = path.startsWith('/support');
+const isAccountPage = path === '/account';
+
+const supporterSsr = Boolean(user) && !isSupportPage;
+const backupEligible = user ? isBackupEmailEligible(user.email) : false;
+const backupHas = Boolean(user?.backupEmail);
+const backupSsr = backupEligible && !backupHas && !isAccountPage;
+---
+
+<div
+  id="bn-banner-carousel"
+  class="hidden relative overflow-hidden"
+  role="region"
+  aria-roledescription="carousel"
+  aria-label="Site announcements"
+  data-ssr-logged-in={supporterSsr ? 'true' : 'false'}
+  data-ssr-backup-eligible={backupSsr ? 'true' : 'false'}
+  data-ssr-email={user?.email || ''}
+>
+  <div id="bn-banner-track" class="flex w-full">
+    <!-- LATEST FIRST: prepend new banners above this line. -->
+
+    <!-- ── Slide: Supporter gratitude (added 2026-10-12) ── -->
+    <div
+      class="bn-banner-slide w-full shrink-0 grow-0 basis-full bg-[var(--bg-elevated)]/95 border-b border-[var(--border)] text-[var(--text)] px-4 py-2 text-xs sm:text-sm"
+      data-banner-id="supporter"
+      role="group"
+      aria-roledescription="slide"
+    >
+      <div class="max-w-[1560px] mx-auto flex items-center justify-between gap-3">
+        <div class="flex items-center gap-2.5 min-w-0">
+          <span class="inline-flex items-center justify-center w-5 h-5 rounded-full bg-amber-500/15 text-amber-600 dark:text-amber-400 shrink-0 text-xs" aria-hidden="true">
+            💛
+          </span>
+          <p class="truncate leading-tight text-[var(--text-muted)] text-xs sm:text-sm">
+            <strong class="font-semibold text-[var(--text)]">Gratitude Note:</strong> BitsNotes is 100% free for all students, kept running by voluntary supporters.
+          </p>
+        </div>
+
+        <div class="flex items-center gap-1.5 sm:gap-2 shrink-0">
+          <a
+            href="/support#wall-of-gratitude"
+            class="hidden sm:inline-flex items-center gap-1 font-semibold text-[var(--accent)] hover:underline text-xs whitespace-nowrap"
+          >
+            Meet our supporters
+            <svg class="w-3 h-3" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" aria-hidden="true">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M9 5l7 7-7 7"/>
+            </svg>
+          </a>
+          <a
+            href="/support"
+            class="font-semibold px-2.5 py-1 rounded-[var(--r-sm)] bg-[var(--accent-subtle)] text-[var(--accent)] hover:bg-[var(--accent)] hover:text-[var(--accent-contrast)] border border-[var(--accent)]/30 transition-colors text-xs whitespace-nowrap no-underline shadow-xs"
+          >
+            Support BitsNotes
+          </a>
+          <div class="bn-banner-nav flex items-center gap-0.5 text-[var(--text-muted)]" aria-label="Announcement navigation">
+            <button type="button" class="bn-banner-prev p-1 rounded-[var(--r-sm)] hover:text-[var(--text)] hover:bg-[var(--bg-subtle)] transition-colors cursor-pointer" aria-label="Previous announcement">
+              <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24" aria-hidden="true">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M15 19l-7-7 7-7"/>
+              </svg>
+            </button>
+            <div class="bn-banner-dots flex items-center gap-1 px-0.5" role="group" aria-label="Choose announcement"></div>
+            <span class="bn-banner-counter text-[11px] font-semibold tabular-nums whitespace-nowrap" aria-live="polite"></span>
+            <button type="button" class="bn-banner-next p-1 rounded-[var(--r-sm)] hover:text-[var(--text)] hover:bg-[var(--bg-subtle)] transition-colors cursor-pointer" aria-label="Next announcement">
+              <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24" aria-hidden="true">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M9 5l7 7-7 7"/>
+              </svg>
+            </button>
+          </div>
+          <button
+            type="button"
+            class="bn-banner-close p-1 rounded-[var(--r-sm)] text-[var(--text-muted)] hover:text-[var(--text)] hover:bg-[var(--bg-subtle)] transition-colors cursor-pointer"
+            data-close-banner="supporter"
+            aria-label="Dismiss gratitude banner"
+            title="Dismiss for 1 hour"
+          >
+            <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" aria-hidden="true">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12"/>
+            </svg>
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- ── Slide: Backup email reminder (added 2026-10-07) ── -->
+    <div
+      class="bn-banner-slide w-full shrink-0 grow-0 basis-full bg-amber-500/10 dark:bg-amber-950/50 border-b border-amber-500/30 dark:border-amber-500/30 text-amber-950 dark:text-amber-100 px-4 py-2.5 text-xs sm:text-sm"
+      data-banner-id="backup"
+      role="group"
+      aria-roledescription="slide"
+    >
+      <div class="max-w-[1560px] mx-auto flex items-center justify-between gap-3">
+        <div class="flex items-center gap-2.5 min-w-0">
+          <svg class="w-4 h-4 shrink-0 text-amber-600 dark:text-amber-400" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" aria-hidden="true">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"/>
+          </svg>
+          <p class="truncate leading-tight text-amber-950 dark:text-amber-100">
+            <strong class="font-semibold text-amber-900 dark:text-amber-300">WILP Account Notice:</strong> Add a personal backup email so you don't lose access if your college email expires.
+          </p>
+        </div>
+
+        <div class="flex items-center gap-1.5 sm:gap-2 shrink-0">
+          <a
+            href="/account"
+            class="font-semibold px-2.5 py-1 rounded-[var(--r-sm)] bg-amber-600 hover:bg-amber-700 dark:bg-amber-500 dark:hover:bg-amber-400 text-white dark:text-amber-950 no-underline transition-colors text-xs whitespace-nowrap shadow-xs"
+          >
+            Add Backup Email
+          </a>
+          <div class="bn-banner-nav flex items-center gap-0.5 text-amber-900/70 dark:text-amber-300/70" aria-label="Announcement navigation">
+            <button type="button" class="bn-banner-prev p-1 rounded-[var(--r-sm)] hover:text-amber-950 dark:hover:text-amber-100 hover:bg-amber-500/20 transition-colors cursor-pointer" aria-label="Previous announcement">
+              <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24" aria-hidden="true">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M15 19l-7-7 7-7"/>
+              </svg>
+            </button>
+            <div class="bn-banner-dots flex items-center gap-1 px-0.5" role="group" aria-label="Choose announcement"></div>
+            <span class="bn-banner-counter text-[11px] font-semibold tabular-nums whitespace-nowrap" aria-live="polite"></span>
+            <button type="button" class="bn-banner-next p-1 rounded-[var(--r-sm)] hover:text-amber-950 dark:hover:text-amber-100 hover:bg-amber-500/20 transition-colors cursor-pointer" aria-label="Next announcement">
+              <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24" aria-hidden="true">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M9 5l7 7-7 7"/>
+              </svg>
+            </button>
+          </div>
+          <button
+            type="button"
+            class="bn-banner-close p-1 rounded-[var(--r-sm)] hover:bg-amber-500/20 dark:hover:bg-amber-500/20 text-amber-900/70 dark:text-amber-300/70 hover:text-amber-950 dark:hover:text-amber-100 transition-colors cursor-pointer"
+            data-close-banner="backup"
+            aria-label="Dismiss backup email banner"
+            title="Dismiss for today"
+          >
+            <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" aria-hidden="true">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12"/>
+            </svg>
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<style>
+  #bn-banner-track {
+    transition: transform 450ms cubic-bezier(0.16, 1, 0.3, 1);
+    will-change: transform;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    #bn-banner-track {
+      transition: none;
+    }
+  }
+</style>
+
+<script is:inline>
+  (function () {
+    var ROTATE_MS = 15 * 1000;
+    var ONE_HOUR_MS = 60 * 60 * 1000;
+    var ONE_DAY_MS = 24 * 60 * 60 * 1000;
+    var WILP_PATTERN = /^2025[^@\s]*@wilp\.bits-pilani\.ac\.in$/i;
+    var SWIPE_MIN_PX = 40;
+    var current = 0;
+    var backupEmailForKey = '';
+
+    function carousel() {
+      return document.getElementById('bn-banner-carousel');
+    }
+
+    function track() {
+      return document.getElementById('bn-banner-track');
+    }
+
+    function cachedUser() {
+      try {
+        var s = sessionStorage.getItem('bitsnotes-user');
+        return s ? JSON.parse(s) : null;
+      } catch (e) {
+        return null;
+      }
+    }
+
+    function stopTimer() {
+      if (window.__bnBannerTimer) {
+        clearTimeout(window.__bnBannerTimer);
+        window.__bnBannerTimer = null;
+      }
+    }
+
+    function startTimer(count) {
+      stopTimer();
+      if (count > 1 && !document.hidden) {
+        window.__bnBannerTimer = setTimeout(function () {
+          current += 1;
+          render();
+        }, ROTATE_MS);
+      }
+    }
+
+    // ── Per-banner eligibility (same rules as the old standalone banners) ──
+    function isSupporterEligible(root, user) {
+      if (window.location.pathname.startsWith('/support')) return false;
+      var loggedIn = Boolean(user) || root.getAttribute('data-ssr-logged-in') === 'true';
+      if (!loggedIn) return false;
+      try {
+        var dismissedAt = localStorage.getItem('bn-supporter-banner-dismissed');
+        if (dismissedAt && Date.now() - parseInt(dismissedAt, 10) < ONE_HOUR_MS) return false;
+      } catch (e) {}
+      return true;
+    }
+
+    function isBackupEligible(root, user) {
+      if (window.location.pathname === '/account') return false;
+      var email = user ? user.email || '' : root.getAttribute('data-ssr-email') || '';
+      var hasBackup = user ? Boolean(user.backupEmail) : false;
+      if (!user && root.getAttribute('data-ssr-backup-eligible') === 'true') {
+        email = root.getAttribute('data-ssr-email') || '';
+        hasBackup = false;
+      }
+      if (!email || !WILP_PATTERN.test(email) || hasBackup) return false;
+      backupEmailForKey = email;
+      try {
+        var key = 'bn-backup-banner-dismissed-' + encodeURIComponent(email);
+        var dismissedAt = localStorage.getItem(key);
+        if (dismissedAt && Date.now() - parseInt(dismissedAt, 10) < ONE_DAY_MS) return false;
+      } catch (e) {}
+      return true;
+    }
+
+    // DOM order = display order (latest first). New banners: add a case here.
+    function eligibleIds() {
+      var root = carousel();
+      if (!root) return [];
+      var user = cachedUser();
+      var out = [];
+      var slides = root.querySelectorAll('.bn-banner-slide');
+      for (var i = 0; i < slides.length; i++) {
+        var id = slides[i].getAttribute('data-banner-id');
+        var ok = false;
+        if (id === 'supporter') ok = isSupporterEligible(root, user);
+        else if (id === 'backup') ok = isBackupEligible(root, user);
+        else ok = true;
+        if (ok) out.push(id);
+      }
+      return out;
+    }
+
+    function syncDots(root, ids) {
+      var containers = root.querySelectorAll('.bn-banner-dots');
+      for (var c = 0; c < containers.length; c++) {
+        var dc = containers[c];
+        if (dc.childNodes.length !== ids.length) {
+          dc.innerHTML = '';
+          for (var i = 0; i < ids.length; i++) {
+            var b = document.createElement('button');
+            b.type = 'button';
+            b.className = 'bn-banner-dot';
+            b.setAttribute('data-index', String(i));
+            dc.appendChild(b);
+          }
+        }
+        for (var k = 0; k < dc.childNodes.length; k++) {
+          var dot = dc.childNodes[k];
+          dot.className =
+            'bn-banner-dot h-1.5 rounded-full bg-current transition-all cursor-pointer ' +
+            (k === current ? 'w-4 opacity-100' : 'w-1.5 opacity-30 hover:opacity-60');
+          dot.setAttribute('aria-label', 'Show announcement ' + (k + 1) + ' of ' + ids.length);
+          if (k === current) dot.setAttribute('aria-current', 'true');
+          else dot.removeAttribute('aria-current');
+        }
+      }
+    }
+
+    function render() {
+      var root = carousel();
+      var tr = track();
+      if (!root || !tr) return;
+      var ids = eligibleIds();
+      var slides = tr.querySelectorAll('.bn-banner-slide');
+
+      for (var i = 0; i < slides.length; i++) {
+        var sid = slides[i].getAttribute('data-banner-id');
+        slides[i].style.display = ids.indexOf(sid) === -1 ? 'none' : '';
+      }
+
+      if (ids.length === 0) {
+        root.classList.add('hidden');
+        stopTimer();
+        return;
+      }
+      root.classList.remove('hidden');
+
+      if (current >= ids.length) current = 0;
+      if (current < 0) current = ids.length - 1;
+      tr.style.transform = current === 0 ? 'translateX(0%)' : 'translateX(-' + current * 100 + '%)';
+
+      var navs = root.querySelectorAll('.bn-banner-nav');
+      for (var n = 0; n < navs.length; n++) {
+        if (ids.length > 1) {
+          navs[n].classList.remove('hidden');
+          navs[n].classList.add('flex');
+        } else {
+          navs[n].classList.add('hidden');
+          navs[n].classList.remove('flex');
+        }
+      }
+
+      syncDots(root, ids);
+
+      var counters = root.querySelectorAll('.bn-banner-counter');
+      for (var m = 0; m < counters.length; m++) {
+        counters[m].textContent = current + 1 + ' / ' + ids.length;
+      }
+
+      for (var s = 0; s < slides.length; s++) {
+        var pos = ids.indexOf(slides[s].getAttribute('data-banner-id'));
+        if (pos !== -1) {
+          slides[s].setAttribute('aria-label', 'Announcement ' + (pos + 1) + ' of ' + ids.length);
+        } else {
+          slides[s].removeAttribute('aria-label');
+        }
+      }
+
+      startTimer(ids.length);
+    }
+
+    function goTo(i, total) {
+      if (total <= 1) return;
+      current = ((i % total) + total) % total;
+      render();
+    }
+
+    function dismissBanner(id) {
+      try {
+        if (id === 'supporter') {
+          localStorage.setItem('bn-supporter-banner-dismissed', Date.now().toString());
+        } else if (id === 'backup' && backupEmailForKey) {
+          localStorage.setItem(
+            'bn-backup-banner-dismissed-' + encodeURIComponent(backupEmailForKey),
+            Date.now().toString()
+          );
+        }
+      } catch (e) {}
+      // Re-render: the dismissed banner drops out, the next one slides in.
+      var ids = eligibleIds();
+      if (current >= ids.length) current = 0;
+      render();
+    }
+
+    function bind() {
+      var root = carousel();
+      if (!root || root.dataset.carouselBound) return;
+      root.dataset.carouselBound = 'true';
+
+      root.addEventListener('click', function (e) {
+        var t = e.target && e.target.closest ? e.target.closest('.bn-banner-prev,.bn-banner-next,.bn-banner-dot,.bn-banner-close') : null;
+        if (!t) return;
+        if (t.classList.contains('bn-banner-prev')) {
+          e.preventDefault();
+          goTo(current - 1, eligibleIds().length);
+        } else if (t.classList.contains('bn-banner-next')) {
+          e.preventDefault();
+          goTo(current + 1, eligibleIds().length);
+        } else if (t.classList.contains('bn-banner-dot')) {
+          e.preventDefault();
+          goTo(parseInt(t.getAttribute('data-index') || '0', 10), eligibleIds().length);
+        } else if (t.classList.contains('bn-banner-close')) {
+          e.preventDefault();
+          dismissBanner(t.getAttribute('data-close-banner'));
+        }
+      });
+
+      root.addEventListener('mouseenter', stopTimer);
+      root.addEventListener('mouseleave', function () {
+        startTimer(eligibleIds().length);
+      });
+      root.addEventListener('focusin', stopTimer);
+      root.addEventListener('focusout', function () {
+        startTimer(eligibleIds().length);
+      });
+
+      var startX = null;
+      root.addEventListener(
+        'touchstart',
+        function (e) {
+          if (e.touches.length === 1) startX = e.touches[0].clientX;
+        },
+        { passive: true }
+      );
+      root.addEventListener(
+        'touchend',
+        function (e) {
+          if (startX === null) return;
+          var dx = e.changedTouches[0].clientX - startX;
+          startX = null;
+          if (Math.abs(dx) > SWIPE_MIN_PX) {
+            var total = eligibleIds().length;
+            if (dx < 0) goTo(current + 1, total);
+            else goTo(current - 1, total);
+          }
+        },
+        { passive: true }
+      );
+
+      if (!window.__bnBannerVisibilityBound) {
+        window.__bnBannerVisibilityBound = true;
+        document.addEventListener('visibilitychange', function () {
+          var r = carousel();
+          if (!r || r.classList.contains('hidden')) return;
+          if (document.hidden) stopTimer();
+          else startTimer(eligibleIds().length);
+        });
+        document.addEventListener('astro:before-swap', stopTimer);
+      }
+    }
+
+    function init() {
+      stopTimer();
+      bind();
+      current = 0;
+      render();
+    }
+
+    init();
+    document.addEventListener('astro:page-load', init);
+    window.addEventListener('bitsnotes:user-updated', function () {
+      current = 0;
+      render();
+    });
+  })();
+</script>

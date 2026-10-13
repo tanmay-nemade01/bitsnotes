@@ -65,6 +65,13 @@ export const onRequest = defineMiddleware(async (context, next) => {
   let user: any = null;
   let tier = 'free';
 
+  // Signout must never mint a fresh session: it runs after this middleware,
+  // and any rotated tokens issued here would overwrite the clearing cookies
+  // the signout handler sets (requiring a second click to log out).
+  // We still resolve the JWT so the handler can revoke all tokens, but we
+  // skip refresh-token rotation for this route.
+  const isSignout = pathname === '/api/auth/signout';
+
   if (!isAsset) {
     const cookieHeader = request.headers.get('Cookie') || '';
     // Cheap cookie inspection BEFORE importing any session/DB module: only
@@ -99,8 +106,10 @@ export const onRequest = defineMiddleware(async (context, next) => {
               };
               tier = claims.tier;
             }
-          } else {
-            // Access token missing or expired — try refresh
+          } else if (!isSignout) {
+            // Access token missing or expired — try refresh.
+            // Skipped for signout so logout never mints a fresh session
+            // that would overwrite the handler's clearing cookies.
             const refreshToken = sessionMod.getRefreshTokenFromCookie(cookieHeader);
             if (refreshToken) {
               const rotated = await sessionMod.verifyRefreshToken(db, refreshToken);
@@ -138,9 +147,21 @@ export const onRequest = defineMiddleware(async (context, next) => {
   (locals as any).user = user;
   (locals as any).tier = tier;
 
+  // ─── Legacy /auth/signup URL: sign-in auto-creates accounts ──────────
+  // There is no separate signup page (OAuth upserts on first sign-in),
+  // so preserve old links/bookmarks by redirecting to signin.
+  if (pathname === '/auth/signup' || pathname === '/auth/signup/') {
+    const redirect = new URL('/auth/signin', url.origin);
+    redirect.search = url.search;
+    return new Response(null, {
+      status: 302,
+      headers: { Location: redirect.pathname + redirect.search + url.hash },
+    });
+  }
+
   // ─── Auth page redirect: if already signed in, redirect away ─────────
   if (isAuthRoute(pathname) && user && !pathname.includes('signout')) {
-    if (pathname === '/auth/signin' || pathname === '/auth/signup') {
+    if (pathname === '/auth/signin') {
       return new Response(null, {
         status: 302,
         headers: { Location: '/' },
@@ -234,17 +255,27 @@ export const onRequest = defineMiddleware(async (context, next) => {
   }
 
   // ─── Set refreshed cookies if applicable ─────────────────────────────
-  if ((locals as any).__newSessionToken) {
-    try {
-      const { setSessionCookie } = await import('./lib/auth/session');
-      setSessionCookie(headers, (locals as any).__newSessionToken, request);
-    } catch {}
-  }
-  if ((locals as any).__newRefreshToken) {
-    try {
-      const { setRefreshCookie } = await import('./lib/auth/session');
-      setRefreshCookie(headers, (locals as any).__newRefreshToken, request);
-    } catch {}
+  // Never re-set a session on a response that clears it (e.g. signout):
+  // the clearing cookies must win, otherwise logout appears to fail.
+  const setCookies: string[] = typeof (headers as any).getSetCookie === 'function'
+    ? (headers as any).getSetCookie()
+    : (headers.get('Set-Cookie')?.split(/,(?=[^;,]+=[^;,]*;)/) ?? []);
+  const clearsSession = setCookies.some(
+    (c) => /__session=;/.test(c) || /__rt=;/.test(c),
+  );
+  if (!clearsSession) {
+    if ((locals as any).__newSessionToken) {
+      try {
+        const { setSessionCookie } = await import('./lib/auth/session');
+        setSessionCookie(headers, (locals as any).__newSessionToken, request);
+      } catch {}
+    }
+    if ((locals as any).__newRefreshToken) {
+      try {
+        const { setRefreshCookie } = await import('./lib/auth/session');
+        setRefreshCookie(headers, (locals as any).__newRefreshToken, request);
+      } catch {}
+    }
   }
 
   return new Response(response.body, {
