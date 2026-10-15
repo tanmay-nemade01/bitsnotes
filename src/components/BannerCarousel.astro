@@ -219,6 +219,13 @@ const backupSsr = backupEligible && !backupHas && !isAccountPage;
     var SWIPE_MIN_PX = 40;
     var current = 0;
     var backupEmailForKey = '';
+    var supporterActiveThisPage = false;
+
+    // Clear legacy un-namespaced keys from previous versions that could block accounts across the browser
+    try {
+      localStorage.removeItem('bn-supporter-banner-last-shown');
+      localStorage.removeItem('bn-supporter-banner-dismissed');
+    } catch (e) {}
 
     function carousel() {
       return document.getElementById('bn-banner-carousel');
@@ -235,6 +242,23 @@ const backupSsr = backupEligible && !backupHas && !isAccountPage;
       } catch (e) {
         return null;
       }
+    }
+
+    function getSupporterSnoozeKey(root, user) {
+      var email = '';
+      if (user && user.email) {
+        email = user.email;
+      } else if (root) {
+        email = root.getAttribute('data-ssr-email') || '';
+      }
+      if (!email) {
+        var u = cachedUser();
+        if (u && u.email) email = u.email;
+      }
+      if (email) {
+        return 'bn-supporter-banner-snoozed-' + encodeURIComponent(email.toLowerCase().trim());
+      }
+      return 'bn-supporter-banner-snoozed';
     }
 
     function stopTimer() {
@@ -273,25 +297,31 @@ const backupSsr = backupEligible && !backupHas && !isAccountPage;
     // ── Per-banner eligibility ──
     function isSupporterEligible(root, user) {
       if (window.location.pathname.startsWith('/support')) return false;
-      var loggedIn = Boolean(user) || root.getAttribute('data-ssr-logged-in') === 'true';
+      var loggedIn = Boolean(user) || (root && root.getAttribute('data-ssr-logged-in') === 'true');
+      if (!loggedIn) {
+        var u = cachedUser();
+        if (u) loggedIn = true;
+      }
       if (!loggedIn) return false;
-      try {
-        // If explicitly dismissed via close button, don't show for 7 days
-        var dismissedAt = localStorage.getItem('bn-supporter-banner-dismissed');
-        if (dismissedAt && Date.now() - parseInt(dismissedAt, 10) < SEVEN_DAYS_MS) return false;
 
-        // Daily impression cap: only shown once a day
-        var lastShown = localStorage.getItem('bn-supporter-banner-last-shown');
-        if (lastShown && Date.now() - parseInt(lastShown, 10) < ONE_DAY_MS) return false;
+      // If already active on the current page view, keep it active so auth re-renders don't drop it
+      if (supporterActiveThisPage) return true;
+
+      try {
+        var key = getSupporterSnoozeKey(root, user);
+        var snoozedUntil = localStorage.getItem(key);
+        if (snoozedUntil && Date.now() < parseInt(snoozedUntil, 10)) {
+          return false;
+        }
       } catch (e) {}
       return true;
     }
 
     function isBackupEligible(root, user) {
       if (window.location.pathname === '/account') return false;
-      var email = user ? user.email || '' : root.getAttribute('data-ssr-email') || '';
+      var email = user ? user.email || '' : (root ? root.getAttribute('data-ssr-email') || '' : '');
       var hasBackup = user ? Boolean(user.backupEmail) : false;
-      if (!user && root.getAttribute('data-ssr-backup-eligible') === 'true') {
+      if (!user && root && root.getAttribute('data-ssr-backup-eligible') === 'true') {
         email = root.getAttribute('data-ssr-email') || '';
         hasBackup = false;
       }
@@ -369,14 +399,8 @@ const backupSsr = backupEligible && !backupHas && !isAccountPage;
       }
       root.classList.remove('hidden');
 
-      // Record daily impression so user only sees the support banner once a day across navigations
       if (ids.indexOf('supporter') !== -1) {
-        try {
-          var lastShown = localStorage.getItem('bn-supporter-banner-last-shown');
-          if (!lastShown || Date.now() - parseInt(lastShown, 10) >= ONE_DAY_MS) {
-            localStorage.setItem('bn-supporter-banner-last-shown', Date.now().toString());
-          }
-        } catch (e) {}
+        supporterActiveThisPage = true;
       }
 
       if (current >= ids.length) current = 0;
@@ -444,10 +468,12 @@ const backupSsr = backupEligible && !backupHas && !isAccountPage;
     function dismissBanner(id, isExplicit) {
       try {
         if (id === 'supporter') {
-          if (isExplicit) {
-            localStorage.setItem('bn-supporter-banner-dismissed', Date.now().toString());
-          }
-          localStorage.setItem('bn-supporter-banner-last-shown', Date.now().toString());
+          supporterActiveThisPage = false;
+          var root = carousel();
+          var user = cachedUser();
+          var key = getSupporterSnoozeKey(root, user);
+          var duration = isExplicit ? SEVEN_DAYS_MS : ONE_DAY_MS;
+          localStorage.setItem(key, (Date.now() + duration).toString());
         } else if (id === 'backup' && backupEmailForKey) {
           localStorage.setItem(
             'bn-backup-banner-dismissed-' + encodeURIComponent(backupEmailForKey),
@@ -459,6 +485,18 @@ const backupSsr = backupEligible && !backupHas && !isAccountPage;
       var ids = eligibleIds();
       if (current >= ids.length) current = 0;
       render();
+    }
+
+    function markSupporterShownIfActive() {
+      if (supporterActiveThisPage) {
+        supporterActiveThisPage = false;
+        try {
+          var root = carousel();
+          var user = cachedUser();
+          var key = getSupporterSnoozeKey(root, user);
+          localStorage.setItem(key, (Date.now() + ONE_DAY_MS).toString());
+        } catch (e) {}
+      }
     }
 
     function bind() {
@@ -549,6 +587,10 @@ const backupSsr = backupEligible && !backupHas && !isAccountPage;
         document.addEventListener('astro:before-swap', function () {
           stopTimer();
           stopAutoDismissTimer();
+          markSupporterShownIfActive();
+        });
+        window.addEventListener('beforeunload', function () {
+          markSupporterShownIfActive();
         });
       }
     }
