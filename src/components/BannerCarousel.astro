@@ -2,17 +2,19 @@
 /**
  * BannerCarousel.astro
  *
- * Rotating site-announcement carousel. Shows ONE banner at a time and slides
- * sideways to the next — the page never stacks multiple banners.
+ * Rotating site-announcement overlay carousel. Shows ONE banner at a time
+ * as an overlay beneath the sticky header — never shifting page layout (0 CLS).
  *
  * Behaviour:
- * - Latest banner first (DOM order = display order; prepend new slides at the TOP).
+ * - Positioned as a fixed overlay below the sticky navbar (`top-14`).
+ * - Support gratitude banner auto-dismisses smoothly after 8 seconds (pause on hover/focus).
+ * - Frequency capped: shown at most once a day to users across navigations.
+ * - Explicit dismissal (`✕`) snoozes the gratitude banner for 7 days.
  * - Auto-advances every 15s when more than one banner is eligible; loops.
  * - Closing a banner dismisses THAT banner (with its own cooldown) and reveals
  *   the next one. When none remain, the carousel collapses entirely.
  * - Dots + "1 / N" counter show position; both are hidden when only one banner.
- * - Hover / focus pauses rotation; swipe works on touch.
- * - Animation is transform-only on the track (GPU-friendly).
+ * - Animation is transform/opacity-only on the overlay track (GPU-friendly, no layout shifts).
  *
  * TO ADD A NEW BANNER:
  *  1. Prepend a new `.bn-banner-slide` div (with a unique `data-banner-id`) as
@@ -42,7 +44,7 @@ const backupSsr = backupEligible && !backupHas && !isAccountPage;
 
 <div
   id="bn-banner-carousel"
-  class="hidden relative overflow-hidden"
+  class="hidden fixed top-14 left-0 right-0 z-[35] overflow-hidden shadow-md"
   role="region"
   aria-roledescription="carousel"
   aria-label="Site announcements"
@@ -55,7 +57,7 @@ const backupSsr = backupEligible && !backupHas && !isAccountPage;
 
     <!-- ── Slide: Supporter gratitude (added 2026-10-12) ── -->
     <div
-      class="bn-banner-slide w-full shrink-0 grow-0 basis-full bg-[var(--bg-elevated)]/95 border-b border-[var(--border)] text-[var(--text)] px-4 py-2 text-xs sm:text-sm"
+      class="bn-banner-slide w-full shrink-0 grow-0 basis-full bg-[var(--bg-elevated)]/95 backdrop-blur-md border-b border-[var(--border)] text-[var(--text)] px-4 py-2 text-xs sm:text-sm"
       data-banner-id="supporter"
       role="group"
       aria-roledescription="slide"
@@ -105,7 +107,7 @@ const backupSsr = backupEligible && !backupHas && !isAccountPage;
             class="bn-banner-close p-1 rounded-[var(--r-sm)] text-[var(--text-muted)] hover:text-[var(--text)] hover:bg-[var(--bg-subtle)] transition-colors cursor-pointer"
             data-close-banner="supporter"
             aria-label="Dismiss gratitude banner"
-            title="Dismiss for 1 hour"
+            title="Dismiss"
           >
             <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" aria-hidden="true">
               <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12"/>
@@ -117,7 +119,7 @@ const backupSsr = backupEligible && !backupHas && !isAccountPage;
 
     <!-- ── Slide: Backup email reminder (added 2026-10-07) ── -->
     <div
-      class="bn-banner-slide w-full shrink-0 grow-0 basis-full bg-amber-500/10 dark:bg-amber-950/50 border-b border-amber-500/30 dark:border-amber-500/30 text-amber-950 dark:text-amber-100 px-4 py-2.5 text-xs sm:text-sm"
+      class="bn-banner-slide w-full shrink-0 grow-0 basis-full bg-amber-500/10 dark:bg-amber-950/50 backdrop-blur-md border-b border-amber-500/30 dark:border-amber-500/30 text-amber-950 dark:text-amber-100 px-4 py-2.5 text-xs sm:text-sm"
       data-banner-id="backup"
       role="group"
       aria-roledescription="slide"
@@ -171,13 +173,38 @@ const backupSsr = backupEligible && !backupHas && !isAccountPage;
 </div>
 
 <style>
+  #bn-banner-carousel {
+    transition: transform 350ms cubic-bezier(0.16, 1, 0.3, 1), opacity 300ms ease;
+    will-change: transform, opacity;
+  }
+  #bn-banner-carousel:not(.hidden) {
+    animation: bn-banner-slide-down 350ms cubic-bezier(0.16, 1, 0.3, 1) forwards;
+  }
+  @keyframes bn-banner-slide-down {
+    from {
+      transform: translateY(-100%);
+      opacity: 0;
+    }
+    to {
+      transform: translateY(0);
+      opacity: 1;
+    }
+  }
+  #bn-banner-carousel.bn-banner-leaving {
+    animation: none;
+    transform: translateY(-100%);
+    opacity: 0;
+    pointer-events: none;
+  }
   #bn-banner-track {
     transition: transform 450ms cubic-bezier(0.16, 1, 0.3, 1);
     will-change: transform;
   }
   @media (prefers-reduced-motion: reduce) {
+    #bn-banner-carousel,
     #bn-banner-track {
-      transition: none;
+      animation: none !important;
+      transition: none !important;
     }
   }
 </style>
@@ -185,8 +212,9 @@ const backupSsr = backupEligible && !backupHas && !isAccountPage;
 <script is:inline>
   (function () {
     var ROTATE_MS = 15 * 1000;
-    var ONE_HOUR_MS = 60 * 60 * 1000;
     var ONE_DAY_MS = 24 * 60 * 60 * 1000;
+    var SEVEN_DAYS_MS = 7 * 24 * 60 * 60 * 1000;
+    var AUTO_DISMISS_MS = 8 * 1000; // Auto-dismiss supporter banner after 8s (between 5 and 10s)
     var WILP_PATTERN = /^2025[^@\s]*@wilp\.bits-pilani\.ac\.in$/i;
     var SWIPE_MIN_PX = 40;
     var current = 0;
@@ -226,14 +254,35 @@ const backupSsr = backupEligible && !backupHas && !isAccountPage;
       }
     }
 
-    // ── Per-banner eligibility (same rules as the old standalone banners) ──
+    function stopAutoDismissTimer() {
+      if (window.__bnAutoDismissTimer) {
+        clearTimeout(window.__bnAutoDismissTimer);
+        window.__bnAutoDismissTimer = null;
+      }
+    }
+
+    function startAutoDismissTimer() {
+      stopAutoDismissTimer();
+      if (!document.hidden) {
+        window.__bnAutoDismissTimer = setTimeout(function () {
+          animateDismiss('supporter', false);
+        }, AUTO_DISMISS_MS);
+      }
+    }
+
+    // ── Per-banner eligibility ──
     function isSupporterEligible(root, user) {
       if (window.location.pathname.startsWith('/support')) return false;
       var loggedIn = Boolean(user) || root.getAttribute('data-ssr-logged-in') === 'true';
       if (!loggedIn) return false;
       try {
+        // If explicitly dismissed via close button, don't show for 7 days
         var dismissedAt = localStorage.getItem('bn-supporter-banner-dismissed');
-        if (dismissedAt && Date.now() - parseInt(dismissedAt, 10) < ONE_HOUR_MS) return false;
+        if (dismissedAt && Date.now() - parseInt(dismissedAt, 10) < SEVEN_DAYS_MS) return false;
+
+        // Daily impression cap: only shown once a day
+        var lastShown = localStorage.getItem('bn-supporter-banner-last-shown');
+        if (lastShown && Date.now() - parseInt(lastShown, 10) < ONE_DAY_MS) return false;
       } catch (e) {}
       return true;
     }
@@ -315,9 +364,20 @@ const backupSsr = backupEligible && !backupHas && !isAccountPage;
       if (ids.length === 0) {
         root.classList.add('hidden');
         stopTimer();
+        stopAutoDismissTimer();
         return;
       }
       root.classList.remove('hidden');
+
+      // Record daily impression so user only sees the support banner once a day across navigations
+      if (ids.indexOf('supporter') !== -1) {
+        try {
+          var lastShown = localStorage.getItem('bn-supporter-banner-last-shown');
+          if (!lastShown || Date.now() - parseInt(lastShown, 10) >= ONE_DAY_MS) {
+            localStorage.setItem('bn-supporter-banner-last-shown', Date.now().toString());
+          }
+        } catch (e) {}
+      }
 
       if (current >= ids.length) current = 0;
       if (current < 0) current = ids.length - 1;
@@ -351,6 +411,13 @@ const backupSsr = backupEligible && !backupHas && !isAccountPage;
       }
 
       startTimer(ids.length);
+
+      // Start auto-dismiss timer whenever supporter banner is active
+      if (ids[current] === 'supporter') {
+        startAutoDismissTimer();
+      } else {
+        stopAutoDismissTimer();
+      }
     }
 
     function goTo(i, total) {
@@ -359,10 +426,28 @@ const backupSsr = backupEligible && !backupHas && !isAccountPage;
       render();
     }
 
-    function dismissBanner(id) {
+    function animateDismiss(id, isExplicit) {
+      var root = carousel();
+      var ids = eligibleIds();
+      // If this is the only active banner slide, smoothly slide up and fade out the overlay
+      if (ids.length <= 1 && root) {
+        root.classList.add('bn-banner-leaving');
+        setTimeout(function () {
+          dismissBanner(id, isExplicit);
+          if (root) root.classList.remove('bn-banner-leaving');
+        }, 350);
+      } else {
+        dismissBanner(id, isExplicit);
+      }
+    }
+
+    function dismissBanner(id, isExplicit) {
       try {
         if (id === 'supporter') {
-          localStorage.setItem('bn-supporter-banner-dismissed', Date.now().toString());
+          if (isExplicit) {
+            localStorage.setItem('bn-supporter-banner-dismissed', Date.now().toString());
+          }
+          localStorage.setItem('bn-supporter-banner-last-shown', Date.now().toString());
         } else if (id === 'backup' && backupEmailForKey) {
           localStorage.setItem(
             'bn-backup-banner-dismissed-' + encodeURIComponent(backupEmailForKey),
@@ -395,17 +480,31 @@ const backupSsr = backupEligible && !backupHas && !isAccountPage;
           goTo(parseInt(t.getAttribute('data-index') || '0', 10), eligibleIds().length);
         } else if (t.classList.contains('bn-banner-close')) {
           e.preventDefault();
-          dismissBanner(t.getAttribute('data-close-banner'));
+          animateDismiss(t.getAttribute('data-close-banner'), true);
         }
       });
 
-      root.addEventListener('mouseenter', stopTimer);
-      root.addEventListener('mouseleave', function () {
-        startTimer(eligibleIds().length);
+      root.addEventListener('mouseenter', function () {
+        stopTimer();
+        stopAutoDismissTimer();
       });
-      root.addEventListener('focusin', stopTimer);
+      root.addEventListener('mouseleave', function () {
+        var ids = eligibleIds();
+        startTimer(ids.length);
+        if (ids[current] === 'supporter') {
+          startAutoDismissTimer();
+        }
+      });
+      root.addEventListener('focusin', function () {
+        stopTimer();
+        stopAutoDismissTimer();
+      });
       root.addEventListener('focusout', function () {
-        startTimer(eligibleIds().length);
+        var ids = eligibleIds();
+        startTimer(ids.length);
+        if (ids[current] === 'supporter') {
+          startAutoDismissTimer();
+        }
       });
 
       var startX = null;
@@ -436,15 +535,27 @@ const backupSsr = backupEligible && !backupHas && !isAccountPage;
         document.addEventListener('visibilitychange', function () {
           var r = carousel();
           if (!r || r.classList.contains('hidden')) return;
-          if (document.hidden) stopTimer();
-          else startTimer(eligibleIds().length);
+          if (document.hidden) {
+            stopTimer();
+            stopAutoDismissTimer();
+          } else {
+            var ids = eligibleIds();
+            startTimer(ids.length);
+            if (ids[current] === 'supporter') {
+              startAutoDismissTimer();
+            }
+          }
         });
-        document.addEventListener('astro:before-swap', stopTimer);
+        document.addEventListener('astro:before-swap', function () {
+          stopTimer();
+          stopAutoDismissTimer();
+        });
       }
     }
 
     function init() {
       stopTimer();
+      stopAutoDismissTimer();
       bind();
       current = 0;
       render();
