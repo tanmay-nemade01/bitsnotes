@@ -4,8 +4,9 @@
  */
 
 /** Origins accepted for APP_BASE_URL (includes www/apex twin). */
-export function allowedOrigins(baseUrl: string): Set<string> {
+export function allowedOrigins(baseUrl?: string): Set<string> {
   const origins = new Set<string>();
+  if (!baseUrl) return origins;
   try {
     const base = new URL(baseUrl);
     origins.add(base.origin);
@@ -22,10 +23,21 @@ export function allowedOrigins(baseUrl: string): Set<string> {
 
 /**
  * Validate that a request is same-origin by checking Origin or Referer header.
- * Accepts both apex and www variants of the configured base URL.
+ * Accepts both apex and www variants of the configured base URL, as well as
+ * the request's own origin.
  */
-export function validateOrigin(request: Request, baseUrl: string): boolean {
+export function validateOrigin(request: Request, baseUrl?: string): boolean {
   const allowed = allowedOrigins(baseUrl);
+
+  // Allow same-origin requests matching the request URL itself
+  try {
+    const reqOrigin = new URL(request.url).origin;
+    if (reqOrigin && reqOrigin !== 'null') {
+      allowed.add(reqOrigin);
+    }
+  } catch {
+    // Ignore invalid request URL
+  }
 
   const origin = request.headers.get('Origin');
   if (origin) {
