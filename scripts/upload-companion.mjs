@@ -57,6 +57,7 @@ const FOLDER_SUBJECTS = {
   ASM: ['Advanced Statistical Methods'],
   BDA: ['Big Data Analytics', 'Big Data Systems'],
   CS: ['Cyber Security'],
+  CV: ['Computer Vision'],
   DDA: ['Database Design and Applications'],
   DM: ['Data Mining'],
   DML: ['Distributed Machine Learning'],
@@ -74,6 +75,7 @@ const FOLDER_SUBJECTS = {
   NLP: ['Natural Language Processing'],
   OODAP: ['Object Oriented Design, Analysis and Programming Architecture'],
   OS: ['Operating Systems'],
+  QC: ['Quantum Computing'],
   SA: ['Software Architectures'],
   SE: ['Software Engineering'],
   SEML: ['Software Engineering for Machine Learning'],
@@ -88,7 +90,7 @@ const FOLDER_SUBJECTS = {
 
 function deriveChapterTitle(fileName) {
   let t = (fileName || '').replace(/\.txt$/i, '').trim();
-  t = t.replace(/^[TR]\d+_/i, '');
+  t = t.replace(/^[TR]\d+[-_\s]+/i, '');
   t = t.replace(/^(Ch|Chapter|Lecture|LN)[-_\s]*\d+[-_\s]*/i, '');
   t = t.replace(/[_-]+/g, ' ').replace(/\s+/g, ' ').trim();
   return t || fileName;
@@ -99,7 +101,7 @@ function cleanPlainText(text) {
 }
 
 function extractBookTag(fileName) {
-  const m = fileName.match(/^([TR]\d+)_/i);
+  const m = fileName.match(/^([TR]\d+)[-_\s]/i);
   return m ? m[1].toUpperCase() : '';
 }
 

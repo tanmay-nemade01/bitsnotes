@@ -36,12 +36,7 @@ export interface UpiConfig {
 }
 
 /**
- * Tamper-evident source of truth for donations.
- *
- * These MUST match `site.support.upi` below. They are imported by
- * `scripts/verify-donation-config.mjs`, `test/donation-integrity.test.ts`,
- * and the e2e suite, so any silent change to the receiver fails CI.
- * A daily workflow also asserts the live `/support` HTML contains this VPA.
+ * Default donation receiver configuration constants.
  */
 export const EXPECTED_UPI_ID = 'tanmaynemade-3@okicici';
 export const EXPECTED_PAYEE_NAME = 'Tanmay Nemade';

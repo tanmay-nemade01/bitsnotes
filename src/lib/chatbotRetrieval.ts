@@ -381,9 +381,9 @@ const companionIndexCache = new Map<string, { data: CompanionChapter[]; time: nu
  */
 export function deriveChapterTitle(fileName: string): string {
   let t = (fileName || '').replace(/\.txt$/i, '').trim();
-  // Strip leading source-book tag: T1_, R12_, etc.
-  t = t.replace(/^[TR]\d+_/i, '');
-  // Strip leading chapter/section number tag: Ch01_, Chapter_10_, Lecture_3_, LN-1-, etc.
+  // Strip leading source-book tag: T1_, R12_, T1 _ , etc.
+  t = t.replace(/^[TR]\d+[-_\s]+/i, '');
+  // Strip leading chapter/section number tag: Ch01_, Chapter_10_, Lecture_3_, LN-1-, Chapter 1, etc.
   t = t.replace(/^(Ch|Chapter|Lecture|LN)[-_\s]*\d+[-_\s]*/i, '');
   t = t.replace(/[_-]+/g, ' ').replace(/\s+/g, ' ').trim();
   return t || fileName;
