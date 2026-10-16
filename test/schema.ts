@@ -211,4 +211,26 @@ CREATE TABLE IF NOT EXISTS supporters (
   created_by     TEXT,
   UNIQUE(name)
 );
+
+CREATE TABLE IF NOT EXISTS tags (
+  id            TEXT PRIMARY KEY,
+  name          TEXT NOT NULL UNIQUE,
+  slug          TEXT NOT NULL UNIQUE,
+  description   TEXT,
+  color         TEXT NOT NULL DEFAULT 'accent',
+  display_order INTEGER NOT NULL DEFAULT 0,
+  is_visible    INTEGER NOT NULL DEFAULT 1,
+  created_at    INTEGER NOT NULL,
+  updated_at    INTEGER NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS subject_tags (
+  id            TEXT PRIMARY KEY,
+  subject_name  TEXT NOT NULL,
+  tag_id        TEXT NOT NULL REFERENCES tags(id) ON DELETE CASCADE,
+  display_order INTEGER NOT NULL DEFAULT 0,
+  created_at    INTEGER NOT NULL,
+  UNIQUE(subject_name, tag_id)
+);
 `;
+
