@@ -1,72 +1,18 @@
 ---
 import BaseLayout from '../layouts/BaseLayout.astro';
 import { listCatalog } from '../utils/notesLoader';
-import { getSubjectInfo } from '../data/subjects';
 import { getPublishedPosts } from '../utils/blogLoader';
 import BlogPostCard from '../components/blog/BlogPostCard.astro';
 import '../styles/blog.css';
 
+import { getEnv } from '../lib/apiHelpers';
+import { getSectionsWithSubjects, TAG_COLOR_CLASSES, type TagColor } from '../lib/tags';
+
 export const prerender = false;
 
+const env = await getEnv(Astro).catch(() => null);
 const catalog = await listCatalog();
-
-// Build a per-subject view model: split lectures vs additional resources
-const subjectsVM = catalog.map((s) => {
-  const info = getSubjectInfo(s.subject);
-  const lectures = s.lectures.filter((l) => l.scope === 'lecture');
-  const additional = s.lectures.filter((l) => l.scope !== 'lecture');
-  return {
-    name: s.subject,
-    description: s.description || info.description,
-    lectureCount: lectures.length,
-    additionalCount: additional.length,
-    semester: typeof s.semester === 'number' ? s.semester : info.semester,
-    order: s.order ?? info.order ?? 999,
-  };
-});
-
-// Group subjects into sections: Semesters in descending order (e.g. Semester 2, Semester 1), then Basics
-const semesterNumbers = Array.from(
-  new Set(
-    subjectsVM
-      .map((s) => s.semester)
-      .filter((sem): sem is number => typeof sem === 'number')
-  )
-).sort((a, b) => b - a);
-
-interface SubjectSection {
-  id: string;
-  title: string;
-  subjects: typeof subjectsVM;
-}
-
-const sections: SubjectSection[] = [];
-
-for (const sem of semesterNumbers) {
-  const semSubjects = subjectsVM
-    .filter((s) => s.semester === sem)
-    .sort((a, b) => a.order - b.order || a.name.localeCompare(b.name));
-
-  if (semSubjects.length > 0) {
-    sections.push({
-      id: `semester-${sem}`,
-      title: `Semester ${sem}`,
-      subjects: semSubjects,
-    });
-  }
-}
-
-const basicsSubjects = subjectsVM
-  .filter((s) => typeof s.semester !== 'number')
-  .sort((a, b) => a.order - b.order || a.name.localeCompare(b.name));
-
-if (basicsSubjects.length > 0) {
-  sections.push({
-    id: 'basics',
-    title: 'Basics',
-    subjects: basicsSubjects,
-  });
-}
+const { sections, usingTags } = await getSectionsWithSubjects(env?.DB, catalog);
 
 const recentPosts = (await getPublishedPosts()).slice(0, 3);
 
@@ -124,18 +70,39 @@ const webSiteJson = JSON.stringify(webSiteSchema);
         <span class="flex-grow text-[var(--text-muted)] group-hover:text-[var(--text)] transition-colors">Search notes, concepts, and subjects...</span>
         <kbd class="hidden sm:inline-flex items-center px-1.5 py-0.5 text-[9px] font-sans font-semibold text-[var(--text-muted)] bg-[var(--bg-subtle)] border border-[var(--border)] rounded-[4px] leading-none shrink-0">Ctrl+K</kbd>
       </button>
+
+      {/* Quick Jump Pills for Tag Sections */}
+      {sections.length > 1 && (
+        <nav aria-label="Section navigation" class="mt-5 flex flex-wrap items-center gap-2">
+          <span class="text-xs font-semibold text-[var(--text-faint)] uppercase tracking-wider mr-1">Jump to:</span>
+          {sections.map((sec) => (
+            <a
+              href={`#${sec.id}`}
+              class="inline-flex items-center gap-1.5 px-3 py-1 text-xs font-medium rounded-full border border-[var(--border)] bg-[var(--bg-elevated)] text-[var(--text-muted)] hover:text-[var(--text)] hover:border-[var(--accent)] hover:bg-[var(--bg-subtle)] transition-all no-underline"
+            >
+              <span>{sec.title}</span>
+              <span class="text-[10px] text-[var(--text-faint)]">({sec.subjects.length})</span>
+            </a>
+          ))}
+        </nav>
+      )}
     </header>
 
-    <!-- ============ VIEW: SUBJECTS (grouped by semester / category) ============ -->
-    <section aria-label="Subjects" class="space-y-10">
+    <!-- ============ VIEW: SUBJECTS (grouped by admin tags / rank) ============ -->
+    <section aria-label="Subjects" class="space-y-12">
       <h2 class="sr-only">Subjects</h2>
       {sections.map((sec) => (
-        <div class="space-y-4">
+        <div id={sec.id} class="scroll-mt-20 space-y-4">
           <div class="flex items-center justify-between border-b border-[var(--border)] pb-2">
-            <h3 class="font-display text-xl sm:text-2xl font-bold text-[var(--text)] tracking-tight">
-              {sec.title}
-            </h3>
-            <span class="text-xs font-medium px-2.5 py-0.5 rounded-full bg-[var(--bg-subtle)] text-[var(--text-muted)] border border-[var(--border)]">
+            <div>
+              <h3 class="font-display text-xl sm:text-2xl font-bold text-[var(--text)] tracking-tight flex items-center gap-2">
+                {sec.title}
+              </h3>
+              {sec.description && (
+                <p class="text-xs text-[var(--text-muted)] mt-0.5 max-w-xl">{sec.description}</p>
+              )}
+            </div>
+            <span class="text-xs font-medium px-2.5 py-0.5 rounded-full bg-[var(--bg-subtle)] text-[var(--text-muted)] border border-[var(--border)] shrink-0">
               {sec.subjects.length} {sec.subjects.length === 1 ? 'subject' : 'subjects'}
             </span>
           </div>
@@ -149,7 +116,7 @@ const webSiteJson = JSON.stringify(webSiteSchema);
                   data-astro-prefetch
                   data-subject-name={s.name.toLowerCase()}
                   data-subject-description={s.description.toLowerCase()}
-                  class="bn-subject-card group border border-[var(--border)] rounded-[var(--r-md)] p-5 hover:border-[var(--border-strong)] hover:bg-[var(--bg-subtle)] transition-colors no-underline"
+                  class="bn-subject-card group border border-[var(--border)] rounded-[var(--r-md)] p-5 hover:border-[var(--border-strong)] hover:bg-[var(--bg-subtle)] transition-colors no-underline flex flex-col justify-between"
                 >
                   <div class="flex items-start gap-3">
                     <div class="mt-0.5 w-8 h-8 rounded-[var(--r-sm)] bg-[var(--accent-subtle)] flex items-center justify-center text-[var(--accent)] shrink-0">
@@ -172,6 +139,20 @@ const webSiteJson = JSON.stringify(webSiteSchema);
                       <path stroke-linecap="round" stroke-linejoin="round" d="M9 5l7 7-7 7"/>
                     </svg>
                   </div>
+
+                  {/* Multi-tag Badge Chips */}
+                  {s.tags && s.tags.length > 0 && (
+                    <div class="flex flex-wrap gap-1.5 mt-3 pt-2.5 border-t border-[var(--border)]/50">
+                      {s.tags.map((t) => {
+                        const style = TAG_COLOR_CLASSES[t.color as TagColor]?.badge || TAG_COLOR_CLASSES.accent.badge;
+                        return (
+                          <span class={`inline-flex items-center px-2 py-0.5 rounded-full text-[10.5px] font-semibold border ${style}`}>
+                            {t.name}
+                          </span>
+                        );
+                      })}
+                    </div>
+                  )}
                 </a>
               );
             })}
