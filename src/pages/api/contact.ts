@@ -1,57 +1,78 @@
 import type { APIRoute } from 'astro';
-import { env } from 'cloudflare:workers';
-import { EmailMessage } from 'cloudflare:email';
-import { getEnv, getClientIp, tooMany, serverError } from '../../lib/apiHelpers';
+import { getEnv, getClientIp, tooMany, serverError, badRequest } from '../../lib/apiHelpers';
 import { validateOrigin, csrfForbidden } from '../../lib/auth/csrf';
 
 export const prerender = false;
 
-export const POST: APIRoute = async ({ request }) => {
+/**
+ * Safely resolves the EmailMessage constructor across environments.
+ * Cloudflare Workers provides EmailMessage either on globalThis or via 'cloudflare:email'.
+ */
+async function getEmailMessageConstructor(): Promise<(new (from: string, to: string, raw: string | Uint8Array) => unknown) | null> {
+  if (typeof (globalThis as any).EmailMessage !== 'undefined') {
+    return (globalThis as any).EmailMessage;
+  }
   try {
-    const appEnv = await getEnv();
+    const cfEmail = await import('cloudflare:email');
+    return cfEmail.EmailMessage as unknown as (new (from: string, to: string, raw: string | Uint8Array) => unknown);
+  } catch {
+    return null;
+  }
+}
 
-    if (!validateOrigin(request, appEnv.APP_BASE_URL || 'https://bitsnotes.com')) {
+export const POST: APIRoute = async (context) => {
+  const request = context.request;
+  try {
+    const appEnv = await getEnv(context);
+
+    // CSRF check
+    if (!validateOrigin(request, appEnv.APP_BASE_URL)) {
       return csrfForbidden();
     }
 
+    // Rate limiting: 5 requests per minute per IP
     if (appEnv.CONTACT_RATE_LIMITER) {
-      const ip = getClientIp(request);
-      const { success } = await appEnv.CONTACT_RATE_LIMITER.limit({ key: `contact:${ip}` });
-      if (!success) return tooMany('Too many requests. Please try again later.');
+      try {
+        const ip = getClientIp(request);
+        const { success } = await appEnv.CONTACT_RATE_LIMITER.limit({ key: `contact:${ip}` });
+        if (!success) {
+          return tooMany('Too many messages sent. Please wait a moment before trying again.');
+        }
+      } catch (rateLimitErr) {
+        console.warn('[Contact API] Rate limiter encountered an issue:', rateLimitErr);
+      }
     }
 
-    const body = await request.json() as Record<string, unknown>;
-    const name = body.name as string | undefined;
-    const email = body.email as string | undefined;
-    const subject = body.subject as string | undefined;
-    const message = body.message as string | undefined;
-    const _website = body._website as string | undefined;
+    let body: Record<string, unknown>;
+    try {
+      body = (await request.json()) as Record<string, unknown>;
+    } catch {
+      return badRequest('Invalid JSON request body.');
+    }
 
-    // Honeypot: if a bot filled the hidden field, silently accept but don't send
-    if (_website) {
+    const name = typeof body.name === 'string' ? body.name : '';
+    const email = typeof body.email === 'string' ? body.email : '';
+    const subject = typeof body.subject === 'string' ? body.subject : '';
+    const message = typeof body.message === 'string' ? body.message : '';
+    const _website = typeof body._website === 'string' ? body._website : '';
+
+    // Honeypot: silently accept bot submissions
+    if (_website.trim()) {
       return new Response(
         JSON.stringify({ success: true }),
         { status: 200, headers: { 'Content-Type': 'application/json' } }
       );
     }
 
-    // Validate inputs
-    if (!name || !email || !subject || !message) {
-      return new Response(
-        JSON.stringify({ error: 'All fields (name, email, subject, message) are required.' }),
-        { status: 400, headers: { 'Content-Type': 'application/json' } }
-      );
-    }
-
     // Strip CRLF from header-injectable fields to prevent email header injection
-    const sanitize = (s: string) => s.replace(/[\r\n]/g, '').trim();
+    const sanitizeHeader = (s: string) => s.replace(/[\r\n]/g, '').trim();
 
-    const safeName = sanitize(name).slice(0, 100);
-    const safeEmail = sanitize(email);
-    const safeSubject = sanitize(subject).slice(0, 150);
-    const safeMessage = (message || '').slice(0, 5000);
+    const safeName = sanitizeHeader(name).slice(0, 100);
+    const safeEmail = sanitizeHeader(email).toLowerCase();
+    const safeSubject = sanitizeHeader(subject).slice(0, 150);
+    const safeMessage = message.trim().slice(0, 5000);
 
-    // Re-check after sanitization
+    // Required fields check
     if (!safeName || !safeEmail || !safeSubject || !safeMessage) {
       return new Response(
         JSON.stringify({ error: 'All fields (name, email, subject, message) are required.' }),
@@ -59,7 +80,7 @@ export const POST: APIRoute = async ({ request }) => {
       );
     }
 
-    // Basic email format check
+    // Email format validation
     const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
     if (!emailRegex.test(safeEmail)) {
       return new Response(
@@ -68,7 +89,7 @@ export const POST: APIRoute = async ({ request }) => {
       );
     }
 
-    const sender = 'contact-form@bitsnotes.com'; // Must be a verified address/domain in Cloudflare Email Routing
+    const sender = 'noreply@bitsnotes.com';
     const recipient = 'support@bitsnotes.com';
     const messageId = `<${crypto.randomUUID()}@bitsnotes.com>`;
 
@@ -97,25 +118,33 @@ export const POST: APIRoute = async ({ request }) => {
       `Sent via BitsNotes Cloudflare Email Routing.`
     ].join('\r\n');
 
-    // Retrieve SEND_EMAIL binding
-    const emailBinding = (env as any).SEND_EMAIL;
+    const emailBinding = appEnv.SEND_EMAIL;
 
     if (!emailBinding) {
-      // Demo/local: acknowledge without echoing PII to logs
+      // Demo / local dev: acknowledge submission gracefully
       console.log('[Contact API] SEND_EMAIL binding inactive — simulated accept');
       return new Response(
         JSON.stringify({
           success: true,
           simulated: true,
-          message: 'Demo Mode: Message accepted (email binding not active).'
+          message: 'Message accepted (email binding not active in this environment).'
         }),
         { status: 200, headers: { 'Content-Type': 'application/json' } }
       );
     }
 
     // Send email using Cloudflare Email Service binding
-    const emailMessage = new EmailMessage(sender, recipient, mimeText);
-    await emailBinding.send(emailMessage);
+    try {
+      const EmailMsg = await getEmailMessageConstructor();
+      if (!EmailMsg) {
+        throw new Error('EmailMessage constructor unavailable in current runtime');
+      }
+      const emailMessage = new EmailMsg(sender, recipient, mimeText);
+      await emailBinding.send(emailMessage);
+    } catch (sendErr) {
+      console.error('[Contact API] Cloudflare email transmission failed:', sendErr);
+      return serverError('Failed to send message. Please contact us directly at support@bitsnotes.com.');
+    }
 
     return new Response(
       JSON.stringify({ success: true }),
