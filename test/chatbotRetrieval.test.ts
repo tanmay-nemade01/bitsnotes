@@ -119,6 +119,10 @@ describe('chatbotRetrieval (lean cross-lecture RAG)', () => {
         expect(deriveChapterTitle('R2_Ch03_Content_Based_Recommender_Systems_State_of_the_Art_and_Trends.txt')).toBe(
           'Content Based Recommender Systems State of the Art and Trends'
         );
+        expect(deriveChapterTitle('T1 _ Chapter 1 Introduction and Overview.txt')).toBe('Introduction and Overview');
+        expect(deriveChapterTitle('T2 _ Appendix 1 Notes on Basic Probability Theory.txt')).toBe(
+          'Appendix 1 Notes on Basic Probability Theory'
+        );
       });
 
       it('falls back to the raw filename when nothing prettifiable remains', () => {
