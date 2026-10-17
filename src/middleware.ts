@@ -46,6 +46,14 @@ function isAuthRoute(pathname: string): boolean {
   return pathname.startsWith('/auth/') || pathname.startsWith('/api/auth/');
 }
 
+// Secret admin area. Kept as a single source of truth so a rename only touches
+// this constant. Obscurity is a bonus, not the defence — membership in the
+// `admin_users` table is what actually authorises access.
+const BACKSTAGE_PREFIX = '/backstage';
+function isBackstageRoute(pathname: string): boolean {
+  return pathname === BACKSTAGE_PREFIX || pathname.startsWith(BACKSTAGE_PREFIX + '/');
+}
+
 export const onRequest = defineMiddleware(async (context, next) => {
   const { request, url, locals } = context;
   const pathname = url.pathname;
@@ -147,6 +155,55 @@ export const onRequest = defineMiddleware(async (context, next) => {
   (locals as any).user = user;
   (locals as any).tier = tier;
 
+  // ─── Admin (/backstage) access gate ─────────────────────────────────
+  // Signed out  → redirect to sign-in (preserving the intended destination).
+  // Non-admin   → 404 (do not reveal that the area exists).
+  // Admins      → mark the request and record a best-effort audit event.
+  if (isBackstageRoute(pathname)) {
+    if (!user) {
+      const redirect = new URL('/auth/signin', url.origin);
+      redirect.searchParams.set('redirect', pathname);
+      return new Response(null, {
+        status: 302,
+        headers: { Location: redirect.pathname + redirect.search },
+      });
+    }
+
+    const adminDb = (env as any).DB;
+    let isAdminUser = false;
+    if (adminDb) {
+      try {
+        const row = await adminDb
+          .prepare('SELECT user_id FROM admin_users WHERE user_id = ?')
+          .bind(user.id)
+          .first();
+        isAdminUser = !!row;
+      } catch (err) {
+        console.error('[middleware] admin check failed:', err);
+      }
+    }
+
+    if (!isAdminUser) {
+      return new Response(null, { status: 404, statusText: 'Not Found' });
+    }
+
+    (locals as any).isAdmin = true;
+
+    if (request.method === 'GET') {
+      try {
+        const { logAuthEvent } = await import('./lib/auth');
+        await logAuthEvent(adminDb, {
+          userId: user.id,
+          event: 'admin_dashboard_view',
+          ip: request.headers.get('CF-Connecting-IP') || '',
+          ua: request.headers.get('User-Agent') || '',
+        });
+      } catch {
+        // best-effort
+      }
+    }
+  }
+
   // ─── Legacy /auth/signup URL: sign-in auto-creates accounts ──────────
   // There is no separate signup page (OAuth upserts on first sign-in),
   // so preserve old links/bookmarks by redirecting to signin.
@@ -214,7 +271,7 @@ export const onRequest = defineMiddleware(async (context, next) => {
 
   // ─── CSP + cache policy for HTML vs API vs auth ─────────────────────
   const contentType = headers.get('content-type') || '';
-  if (isAuthRoute(pathname) || pathname.startsWith('/admin')) {
+  if (isAuthRoute(pathname) || isBackstageRoute(pathname)) {
     // Auth and Admin routes: enforcing CSP, no-cache
     headers.set('Content-Security-Policy', cspEnforcing);
     headers.set('Cache-Control', noCacheHeader);
@@ -225,7 +282,7 @@ export const onRequest = defineMiddleware(async (context, next) => {
     // Cache public page shells at the edge ONLY when the request is anonymous
     // (signed-out). Signed-in responses, admin pages, and any mutation route
     // stay no-store so personalized UI is never served from cache (Phase 8.10).
-    const isAdmin = pathname.startsWith('/admin');
+    const isAdmin = isBackstageRoute(pathname);
     const isMutation = request.method !== 'GET' && request.method !== 'HEAD';
     // Lecture notes (/view/) are gated per-viewer (verified bot vs anonymous teaser vs
     // signed-in), so a cached copy could leak full notes to anonymous users or serve

@@ -1,0 +1,349 @@
+---
+/**
+ * Admin Comments — unified moderation.
+ *
+ * Merges the old dashboard "Comments Overview" (grouped by page) with the
+ * legacy /admin/comments filter view. "All" shows comments grouped by page;
+ * selecting a status shows a flat, filtered list.
+ */
+import AdminLayout from '../../layouts/AdminLayout.astro';
+
+export const prerender = false;
+
+const filters = [
+  { value: 'all', label: 'All' },
+  { value: 'pending', label: 'Pending' },
+  { value: 'reported', label: 'Reported' },
+  { value: 'hidden', label: 'Hidden' },
+  { value: 'published', label: 'Published' },
+  { value: 'deleted', label: 'Deleted' },
+];
+---
+
+<AdminLayout title="Comments" subtitle="Moderate comments across every page">
+  <div data-admin-comments class="space-y-6">
+    <div class="flex flex-wrap items-center justify-between gap-4">
+      <div class="flex flex-wrap gap-2" role="tablist" aria-label="Filter comments">
+        {filters.map((f) => (
+          <button
+            type="button"
+            data-filter={f.value}
+            class="px-3 py-1.5 text-xs font-semibold rounded-[var(--r-sm)] border border-[var(--border)] text-[var(--text-muted)] hover:text-[var(--text)] hover:border-[var(--accent)] transition-colors cursor-pointer data-[active=true]:bg-[var(--accent)] data-[active=true]:text-[var(--accent-contrast)] data-[active=true]:border-[var(--accent)]"
+            data-active={f.value === 'all' ? 'true' : 'false'}
+          >
+            {f.label}
+          </button>
+        ))}
+      </div>
+      <div class="flex items-center gap-3">
+        <div class="text-xs text-[var(--text-muted)] flex gap-3 flex-wrap" id="comments-summary-stats"></div>
+        <button
+          type="button"
+          id="comments-refresh"
+          class="p-1.5 rounded-[var(--r-sm)] border border-[var(--border)] text-[var(--text-muted)] hover:text-[var(--text)] hover:border-[var(--accent)] transition-colors cursor-pointer"
+          title="Refresh"
+          aria-label="Refresh comments"
+        >
+          <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/></svg>
+        </button>
+      </div>
+    </div>
+
+    <div id="comments-body" class="space-y-4">
+      <p class="text-sm text-[var(--text-muted)]">Loading comments…</p>
+    </div>
+  </div>
+</AdminLayout>
+
+<script is:inline data-astro-rerun>
+  (function () {
+    var root = document.querySelector('[data-admin-comments]');
+    var A = window.__bnAdmin;
+    if (!root || !A) return;
+
+    var body = root.querySelector('#comments-body');
+    var summaryEl = root.querySelector('#comments-summary-stats');
+    var refreshBtn = root.querySelector('#comments-refresh');
+    var filterBtns = root.querySelectorAll('[data-filter]');
+
+    var cachedPages = [];
+    var currentFilter = 'all';
+
+    function load() {
+      body.innerHTML = '<p class="text-sm text-[var(--text-muted)]">Loading comments…</p>';
+      return A.getJSON('/api/admin/comments/overview')
+        .then(function (data) {
+          cachedPages = data.pages || [];
+          renderSummary();
+          render();
+        })
+        .catch(function () {
+          body.innerHTML = '<p class="text-sm text-[var(--danger-text)]">Failed to load comments overview.</p>';
+        });
+    }
+
+    function renderSummary() {
+      if (!summaryEl) return;
+      var total = 0,
+        published = 0,
+        pending = 0,
+        hidden = 0;
+      cachedPages.forEach(function (p) {
+        total += p.total;
+        published += p.published;
+        pending += p.pending;
+        hidden += p.hidden;
+      });
+      summaryEl.innerHTML =
+        '<span>Total: <strong>' + total + '</strong></span>' +
+        '<span>Published: <strong class="text-[var(--success)]">' + published + '</strong></span>' +
+        '<span>Pending: <strong class="text-[var(--warning)]">' + pending + '</strong></span>' +
+        '<span>Hidden: <strong class="text-[var(--danger)]">' + hidden + '</strong></span>';
+    }
+
+    function render() {
+      if (!cachedPages.length) {
+        body.innerHTML = '<p class="text-sm text-[var(--text-muted)]">No comments found in D1 database.</p>';
+        return;
+      }
+      if (currentFilter === 'all') renderGrouped();
+      else renderFlat();
+    }
+
+    function matchesFilter(c) {
+      if (currentFilter === 'reported') return (c.reportCount || 0) > 0;
+      return c.status === currentFilter;
+    }
+
+    // ── Grouped by page ──
+    function renderGrouped() {
+      body.innerHTML = '';
+      cachedPages.forEach(function (page) {
+        var section = document.createElement('div');
+        section.className = 'border border-[var(--border)] rounded-[var(--r-md)] bg-[var(--bg-elevated)] overflow-hidden shadow-sm';
+
+        var header = document.createElement('button');
+        header.type = 'button';
+        header.className = 'w-full text-left p-4 bg-[var(--bg-subtle)] hover:bg-[var(--bg-interactive)] flex items-center justify-between gap-4 focus:outline-none transition-colors cursor-pointer';
+
+        var titleContainer = document.createElement('div');
+        titleContainer.className = 'flex flex-col gap-1';
+
+        var title = document.createElement('h3');
+        title.className = 'font-display font-bold text-base text-[var(--text)]';
+        title.textContent = page.label;
+        titleContainer.appendChild(title);
+
+        var metaRow = document.createElement('div');
+        metaRow.className = 'flex items-center gap-2 flex-wrap text-xs';
+        var countBadge = document.createElement('span');
+        countBadge.className = 'font-semibold text-[var(--text-muted)]';
+        countBadge.textContent = page.total + (page.total === 1 ? ' comment' : ' comments');
+        metaRow.appendChild(countBadge);
+
+        if (page.pending > 0) {
+          var pb = document.createElement('span');
+          pb.className = 'px-1.5 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider bg-[var(--warning-bg)] text-[var(--warning)] border border-[var(--warning-border)]';
+          pb.textContent = page.pending + ' pending';
+          metaRow.appendChild(pb);
+        }
+        if (page.hidden > 0) {
+          var hb = document.createElement('span');
+          hb.className = 'px-1.5 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider bg-[var(--danger-bg)] text-[var(--danger)] border border-[var(--danger-border)]';
+          hb.textContent = page.hidden + ' hidden';
+          metaRow.appendChild(hb);
+        }
+        titleContainer.appendChild(metaRow);
+
+        var arrow = document.createElement('div');
+        arrow.className = 'text-[var(--text-muted)] transition-transform duration-200 transform rotate-0';
+        arrow.innerHTML = '<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M19 9l-7 7-7-7"/></svg>';
+
+        header.appendChild(titleContainer);
+        header.appendChild(arrow);
+
+        var content = document.createElement('div');
+        content.className = 'hidden border-t border-[var(--border)] p-4 space-y-4 bg-[var(--bg-elevated)]';
+        page.comments.forEach(function (c) {
+          content.appendChild(buildCard(c, page.label, false));
+        });
+
+        header.addEventListener('click', function () {
+          var isHidden = content.classList.contains('hidden');
+          content.classList.toggle('hidden');
+          arrow.classList.toggle('rotate-180', isHidden);
+        });
+
+        section.appendChild(header);
+        section.appendChild(content);
+        body.appendChild(section);
+      });
+    }
+
+    // ── Flat filtered list ──
+    function renderFlat() {
+      var rows = [];
+      cachedPages.forEach(function (page) {
+        page.comments.forEach(function (c) {
+          if (matchesFilter(c)) rows.push({ c: c, label: page.label });
+        });
+      });
+
+      if (!rows.length) {
+        body.innerHTML = '<p class="text-sm text-[var(--text-muted)]">No comments in this view.</p>';
+        return;
+      }
+
+      body.innerHTML = '';
+      rows.forEach(function (row) {
+        body.appendChild(buildCard(row.c, row.label, true));
+      });
+    }
+
+    function buildCard(c, pageLabel, showLabel) {
+      var card = document.createElement('div');
+      card.className = 'border border-[var(--border)] rounded-[var(--r-sm)] p-4 bg-[var(--bg-interactive)] hover:border-[var(--accent)] transition-colors';
+
+      var cardMeta = document.createElement('div');
+      cardMeta.className = 'flex flex-wrap items-center justify-between gap-2 mb-2 text-xs text-[var(--text-muted)]';
+
+      var authorLink = document.createElement('a');
+      authorLink.href = c.pageUrl;
+      authorLink.className = 'font-bold text-[var(--text)] hover:text-[var(--accent)] hover:underline flex items-center gap-1.5 transition-colors';
+      authorLink.textContent = c.displayName;
+      if (c.isAdmin) {
+        var badge = document.createElement('span');
+        badge.className = 'admin-badge';
+        badge.textContent = 'Admin';
+        authorLink.appendChild(badge);
+      }
+
+      var metaRight = document.createElement('div');
+      metaRight.className = 'flex items-center gap-2';
+
+      var statusBadge = document.createElement('span');
+      statusBadge.className = 'px-1.5 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider';
+      if (c.status === 'published') statusBadge.className += ' bg-[var(--success-bg)] text-[var(--success-text)] border border-[var(--success-border)]';
+      else if (c.status === 'pending') statusBadge.className += ' bg-[var(--warning-bg)] text-[var(--warning-text)] border border-[var(--warning-border)]';
+      else statusBadge.className += ' bg-[var(--danger-bg)] text-[var(--danger-text)] border border-[var(--danger-border)]';
+      statusBadge.textContent = c.status;
+      metaRight.appendChild(statusBadge);
+
+      if (c.reportCount > 0) {
+        var reportBadge = document.createElement('span');
+        reportBadge.className = 'px-1.5 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider bg-[var(--danger-bg)] text-[var(--danger)] border border-[var(--danger-border)]';
+        reportBadge.textContent = c.reportCount + ' reported';
+        metaRight.appendChild(reportBadge);
+      }
+
+      var timeSpan = document.createElement('span');
+      timeSpan.textContent = A.timeAgo(c.createdAt);
+      metaRight.appendChild(timeSpan);
+
+      cardMeta.appendChild(authorLink);
+      cardMeta.appendChild(metaRight);
+      card.appendChild(cardMeta);
+
+      if (showLabel) {
+        var labelLink = document.createElement('a');
+        labelLink.href = c.pageUrl;
+        labelLink.className = 'inline-block mb-2 text-[11px] text-[var(--text-muted)] hover:text-[var(--accent)] hover:underline';
+        labelLink.textContent = pageLabel;
+        card.appendChild(labelLink);
+      }
+
+      var bodyEl = document.createElement('p');
+      bodyEl.className = 'text-sm text-[var(--text)] whitespace-pre-wrap mb-3';
+      bodyEl.textContent = c.body;
+      card.appendChild(bodyEl);
+
+      if (c.moderationReason) {
+        var reason = document.createElement('div');
+        reason.className = 'text-xs italic bg-[var(--bg-subtle)] text-[var(--danger-text)] p-2 rounded mb-3 border border-[var(--border)]';
+        reason.textContent = 'Moderation reason: ' + c.moderationReason;
+        card.appendChild(reason);
+      }
+
+      var actions = document.createElement('div');
+      actions.className = 'flex flex-wrap items-center justify-between gap-3';
+      var leftBtns = document.createElement('div');
+      leftBtns.className = 'flex flex-wrap gap-2';
+
+      [
+        { a: 'publish', label: 'Publish', show: c.status !== 'published' },
+        { a: 'hide', label: 'Hide', show: c.status === 'published' },
+        { a: 'restore', label: 'Restore', show: c.status === 'deleted' || c.status === 'hidden' },
+        { a: 'delete', label: 'Delete', show: c.status !== 'deleted' },
+      ].forEach(function (act) {
+        if (!act.show) return;
+        var b = document.createElement('button');
+        b.type = 'button';
+        b.className = 'px-2.5 py-1 text-xs font-medium rounded-[var(--r-sm)] border border-[var(--border)] bg-[var(--bg-elevated)] text-[var(--text-muted)] hover:text-[var(--text)] hover:border-[var(--accent)] transition-colors cursor-pointer';
+        b.textContent = act.label;
+        b.addEventListener('click', function (e) {
+          e.stopPropagation();
+          moderate(c.id, act.a, b);
+        });
+        leftBtns.appendChild(b);
+      });
+
+      var replyLink = document.createElement('a');
+      replyLink.href = c.pageUrl;
+      replyLink.className = 'inline-flex items-center gap-1 px-3 py-1 text-xs font-semibold rounded-[var(--r-sm)] bg-[var(--accent)] text-[var(--accent-contrast)] hover:opacity-90 transition-opacity no-underline';
+      replyLink.innerHTML = 'View & Reply <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M18 13v6a2 2 0 01-2 2H5a2 2 0 01-2-2V8a2 2 0 012-2h6M15 3h6v6M10 14L21 3"/></svg>';
+
+      actions.appendChild(leftBtns);
+      actions.appendChild(replyLink);
+      card.appendChild(actions);
+
+      return card;
+    }
+
+    function moderate(id, action, btn) {
+      btn.disabled = true;
+      A.postJSON('/api/admin/comments/' + encodeURIComponent(id), { action: action })
+        .then(function (res) {
+          if (res.ok) load();
+          else {
+            btn.disabled = false;
+            alert('Action failed.');
+          }
+        })
+        .catch(function () {
+          btn.disabled = false;
+          alert('Action failed.');
+        });
+    }
+
+    filterBtns.forEach(function (btn) {
+      btn.addEventListener('click', function () {
+        filterBtns.forEach(function (b) { b.dataset.active = 'false'; });
+        btn.dataset.active = 'true';
+        currentFilter = btn.dataset.filter;
+        render();
+      });
+    });
+
+    if (refreshBtn) refreshBtn.addEventListener('click', function () { load(); });
+
+    load();
+  })();
+</script>
+
+<style>
+  .admin-badge {
+    background: var(--accent-subtle);
+    color: var(--accent);
+    border: 1px solid var(--accent);
+    font-size: 0.65rem;
+    font-weight: 700;
+    padding: 1px 6px;
+    border-radius: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    display: inline-flex;
+    align-items: center;
+    line-height: 1;
+    height: 16px;
+  }
+</style>

@@ -5,7 +5,7 @@
  *
  * Unauthenticated and read-only: the wall is public. The support page renders
  * a static list at build time and then calls this endpoint to swap in the live
- * roster, so adding a supporter from /admin shows up without a redeploy.
+ * roster, so adding a supporter from /backstage/supporters shows up without a redeploy.
  *
  * If D1 is unavailable (local dev before migrations, or a transient failure)
  * we serve the static fallback from `src/data/supporters.ts` so the wall never
