@@ -2,7 +2,7 @@
  * Community supporters who have contributed to keeping BitsNotes free and open.
  *
  * ⚠️ This file is now only the **static fallback**. The live roster lives in the
- * D1 `supporters` table and is managed from /admin (Wall of Gratitude tab), so
+ * D1 `supporters` table and is managed from /backstage/supporters, so
  * new supporters appear instantly without a rebuild or deploy.
  *
  * This list is used when:

@@ -1,7 +1,7 @@
 /**
  * Supporters data-access layer (Wall of Gratitude).
  *
- * The roster lives in the D1 `supporters` table and is edited from /admin, so
+ * The roster lives in the D1 `supporters` table and is edited from /backstage/supporters, so
  * a new supporter shows up on /support immediately — no PR, rebuild, or deploy.
  *
  * `src/data/supporters.ts` remains the static fallback used when the table is
