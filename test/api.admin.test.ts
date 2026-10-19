@@ -84,7 +84,6 @@ import type { AuthDb } from '../src/lib/auth/db';
 import { setTestEnv } from './cloudflare-shim';
 import { GET as adminGet } from '../src/pages/api/admin/comments/index';
 import { POST as adminPost } from '../src/pages/api/admin/comments/[id]';
-import { GET as adminViewsGet } from '../src/pages/api/admin/views';
 import { GET as adminOverviewGet } from '../src/pages/api/admin/comments/overview';
 import { createComment, addAdmin } from '../src/lib/comments';
 
@@ -167,35 +166,6 @@ describe('POST /api/admin/comments/[id]', () => {
     const ctx = makeContext({ method: 'POST', url: BASE + '/api/admin/comments/' + comment.id, body: { action: 'explode' }, user: { id: 'u1' }, params: { id: comment.id } });
     const res = await adminPost(ctx as any);
     expect(res.status).toBe(400);
-  });
-});
-
-describe('GET /api/admin/views', () => {
-  it('rejects anonymous (401)', async () => {
-    const ctx = makeContext({ method: 'GET', url: BASE + '/api/admin/views' });
-    const res = await adminViewsGet(ctx as any);
-    expect(res.status).toBe(401);
-  });
-
-  it('rejects non-admin (403)', async () => {
-    const ctx = makeContext({ method: 'GET', url: BASE + '/api/admin/views', user: { id: 'u2' } });
-    const res = await adminViewsGet(ctx as any);
-    expect(res.status).toBe(403);
-  });
-
-  it('returns sorted views list for admin', async () => {
-    await addAdmin(db, 'u1');
-    // Insert mock views row into db
-    await db.prepare('INSERT OR IGNORE INTO page_views (page_key, views) VALUES (?, ?)').bind('home', 50).run();
-    const ctx = makeContext({ method: 'GET', url: BASE + '/api/admin/views', user: { id: 'u1' } });
-    const res = await adminViewsGet(ctx as any);
-    expect(res.status).toBe(200);
-    const data = await res.json();
-    expect(data.views).toBeDefined();
-    // home should have 50 views
-    const homeView = data.views.find((v: any) => v.pageKey === 'home');
-    expect(homeView).toBeDefined();
-    expect(homeView.views).toBe(50);
   });
 });
 

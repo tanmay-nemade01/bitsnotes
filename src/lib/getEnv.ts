@@ -21,7 +21,6 @@ export interface AppEnv {
   COMMENT_RATE_LIMITER?: { limit: (opts: { key: string }) => Promise<{ success: boolean }> };
   FEEDBACK_RATE_LIMITER?: { limit: (opts: { key: string }) => Promise<{ success: boolean }> };
   CONTACT_RATE_LIMITER?: { limit: (opts: { key: string }) => Promise<{ success: boolean }> };
-  VIEWS_RATE_LIMITER?: { limit: (opts: { key: string }) => Promise<{ success: boolean }> };
   CHATBOT_RATE_LIMITER?: { limit: (opts: { key: string }) => Promise<{ success: boolean }> };
   OPENROUTER_API_KEY?: string;
 }

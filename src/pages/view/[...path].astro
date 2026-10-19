@@ -12,7 +12,6 @@ import { getResourceKindLabel, slugify } from '../../utils/lectureDisplay';
 import { renderMathInline } from '../../utils/mathRender';
 import CommentsSection from '../../components/CommentsSection.astro';
 import UsefulnessFeedback from '../../components/UsefulnessFeedback.astro';
-import ViewCounter from '../../components/ViewCounter.astro';
 import ChatbotPanel from '../../components/ChatbotPanel.astro';
 import { getUser } from '../../lib/apiHelpers';
 import { isVerifiedSearchBot } from '../../lib/searchBots';
@@ -87,55 +86,22 @@ if (lectureContent) {
 
 let bodyContent = '';
 let inlineStyles = '';
-let hasRevisionSection = false;
-let revisionSectionContent = '';
-let hasQuizSection = false;
-let quizSectionContent = '';
 
 if (hasHtmlContent) {
   const parsed = parseLectureHtml(htmlContent, cssContent);
   bodyContent = parsed.bodyContent;
   inlineStyles = parsed.inlineStyles;
-  hasRevisionSection = parsed.hasRevisionSection;
-  revisionSectionContent = parsed.revisionSectionContent;
-  hasQuizSection = parsed.hasQuizSection;
-  quizSectionContent = parsed.quizSectionContent;
 }
 
 const hasMermaid = bodyContent.includes('class="mermaid"') || bodyContent.includes('data-type="concept-map"');
 
 const metadata = customMetadata || getFallbackMetadata(lectureFolderName, subjectName);
 
-// Pre-render LaTeX in metadata-driven panels (revision formulas, quiz
-// questions/options/explanations, summary) — math in the notes body itself
-// was already rendered by the notes loader.
-{
+if (metadata) {
   const fmt = (s: string | undefined | null): string => (s ? renderMathInline(s) : '');
-  const fmtFormula = (s: string | undefined | null): string => {
-    if (!s) return '';
-    const hasDelimiter = /\\\(|\\\[|\$\$|\$[^$]/.test(s);
-    return renderMathInline(hasDelimiter ? s : `\\[ ${s} \\]`);
-  };
-  if (metadata) {
-    if (metadata.summary) metadata.summary = fmt(metadata.summary);
-    if (Array.isArray(metadata.keyConcepts)) {
-      metadata.keyConcepts = metadata.keyConcepts.map((k: string) => fmt(k));
-    }
-    if (Array.isArray(metadata.examRevisionNotes)) {
-      metadata.examRevisionNotes.forEach((item: any) => {
-        if (item.mustKnow) item.mustKnow = fmt(item.mustKnow);
-        if (item.keyFormula) item.keyFormula = fmtFormula(item.keyFormula);
-        if (item.commonPitfall) item.commonPitfall = fmt(item.commonPitfall);
-        if (item.quickCheck) item.quickCheck = fmt(item.quickCheck);
-      });
-    }
-    if (Array.isArray(metadata.quiz)) {
-      metadata.quiz.forEach((q: any) => {
-        if (q.question) q.question = fmt(q.question);
-        if (Array.isArray(q.options)) q.options = q.options.map((o: string) => fmt(o));
-        if (q.explanation) q.explanation = fmt(q.explanation);
-      });
-    }
+  if (metadata.summary) metadata.summary = fmt(metadata.summary);
+  if (Array.isArray(metadata.keyConcepts)) {
+    metadata.keyConcepts = metadata.keyConcepts.map((k: string) => fmt(k));
   }
 }
 
@@ -196,8 +162,7 @@ const displayResourceTitle = isResource
   ? (conceptTitle || cleanLectureName)
   : (conceptTitle ? `${cleanLectureName} · ${conceptTitle}` : cleanLectureName);
 
-const showRevisionTab = !gated && (hasRevisionSection || !!(metadata.examRevisionNotes && metadata.examRevisionNotes.length > 0));
-const showQuizTab = !gated && (hasQuizSection || !!(metadata.quiz && metadata.quiz.length > 0));
+
 
 const subjects = await listSubjects();
 
@@ -399,30 +364,9 @@ const quizJson = quizSchema && !gated ? JSON.stringify(quizSchema) : null;
 
           <!-- ========== CENTER CONTENT ========== -->
           <div id="main-lecture-container" class="flex-1 min-w-0 flex flex-col max-w-[900px] w-full mx-auto transition-all duration-300">
-            <!-- Underline tabs -->
-            <nav class="flex gap-0 justify-start border-b border-[var(--border)] mb-3 overflow-x-auto overflow-y-hidden -mx-4 sm:mx-0 px-4 sm:px-0" role="tablist" aria-label="Lecture viewer tabs">
-              {[
-                { id: 'notes', label: isResource ? `${resourceKindLabel}` : 'Lecture Notes' },
-                { id: 'guide', label: 'Study Guide' },
-                ...(showRevisionTab ? [{ id: 'revision', label: 'Exam Revision' }] : []),
-                ...(showQuizTab ? [{ id: 'quiz', label: 'Practice Quiz' }] : []),
-              ].map((tab, i) => (
-                <button
-                  id={`tab-${tab.id}`}
-                  role="tab"
-                  aria-controls={`panel-${tab.id}`}
-                  aria-selected={i === 0 ? 'true' : 'false'}
-                  tabindex={i === 0 ? 0 : -1}
-                  data-tab={tab.id}
-                  class={`shrink-0 px-4 py-2.5 text-sm font-medium whitespace-nowrap border-b-2 transition-colors -mb-[1px]
-                    ${i === 0 ? 'text-[var(--accent)] border-[var(--accent)]' : 'text-[var(--text-muted)] border-transparent hover:text-[var(--text)] hover:border-[var(--border-strong)]'}`}
-                >
-                  {tab.label}
-                </button>
-              ))}
-            </nav>
 
-            <!-- Toolbar: bookmark (auth) + view count -->
+
+            <!-- Toolbar: bookmark (auth) -->
             <div id="bn-toolbar-row" class="flex items-center justify-between gap-3 mb-3 min-h-8">
               <div class="flex items-center gap-2">
                 <button type="button" id="bn-bookmark-toggle"
@@ -437,7 +381,6 @@ const quizJson = quizSchema && !gated ? JSON.stringify(quizSchema) : null;
                   <span>Save</span>
                 </button>
               </div>
-              <ViewCounter pageKey={`lecture:${subjectName}:${lectureFolderName}`} class="text-xs text-[var(--text-faint)]" />
             </div>
 
             <!-- Tab panels -->
@@ -476,20 +419,12 @@ const quizJson = quizSchema && !gated ? JSON.stringify(quizSchema) : null;
                           </div>
                           <h2 class="login-wall-title">Sign in to read the full notes</h2>
                           <p class="login-wall-desc">
-                            You are reading a preview. Sign in with Google (free) to unlock all {allTopics.length} sections, the exam revision sheet, practice quiz and AI study assistant.
+                            You are reading a preview. Sign in with Google (free) to unlock all {allTopics.length} sections and AI study assistant.
                           </p>
                           <div class="login-wall-features">
                             <span class="login-wall-feature-chip">
                               <svg class="w-3.5 h-3.5 text-[var(--accent)]" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><path d="M5 13l4 4L19 7"/></svg>
                               {allTopics.length} Full Sections
-                            </span>
-                            <span class="login-wall-feature-chip">
-                              <svg class="w-3.5 h-3.5 text-[var(--accent)]" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><path d="M5 13l4 4L19 7"/></svg>
-                              Exam Revision Sheet
-                            </span>
-                            <span class="login-wall-feature-chip">
-                              <svg class="w-3.5 h-3.5 text-[var(--accent)]" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><path d="M5 13l4 4L19 7"/></svg>
-                              Practice Quiz
                             </span>
                             <span class="login-wall-feature-chip">
                               <svg class="w-3.5 h-3.5 text-[var(--accent)]" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><path d="M5 13l4 4L19 7"/></svg>
@@ -547,149 +482,7 @@ const quizJson = quizSchema && !gated ? JSON.stringify(quizSchema) : null;
               )}
             </div>
 
-            <!-- Study Guide panel -->
-            <div class="tab-panel study-guide-panel" id="panel-guide" role="tabpanel" aria-labelledby="tab-guide">
-              <div class="guide-header">
-                <h2>{displayResourceTitle}</h2>
-                <div class="guide-meta">
-                  <span>{subjectName}</span>
-                  {metadata.gradeLevel && <span>&middot; {metadata.gradeLevel}</span>}
-                  {metadata.datePublished && <span>&middot; {metadata.datePublished}</span>}
-                </div>
-              </div>
 
-              {metadata.summary && (
-                <div class="guide-summary"><h3>Summary</h3><p>{metadata.summary}</p></div>
-              )}
-
-              {metadata.keyConcepts && metadata.keyConcepts.length > 0 && (
-                <div class="objectives">
-                  <h3>Learning Objectives</h3>
-                  {metadata.keyConcepts.map((concept: string, idx: number) => (
-                    <div class="objective-item">
-                      <span class="objective-marker">{idx + 1}</span>
-                      <span class="objective-text">{concept}</span>
-                    </div>
-                  ))}
-                </div>
-              )}
-
-              {metadata.sections && metadata.sections.length > 0 && (
-                <div class="sections-breakdown">
-                  <h3>Sections Breakdown</h3>
-                  {metadata.sections.map((section: any, idx: number) => (
-                    <div class="section-card">
-                      <div class="section-card-header">
-                        <span class="section-card-number">{idx + 1}</span>
-                        <span class="section-card-title">{section.title}</span>
-                      </div>
-                      {section.pages && <span class="section-card-pages">{section.pages}</span>}
-                      {section.description && <p class="section-card-desc">{section.description}</p>}
-                    </div>
-                  ))}
-                </div>
-              )}
-
-              {metadata.targetAudience && (
-                <div class="audience-badge">
-                  <svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 00-3-3.87"/><path d="M16 3.13a4 4 0 010 7.75"/></svg>
-                  {metadata.targetAudience}
-                </div>
-              )}
-            </div>
-
-            <!-- Exam Revision panel -->
-            {showRevisionTab && (
-              <div class="tab-panel revision-panel" id="panel-revision" role="tabpanel" aria-labelledby="tab-revision">
-                {hasRevisionSection ? (
-                  <Fragment set:html={revisionSectionContent} />
-                ) : (
-                  <>
-                    <div class="guide-header">
-                      <h2>Exam Revision Notes</h2>
-                      <div class="guide-meta">
-                        <span>Key Topics</span><span>&middot; Must Knows</span><span>&middot; Formulas</span><span>&middot; Quick Checks</span>
-                      </div>
-                    </div>
-                    <div class="flex flex-col gap-6">
-                      {metadata.examRevisionNotes?.map((item: any, idx: number) => (
-                        <div class="section-card">
-                          <div class="flex items-center gap-3.5 mb-4 pb-3 border-b border-[var(--border)]">
-                            <span class="section-card-number">{idx + 1}</span>
-                            <span class="section-card-title text-lg">{item.topic}</span>
-                          </div>
-                          <div class="flex flex-col gap-4">
-                            {item.mustKnow && (
-                              <div class="revision-mustknow"><strong>Must Know</strong><p>{item.mustKnow}</p></div>
-                            )}
-                            {item.keyFormula && (
-                              <div class="revision-formula">
-                                <strong class="text-[0.7rem] font-bold text-[var(--accent)] uppercase tracking-wider block mb-2">Key Formula</strong>
-                                <div set:html={item.keyFormula}></div>
-                              </div>
-                            )}
-                            {item.commonPitfall && (
-                              <div class="revision-pitfall"><strong>Common Pitfall</strong><p>{item.commonPitfall}</p></div>
-                            )}
-                            {item.quickCheck && (
-                              <div class="revision-check"><strong>Quick Check</strong><p>{item.quickCheck}</p></div>
-                            )}
-                            {item.connections && item.connections.length > 0 && (
-                              <div class="revision-connections"><strong>Connections:</strong>
-                                {item.connections.map((conn: string) => (
-                                  <span class="px-2.5 py-1 bg-[var(--accent-subtle)] rounded-[var(--r-sm)] text-xs font-semibold text-[var(--accent)]">{conn}</span>
-                                ))}
-                              </div>
-                            )}
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  </>
-                )}
-              </div>
-            )}
-
-            <!-- Quiz panel -->
-            {showQuizTab && (
-              <div class="tab-panel quiz-panel" id="panel-quiz" role="tabpanel" aria-labelledby="tab-quiz">
-                {hasQuizSection ? (
-                  <Fragment set:html={quizSectionContent} />
-                ) : (
-                  <>
-                    <div class="quiz-header">
-                      <h2>Practice Quiz</h2>
-                      <p>Test your understanding of {lectureName}. Select an answer for each question — results are instant.</p>
-                    </div>
-                    <div class="quiz-grid" id="quiz-grid">
-                      {metadata.quiz.map((q: any, qIdx: number) => (
-                        <div class="quiz-card" data-correct-index={q.answerIndex} id={`quiz-card-${qIdx}`}>
-                          <div class="quiz-card-header">
-                            <span class="quiz-card-number">{qIdx + 1}</span>
-                            <p class="quiz-question">{q.question}</p>
-                          </div>
-                          <div class="quiz-options">
-                            {q.options.map((opt: string, optIdx: number) => (
-                              <button class="quiz-option" onclick={`window.checkQuizAnswer(this, ${optIdx}, ${qIdx})`}>{opt}</button>
-                            ))}
-                          </div>
-                          <div class="quiz-explanation hidden"><strong>Explanation:</strong> {q.explanation}</div>
-                        </div>
-                      ))}
-                    </div>
-                    <div class="quiz-score hidden" id="quiz-score">
-                      <h3 id="quiz-score-text">0 / {metadata.quiz.length}</h3>
-                      <p id="quiz-score-label">Keep going! Review the questions you missed.</p>
-                      <div class="progress-bar"><div class="progress-fill" id="quiz-progress-fill" style="width:0%"></div></div>
-                      <button class="quiz-retry" onclick="window.resetQuiz()">
-                        <svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 11-2.12-9.36L23 10"/></svg>
-                        Try Again
-                      </button>
-                    </div>
-                  </>
-                )}
-              </div>
-            )}
 
             <!-- Prev / Next navigation -->
             <div class="flex gap-3 mt-8 pt-6 border-t border-[var(--border)]">
@@ -807,61 +600,7 @@ const quizJson = quizSchema && !gated ? JSON.stringify(quizSchema) : null;
 </BaseLayout>
 
 <script is:inline data-astro-rerun>
-  // ===================== TAB SWITCHING (delegated + page-load safe) =====================
-  // Math is pre-rendered server-side (KaTeX) — no client-side typesetting.
 
-  function initTabs() {
-    var tabNav = document.querySelector('[role="tablist"]');
-    if (!tabNav || tabNav.dataset.tabsInited) return;
-    tabNav.dataset.tabsInited = 'true';
-
-    function activateTab(btn) {
-      if (!btn) return;
-      var tabId = btn.getAttribute('data-tab');
-      tabNav.querySelectorAll('[role="tab"][data-tab]').forEach(function(t) {
-        t.classList.remove('text-[var(--accent)]', 'border-[var(--accent)]');
-        t.classList.add('text-[var(--text-muted)]', 'border-transparent');
-        t.setAttribute('aria-selected', 'false');
-        t.setAttribute('tabindex', '-1');
-      });
-      btn.classList.add('text-[var(--accent)]', 'border-[var(--accent)]');
-      btn.classList.remove('text-[var(--text-muted)]', 'border-transparent');
-      btn.setAttribute('aria-selected', 'true');
-      btn.setAttribute('tabindex', '0');
-
-      var panelIds = ['panel-notes', 'panel-guide', 'panel-revision', 'panel-quiz'];
-      panelIds.forEach(function(id) {
-        var p = document.getElementById(id);
-        if (p) p.classList.remove('active');
-      });
-      var panel = document.getElementById('panel-' + tabId);
-      if (panel) {
-        panel.classList.add('active');
-      }
-    }
-
-    tabNav.addEventListener('click', function(e) {
-      var btn = e.target.closest('[role="tab"][data-tab]');
-      if (!btn) return;
-      activateTab(btn);
-    });
-
-    tabNav.addEventListener('keydown', function(e) {
-      var tabs = Array.prototype.slice.call(tabNav.querySelectorAll('[role="tab"][data-tab]'));
-      var current = document.activeElement;
-      var idx = tabs.indexOf(current);
-      if (idx < 0) return;
-      var next = -1;
-      if (e.key === 'ArrowRight' || e.key === 'ArrowDown') next = (idx + 1) % tabs.length;
-      else if (e.key === 'ArrowLeft' || e.key === 'ArrowUp') next = (idx - 1 + tabs.length) % tabs.length;
-      else if (e.key === 'Home') next = 0;
-      else if (e.key === 'End') next = tabs.length - 1;
-      if (next < 0) return;
-      e.preventDefault();
-      tabs[next].focus();
-      activateTab(tabs[next]);
-    });
-  }
 
   // ===================== SCROLL-SPY TOC =====================
   function initScrollSpy() {
@@ -878,7 +617,7 @@ const quizJson = quizSchema && !gated ? JSON.stringify(quizSchema) : null;
 
     function spy() {
       var notesPanel = document.getElementById('panel-notes');
-      if (!notesPanel || !notesPanel.classList.contains('active')) return;
+      if (!notesPanel) return;
 
       var buffer = 72;
       var currentTarget = null;
@@ -1036,10 +775,7 @@ const quizJson = quizSchema && !gated ? JSON.stringify(quizSchema) : null;
 
       if (!targetEl) return;
 
-      var notesTab = document.querySelector('[role="tab"][data-tab="notes"]');
-      if (notesTab && notesTab.getAttribute('aria-selected') !== 'true') {
-        notesTab.click();
-      }
+
 
       var headerOffset = 72;
       var elementPosition = targetEl.getBoundingClientRect().top;
@@ -1230,86 +966,12 @@ const quizJson = quizSchema && !gated ? JSON.stringify(quizSchema) : null;
   }
 
   // Run initializers on load / view transitions
-  initTabs();
   initMobileDrawers();
   initSidebarCollapse();
   initTopicAccordion();
   initTopicNavLinks();
   initScrollSpy();
   initCodeCopy();
-</script>
-
-<script is:inline data-astro-rerun>
-  // ===================== QUIZ =====================
-  window.quizState = { answered: 0, correct: 0, total: 0 };
-
-  window.checkQuizAnswer = function(_button, optionIndex, questionIndex) {
-    var card = document.getElementById('quiz-card-' + questionIndex);
-    if (!card || card.dataset.answered === 'true') return;
-    card.dataset.answered = 'true';
-    var correctIndex = parseInt(card.getAttribute('data-correct-index'));
-    var options = card.querySelectorAll('.quiz-option');
-    var isCorrect = optionIndex === correctIndex;
-    options.forEach(function(opt, idx) {
-      opt.disabled = true;
-      if (idx === correctIndex) opt.classList.add('correct');
-      else if (idx === optionIndex) opt.classList.add('incorrect');
-    });
-    var explanation = card.querySelector('.quiz-explanation');
-    if (explanation) { explanation.classList.remove('hidden'); explanation.classList.add('fade-in'); }
-
-    var totalCards = document.querySelectorAll('#quiz-grid .quiz-card').length;
-    window.quizState.total = totalCards;
-    window.quizState.answered = document.querySelectorAll('#quiz-grid .quiz-card[data-answered="true"]').length;
-    if (isCorrect) window.quizState.correct++;
-    if (window.quizState.answered >= window.quizState.total) window.showQuizScore();
-  };
-
-  window.showQuizScore = function() {
-    var scoreEl = document.getElementById('quiz-score');
-    var textEl = document.getElementById('quiz-score-text');
-    var labelEl = document.getElementById('quiz-score-label');
-    var fillEl = document.getElementById('quiz-progress-fill');
-    if (!scoreEl) return;
-    scoreEl.classList.remove('hidden');
-    var pct = window.quizState.total > 0 ? Math.round((window.quizState.correct / window.quizState.total) * 100) : 0;
-    textEl.textContent = window.quizState.correct + ' / ' + window.quizState.total;
-    fillEl.style.width = pct + '%';
-    if (pct === 100) labelEl.textContent = 'Perfect score! You mastered this material.';
-    else if (pct >= 70) labelEl.textContent = 'Great job! Review the explanations for questions you missed.';
-    else labelEl.textContent = 'Keep going! Review the lecture notes and try again.';
-  };
-
-  window.resetQuiz = function() {
-    document.querySelectorAll('#quiz-grid .quiz-card').forEach(function(card) {
-      card.dataset.answered = 'false';
-      card.querySelectorAll('.quiz-option').forEach(function(opt) {
-        opt.disabled = false;
-        opt.classList.remove('correct', 'incorrect');
-      });
-      var expl = card.querySelector('.quiz-explanation');
-      if (expl) { expl.classList.add('hidden'); expl.classList.remove('fade-in'); }
-    });
-    var scoreEl = document.getElementById('quiz-score');
-    if (scoreEl) scoreEl.classList.add('hidden');
-    window.quizState = { answered: 0, correct: 0, total: 0 };
-  };
-
-  // Legacy inline quiz handler
-  window.checkAnswer = function(button, optionIndex) {
-    var card = button.closest('.quiz-card');
-    if (!card || card.dataset.answered === 'true') return;
-    card.dataset.answered = 'true';
-    var correctIndex = parseInt(card.getAttribute('data-correct-index') || card.dataset.correctIndex);
-    var options = card.querySelectorAll('.quiz-option');
-    options.forEach(function(opt, idx) {
-      opt.disabled = true;
-      if (idx === correctIndex) opt.classList.add('correct');
-      else if (idx === optionIndex) opt.classList.add('incorrect');
-    });
-    var explanation = card.querySelector('.quiz-explanation');
-    if (explanation) { explanation.classList.remove('hidden'); explanation.classList.add('fade-in'); }
-  };
 </script>
 
 <script is:inline data-astro-rerun>

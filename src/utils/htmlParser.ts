@@ -139,35 +139,41 @@ export function parseLectureHtml(htmlContent: string, extraCss?: string): Parsed
     .replace(/<body[^>]*>/gi, '')
     .replace(/<\/body>/gi, '');
 
-  // Extract <section class="exam-revision-section"> if present in HTML bodyContent
+  // Extract and strip <section class="exam-revision-section"> if present in HTML bodyContent
   let hasRevisionSection = false;
   let revisionSectionContent = '';
   const revisionMatch = bodyContent.match(
-    /<section[^>]*class=["']exam-revision-section["'][^>]*>([\s\S]*?)<\/section>/i
+    /<section[^>]*class=["'][^"']*exam-revision-section[^"']*["'][^>]*>([\s\S]*?)<\/section>/i
   );
   if (revisionMatch) {
     hasRevisionSection = true;
     revisionSectionContent = revisionMatch[0];
-    bodyContent = bodyContent.replace(
-      /<section[^>]*class=["']exam-revision-section["'][^>]*>([\s\S]*?)<\/section>/i,
-      ''
-    );
   }
+  bodyContent = bodyContent.replace(
+    /<section[^>]*class=["'][^"']*exam-revision-section[^"']*["'][^>]*>[\s\S]*?<\/section>/gi,
+    ''
+  );
+
+  // Strip any study guide sections if present in HTML bodyContent
+  bodyContent = bodyContent.replace(
+    /<section[^>]*class=["'][^"']*study-guide[^"']*["'][^>]*>[\s\S]*?<\/section>/gi,
+    ''
+  );
 
   // Extract <section class="quiz-section"> if present in HTML bodyContent
   let hasQuizSection = false;
   let quizSectionContent = '';
   const quizMatch = bodyContent.match(
-    /<section[^>]*class=["']quiz-section["'][^>]*>([\s\S]*?)<\/section>/i
+    /<section[^>]*class=["'][^"']*quiz-section[^"']*["'][^>]*>([\s\S]*?)<\/section>/i
   );
   if (quizMatch) {
     hasQuizSection = true;
     quizSectionContent = quizMatch[0];
-    bodyContent = bodyContent.replace(
-      /<section[^>]*class=["']quiz-section["'][^>]*>([\s\S]*?)<\/section>/i,
-      ''
-    );
   }
+  bodyContent = bodyContent.replace(
+    /<section[^>]*class=["'][^"']*quiz-section[^"']*["'][^>]*>[\s\S]*?<\/section>/gi,
+    ''
+  );
 
   // Remove script tags from the body content to prevent executing or double-rendering quiz scripts
   // and to avoid breaking JSON serialization.
