@@ -249,12 +249,6 @@ CREATE TABLE IF NOT EXISTS bit_reactions (
 CREATE INDEX IF NOT EXISTS idx_bit_reactions_slug ON bit_reactions(slug);
 CREATE INDEX IF NOT EXISTS idx_bit_reactions_user ON bit_reactions(user_id);
 
--- ─── Views Tracking ────────────────────────────────────────────────────────
-CREATE TABLE IF NOT EXISTS page_views (
-  page_key      TEXT PRIMARY KEY,
-  views         INTEGER NOT NULL DEFAULT 0
-);
-
 -- ─── Supporters (Wall of Gratitude) ────────────────────────────────────────
 -- Managed from /admin at runtime so new backers appear instantly (no redeploy).
 -- Mirrors `src/db/migrations/007_supporters.sql`.

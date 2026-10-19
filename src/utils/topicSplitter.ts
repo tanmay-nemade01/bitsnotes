@@ -90,8 +90,9 @@ export function splitLectureTopics(bodyContent: string): SplitResult {
   while ((match = h2Regex.exec(cleanBody)) !== null) {
     const titleText = stripHtml(match[2]);
     const isTopic =
-      /class=["'][^"']*section-title[^"']*["']/i.test(match[1]) ||
-      /^\d+\.\d+\b/.test(titleText);
+      (/class=["'][^"']*section-title[^"']*["']/i.test(match[1]) ||
+      /^\d+\.\d+\b/.test(titleText)) &&
+      !/exam revision|study guide/i.test(titleText);
 
     if (isTopic) {
       h2s.push({

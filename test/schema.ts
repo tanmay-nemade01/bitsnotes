@@ -185,11 +185,6 @@ CREATE TABLE IF NOT EXISTS bookmarks (
   created_at      INTEGER NOT NULL
 );
 
-CREATE TABLE IF NOT EXISTS page_views (
-  page_key      TEXT PRIMARY KEY,
-  views         INTEGER NOT NULL DEFAULT 0
-);
-
 CREATE TABLE IF NOT EXISTS bit_reactions (
   id            TEXT PRIMARY KEY,
   user_id       TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
