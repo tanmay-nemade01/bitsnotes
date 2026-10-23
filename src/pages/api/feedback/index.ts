@@ -22,6 +22,7 @@ import { checkProfanity } from '../../../lib/moderation/profanity';
 import { checkSpam } from '../../../lib/moderation/spam';
 import { countLinks } from '../../../lib/moderation/normalize';
 import { listLectures, listSubjects } from '../../../utils/notesLoader';
+import { getHiddenSubjectNames } from '../../../lib/subjectVisibility';
 import {
   generateVisitorId,
   getVisitorId,
@@ -47,6 +48,12 @@ export const GET: APIRoute = async (context) => {
   if (!subject) return badRequest('subject is required');
   if (pageType === 'lecture' && !lecture) {
     return badRequest('lecture is required for lecture pages');
+  }
+
+  const isAdmin = Boolean((context.locals as any).isAdmin);
+  const hiddenSubjects = await getHiddenSubjectNames(env.DB);
+  if (!isAdmin && hiddenSubjects.has(subject)) {
+    return json({ useful: 0, notYet: 0, myVote: null }, 200, { 'Cache-Control': 'no-store' });
   }
 
   try {
@@ -138,6 +145,12 @@ export const POST: APIRoute = async (context) => {
   }
 
   // Verify subject/lecture exist in manifest.
+  const isAdmin = Boolean((context.locals as any).isAdmin);
+  const hiddenSubjects = await getHiddenSubjectNames(env.DB);
+  if (!isAdmin && hiddenSubjects.has(subject)) {
+    return badRequest('Unknown subject');
+  }
+
   const subjects = await listSubjects();
   if (!subjects.some((s) => s.name === subject)) {
     return badRequest('Unknown subject');

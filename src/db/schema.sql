@@ -316,3 +316,19 @@ VALUES
   ('0199c000-0000-7000-8000-000000000003', 'Semester 1', 'semester-1', 'First semester foundational courses and prerequisites.', 'blue', 2, 1, 1757000002000, 1757000002000),
   ('0199c000-0000-7000-8000-000000000004', 'Basics', 'basics', 'Introductory and refresher materials.', 'purple', 3, 1, 1757000003000, 1757000003000);
 
+-- ─── Subject Visibility (Hidden / Draft Subjects) ──────────────────────────
+-- Managed by admins from /backstage/tags.
+-- Allows hiding a subject and all its lectures completely from non-admin users.
+-- Hidden subjects (is_public = 0) are completely invisible to non-admins
+-- and only viewable by admins for previewing.
+CREATE TABLE IF NOT EXISTS subject_settings (
+  subject_name  TEXT PRIMARY KEY,                  -- Canonical subject folder name
+  is_public     INTEGER NOT NULL DEFAULT 1,        -- 1 = public to everyone, 0 = hidden (admin preview only)
+  updated_at    INTEGER NOT NULL,
+  updated_by    TEXT                               -- Admin user_id who modified it
+);
+
+CREATE INDEX IF NOT EXISTS idx_subject_settings_public
+  ON subject_settings (is_public);
+
+

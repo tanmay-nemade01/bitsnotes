@@ -12,6 +12,7 @@
 
 import type { APIRoute } from 'astro';
 import { getEnv } from '../../../lib/getEnv';
+import { getHiddenSubjectNames } from '../../../lib/subjectVisibility';
 import {
   buildCompanionBlock,
   buildRelatedBlock,
@@ -123,6 +124,14 @@ export const POST: APIRoute = async ({ locals, request }) => {
     if (!excludeFolder) excludeFolder = parsed.lectureFolder;
   }
   if (!query) query = getLastUserQuery(body.messages);
+
+  const isAdmin = Boolean((locals as any).isAdmin);
+  if (!isAdmin && subject) {
+    const hiddenSubjects = await getHiddenSubjectNames(db);
+    if (hiddenSubjects.has(subject)) {
+      return jsonResponse({ error: 'Subject not found.' }, 404);
+    }
+  }
 
   let relatedBlock = '';
   let companionBlock = '';

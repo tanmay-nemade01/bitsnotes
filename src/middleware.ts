@@ -152,8 +152,25 @@ export const onRequest = defineMiddleware(async (context, next) => {
     }
   }
 
+  let isAdmin = false;
+  if (user) {
+    const adminDb = (env as any).DB;
+    if (adminDb) {
+      try {
+        const row = await adminDb
+          .prepare('SELECT user_id FROM admin_users WHERE user_id = ?')
+          .bind(user.id)
+          .first();
+        isAdmin = !!row;
+      } catch (err) {
+        console.error('[middleware] admin check failed:', err);
+      }
+    }
+  }
+
   (locals as any).user = user;
   (locals as any).tier = tier;
+  (locals as any).isAdmin = isAdmin;
 
   // ─── Admin (/backstage) access gate ─────────────────────────────────
   // Signed out  → redirect to sign-in (preserving the intended destination).
@@ -169,29 +186,14 @@ export const onRequest = defineMiddleware(async (context, next) => {
       });
     }
 
-    const adminDb = (env as any).DB;
-    let isAdminUser = false;
-    if (adminDb) {
-      try {
-        const row = await adminDb
-          .prepare('SELECT user_id FROM admin_users WHERE user_id = ?')
-          .bind(user.id)
-          .first();
-        isAdminUser = !!row;
-      } catch (err) {
-        console.error('[middleware] admin check failed:', err);
-      }
-    }
-
-    if (!isAdminUser) {
+    if (!isAdmin) {
       return new Response(null, { status: 404, statusText: 'Not Found' });
     }
-
-    (locals as any).isAdmin = true;
 
     if (request.method === 'GET') {
       try {
         const { logAuthEvent } = await import('./lib/auth');
+        const adminDb = (env as any).DB;
         await logAuthEvent(adminDb, {
           userId: user.id,
           event: 'admin_dashboard_view',

@@ -12,6 +12,7 @@ import { getEnv, getUser, json, unauthorized, forbidden, badRequest, serverError
 import { isAdmin } from '../../../../lib/comments';
 import { validateOrigin, csrfForbidden } from '../../../../lib/auth/csrf';
 import { listTags, createTag, listSubjectTagsMap } from '../../../../lib/tags';
+import { listSubjectVisibilityMap } from '../../../../lib/subjectVisibility';
 import { listCatalog } from '../../../../utils/notesLoader';
 
 export const prerender = false;
@@ -26,6 +27,7 @@ export const GET: APIRoute = async (context) => {
     const tags = await listTags(env.DB, { includeHidden: true });
     const subjectTagsMap = await listSubjectTagsMap(env.DB);
     const catalog = await listCatalog();
+    const visibilityMap = await listSubjectVisibilityMap(env.DB);
 
     const allSubjects = catalog.map((c) => ({
       name: c.subject,
@@ -33,6 +35,7 @@ export const GET: APIRoute = async (context) => {
       lectureCount: c.lectureCount,
       semester: c.semester,
       order: c.order,
+      isPublic: visibilityMap.has(c.subject) ? visibilityMap.get(c.subject)! : true,
       tags: (subjectTagsMap.get(c.subject) || []).map((t) => ({
         id: t.id,
         name: t.name,
@@ -43,6 +46,7 @@ export const GET: APIRoute = async (context) => {
     }));
 
     const untaggedSubjects = allSubjects.filter((s) => s.tags.length === 0);
+    const hiddenSubjects = allSubjects.filter((s) => !s.isPublic);
 
     // Convert map to plain object for JSON response
     const subjectTagsObj: Record<string, string[]> = {};
@@ -56,6 +60,7 @@ export const GET: APIRoute = async (context) => {
         subjectTagsMap: subjectTagsObj,
         allSubjects,
         untaggedCount: untaggedSubjects.length,
+        hiddenCount: hiddenSubjects.length,
       },
       200,
       { 'Cache-Control': 'no-store' }
