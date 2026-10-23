@@ -1,6 +1,7 @@
 import type { APIRoute } from 'astro';
 import { env } from 'cloudflare:workers';
 import { listSubjects } from '../../../utils/notesLoader';
+import { getHiddenSubjectNames } from '../../../lib/subjectVisibility';
 import { v1CorsHeaders, v1OptionsResponse, checkApiKey } from '../../../lib/cors';
 
 export const prerender = false;
@@ -17,12 +18,15 @@ export const GET: APIRoute = async ({ request }) => {
   }
 
   try {
+    const hiddenSubjects = await getHiddenSubjectNames((env as any).DB);
     const subjects = await listSubjects();
-    const result = subjects.map(s => ({
-      name: s.name,
-      lectureCount: s.lectureCount,
-      slug: encodeURIComponent(s.name)
-    }));
+    const result = subjects
+      .filter((s) => !hiddenSubjects.has(s.name))
+      .map(s => ({
+        name: s.name,
+        lectureCount: s.lectureCount,
+        slug: encodeURIComponent(s.name)
+      }));
     return new Response(JSON.stringify(result), { status: 200, headers: corsHeaders });
   } catch {
     return new Response(

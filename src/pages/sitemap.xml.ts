@@ -3,6 +3,8 @@ import { listSubjects, listLectures } from '../utils/notesLoader';
 import { getPublishedPosts } from '../utils/blogLoader';
 import { getPublishedBits } from '../utils/bitsLoader';
 import { slugify } from '../utils/lectureDisplay';
+import { getEnv } from '../lib/apiHelpers';
+import { getHiddenSubjectNames } from '../lib/subjectVisibility';
 
 export const prerender = false;
 
@@ -14,7 +16,8 @@ export const prerender = false;
  * legacy redirect. The hand-rolled approach is simpler to maintain and
  * avoids adding an extra dependency.
  */
-export const GET: APIRoute = async ({ url }) => {
+export const GET: APIRoute = async (context) => {
+  const { url } = context;
   const baseUrl = `${url.protocol}//${url.host}`;
 
   // Pages to include in sitemap
@@ -47,8 +50,12 @@ export const GET: APIRoute = async ({ url }) => {
     });
   }
 
+  const env = await getEnv(context).catch(() => null);
+  const hiddenSubjects = await getHiddenSubjectNames(env?.DB);
   const subjects = await listSubjects();
-  for (const subject of subjects) {
+  const publicSubjects = subjects.filter((s) => !hiddenSubjects.has(s.name));
+
+  for (const subject of publicSubjects) {
     const subjectParam = slugify(subject.name);
     pages.push({
       path: `/subject/${subjectParam}`,

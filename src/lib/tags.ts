@@ -16,6 +16,7 @@
 import { uuidv7 } from './auth/crypto';
 import type { AuthDb } from './auth/db';
 import { slugify } from '../utils/lectureDisplay';
+import { getHiddenSubjectNames } from './subjectVisibility';
 
 // ─── Constants & Types ────────────────────────────────────────────────────────
 
@@ -111,6 +112,7 @@ export interface TagSectionViewModel {
     lectureCount: number;
     additionalCount: number;
     order: number;
+    isHidden?: boolean;
     tags: Array<{ id: string; name: string; color: TagColor; slug: string }>;
   }>;
 }
@@ -425,8 +427,12 @@ export async function getSectionsWithSubjects(
     order?: number;
     semester?: number;
     lectures: Array<{ scope: string }>;
-  }>
+  }>,
+  options?: { isAdmin?: boolean }
 ): Promise<{ sections: TagSectionViewModel[]; usingTags: boolean }> {
+  const hiddenSubjectNames = await getHiddenSubjectNames(db);
+  const isAdmin = options?.isAdmin ?? false;
+
   // Build a fast lookup map for subject details from catalog
   const catalogMap = new Map(
     catalog.map((s) => {
@@ -445,6 +451,13 @@ export async function getSectionsWithSubjects(
       ];
     })
   );
+
+  // For non-admins, completely remove hidden subjects so they never appear on the homepage
+  if (!isAdmin && hiddenSubjectNames.size > 0) {
+    for (const hidden of hiddenSubjectNames) {
+      catalogMap.delete(hidden);
+    }
+  }
 
   // If DB is available, attempt to build sections from dynamic tags
   if (db) {
@@ -485,7 +498,7 @@ export async function getSectionsWithSubjects(
 
           for (const item of subjectsForTag) {
             const catInfo = catalogMap.get(item.name);
-            if (!catInfo) continue; // subject folder might have been deleted
+            if (!catInfo) continue; // subject folder deleted or hidden from non-admin
 
             seenInSections.add(item.name);
 
@@ -503,6 +516,7 @@ export async function getSectionsWithSubjects(
               lectureCount: catInfo.lectureCount,
               additionalCount: catInfo.additionalCount,
               order: item.displayOrder ?? catInfo.order,
+              isHidden: hiddenSubjectNames.has(catInfo.name),
               tags: allTagsForSub,
             });
           }
@@ -531,6 +545,7 @@ export async function getSectionsWithSubjects(
               lectureCount: catInfo.lectureCount,
               additionalCount: catInfo.additionalCount,
               order: catInfo.order,
+              isHidden: hiddenSubjectNames.has(catInfo.name),
               tags: [],
             });
           }
@@ -581,6 +596,7 @@ export async function getSectionsWithSubjects(
         lectureCount: s.lectureCount,
         additionalCount: s.additionalCount,
         order: s.order,
+        isHidden: hiddenSubjectNames.has(s.name),
         tags: [
           {
             id: `sem-${sem}`,
@@ -613,6 +629,7 @@ export async function getSectionsWithSubjects(
       lectureCount: s.lectureCount,
       additionalCount: s.additionalCount,
       order: s.order,
+      isHidden: hiddenSubjectNames.has(s.name),
       tags: [{ id: 'basics', name: 'Basics', color: 'purple' as TagColor, slug: 'basics' }],
     }));
 

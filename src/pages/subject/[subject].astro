@@ -3,6 +3,8 @@ import BaseLayout from '../../layouts/BaseLayout.astro';
 import { listLectures, getSubjectByNameOrSlug, getSubjectDetails } from '../../utils/notesLoader';
 import CommentsSection from '../../components/CommentsSection.astro';
 import { slugify } from '../../utils/lectureDisplay';
+import { getEnv } from '../../lib/apiHelpers';
+import { getHiddenSubjectNames } from '../../lib/subjectVisibility';
 
 export const prerender = false;
 
@@ -12,6 +14,16 @@ if (!subject) return Astro.redirect('/');
 const decodedSubject = decodeURIComponent(subject);
 const matchedSubject = await getSubjectByNameOrSlug(decodedSubject);
 if (!matchedSubject) return Astro.redirect('/');
+
+// Check visibility: hidden subjects are completely invisible to non-admins
+const env = await getEnv(Astro).catch(() => null);
+const isAdmin = Boolean((Astro.locals as any).isAdmin);
+const hiddenSubjects = await getHiddenSubjectNames(env?.DB);
+const isHidden = hiddenSubjects.has(matchedSubject.name);
+
+if (isHidden && !isAdmin) {
+  return Astro.redirect('/');
+}
 
 // Redirect to canonical slug if raw subject name or unslugified path was used
 const canonicalSubjectSlug = slugify(matchedSubject.name);
@@ -40,13 +52,14 @@ const collectionPageSchema = {
 
 const collectionPageJson = JSON.stringify(collectionPageSchema);
 const seoKeywords = `${decodedSubjectName}, lecture notes, study guides, college courses, study materials, academic resources, BitsNotes`;
+const robotsDirective = isHidden ? 'noindex, nofollow' : 'index, follow';
 ---
 
 <BaseLayout
   title={`${decodedSubjectName} Lectures & Notes | BitsNotes`}
   description={`Comprehensive collection of lecture notes, study guides, and interactive practice quizzes for ${decodedSubjectName}. Access view-only notes and curated summaries for every lecture.`}
   keywords={seoKeywords}
-  robots="index, follow"
+  robots={robotsDirective}
 >
   <Fragment slot="head">
     <script type="application/ld+json" set:html={collectionPageJson} />
@@ -61,6 +74,91 @@ const seoKeywords = `${decodedSubjectName}, lecture notes, study guides, college
       </svg>
       <span class="text-[var(--text)] font-medium truncate">{decodedSubjectName}</span>
     </nav>
+
+    {isAdmin && isHidden && (
+      <aside class="mb-8 rounded-[var(--r-md)] border border-amber-500/30 bg-amber-500/10 p-4 text-amber-700 dark:text-amber-300">
+        <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+          <div class="flex items-center gap-3">
+            <span class="p-2 rounded-full bg-amber-500/20 text-amber-600 dark:text-amber-400 shrink-0">
+              <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+                <rect width="18" height="11" x="3" y="11" rx="2" ry="2"/>
+                <path d="M7 11V7a5 5 0 0 1 10 0v4"/>
+              </svg>
+            </span>
+            <div>
+              <p class="font-bold text-sm flex items-center gap-2">
+                Admin Preview Mode
+                <span class="px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider bg-amber-500/20 text-amber-700 dark:text-amber-300 border border-amber-500/30">
+                  Hidden from Public
+                </span>
+              </p>
+              <p class="text-xs text-amber-700/80 dark:text-amber-300/80 mt-0.5">
+                This subject and all {lectures.length} {lectures.length === 1 ? 'lecture' : 'lectures'} are completely hidden from non-admin users. Only admins can see this preview.
+              </p>
+            </div>
+          </div>
+          <button
+            type="button"
+            id="subject-publish-toggle-btn"
+            data-subject={decodedSubjectName}
+            data-target-public="true"
+            class="shrink-0 px-3.5 py-1.5 text-xs font-semibold rounded-[var(--r-sm)] bg-amber-600 text-white hover:bg-amber-700 transition-colors cursor-pointer flex items-center gap-1.5 shadow-sm"
+          >
+            <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+            Make Public
+          </button>
+        </div>
+      </aside>
+    )}
+
+    {isAdmin && !isHidden && (
+      <div class="mb-6 flex items-center justify-between text-xs text-[var(--text-muted)] bg-[var(--bg-subtle)] border border-[var(--border)] px-3.5 py-2 rounded-[var(--r-sm)]">
+        <div class="flex items-center gap-2">
+          <span class="w-2 h-2 rounded-full bg-emerald-500"></span>
+          <span>Admin status: This subject is <strong>Public</strong> to everyone.</span>
+        </div>
+        <button
+          type="button"
+          id="subject-publish-toggle-btn"
+          data-subject={decodedSubjectName}
+          data-target-public="false"
+          class="text-xs text-amber-600 dark:text-amber-400 hover:underline font-medium cursor-pointer"
+        >
+          Hide Subject
+        </button>
+      </div>
+    )}
+
+    {isAdmin && (
+      <script is:inline>
+        document.getElementById('subject-publish-toggle-btn')?.addEventListener('click', async function () {
+          var btn = this;
+          var subjectName = btn.getAttribute('data-subject');
+          var targetPublic = btn.getAttribute('data-target-public') === 'true';
+          btn.disabled = true;
+          var origText = btn.textContent;
+          btn.textContent = 'Updating…';
+          try {
+            var res = await fetch('/api/admin/subjects/visibility', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ subjectName: subjectName, isPublic: targetPublic })
+            });
+            if (res.ok) {
+              window.location.reload();
+            } else {
+              alert('Failed to update visibility.');
+              btn.disabled = false;
+              btn.textContent = origText;
+            }
+          } catch (e) {
+            alert('Network error.');
+            btn.disabled = false;
+            btn.textContent = origText;
+          }
+        });
+      </script>
+    )}
 
     <!-- Editorial header -->
     <header class="mb-8">

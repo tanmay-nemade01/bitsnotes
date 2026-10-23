@@ -3,6 +3,8 @@ import { env } from 'cloudflare:workers';
 import { listCatalog, getLectureContent, getManifest } from '../utils/notesLoader';
 import { getPublishedPosts } from '../utils/blogLoader';
 import { getPublishedBits, bitPreview } from '../utils/bitsLoader';
+import { getEnv } from '../lib/apiHelpers';
+import { getHiddenSubjectNames } from '../lib/subjectVisibility';
 
 export const prerender = false;
 
@@ -60,17 +62,27 @@ function cleanHtmlText(html: string): string {
   return text.replace(/\s+/g, ' ').trim();
 }
 
-export const GET: APIRoute = async () => {
+export const GET: APIRoute = async (context) => {
+  const envBinding = await getEnv(context).catch(() => null);
+  const isAdmin = Boolean((context.locals as any).isAdmin);
+  const hiddenSubjects = await getHiddenSubjectNames(envBinding?.DB);
+
+  function filterForViewer(items: any[]) {
+    if (isAdmin || hiddenSubjects.size === 0) return items;
+    return items.filter((item) => !item.subject || !hiddenSubjects.has(item.subject));
+  }
+
   // In development, build the search index dynamically so local edits reflect immediately
   if (import.meta.env.DEV) {
     const manifest = await getManifest();
 
     if (devCachedIndex && devCachedManifestVersion === manifest.version) {
-      return new Response(JSON.stringify(devCachedIndex), {
+      const filtered = filterForViewer(devCachedIndex);
+      return new Response(JSON.stringify(filtered), {
         headers: {
           'Content-Type': 'application/json',
           'Cache-Control': 'public, max-age=300',
-          'ETag': `"${manifest.version}"`,
+          'ETag': `"${manifest.version}-${isAdmin ? 'admin' : 'public'}"`,
           'X-Robots-Tag': 'noindex, nofollow'
         }
       });
@@ -148,11 +160,11 @@ export const GET: APIRoute = async () => {
     devCachedIndex = index;
     devCachedManifestVersion = manifest.version;
 
-    return new Response(JSON.stringify(index), {
+    return new Response(JSON.stringify(filterForViewer(index)), {
       headers: {
         'Content-Type': 'application/json',
         'Cache-Control': 'public, max-age=300',
-        'ETag': `"${manifest.version}"`,
+        'ETag': `"${manifest.version}-${isAdmin ? 'admin' : 'public'}"`,
         'X-Robots-Tag': 'noindex, nofollow'
       }
     });
@@ -176,7 +188,7 @@ export const GET: APIRoute = async () => {
     // Edge cache read: a warm isolate serves the compiled index without an R2
     // round-trip or the map/re-serialize pass.
     const cache = (env as any).caches?.default as Cache | undefined;
-    const cacheKey = new Request(`https://internal.bitsnotes/cache/search-index/${manifest.version}.json`);
+    const cacheKey = new Request(`https://internal.bitsnotes/cache/search-index/${manifest.version}-${isAdmin ? 'admin' : 'public'}.json`);
     if (cache) {
       try {
         const hit = await cache.match(cacheKey);
@@ -192,9 +204,9 @@ export const GET: APIRoute = async () => {
       });
     }
 
-    const rawIndex = await obj.json() as any[];
-    // Serve the index with full text for client-side deep search
-    const safeIndex = rawIndex.map((item: any) => ({
+    const rawIndex = (await obj.json()) as any[];
+    // Serve the index with full text for client-side deep search, filtered for non-admins
+    const rawMapped = rawIndex.map((item: any) => ({
       type: item.type || 'note',
       title: item.title,
       subject: item.subject,
@@ -205,11 +217,13 @@ export const GET: APIRoute = async () => {
       snippet: item.snippet || (item.text || '').slice(0, 300)
     }));
 
+    const safeIndex = filterForViewer(rawMapped);
+
     const response = new Response(JSON.stringify(safeIndex), {
       headers: {
         'Content-Type': 'application/json',
         'Cache-Control': 'public, max-age=300',
-        'ETag': `"${manifest.version}"`,
+        'ETag': `"${manifest.version}-${isAdmin ? 'admin' : 'public'}"`,
         'X-Robots-Tag': 'noindex, nofollow'
       }
     });

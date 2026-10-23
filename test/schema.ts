@@ -227,5 +227,12 @@ CREATE TABLE IF NOT EXISTS subject_tags (
   created_at    INTEGER NOT NULL,
   UNIQUE(subject_name, tag_id)
 );
+
+CREATE TABLE IF NOT EXISTS subject_settings (
+  subject_name  TEXT PRIMARY KEY,
+  is_public     INTEGER NOT NULL DEFAULT 1,
+  updated_at    INTEGER NOT NULL,
+  updated_by    TEXT
+);
 `;
 

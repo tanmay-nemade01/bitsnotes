@@ -4,8 +4,9 @@
  */
 
 import type { APIRoute } from 'astro';
-import { getEnv, json, unauthorized, getUser } from '../../../lib/apiHelpers';
+import { getEnv, json, getUser } from '../../../lib/apiHelpers';
 import { listCollections, listBookmarks } from '../../../lib/bookmarks';
+import { getHiddenSubjectNames } from '../../../lib/subjectVisibility';
 import { listCatalog } from '../../../utils/notesLoader';
 
 export const prerender = false;
@@ -18,7 +19,13 @@ export const GET: APIRoute = async (context) => {
 
   const env = await getEnv(context);
   const collections = await listCollections(env.DB, user.id);
-  const bookmarks = await listBookmarks(env.DB, user.id);
+  const rawBookmarks = await listBookmarks(env.DB, user.id);
+
+  const isAdmin = Boolean((context.locals as any).isAdmin);
+  const hiddenSubjects = await getHiddenSubjectNames(env.DB);
+  const bookmarks = (!isAdmin && hiddenSubjects.size > 0)
+    ? rawBookmarks.filter((bm) => !hiddenSubjects.has(bm.subject))
+    : rawBookmarks;
 
   // Normalize bookmark titles to match the catalog (lecture-number prefixed).
   const catalog = await listCatalog();

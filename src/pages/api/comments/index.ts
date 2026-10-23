@@ -23,6 +23,7 @@ import { validateCommentBody, moderateSubmission, MAX_JSON_BYTES, MIN_FILL_MS } 
 import { listLectures, listSubjects } from '../../../utils/notesLoader';
 import { getPublishedPosts } from '../../../utils/blogLoader';
 import { sha256Hex } from '../../../lib/auth/crypto';
+import { getHiddenSubjectNames } from '../../../lib/subjectVisibility';
 
 
 export const prerender = false;
@@ -42,6 +43,15 @@ export const GET: APIRoute = async (context) => {
   if (!subject) return badRequest('subject is required');
   if (pageType === 'lecture' && !lecture) {
     return badRequest('lecture is required for lecture pages');
+  }
+
+  // Non-admins cannot view comments for hidden subjects
+  if (pageType === 'lecture' || pageType === 'subject') {
+    const isAdmin = Boolean((context.locals as any).isAdmin);
+    const hiddenSubjects = await getHiddenSubjectNames(env.DB);
+    if (!isAdmin && hiddenSubjects.has(subject)) {
+      return json({ comments: [], hasMore: false, nextCursor: null }, 200, { 'Cache-Control': 'no-store' });
+    }
   }
 
   const limit = limitRaw ? Math.min(parseInt(limitRaw, 10) || 20, 20) : 20;
@@ -136,6 +146,12 @@ export const POST: APIRoute = async (context) => {
 
   // Verify subject/lecture/blog exist in manifest/loader.
   if (v.pageType === 'lecture' || v.pageType === 'subject') {
+    const isAdmin = Boolean((context.locals as any).isAdmin);
+    const hiddenSubjects = await getHiddenSubjectNames(env.DB);
+    if (!isAdmin && hiddenSubjects.has(v.subject)) {
+      return badRequest('Unknown subject');
+    }
+
     const subjects = await listSubjects();
     if (!subjects.some((s) => s.name === v.subject)) {
       return badRequest('Unknown subject');
