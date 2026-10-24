@@ -16,7 +16,10 @@ CREATE TABLE IF NOT EXISTS users (
   -- Backup email (WILP 2025 cohort only). Existing DBs: apply migrations/008_backup_email.sql
   -- which also creates the partial unique index idx_users_backup_email_verified.
   backup_email             TEXT,
-  backup_email_verified_at INTEGER
+  backup_email_verified_at INTEGER,
+  -- Tags and timed access (migrations/012_user_tags_and_access.sql)
+  tags                     TEXT NOT NULL DEFAULT 'normal',  -- 'batchmate' | 'normal'
+  access_expires_at        INTEGER DEFAULT 1805155199999    -- Epoch ms when access expires (15 March 2027 23:59:59.999 UTC)
 );
 
 -- ─── Auth: OAuth Identities ─────────────────────────────────────────────────

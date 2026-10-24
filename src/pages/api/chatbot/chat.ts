@@ -41,8 +41,12 @@ function jsonResponse(body: object, status: number): Response {
 
 export const POST: APIRoute = async ({ locals, request }) => {
   const user = (locals as any).user;
+  const isAdmin = Boolean((locals as any).isAdmin);
   if (!user) {
     return jsonResponse({ error: 'Authentication required. Please sign in to use BitsNotes AI.' }, 401);
+  }
+  if (!isAdmin && user.accessExpiresAt && Date.now() > user.accessExpiresAt) {
+    return jsonResponse({ error: 'Your access has expired. Please contact an administrator or support to renew access.' }, 403);
   }
 
   const env = await getEnv();
@@ -125,7 +129,6 @@ export const POST: APIRoute = async ({ locals, request }) => {
   }
   if (!query) query = getLastUserQuery(body.messages);
 
-  const isAdmin = Boolean((locals as any).isAdmin);
   if (!isAdmin && subject) {
     const hiddenSubjects = await getHiddenSubjectNames(db);
     if (hiddenSubjects.has(subject)) {

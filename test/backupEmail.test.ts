@@ -298,7 +298,7 @@ describe('API: /api/auth/backup-email', () => {
     expect(row?.backup_email).toBe('student.personal@gmail.com');
   });
 
-  it('rejects setting backup email if it collides with another user primary email', async () => {
+  it('allows setting backup email even if it matches another user primary email', async () => {
     // Another user exists with primary email 'existing@gmail.com'
     const other = await createUser(db, {
       email: 'existing@gmail.com',
@@ -323,9 +323,45 @@ describe('API: /api/auth/backup-email', () => {
       body: { email: 'existing@gmail.com' },
     });
     const res = await backupEmailPost(ctx);
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.success).toBe(true);
+    expect(body.backupEmail).toBe('existing@gmail.com');
+
+    // Verify DB
+    const row = await findUserById(db, user.id);
+    expect(row?.backup_email).toBe('existing@gmail.com');
+  });
+
+  it('rejects setting backup email if it collides with another user verified backup email', async () => {
+    // User 1 sets backup email
+    const user1 = await createUser(db, {
+      email: '2025first@wilp.bits-pilani.ac.in',
+      displayName: 'First',
+      avatarUrl: null,
+    });
+    await verifyUserEmail(db, user1.id);
+    await setBackupEmail(db, user1.id, 'shared.backup@gmail.com');
+
+    // User 2 tries to set the same backup email
+    const user2 = await createUser(db, {
+      email: '2025second@wilp.bits-pilani.ac.in',
+      displayName: 'Second',
+      avatarUrl: null,
+    });
+    await verifyUserEmail(db, user2.id);
+
+    const ctx = makeContext({
+      method: 'POST',
+      url: `${BASE}/api/auth/backup-email`,
+      origin: BASE,
+      user: { id: user2.id, email: user2.email, status: 'active' },
+      body: { email: 'shared.backup@gmail.com' },
+    });
+    const res = await backupEmailPost(ctx);
     expect(res.status).toBe(400);
     const body = await res.json();
-    expect(body.error).toContain('already linked');
+    expect(body.error).toContain('already registered as a backup email');
   });
 });
 
@@ -449,4 +485,68 @@ describe('OAuth Callback: Connecting Backup Email to Main Account', () => {
     const identity = await findIdentity(db, 'google', 'fake-google-uid');
     expect(identity).toBeNull();
   });
+
+  it('connects to main account when backup email was previously registered as a separate user with existing identity', async () => {
+    const mainPrimary = '2025tanmay@wilp.bits-pilani.ac.in';
+    const personalEmail = 'tanmaynemade@gmail.com';
+    const googleUid = 'google-tanmay-uid-789';
+
+    // 1. User earlier logged in with personal gmail (creating old separate user row and identity)
+    const oldPersonalUser = await createUser(db, {
+      email: personalEmail,
+      displayName: 'Tanmay Personal',
+      avatarUrl: null,
+    });
+    await verifyUserEmail(db, oldPersonalUser.id);
+    const { createIdentity } = await import('../src/lib/auth');
+    await createIdentity(db, oldPersonalUser.id, 'google', googleUid);
+
+    // 2. Main WILP account is registered and adds personalEmail as backup
+    const mainUser = await createUser(db, {
+      email: mainPrimary,
+      displayName: 'Tanmay WILP',
+      avatarUrl: null,
+    });
+    await verifyUserEmail(db, mainUser.id);
+    await setBackupEmail(db, mainUser.id, personalEmail);
+
+    // 3. User later logs in via Google with personalEmail
+    mockGoogleProfile.email = personalEmail;
+    mockGoogleProfile.emailVerified = true;
+    mockGoogleProfile.providerUid = googleUid;
+
+    const state = 'google_existing_user_test';
+    const stateData = {
+      state,
+      codeVerifier: 'verifier-789',
+      provider: 'google',
+      redirect: '/account',
+    };
+    const payloadB64 = btoa(JSON.stringify(stateData));
+    const sig = await hmacSign(SECRET, payloadB64);
+    const stateCookie = `${payloadB64}.${sig}`;
+
+    const callbackCtx = makeContext({
+      method: 'GET',
+      url: `${BASE}/api/auth/callback/google?code=code-tanmay&state=${state}`,
+      cookie: `__oauth_state=${stateCookie}`,
+    });
+
+    const res = await callbackGet(callbackCtx);
+    expect(res.status).toBe(302);
+    expect(res.headers.get('Location')).toBe('/account');
+
+    // 4. Verify the session belongs to mainUser
+    const setCookie = res.headers.get('Set-Cookie') || '';
+    const sessionTokenMatch = setCookie.match(/__session=([^;]+)/);
+    expect(sessionTokenMatch).not.toBeNull();
+    const claims = await verifyJwt(sessionTokenMatch![1], SECRET);
+    expect(claims?.sub).toBe(mainUser.id);
+    expect(claims?.email).toBe(mainPrimary);
+
+    // 5. Verify provider identity was transferred to mainUser.id
+    const identity = await findIdentity(db, 'google', googleUid);
+    expect(identity?.user_id).toBe(mainUser.id);
+  });
 });
+

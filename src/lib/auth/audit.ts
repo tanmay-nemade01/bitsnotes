@@ -32,6 +32,7 @@ export type AuthEvent =
   | 'admin_supporter_update'
   | 'admin_supporter_delete'
   | 'admin_users_list'
+  | 'admin_user_update'
   | 'account_delete'
   | 'backup_email_added'
   | 'backup_email_removed'

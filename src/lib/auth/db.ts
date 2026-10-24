@@ -5,6 +5,7 @@
 
 import type { D1PreparedStatement, D1ExecResult } from '@cloudflare/workers-types';
 import { uuidv7 } from './crypto';
+import { DEFAULT_ACCESS_EXPIRES_AT, getUserDefaultTag } from './access';
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -19,6 +20,8 @@ export interface AuthUser {
   status: string;
   backup_email?: string | null;
   backup_email_verified_at?: number | null;
+  tags?: string;
+  access_expires_at?: number | null;
 }
 
 export interface AuthIdentity {
@@ -104,26 +107,42 @@ export async function createUser(db: AuthDb, opts: {
   email: string;
   displayName: string | null;
   avatarUrl: string | null;
+  tags?: string;
+  accessExpiresAt?: number | null;
 }): Promise<AuthUser> {
   const id = uuidv7();
   const now = Date.now();
   const email = opts.email.toLowerCase().trim();
+  const tags = opts.tags ?? getUserDefaultTag(email);
+  const accessExpiresAt = opts.accessExpiresAt !== undefined ? opts.accessExpiresAt : DEFAULT_ACCESS_EXPIRES_AT;
+
   // Strip control chars from display name (max 80 chars)
   const displayName = opts.displayName
     ? opts.displayName.replace(/[\x00-\x1f\x7f]/g, '').slice(0, 80)
     : null;
 
   await db.prepare(
-    `INSERT INTO users (id, email, display_name, avatar_url, created_at, updated_at, status)
-     VALUES (?, ?, ?, ?, ?, ?, 'pending')`,
-  ).bind(id, email, displayName, opts.avatarUrl, now, now).run();
+    `INSERT INTO users (id, email, display_name, avatar_url, created_at, updated_at, status, tags, access_expires_at)
+     VALUES (?, ?, ?, ?, ?, ?, 'pending', ?, ?)`,
+  ).bind(id, email, displayName, opts.avatarUrl, now, now, tags, accessExpiresAt).run();
 
   // Auto-create entitlement row
   await db.prepare(
     `INSERT INTO entitlements (user_id, tier, source, updated_at) VALUES (?, 'free', 'manual', ?)`,
   ).bind(id, now).run();
 
-  return { id, email, email_verified_at: null, display_name: displayName, avatar_url: opts.avatarUrl, created_at: now, updated_at: now, status: 'pending' };
+  return {
+    id,
+    email,
+    email_verified_at: null,
+    display_name: displayName,
+    avatar_url: opts.avatarUrl,
+    created_at: now,
+    updated_at: now,
+    status: 'pending',
+    tags,
+    access_expires_at: accessExpiresAt,
+  };
 }
 
 /**

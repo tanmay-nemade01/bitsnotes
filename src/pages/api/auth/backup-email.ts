@@ -12,7 +12,7 @@ import {
   getEnv, getUser, json, badRequest, unauthorized, forbidden, getClientIp,
 } from '../../../lib/apiHelpers';
 import {
-  findUserById, findUserByEmail, findUserByBackupEmail, setBackupEmail,
+  findUserById, findUserByBackupEmail, setBackupEmail,
   logAuthEvent,
 } from '../../../lib/auth';
 import { validateOrigin, csrfForbidden } from '../../../lib/auth/csrf';
@@ -63,13 +63,11 @@ export const POST: APIRoute = async (context) => {
   if ('error' in parsed) return badRequest(parsed.error);
   const backup = parsed.email;
 
-  // Must not collide with any account's primary email or another user's backup.
-  const [asPrimary, asBackup] = await Promise.all([
-    findUserByEmail(env.DB, backup),
-    findUserByBackupEmail(env.DB, backup),
-  ]);
-  if (asPrimary || (asBackup && asBackup.id !== row.id)) {
-    return badRequest('That email is already linked to a BitsNotes account.');
+  // Must not collide with another user's backup email.
+  // An existing account's primary email CAN be linked as a backup email.
+  const asBackup = await findUserByBackupEmail(env.DB, backup);
+  if (asBackup && asBackup.id !== row.id) {
+    return badRequest('That email is already registered as a backup email for another account.');
   }
 
   const ok = await setBackupEmail(env.DB, row.id, backup);

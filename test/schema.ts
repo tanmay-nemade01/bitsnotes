@@ -18,7 +18,9 @@ CREATE TABLE IF NOT EXISTS users (
   updated_at      INTEGER NOT NULL,
   status          TEXT NOT NULL DEFAULT 'pending',
   backup_email    TEXT,
-  backup_email_verified_at INTEGER
+  backup_email_verified_at INTEGER,
+  tags            TEXT NOT NULL DEFAULT 'normal',
+  access_expires_at INTEGER DEFAULT 1805155199999
 );
 
 CREATE TABLE IF NOT EXISTS entitlements (

@@ -9,3 +9,4 @@ export * from './turnstile';
 export * from './audit';
 export * from './csrf';
 export * from './email';
+export * from './access';
