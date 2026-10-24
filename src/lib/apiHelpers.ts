@@ -46,6 +46,19 @@ export interface ApiUser {
   avatarUrl: string | null;
   status: string;
   backupEmail?: string | null;
+  tags?: string;
+  accessExpiresAt?: number | null;
+  isAccessExpired?: boolean;
+}
+
+/**
+ * Check if user currently has active access (not expired). Admin users always have access.
+ */
+export function hasActiveAccess(user: ApiUser | null, isAdmin?: boolean): boolean {
+  if (!user) return false;
+  if (isAdmin) return true;
+  if (user.accessExpiresAt != null && Date.now() > user.accessExpiresAt) return false;
+  return true;
 }
 
 /**

@@ -111,8 +111,44 @@ export const GET: APIRoute = async (context) => {
   let user: { id: string; status: string; email: string };
   let isNewUser = false;
 
+  // Check if this email is a verified BACKUP email of an existing account
+  const backupOwner = await findUserByBackupEmail(db, normalizedEmail);
+
   const existingIdentity = await findIdentity(db, provider, profile.providerUid);
-  if (existingIdentity) {
+
+  if (backupOwner) {
+    if (!profile.emailVerified) {
+      return badRequest(`Please verify your email address on ${provider} before signing in.`);
+    }
+
+    // Merge any existing account that had this backup email as primary into backupOwner
+    const existingUser = await findUserByEmail(db, normalizedEmail);
+    if (existingUser && existingUser.id !== backupOwner.id) {
+      try {
+        await db.prepare('UPDATE OR IGNORE bookmarks SET user_id = ? WHERE user_id = ?').bind(backupOwner.id, existingUser.id).run();
+        await db.prepare('UPDATE OR IGNORE reading_progress SET user_id = ? WHERE user_id = ?').bind(backupOwner.id, existingUser.id).run();
+        await db.prepare('UPDATE OR IGNORE topic_progress SET user_id = ? WHERE user_id = ?').bind(backupOwner.id, existingUser.id).run();
+        await db.prepare('UPDATE OR IGNORE bit_reactions SET user_id = ? WHERE user_id = ?').bind(backupOwner.id, existingUser.id).run();
+        await db.prepare("UPDATE users SET status = 'deleted', email = ? WHERE id = ?")
+          .bind(`merged-${existingUser.id}@deleted.local`, existingUser.id).run();
+      } catch (err) {
+        console.error('Error merging existing user into backup owner:', err);
+      }
+    }
+
+    if (existingIdentity) {
+      if (existingIdentity.user_id !== backupOwner.id) {
+        await db.prepare('UPDATE identities SET user_id = ? WHERE id = ?')
+          .bind(backupOwner.id, existingIdentity.id)
+          .run();
+      }
+    } else {
+      await createIdentity(db, backupOwner.id, provider, profile.providerUid);
+    }
+
+    user = backupOwner;
+    await logAuthEvent(db, { userId: backupOwner.id, event: 'backup_email_login', provider, ip, ua: request.headers.get('User-Agent') || '' });
+  } else if (existingIdentity) {
     // Existing user — find by id
     const { findUserById } = await import('../../../../lib/auth/db');
     const existing = await findUserById(db, existingIdentity.user_id);
@@ -123,22 +159,10 @@ export const GET: APIRoute = async (context) => {
   } else {
     // Check if email already exists (different provider)
     const existingUser = await findUserByEmail(db, normalizedEmail);
-    // …or a verified BACKUP email of an existing account (needs a provider-verified
-    // address so nobody can claim an account by merely typing an email).
-    const backupOwner = !existingUser
-      ? await findUserByBackupEmail(db, normalizedEmail)
-      : null;
-    if (existingUser || backupOwner) {
-      const owner = (existingUser ?? backupOwner)!;
-      if (backupOwner && !profile.emailVerified) {
-        return badRequest(`Please verify your email address on ${provider} before signing in.`);
-      }
+    if (existingUser) {
       // Link new provider identity to the existing user
-      await createIdentity(db, owner.id, provider, profile.providerUid);
-      user = owner;
-      if (backupOwner) {
-        await logAuthEvent(db, { userId: owner.id, event: 'backup_email_login', provider, ip, ua: request.headers.get('User-Agent') || '' });
-      }
+      await createIdentity(db, existingUser.id, provider, profile.providerUid);
+      user = existingUser;
     } else {
       // Brand new user
       const newUser = await createUser(db, {

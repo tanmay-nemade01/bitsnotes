@@ -11,6 +11,7 @@
  */
 
 import type { AuthDb } from './auth/db';
+import { getUserDefaultTag } from './auth/access';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -36,6 +37,8 @@ export interface AdminUserRow {
   is_admin: number;
   providers: string | null;
   last_login_at: number | null;
+  tags?: string | null;
+  access_expires_at?: number | null;
 }
 
 export interface AdminUserView {
@@ -47,6 +50,9 @@ export interface AdminUserView {
   emailVerified: boolean;
   tier: string;
   isAdmin: boolean;
+  tags: string;
+  accessExpiresAt: number | null;
+  isAccessExpired: boolean;
   /** OAuth providers linked to the account, e.g. ['google']. */
   providers: string[];
   /** Epoch ms — account creation time. */
@@ -99,6 +105,10 @@ export const MAX_SEARCH_LENGTH = 120;
 // ─── Mapping ─────────────────────────────────────────────────────────────────
 
 function toPublic(row: AdminUserRow): AdminUserView {
+  const accessExpiresAt = row.access_expires_at != null ? Number(row.access_expires_at) : null;
+  const isAdmin = Number(row.is_admin) === 1;
+  const isExpired = accessExpiresAt != null && Date.now() > accessExpiresAt && !isAdmin;
+
   return {
     id: row.id,
     email: row.email,
@@ -106,8 +116,11 @@ function toPublic(row: AdminUserRow): AdminUserView {
     avatarUrl: row.avatar_url || null,
     status: row.status,
     emailVerified: row.email_verified_at != null,
+    tags: row.tags || getUserDefaultTag(row.email),
+    accessExpiresAt,
+    isAccessExpired: isExpired,
     tier: row.tier || 'free',
-    isAdmin: Number(row.is_admin) === 1,
+    isAdmin,
     providers: row.providers ? row.providers.split(',').filter(Boolean) : [],
     createdAt: Number(row.created_at) || 0,
     updatedAt: Number(row.updated_at) || 0,
@@ -136,9 +149,9 @@ function buildFilter(
 
   const term = (search || '').trim();
   if (term) {
-    parts.push("(u.email LIKE ? ESCAPE '\\' OR IFNULL(u.display_name, '') LIKE ? ESCAPE '\\')");
+    parts.push("(u.email LIKE ? ESCAPE '\\' OR IFNULL(u.display_name, '') LIKE ? ESCAPE '\\' OR IFNULL(u.tags, '') LIKE ? ESCAPE '\\')");
     const like = `%${escapeLike(term)}%`;
-    params.push(like, like);
+    params.push(like, like, like);
   }
 
   return { clause: parts.length ? `WHERE ${parts.join(' AND ')}` : '', params };
@@ -153,6 +166,8 @@ const SELECT_COLUMNS = `
   u.email_verified_at,
   u.created_at,
   u.updated_at,
+  COALESCE(u.tags, 'normal') AS tags,
+  u.access_expires_at,
   COALESCE(e.tier, 'free') AS tier,
   CASE WHEN a.user_id IS NULL THEN 0 ELSE 1 END AS is_admin,
   (SELECT GROUP_CONCAT(i.provider) FROM identities i WHERE i.user_id = u.id) AS providers,
@@ -248,3 +263,48 @@ export async function getUserStats(db: AuthDb): Promise<UserStats> {
     admins: Number(adminRow?.count) || 0,
   };
 }
+
+/**
+ * Fetch a single user view by id for admin endpoints.
+ */
+export async function findAdminUserById(db: AuthDb, userId: string): Promise<AdminUserView | null> {
+  const row = await db
+    .prepare(`SELECT ${SELECT_COLUMNS} ${FROM_JOINS} WHERE u.id = ?`)
+    .bind(userId)
+    .first<AdminUserRow>();
+  return row ? toPublic(row) : null;
+}
+
+/**
+ * Update user settings (access expiry date and tags) from admin backstage.
+ */
+export async function updateUserAdminSettings(
+  db: AuthDb,
+  userId: string,
+  updates: {
+    tags?: string;
+    accessExpiresAt?: number | null;
+  },
+): Promise<AdminUserView | null> {
+  const now = Date.now();
+  const setClauses: string[] = ['updated_at = ?'];
+  const params: unknown[] = [now];
+
+  if (updates.tags !== undefined) {
+    setClauses.push('tags = ?');
+    params.push(updates.tags);
+  }
+  if (updates.accessExpiresAt !== undefined) {
+    setClauses.push('access_expires_at = ?');
+    params.push(updates.accessExpiresAt);
+  }
+
+  params.push(userId);
+  await db
+    .prepare(`UPDATE users SET ${setClauses.join(', ')} WHERE id = ?`)
+    .bind(...params)
+    .run();
+
+  return findAdminUserById(db, userId);
+}
+

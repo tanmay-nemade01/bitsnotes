@@ -104,6 +104,7 @@ export const onRequest = defineMiddleware(async (context, next) => {
           if (claims) {
             const dbUser = await dbMod.findUserById(db, claims.sub);
             if (dbUser && dbUser.status === 'active') {
+              const accessExpiresAt = dbUser.access_expires_at != null ? Number(dbUser.access_expires_at) : null;
               user = {
                 id: dbUser.id,
                 email: dbUser.email,
@@ -111,6 +112,9 @@ export const onRequest = defineMiddleware(async (context, next) => {
                 avatarUrl: dbUser.avatar_url,
                 status: dbUser.status,
                 backupEmail: dbUser.backup_email ?? null,
+                tags: dbUser.tags ?? 'normal',
+                accessExpiresAt,
+                isAccessExpired: accessExpiresAt != null && Date.now() > accessExpiresAt,
               };
               tier = claims.tier;
             }
@@ -130,6 +134,7 @@ export const onRequest = defineMiddleware(async (context, next) => {
                     { sub: dbUser.id, email: dbUser.email, tier, rt: rotated.newTokenHash },
                     signingKey,
                   );
+                  const accessExpiresAt = dbUser.access_expires_at != null ? Number(dbUser.access_expires_at) : null;
                   user = {
                     id: dbUser.id,
                     email: dbUser.email,
@@ -137,6 +142,9 @@ export const onRequest = defineMiddleware(async (context, next) => {
                     avatarUrl: dbUser.avatar_url,
                     status: dbUser.status,
                     backupEmail: dbUser.backup_email ?? null,
+                    tags: dbUser.tags ?? 'normal',
+                    accessExpiresAt,
+                    isAccessExpired: accessExpiresAt != null && Date.now() > accessExpiresAt,
                   };
                   (locals as any).__newSessionToken = newAccessToken;
                   (locals as any).__newRefreshToken = rotated.newToken;
@@ -166,11 +174,14 @@ export const onRequest = defineMiddleware(async (context, next) => {
         console.error('[middleware] admin check failed:', err);
       }
     }
+    // Admins never have their access expired
+    user.isAccessExpired = Boolean(user.isAccessExpired && !isAdmin);
   }
 
   (locals as any).user = user;
   (locals as any).tier = tier;
   (locals as any).isAdmin = isAdmin;
+  (locals as any).isAccessExpired = Boolean(user?.isAccessExpired);
 
   // ─── Admin (/backstage) access gate ─────────────────────────────────
   // Signed out  → redirect to sign-in (preserving the intended destination).
