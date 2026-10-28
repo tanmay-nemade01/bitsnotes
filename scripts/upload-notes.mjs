@@ -2,10 +2,12 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { execSync } from 'node:child_process';
 import crypto from 'node:crypto';
+import { renderMathInHtml, containsMath } from '../src/utils/mathRender.ts';
 
 const BUCKET_NAME = 'bitsnotes';
 const NOTES_DIR = path.join(process.cwd(), 'src/content/notes');
 const CACHE_FILE = path.join(process.cwd(), '.notes-upload-cache.json');
+const STAGING_DIR = path.join(process.cwd(), '.notes-staging');
 
 // Colors for console output
 const GREEN = '\x1b[32m';
@@ -341,7 +343,7 @@ const uploadQueue = []; // Array of { localPath, remoteKey, contentType, hash }
 let skippedCount = 0;
 
 const subjectFolders = fs.readdirSync(NOTES_DIR, { withFileTypes: true })
-  .filter(dirent => dirent.isDirectory())
+  .filter(dirent => dirent.isDirectory() && !dirent.name.startsWith('_') && !dirent.name.startsWith('.'))
   .map(dirent => dirent.name);
 
 let totalLectures = 0;
@@ -465,8 +467,17 @@ for (const subjectName of subjectFolders) {
     const htmlHash = getFileMd5(htmlPath);
     const remoteHtmlKey = `notes/${subjectName}/${lectureFolder}/${htmlFile}`;
     if (fixed || FORCE_UPLOAD || getCachedHash(remoteHtmlKey) !== htmlHash) {
+      let uploadLocalPath = htmlPath;
+      if (containsMath(currentHtmlContent) && !currentHtmlContent.includes('class="katex"')) {
+        const renderedHtml = renderMathInHtml(currentHtmlContent);
+        const stageFolder = path.join(STAGING_DIR, subjectName, lectureFolder);
+        fs.mkdirSync(stageFolder, { recursive: true });
+        uploadLocalPath = path.join(stageFolder, htmlFile);
+        fs.writeFileSync(uploadLocalPath, renderedHtml, 'utf-8');
+      }
+
       uploadQueue.push({
-        localPath: htmlPath,
+        localPath: uploadLocalPath,
         remoteKey: remoteHtmlKey,
         contentType: 'text/html',
         hash: htmlHash
@@ -565,12 +576,12 @@ for (const subjectName of subjectFolders) {
       if (Array.isArray(metadata.sections)) {
         for (const sec of metadata.sections) {
           if (sec.title) parts.push(sec.title);
-          if (sec.description) parts.push(sec.description);
+          if (sec.description) parts.push(sec.description.slice(0, 160));
         }
       }
       if (Array.isArray(metadata.examRevisionNotes)) {
         for (const note of metadata.examRevisionNotes) {
-          if (typeof note === 'string') parts.push(note);
+          if (typeof note === 'string') parts.push(note.slice(0, 160));
         }
       }
     }
@@ -784,7 +795,10 @@ try {
 } catch (err) {
   console.error(`\n${RED}${BOLD}Sync completed with errors.${RESET}`);
 } finally {
-  // Clean up temporary files
+  // Clean up temporary files and staging directory
   if (fs.existsSync(manifestPath)) fs.unlinkSync(manifestPath);
   if (fs.existsSync(searchIndexPath)) fs.unlinkSync(searchIndexPath);
+  if (fs.existsSync(STAGING_DIR)) {
+    try { fs.rmSync(STAGING_DIR, { recursive: true, force: true }); } catch {}
+  }
 }

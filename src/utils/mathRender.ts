@@ -383,7 +383,7 @@ function renderTextRun(run: string): string {
  * Idempotent: content that already contains KaTeX spans is returned as-is.
  */
 export function renderMathInHtml(html: string): string {
-  if (!html || /class="katex"/.test(html)) return html;
+  if (!html || /class="katex"/.test(html) || !containsMath(html)) return html;
 
   const protectedRuns: string[] = [];
   const textParts: string[] = [];
@@ -415,7 +415,7 @@ export function renderMathInHtml(html: string): string {
  * questions, formulas, summaries). No-op when no delimiters are present.
  */
 export function renderMathInline(text: string): string {
-  if (!text || /class="katex"/.test(text)) return text;
+  if (!text || /class="katex"/.test(text) || !containsMath(text)) return text;
   return renderTextRun(text);
 }
 

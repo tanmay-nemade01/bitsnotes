@@ -34,12 +34,28 @@ export function normalizeSubjectName(name: string): string {
   return name.trim();
 }
 
+let cachedHiddenSubjectNames: { data: Set<string>; expiresAt: number } | null = null;
+const CACHE_TTL_MS = 60_000; // 60 seconds memory cache per isolate
+
+/**
+ * Manually invalidates the subject visibility cache (e.g. after admin updates).
+ */
+export function invalidateSubjectVisibilityCache(): void {
+  cachedHiddenSubjectNames = null;
+}
+
 /**
  * Returns a Set of canonical subject names that are hidden (is_public = 0).
  * Safe against missing DB or missing table (returns empty Set on failure).
+ * Results are cached in worker memory for 60 seconds per isolate.
  */
 export async function getHiddenSubjectNames(db?: AuthDb | null): Promise<Set<string>> {
   if (!db) return new Set();
+
+  const now = Date.now();
+  if (cachedHiddenSubjectNames && now < cachedHiddenSubjectNames.expiresAt) {
+    return cachedHiddenSubjectNames.data;
+  }
 
   try {
     const rows = await db
@@ -52,6 +68,7 @@ export async function getHiddenSubjectNames(db?: AuthDb | null): Promise<Set<str
         hiddenSet.add(normalizeSubjectName(row.subject_name));
       }
     }
+    cachedHiddenSubjectNames = { data: hiddenSet, expiresAt: now + CACHE_TTL_MS };
     return hiddenSet;
   } catch (err: any) {
     // Graceful fallback if table doesn't exist yet in older isolates or migrations
@@ -137,6 +154,8 @@ export async function setSubjectVisibility(
     )
     .bind(canonical, publicVal, now, userId)
     .run();
+
+  invalidateSubjectVisibilityCache();
 
   return { subjectName: canonical, isPublic };
 }

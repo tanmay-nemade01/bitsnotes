@@ -33,8 +33,14 @@ const CRAWLERS: CrawlerSpec[] = [
   },
 ];
 
+interface ParsedCidr {
+  v: 4 | 6;
+  baseShifted: bigint;
+  shift: bigint;
+}
+
 const RANGE_TTL_MS = 24 * 60 * 60 * 1000;
-const rangeCache = new Map<string, { at: number; cidrs: string[] }>();
+const rangeCache = new Map<string, { at: number; cidrs: ParsedCidr[] }>();
 
 // ─── IP / CIDR helpers (IPv4 + IPv6, BigInt based) ──────────────────────────
 
@@ -74,18 +80,27 @@ function parseIp(ip: string): { v: 4 | 6; n: bigint } | null {
   return { v: 4, n };
 }
 
-function ipInCidr(ip: { v: 4 | 6; n: bigint }, cidr: string): boolean {
+function parseCidr(cidr: string): ParsedCidr | null {
   const [base, lenStr] = cidr.split('/');
   const parsed = parseIp(base);
-  if (!parsed || parsed.v !== ip.v) return false;
-  const bits = ip.v === 4 ? 32 : 128;
+  if (!parsed) return null;
+  const bits = parsed.v === 4 ? 32 : 128;
   const len = lenStr === undefined ? bits : Number(lenStr);
-  if (!Number.isInteger(len) || len < 0 || len > bits) return false;
+  if (!Number.isInteger(len) || len < 0 || len > bits) return null;
   const shift = BigInt(bits - len);
-  return (ip.n >> shift) === (parsed.n >> shift);
+  return {
+    v: parsed.v,
+    baseShifted: parsed.n >> shift,
+    shift,
+  };
 }
 
-async function loadRanges(url: string): Promise<string[]> {
+function ipMatchesParsedCidr(ip: { v: 4 | 6; n: bigint }, cidr: ParsedCidr): boolean {
+  if (ip.v !== cidr.v) return false;
+  return (ip.n >> cidr.shift) === cidr.baseShifted;
+}
+
+async function loadRanges(url: string): Promise<ParsedCidr[]> {
   const cached = rangeCache.get(url);
   if (cached && Date.now() - cached.at < RANGE_TTL_MS) return cached.cidrs;
   try {
@@ -94,7 +109,9 @@ async function loadRanges(url: string): Promise<string[]> {
     const data = (await res.json()) as { prefixes?: Array<{ ipv4Prefix?: string; ipv6Prefix?: string }> };
     const cidrs = (data.prefixes ?? [])
       .map((p) => p.ipv4Prefix || p.ipv6Prefix || '')
-      .filter(Boolean);
+      .filter(Boolean)
+      .map(parseCidr)
+      .filter((c): c is ParsedCidr => c !== null);
     rangeCache.set(url, { at: Date.now(), cidrs });
     return cidrs;
   } catch (err) {
@@ -124,7 +141,7 @@ export async function isVerifiedSearchBot(request: Request): Promise<boolean> {
 
   for (const crawler of matching) {
     const cidrs = await loadRanges(crawler.rangesUrl);
-    if (cidrs.some((c) => ipInCidr(ip, c))) return true;
+    if (cidrs.some((c) => ipMatchesParsedCidr(ip, c))) return true;
   }
   return false;
 }
