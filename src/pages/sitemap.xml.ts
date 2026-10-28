@@ -1,5 +1,5 @@
 import type { APIRoute } from 'astro';
-import { listSubjects, listLectures } from '../utils/notesLoader';
+import { listSubjects, listLectures, getManifest } from '../utils/notesLoader';
 import { getPublishedPosts } from '../utils/blogLoader';
 import { getPublishedBits } from '../utils/bitsLoader';
 import { slugify } from '../utils/lectureDisplay';
@@ -8,17 +8,46 @@ import { getHiddenSubjectNames } from '../lib/subjectVisibility';
 
 export const prerender = false;
 
+let devCachedXml: string | null = null;
+let devCachedVersion: string | null = null;
+
 /**
  * Dynamic sitemap endpoint (hand-rolled instead of @astrojs/sitemap).
- *
- * @astrojs/sitemap expects all routes to be known at build time via
- * getStaticPaths, but this site has a server-rendered contact API and
- * legacy redirect. The hand-rolled approach is simpler to maintain and
- * avoids adding an extra dependency.
+ * Cached at Cloudflare Edge via caches.default (24h TTL) to prevent repeated
+ * bot crawls from executing note manifest/subject queries.
  */
 export const GET: APIRoute = async (context) => {
   const { url } = context;
   const baseUrl = `${url.protocol}//${url.host}`;
+
+  const manifest = await getManifest().catch(() => null);
+  const version = manifest?.version || new Date().toISOString().split('T')[0];
+
+  if (import.meta.env.DEV) {
+    if (devCachedXml && devCachedVersion === version) {
+      return new Response(devCachedXml, {
+        status: 200,
+        headers: {
+          'Content-Type': 'application/xml; charset=utf-8',
+          'Cache-Control': 'public, max-age=300',
+          'X-Robots-Tag': 'noindex',
+        },
+      });
+    }
+  }
+
+  // Edge cache lookup (production Cloudflare Workers)
+  const cache = typeof caches !== 'undefined' && (caches as any)?.default
+    ? ((caches as any).default as Cache)
+    : ((globalThis as any)?.caches?.default as Cache | undefined);
+  const cacheKey = new Request(`https://bitsnotes.com/__cache/sitemap/${encodeURIComponent(version)}.xml`);
+
+  if (cache) {
+    try {
+      const hit = await cache.match(cacheKey);
+      if (hit) return hit;
+    } catch { /* cache read is best-effort */ }
+  }
 
   // Pages to include in sitemap
   const pages = [
@@ -97,12 +126,25 @@ export const GET: APIRoute = async (context) => {
 >${urls}
 </urlset>`;
 
-  return new Response(xml, {
+  if (import.meta.env.DEV) {
+    devCachedXml = xml;
+    devCachedVersion = version;
+  }
+
+  const response = new Response(xml, {
     status: 200,
     headers: {
       'Content-Type': 'application/xml; charset=utf-8',
-      'Cache-Control': 'public, max-age=86400', // cache for 24 hours
-      'X-Robots-Tag': 'noindex',                // don't index the sitemap itself
+      'Cache-Control': 'public, max-age=86400, s-maxage=86400', // cache for 24 hours at edge & browser
+      'X-Robots-Tag': 'noindex',                                // don't index the sitemap itself
     },
   });
+
+  if (cache) {
+    try {
+      cache.put(cacheKey, response.clone()).catch(() => {});
+    } catch { /* cache write is best-effort */ }
+  }
+
+  return response;
 };

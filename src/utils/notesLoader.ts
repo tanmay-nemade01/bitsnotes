@@ -2,8 +2,15 @@ import { env } from 'cloudflare:workers';
 import { getFallbackMetadata } from './metadata';
 import type { DocumentMetadata, ResourceKind, AvailableMode, ResourceScope, MetadataSource } from './metadata';
 import { normalizeCatalogEntry, type RawCatalogEntry, slugify } from './lectureDisplay';
-import { renderMathInHtml } from './mathRender';
+import { renderMathInHtml, containsMath } from './mathRender';
 import { getSubjectInfo, type SubjectInfo } from '../data/subjects';
+
+function getEdgeCache(): Cache | undefined {
+  if (typeof caches !== 'undefined' && (caches as any)?.default) {
+    return (caches as any).default as Cache;
+  }
+  return (globalThis as any)?.caches?.default as Cache | undefined;
+}
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -180,11 +187,11 @@ export async function getManifest(): Promise<NotesManifest> {
     return manifest;
   }
 
-  // Production: fetch from R2 with 10-second in-memory TTL cache, backed by
-  // the Cloudflare Cache API for a longer (5 min) isolate-level TTL with
+  // Production: fetch from R2 with 60-second in-memory TTL cache, backed by
+  // the Cloudflare Cache API for a longer isolate-level TTL with
   // stale-while-revalidate (Phase 8.8). Versioned by the manifest's own
   // `version` field so a new upload invalidates the cached copy immediately.
-  if (manifestCache && (now - lastFetchedTime < 10000)) {
+  if (manifestCache && (now - lastFetchedTime < 60000)) {
     return manifestCache;
   }
 
@@ -195,10 +202,10 @@ export async function getManifest(): Promise<NotesManifest> {
   }
 
   try {
-    const cache = (env as any).caches?.default as Cache | undefined;
-    const cacheKey = new Request('https://internal.bitsnotes/cache/notes-manifest.json');
+    const cache = getEdgeCache();
+    const cacheKey = new Request('https://bitsnotes.com/__cache/notes-manifest.json');
 
-    // Edge cache read: a warm isolate (≤5 min old copy) skips the R2 round-trip.
+    // Edge cache read: a warm isolate skips the R2 round-trip.
     if (cache) {
       try {
         const hit = await cache.match(cacheKey);
@@ -218,13 +225,13 @@ export async function getManifest(): Promise<NotesManifest> {
     }
     const manifest = (await obj.json()) as NotesManifest;
 
-    // Populate the edge cache with a 5-minute TTL, versioned by manifest version.
+    // Populate the edge cache, versioned by manifest version.
     if (cache) {
       try {
         const cached = new Response(JSON.stringify(manifest), {
           headers: {
             'Content-Type': 'application/json',
-            'Cache-Control': 'public, max-age=300',
+            'Cache-Control': 'public, max-age=86400',
             'ETag': `"${manifest.version}"`,
           },
         });
@@ -256,6 +263,7 @@ async function buildLocalManifest(): Promise<NotesManifest> {
     if (!match) continue;
 
     const subjectName = match[1];
+    if (subjectName.startsWith('_') || subjectName.startsWith('.')) continue;
     const lectureFolder = match[2];
     const fileName = match[3];
 
@@ -544,8 +552,10 @@ export async function getLectureContent(subjectName: string, lectureFolderName: 
       return null;
     }
 
-    // Pre-render LaTeX → KaTeX at serve time in dev (no CDN caching here).
-    htmlContent = renderMathInHtml(htmlContent);
+    // Pre-render LaTeX → KaTeX at serve time in dev if math is present and not pre-rendered.
+    if (!htmlContent.includes('class="katex"') && containsMath(htmlContent)) {
+      htmlContent = renderMathInHtml(htmlContent);
+    }
   } else {
     // Production: fetch HTML file from Cloudflare R2
     const bucket = (env as any).NOTES_BUCKET;
@@ -555,9 +565,9 @@ export async function getLectureContent(subjectName: string, lectureFolderName: 
     }
 
     // Edge cache read (keyed by manifest version): a warm entry skips the R2
-    // round-trips AND the KaTeX pre-render entirely.
-    const cache = (env as any).caches?.default as Cache | undefined;
-    const cacheKey = new Request(`https://internal.bitsnotes/cache/lecture-v2/${manifest.version}/${encodeURIComponent(subjectName)}/${encodeURIComponent(lectureFolderName)}`);
+    // round-trips AND any processing entirely.
+    const cache = getEdgeCache();
+    const cacheKey = new Request(`https://bitsnotes.com/__cache/lecture-v2/${encodeURIComponent(manifest.version)}/${encodeURIComponent(subjectName)}/${encodeURIComponent(lectureFolderName)}`);
     if (cache) {
       try {
         const hit = await cache.match(cacheKey);
@@ -599,11 +609,11 @@ export async function getLectureContent(subjectName: string, lectureFolderName: 
       }
       htmlContent = await obj.text();
 
-      // Pre-render LaTeX → KaTeX HTML (Phase: math at build/serve time). This
-      // replaces the client-side MathJax pipeline (620KB + seconds of main-thread
-      // CPU) and runs once per cache window — the converted HTML is what gets
-      // cached below, so repeat requests never re-render math.
-      htmlContent = renderMathInHtml(htmlContent);
+      // Pre-render fallback: R2 notes uploaded with upload-notes.mjs already have
+      // KaTeX math pre-rendered. Only run runtime KaTeX if the note has unrendered math.
+      if (!htmlContent.includes('class="katex"') && containsMath(htmlContent)) {
+        htmlContent = renderMathInHtml(htmlContent);
+      }
 
       // Fetch optional companion CSS and JS from R2
       try {
@@ -645,7 +655,7 @@ export async function getLectureContent(subjectName: string, lectureFolderName: 
           const cached = new Response(JSON.stringify({ htmlContent, cssContent, jsContent }), {
             headers: {
               'Content-Type': 'application/json',
-              'Cache-Control': 'public, max-age=300',
+              'Cache-Control': 'public, max-age=86400',
               'ETag': `"${manifest.version}"`,
             },
           });

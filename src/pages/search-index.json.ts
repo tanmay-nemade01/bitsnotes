@@ -28,12 +28,12 @@ function extractSearchableNoteText(html: string, topicTitle?: string): { text: s
       if (Array.isArray(meta.sections)) {
         for (const sec of meta.sections) {
           if (sec.title) parts.push(sec.title);
-          if (sec.description) parts.push(sec.description);
+          if (sec.description) parts.push(sec.description.slice(0, 160));
         }
       }
       if (Array.isArray(meta.examRevisionNotes)) {
         for (const note of meta.examRevisionNotes) {
-          if (typeof note === 'string') parts.push(note);
+          if (typeof note === 'string') parts.push(note.slice(0, 160));
         }
       }
     } catch {}
@@ -187,8 +187,10 @@ export const GET: APIRoute = async (context) => {
 
     // Edge cache read: a warm isolate serves the compiled index without an R2
     // round-trip or the map/re-serialize pass.
-    const cache = (env as any).caches?.default as Cache | undefined;
-    const cacheKey = new Request(`https://internal.bitsnotes/cache/search-index/${manifest.version}-${isAdmin ? 'admin' : 'public'}.json`);
+    const cache = typeof caches !== 'undefined' && (caches as any)?.default
+      ? ((caches as any).default as Cache)
+      : ((globalThis as any)?.caches?.default as Cache | undefined);
+    const cacheKey = new Request(`https://bitsnotes.com/__cache/search-index/${encodeURIComponent(manifest.version)}-${isAdmin ? 'admin' : 'public'}.json`);
     if (cache) {
       try {
         const hit = await cache.match(cacheKey);
@@ -222,7 +224,7 @@ export const GET: APIRoute = async (context) => {
     const response = new Response(JSON.stringify(safeIndex), {
       headers: {
         'Content-Type': 'application/json',
-        'Cache-Control': 'public, max-age=300',
+        'Cache-Control': 'public, max-age=86400',
         'ETag': `"${manifest.version}-${isAdmin ? 'admin' : 'public'}"`,
         'X-Robots-Tag': 'noindex, nofollow'
       }

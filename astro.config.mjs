@@ -33,6 +33,7 @@ export default defineConfig({
           '**/playwright-report/**',
           '**/test-results/**',
           '**/.notes-upload-cache.json',
+          '**/.notes-staging/**',
           '**/.blog-upload-cache.json'
         ]
       }
