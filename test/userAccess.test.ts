@@ -250,6 +250,42 @@ describe('Admin Users Management: Querying and Updating Tags & Timed Access', ()
     const body3 = await res3.json();
     expect(body3.user.accessExpiresAt).toBeNull();
     expect(body3.user.isAccessExpired).toBe(false);
+
+    // 4. Update chatbot monthly limit
+    const ctx4 = makeContext({
+      method: 'POST',
+      url: `${BASE}/api/admin/users/${targetUser.id}`,
+      params: { id: targetUser.id },
+      origin: BASE,
+      user: { id: adminUser.id, email: adminUser.email, status: 'active' },
+      body: {
+        chatbotLimit: 50,
+      },
+    });
+
+    const res4 = await userAdminPost(ctx4);
+    expect(res4.status).toBe(200);
+    const body4 = await res4.json();
+    expect(body4.user.chatbotLimit).toBe(50);
+
+    // 5. Reset chatbot usage and clear custom limit back to default
+    const ctx5 = makeContext({
+      method: 'POST',
+      url: `${BASE}/api/admin/users/${targetUser.id}`,
+      params: { id: targetUser.id },
+      origin: BASE,
+      user: { id: adminUser.id, email: adminUser.email, status: 'active' },
+      body: {
+        chatbotLimit: null,
+        resetChatbotUsage: true,
+      },
+    });
+
+    const res5 = await userAdminPost(ctx5);
+    expect(res5.status).toBe(200);
+    const body5 = await res5.json();
+    expect(body5.user.chatbotLimit).toBeNull();
+    expect(body5.usageReset).toBe(true);
   });
 
   it('rejects non-admin or unauthenticated access update requests', async () => {

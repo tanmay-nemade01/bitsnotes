@@ -20,7 +20,8 @@ CREATE TABLE IF NOT EXISTS users (
   backup_email    TEXT,
   backup_email_verified_at INTEGER,
   tags            TEXT NOT NULL DEFAULT 'normal',
-  access_expires_at INTEGER DEFAULT 1805155199999
+  access_expires_at INTEGER DEFAULT 1805155199999,
+  chatbot_limit     INTEGER DEFAULT NULL
 );
 
 CREATE TABLE IF NOT EXISTS entitlements (
@@ -207,6 +208,13 @@ CREATE TABLE IF NOT EXISTS supporters (
   created_at     INTEGER NOT NULL,
   created_by     TEXT,
   UNIQUE(name)
+);
+
+CREATE TABLE IF NOT EXISTS chatbot_usage (
+  user_id       TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  usage_date    TEXT NOT NULL,
+  message_count INTEGER NOT NULL DEFAULT 0,
+  PRIMARY KEY (user_id, usage_date)
 );
 
 CREATE TABLE IF NOT EXISTS tags (

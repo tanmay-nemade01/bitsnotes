@@ -1,10 +1,12 @@
 /**
- * Admin user mutation API — update individual user settings (access expiration, tags).
+ * Admin user mutation API — update individual user settings (access expiration, tags, chatbot limit).
  *
  * POST /api/admin/users/[id]
  *   body: {
  *     accessExpiresAt?: number | string | null,
- *     tags?: string
+ *     tags?: string,
+ *     chatbotLimit?: number | null,
+ *     resetChatbotUsage?: boolean
  *   }
  *   → { success: true, user: AdminUserView }
  *
@@ -17,6 +19,7 @@ import { isAdmin } from '../../../../lib/comments';
 import { logAuthEvent } from '../../../../lib/auth';
 import { validateOrigin, csrfForbidden } from '../../../../lib/auth/csrf';
 import { findAdminUserById, updateUserAdminSettings } from '../../../../lib/users';
+import { resetUserMonthlyUsage } from '../../../../lib/chatbotUsage';
 
 export const prerender = false;
 
@@ -43,7 +46,7 @@ export const POST: APIRoute = async (context) => {
   const existing = await findAdminUserById(env.DB, id);
   if (!existing) return notFound('User not found');
 
-  const updates: { tags?: string; accessExpiresAt?: number | null } = {};
+  const updates: { tags?: string; accessExpiresAt?: number | null; chatbotLimit?: number | null } = {};
 
   // Validate tags
   if (body.tags !== undefined) {
@@ -77,12 +80,34 @@ export const POST: APIRoute = async (context) => {
     }
   }
 
-  if (Object.keys(updates).length === 0) {
+  // Validate chatbotLimit
+  if (body.chatbotLimit !== undefined) {
+    if (body.chatbotLimit === null || body.chatbotLimit === '') {
+      updates.chatbotLimit = null; // Revert to default 20/month
+    } else {
+      const parsedLimit = typeof body.chatbotLimit === 'number' ? body.chatbotLimit : Number(body.chatbotLimit);
+      if (!Number.isFinite(parsedLimit) || parsedLimit < 0) {
+        return badRequest('Chatbot limit must be a non-negative number');
+      }
+      updates.chatbotLimit = Math.trunc(parsedLimit);
+    }
+  }
+
+  const shouldResetUsage = body.resetChatbotUsage === true;
+
+  if (Object.keys(updates).length === 0 && !shouldResetUsage) {
     return badRequest('No updates provided');
   }
 
   try {
-    const updated = await updateUserAdminSettings(env.DB, id, updates);
+    if (shouldResetUsage) {
+      await resetUserMonthlyUsage(env.DB, id);
+    }
+
+    const updated = Object.keys(updates).length > 0
+      ? await updateUserAdminSettings(env.DB, id, updates)
+      : await findAdminUserById(env.DB, id);
+
     if (!updated) return notFound('User not found');
 
     await logAuthEvent(env.DB, {
@@ -92,7 +117,7 @@ export const POST: APIRoute = async (context) => {
       ua: context.request.headers.get('User-Agent') || '',
     });
 
-    return json({ success: true, user: updated }, 200, { 'Cache-Control': 'no-store' });
+    return json({ success: true, user: updated, usageReset: shouldResetUsage }, 200, { 'Cache-Control': 'no-store' });
   } catch (err) {
     console.error(`[api/admin/users/${id}] update failed:`, err);
     return serverError('Could not update user settings.');
