@@ -3,7 +3,7 @@ import { makeDb } from './setup';
 import { setTestEnv } from './cloudflare-shim';
 import { onRequest } from '../src/middleware';
 import { createUser, verifyUserEmail } from '../src/lib/auth/db';
-import { signJwt } from '../src/lib/auth/session';
+import { signJwt, createRefreshToken, revokeAllRefreshTokens } from '../src/lib/auth/session';
 import type { AuthDb } from '../src/lib/auth/db';
 
 const BASE = 'https://bitsnotes.com';
@@ -30,9 +30,10 @@ describe('Middleware Session Authentication & Caching', () => {
     });
     await verifyUserEmail(db, dbUser.id);
 
-    // 2. Generate a valid session JWT
+    // 2. Generate a valid session JWT linked to a valid refresh token
+    const { tokenHash: rtHash } = await createRefreshToken(db, dbUser.id);
     const token = await signJwt(
-      { sub: dbUser.id, email: dbUser.email, tier: 'free', rt: 'dummy-refresh-id' },
+      { sub: dbUser.id, email: dbUser.email, tier: 'free', rt: rtHash },
       SECRET,
     );
 
@@ -124,5 +125,46 @@ describe('Middleware Session Authentication & Caching', () => {
     // Caching check: anonymous public HTML page shell can be cached at edge but must be revalidated by the browser
     expect(res.headers.get('Cache-Control')).toBe('s-maxage=300, stale-while-revalidate=600, must-revalidate');
     expect(res.headers.get('Vary')).toContain('Cookie');
+  });
+  it('does not populate Astro.locals.user when access token is revoked on signout', async () => {
+    // 1. Create an active user
+    const dbUser = await createUser(db, {
+      email: 'revoked@example.com',
+      displayName: 'Revoked User',
+      avatarUrl: 'https://example.com/avatar.png',
+    });
+    await verifyUserEmail(db, dbUser.id);
+
+    // 2. Create refresh token and JWT
+    const { tokenHash: rtHash } = await createRefreshToken(db, dbUser.id);
+    const token = await signJwt(
+      { sub: dbUser.id, email: dbUser.email, tier: 'free', rt: rtHash },
+      SECRET,
+    );
+
+    // 3. Revoke all refresh tokens (as signout does)
+    await revokeAllRefreshTokens(db, dbUser.id);
+
+    // 4. Run middleware with the revoked token
+    const request = new Request(`${BASE}/`, {
+      headers: {
+        'Cookie': `__session=${token}`,
+      },
+    });
+
+    const locals: any = {};
+    const context = {
+      request,
+      url: new URL(`${BASE}/`),
+      locals,
+    };
+
+    const next = async () => new Response('OK', {
+      headers: { 'Content-Type': 'text/html; charset=utf-8' },
+    });
+
+    const res = await onRequest(context as any, next);
+
+    expect(locals.user).toBeNull();
   });
 });

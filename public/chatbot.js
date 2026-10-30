@@ -924,9 +924,15 @@
       var data = await res.json();
       var reply = '';
       if (data.choices && data.choices[0] && data.choices[0].message) {
-        reply = data.choices[0].message.content;
+        reply = data.choices[0].message.content || '';
       } else {
         reply = 'Received unexpected response format.';
+      }
+
+      // Strip safety classifier artifacts if present
+      reply = reply.replace(/^UserSafety\s*:\s*safe\s*(\n+|$)/i, '').trim();
+      if (!reply) {
+        reply = 'I am ready to help! Please ask any question about these lecture notes.';
       }
 
       conversationHistory.push({ role: 'assistant', content: reply });

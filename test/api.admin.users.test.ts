@@ -270,6 +270,14 @@ describe('listAdminUsers', () => {
     const result = await listAdminUsers(db, { search: '%' });
     expect(result.total).toBe(0);
   });
+
+  it('handles empty query parameters without errors', async () => {
+    await addAdmin(db, 'u-admin');
+    await seedUser({ id: 'u1', email: 'a@example.com', createdAt: NOW });
+    const result = await listAdminUsers(db, {});
+    expect(result.total).toBe(1);
+    expect(result.users).toHaveLength(1);
+  });
 });
 
 describe('getUserStats', () => {

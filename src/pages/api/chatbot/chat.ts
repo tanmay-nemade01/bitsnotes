@@ -12,7 +12,8 @@
 
 import type { APIRoute } from 'astro';
 import { getEnv } from '../../../lib/getEnv';
-import { getHiddenSubjectNames } from '../../../lib/subjectVisibility';
+import { getHiddenSubjectNames, SubjectVisibilityUnavailableError } from '../../../lib/subjectVisibility';
+import { validateOrigin, csrfForbidden } from '../../../lib/auth/csrf';
 import {
   buildBaseSystemPrompt,
   buildCompanionBlock,
@@ -32,7 +33,11 @@ import { getChatbotUsage, incrementChatbotUsage } from '../../../lib/chatbotUsag
 export const prerender = false;
 
 const OPENROUTER_CHAT_URL = 'https://openrouter.ai/api/v1/chat/completions';
-const OPENROUTER_MODEL = 'openrouter/free';
+const OPENROUTER_CHAT_MODELS = [
+  'google/gemma-4-31b-it:free',
+  'google/gemma-4-26b-a4b-it:free',
+  'nvidia/nemotron-3.5-lightning:free',
+];
 
 function jsonResponse(body: object, status: number): Response {
   return new Response(JSON.stringify(body), {
@@ -52,6 +57,9 @@ export const POST: APIRoute = async ({ locals, request }) => {
   }
 
   const env = await getEnv();
+  if (!validateOrigin(request, env.APP_BASE_URL)) {
+    return csrfForbidden();
+  }
   const db = env.DB;
   const openrouterKey = env.OPENROUTER_API_KEY;
 
@@ -125,9 +133,16 @@ export const POST: APIRoute = async ({ locals, request }) => {
   if (!query) query = getLastUserQuery(body.messages);
 
   if (!isAdmin && subject) {
-    const hiddenSubjects = await getHiddenSubjectNames(db);
-    if (hiddenSubjects.has(subject)) {
-      return jsonResponse({ error: 'Subject not found.' }, 404);
+    try {
+      const hiddenSubjects = await getHiddenSubjectNames(db);
+      if (hiddenSubjects.has(subject)) {
+        return jsonResponse({ error: 'Subject not found.' }, 404);
+      }
+    } catch (err) {
+      if (err instanceof SubjectVisibilityUnavailableError) {
+        return jsonResponse({ error: 'Subject visibility unavailable' }, 503);
+      }
+      throw err;
     }
   }
 
@@ -236,7 +251,7 @@ export const POST: APIRoute = async ({ locals, request }) => {
         'X-Title': 'BitsNotes AI Study Assistant',
       },
       body: JSON.stringify({
-        model: OPENROUTER_MODEL,
+        models: OPENROUTER_CHAT_MODELS,
         messages: upstreamMessages,
         temperature: 0.3,
       }),
@@ -248,6 +263,13 @@ export const POST: APIRoute = async ({ locals, request }) => {
     }
 
     const data = (await orResponse.json()) as Record<string, any>;
+
+    if (data.choices && data.choices[0] && data.choices[0].message) {
+      const rawContent = typeof data.choices[0].message.content === 'string' ? data.choices[0].message.content : '';
+      // Strip safety classifier artifacts if returned by any upstream provider
+      const cleaned = rawContent.replace(/^UserSafety\s*:\s*safe\s*(\n+|$)/i, '').trim();
+      data.choices[0].message.content = cleaned || rawContent;
+    }
 
     // ─── Increment usage counter on success ──────────────────────────
     let finalUsage = usageInfo;

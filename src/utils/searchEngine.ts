@@ -82,6 +82,32 @@ export function prepareSearchIndex(rawItems: RawSearchItem[]): PreparedSearchIte
 /**
  * Splits query string into distinct normalized tokens and categorizes them.
  */
+/**
+ * Maps raw R2 search index items to safe public search items.
+ * Prevents leaking revision notes for notes with older indexVersion.
+ */
+export function toPublicSearchItem(item: any): any {
+  const isNote = !item.type || item.type === 'note';
+  let text = item.text || item.snippet || '';
+  if (isNote) {
+    if (item.indexVersion === 2) {
+      text = item.text || '';
+    } else {
+      text = [item.title, item.topicTitle, item.snippet].filter(Boolean).join(' ');
+    }
+  }
+  return {
+    type: item.type || 'note',
+    title: item.title,
+    subject: item.subject,
+    folderName: item.folderName,
+    slug: item.slug || item.folderName,
+    topicTitle: item.topicTitle || '',
+    text,
+    snippet: item.snippet || text.slice(0, 300),
+  };
+}
+
 export function tokenizeQuery(rawQuery: string): {
   cleanQuery: string;
   allTerms: string[];
@@ -259,7 +285,7 @@ export function executeSearch(
 /**
  * Escapes HTML characters in snippet strings.
  */
-function escapeHtml(str: string): string {
+export function escapeHtml(str: string): string {
   return str
     .replace(/&/g, '&amp;')
     .replace(/</g, '&lt;')

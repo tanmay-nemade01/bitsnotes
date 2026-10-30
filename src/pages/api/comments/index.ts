@@ -23,7 +23,7 @@ import { validateCommentBody, moderateSubmission, MAX_JSON_BYTES, MIN_FILL_MS } 
 import { listLectures, listSubjects } from '../../../utils/notesLoader';
 import { getPublishedPosts } from '../../../utils/blogLoader';
 import { sha256Hex } from '../../../lib/auth/crypto';
-import { getHiddenSubjectNames } from '../../../lib/subjectVisibility';
+import { getHiddenSubjectNames, SubjectVisibilityUnavailableError } from '../../../lib/subjectVisibility';
 
 
 export const prerender = false;
@@ -48,7 +48,20 @@ export const GET: APIRoute = async (context) => {
   // Non-admins cannot view comments for hidden subjects
   if (pageType === 'lecture' || pageType === 'subject') {
     const isAdmin = Boolean((context.locals as any).isAdmin);
-    const hiddenSubjects = await getHiddenSubjectNames(env.DB);
+    let hiddenSubjects: Set<string>;
+    try {
+      hiddenSubjects = await getHiddenSubjectNames(env.DB);
+    } catch (err) {
+      if (err instanceof SubjectVisibilityUnavailableError) {
+        if (isAdmin) {
+          hiddenSubjects = new Set();
+        } else {
+          return json({ comments: [], hasMore: false, nextCursor: null }, 200, { 'Cache-Control': 'no-store' });
+        }
+      } else {
+        throw err;
+      }
+    }
     if (!isAdmin && hiddenSubjects.has(subject)) {
       return json({ comments: [], hasMore: false, nextCursor: null }, 200, { 'Cache-Control': 'no-store' });
     }
@@ -147,7 +160,20 @@ export const POST: APIRoute = async (context) => {
   // Verify subject/lecture/blog exist in manifest/loader.
   if (v.pageType === 'lecture' || v.pageType === 'subject') {
     const isAdmin = Boolean((context.locals as any).isAdmin);
-    const hiddenSubjects = await getHiddenSubjectNames(env.DB);
+    let hiddenSubjects: Set<string>;
+    try {
+      hiddenSubjects = await getHiddenSubjectNames(env.DB);
+    } catch (err) {
+      if (err instanceof SubjectVisibilityUnavailableError) {
+        if (isAdmin) {
+          hiddenSubjects = new Set();
+        } else {
+          return json({ error: 'Subject visibility unavailable' }, 503);
+        }
+      } else {
+        throw err;
+      }
+    }
     if (!isAdmin && hiddenSubjects.has(v.subject)) {
       return badRequest('Unknown subject');
     }

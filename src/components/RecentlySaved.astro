@@ -6,7 +6,7 @@
 import { listRecentBookmarks } from '../lib/bookmarks';
 import type { Bookmark } from '../lib/bookmarks';
 import { getEnv } from '../lib/getEnv';
-import { getHiddenSubjectNames } from '../lib/subjectVisibility';
+import { getHiddenSubjectNames, SubjectVisibilityUnavailableError } from '../lib/subjectVisibility';
 import { listCatalog } from '../utils/notesLoader';
 import { slugify } from '../utils/lectureDisplay';
 
@@ -17,10 +17,18 @@ if (user) {
   const env = await getEnv();
   const raw = await listRecentBookmarks(env.DB, user.id, 5);
   const isAdmin = Boolean((Astro.locals as any).isAdmin);
-  const hiddenSubjects = await getHiddenSubjectNames(env.DB);
-  bookmarks = (!isAdmin && hiddenSubjects.size > 0)
-    ? raw.filter((bm) => !hiddenSubjects.has(bm.subject))
-    : raw;
+  try {
+    const hiddenSubjects = await getHiddenSubjectNames(env.DB);
+    bookmarks = (!isAdmin && hiddenSubjects.size > 0)
+      ? raw.filter((bm) => !hiddenSubjects.has(bm.subject))
+      : raw;
+  } catch (err) {
+    if (err instanceof SubjectVisibilityUnavailableError) {
+      bookmarks = isAdmin ? raw : [];
+    } else {
+      throw err;
+    }
+  }
 }
 
 // Normalize bookmark titles to match the catalog (lecture-number prefixed).
@@ -49,15 +57,15 @@ function bookmarkTitle(bm: Bookmark): string {
           href={`/view/${encodeURIComponent(slugify(bm.subject))}/${encodeURIComponent(slugLookup.get(`${bm.subject}::${bm.lecture}`) || bm.lecture)}`}
           class="flex items-center gap-3 p-3 border border-[var(--border)] bg-[var(--bg-elevated)] rounded-[var(--r-sm)] hover:border-[var(--accent)] hover:bg-[var(--bg-subtle)] transition-colors no-underline group"
         >
-          <div class="w-7 h-7 rounded-[var(--r-sm)] bg-[var(--accent-subtle)] flex items-center justify-center shrink-0">
-            <svg class="w-3.5 h-3.5 text-[var(--accent)]" fill="currentColor" viewBox="0 0 24 24">
-              <path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/>
-            </svg>
-          </div>
           <div class="min-w-0 flex-1">
-            <p class="text-sm font-medium text-[var(--text)] group-hover:text-[var(--accent)] transition-colors line-clamp-1">{bookmarkTitle(bm)}</p>
-            <p class="text-[10px] text-[var(--text-muted)] truncate">{bm.subject}</p>
+            <span class="block text-xs font-semibold text-[var(--accent)] truncate">
+              {bm.subject}
+            </span>
+            <span class="block text-sm font-medium text-[var(--text)] truncate group-hover:text-[var(--accent)]">
+              {bookmarkTitle(bm)}
+            </span>
           </div>
+          <svg class="w-4 h-4 text-[var(--text-muted)] group-hover:text-[var(--accent)] shrink-0 transition-colors" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M9 5l7 7-7 7"/></svg>
         </a>
       ))}
     </div>

@@ -1,7 +1,7 @@
 import type { APIRoute } from 'astro';
 import { env } from 'cloudflare:workers';
 import { listSubjects } from '../../../utils/notesLoader';
-import { getHiddenSubjectNames } from '../../../lib/subjectVisibility';
+import { getHiddenSubjectNames, SubjectVisibilityUnavailableError } from '../../../lib/subjectVisibility';
 import { v1CorsHeaders, v1OptionsResponse, checkApiKey } from '../../../lib/cors';
 
 export const prerender = false;
@@ -28,7 +28,13 @@ export const GET: APIRoute = async ({ request }) => {
         slug: encodeURIComponent(s.name)
       }));
     return new Response(JSON.stringify(result), { status: 200, headers: corsHeaders });
-  } catch {
+  } catch (err) {
+    if (err instanceof SubjectVisibilityUnavailableError) {
+      return new Response(
+        JSON.stringify({ error: 'Subject visibility unavailable' }),
+        { status: 503, headers: corsHeaders }
+      );
+    }
     return new Response(
       JSON.stringify({ error: 'Failed to retrieve subjects' }),
       { status: 500, headers: corsHeaders }

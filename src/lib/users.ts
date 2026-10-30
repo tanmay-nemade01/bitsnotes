@@ -178,6 +178,24 @@ const SELECT_COLUMNS = `
   (SELECT MAX(ae.created_at) FROM auth_events ae WHERE ae.user_id = u.id AND ae.event = 'login') AS last_login_at
 `;
 
+const SELECT_COLUMNS_LEGACY = `
+  u.id,
+  u.email,
+  u.display_name,
+  u.avatar_url,
+  u.status,
+  u.email_verified_at,
+  u.created_at,
+  u.updated_at,
+  COALESCE(u.tags, 'normal') AS tags,
+  u.access_expires_at,
+  NULL AS chatbot_limit,
+  COALESCE(e.tier, 'free') AS tier,
+  CASE WHEN a.user_id IS NULL THEN 0 ELSE 1 END AS is_admin,
+  (SELECT GROUP_CONCAT(i.provider) FROM identities i WHERE i.user_id = u.id) AS providers,
+  (SELECT MAX(ae.created_at) FROM auth_events ae WHERE ae.user_id = u.id AND ae.event = 'login') AS last_login_at
+`;
+
 const FROM_JOINS = `
   FROM users u
   LEFT JOIN entitlements e ON e.user_id = u.id
@@ -202,15 +220,25 @@ export async function listAdminUsers(
     ? 'ORDER BY u.created_at ASC, u.id ASC'
     : 'ORDER BY u.created_at DESC, u.id DESC';
 
-  const rows = await db
-    .prepare(`SELECT ${SELECT_COLUMNS} ${FROM_JOINS} ${clause} ${orderClause} LIMIT ? OFFSET ?`)
-    .bind(...params, limit, offset)
-    .all<AdminUserRow>();
+  let rows: { results?: AdminUserRow[] };
+  try {
+    rows = await db
+      .prepare(`SELECT ${SELECT_COLUMNS} ${FROM_JOINS} ${clause} ${orderClause} LIMIT ? OFFSET ?`)
+      .bind(...params, limit, offset)
+      .all<AdminUserRow>();
+  } catch (err: any) {
+    if (err?.message?.includes('chatbot_limit') || err?.message?.includes('no such column')) {
+      rows = await db
+        .prepare(`SELECT ${SELECT_COLUMNS_LEGACY} ${FROM_JOINS} ${clause} ${orderClause} LIMIT ? OFFSET ?`)
+        .bind(...params, limit, offset)
+        .all<AdminUserRow>();
+    } else {
+      throw err;
+    }
+  }
 
-  const countRow = await db
-    .prepare(`SELECT COUNT(*) AS count FROM users u ${clause}`)
-    .bind(...params)
-    .first<{ count: number }>();
+  const countStmt = db.prepare(`SELECT COUNT(*) AS count FROM users u ${clause}`);
+  const countRow = await (params.length > 0 ? countStmt.bind(...params) : countStmt).first<{ count: number }>();
 
   return {
     users: (rows.results ?? []).map(toPublic),
@@ -272,10 +300,22 @@ export async function getUserStats(db: AuthDb): Promise<UserStats> {
  * Fetch a single user view by id for admin endpoints.
  */
 export async function findAdminUserById(db: AuthDb, userId: string): Promise<AdminUserView | null> {
-  const row = await db
-    .prepare(`SELECT ${SELECT_COLUMNS} ${FROM_JOINS} WHERE u.id = ?`)
-    .bind(userId)
-    .first<AdminUserRow>();
+  let row: AdminUserRow | null = null;
+  try {
+    row = await db
+      .prepare(`SELECT ${SELECT_COLUMNS} ${FROM_JOINS} WHERE u.id = ?`)
+      .bind(userId)
+      .first<AdminUserRow>();
+  } catch (err: any) {
+    if (err?.message?.includes('chatbot_limit') || err?.message?.includes('no such column')) {
+      row = await db
+        .prepare(`SELECT ${SELECT_COLUMNS_LEGACY} ${FROM_JOINS} WHERE u.id = ?`)
+        .bind(userId)
+        .first<AdminUserRow>();
+    } else {
+      throw err;
+    }
+  }
   return row ? toPublic(row) : null;
 }
 
@@ -309,10 +349,33 @@ export async function updateUserAdminSettings(
   }
 
   params.push(userId);
-  await db
-    .prepare(`UPDATE users SET ${setClauses.join(', ')} WHERE id = ?`)
-    .bind(...params)
-    .run();
+  try {
+    await db
+      .prepare(`UPDATE users SET ${setClauses.join(', ')} WHERE id = ?`)
+      .bind(...params)
+      .run();
+  } catch (err: any) {
+    if (err?.message?.includes('chatbot_limit') && updates.chatbotLimit !== undefined) {
+      // Retry without chatbot_limit if column is not yet migrated
+      const fallbackClauses: string[] = ['updated_at = ?'];
+      const fallbackParams: unknown[] = [now];
+      if (updates.tags !== undefined) {
+        fallbackClauses.push('tags = ?');
+        fallbackParams.push(updates.tags);
+      }
+      if (updates.accessExpiresAt !== undefined) {
+        fallbackClauses.push('access_expires_at = ?');
+        fallbackParams.push(updates.accessExpiresAt);
+      }
+      fallbackParams.push(userId);
+      await db
+        .prepare(`UPDATE users SET ${fallbackClauses.join(', ')} WHERE id = ?`)
+        .bind(...fallbackParams)
+        .run();
+    } else {
+      throw err;
+    }
+  }
 
   return findAdminUserById(db, userId);
 }

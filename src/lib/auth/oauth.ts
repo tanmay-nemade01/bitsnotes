@@ -26,7 +26,12 @@ const GOOGLE_AUTH_URL = 'https://accounts.google.com/o/oauth2/v2/auth';
 const GOOGLE_TOKEN_URL = 'https://oauth2.googleapis.com/token';
 const GOOGLE_USERINFO_URL = 'https://www.googleapis.com/oauth2/v3/userinfo';
 
-export function googleAuthorizeUrl(config: OAuthConfig, state: string, codeChallenge: string): string {
+export function googleAuthorizeUrl(
+  config: OAuthConfig,
+  state: string,
+  codeChallenge: string,
+  prompt: string = 'consent',
+): string {
   const params = new URLSearchParams({
     client_id: config.clientId,
     redirect_uri: config.redirectUri,
@@ -36,7 +41,7 @@ export function googleAuthorizeUrl(config: OAuthConfig, state: string, codeChall
     code_challenge: codeChallenge,
     code_challenge_method: 'S256',
     access_type: 'offline',
-    prompt: 'consent',
+    prompt,
   });
   return `${GOOGLE_AUTH_URL}?${params}`;
 }
@@ -150,13 +155,25 @@ export async function githubExchangeCode(
   let emailVerified = false;
   if (emailRes.ok) {
     const emails = await emailRes.json<Array<{ email: string; primary: boolean; verified: boolean }>>();
-    const primary = emails.find(e => e.primary);
-    if (primary) {
-      primaryEmail = primary.email;
-      emailVerified = primary.verified;
-    } else if (emails.length > 0) {
-      primaryEmail = emails[0].email;
-      emailVerified = emails[0].verified;
+    const primaryVerified = emails.find((e) => e.primary && e.verified);
+    if (primaryVerified) {
+      primaryEmail = primaryVerified.email;
+      emailVerified = true;
+    } else {
+      const firstVerified = emails.find((e) => e.verified);
+      if (firstVerified) {
+        primaryEmail = firstVerified.email;
+        emailVerified = true;
+      } else {
+        const primaryUnverified = emails.find((e) => e.primary);
+        if (primaryUnverified) {
+          primaryEmail = primaryUnverified.email;
+          emailVerified = false;
+        } else if (emails.length > 0) {
+          primaryEmail = emails[0].email;
+          emailVerified = false;
+        }
+      }
     }
   }
 

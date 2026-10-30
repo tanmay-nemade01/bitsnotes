@@ -30,10 +30,16 @@ function clampInt(value: string | null, fallback: number, min: number, max: numb
 }
 
 export const GET: APIRoute = async (context) => {
-  const env = await getEnv(context);
   const user = getUser(context);
   if (!user) return unauthorized();
-  if (!(await isAdmin(env.DB, user.id))) return forbidden();
+
+  const env = await getEnv(context);
+  const isAdminUser = Boolean((context.locals as any).isAdmin) || (env.DB ? await isAdmin(env.DB, user.id) : false);
+  if (!isAdminUser) return forbidden();
+
+  if (!env.DB) {
+    return serverError('Database unavailable.');
+  }
 
   const params = new URL(context.request.url).searchParams;
 

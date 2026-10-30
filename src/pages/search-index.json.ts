@@ -4,7 +4,12 @@ import { listCatalog, getLectureContent, getManifest } from '../utils/notesLoade
 import { getPublishedPosts } from '../utils/blogLoader';
 import { getPublishedBits, bitPreview } from '../utils/bitsLoader';
 import { getEnv } from '../lib/apiHelpers';
-import { getHiddenSubjectNames } from '../lib/subjectVisibility';
+import {
+  getHiddenSubjectNames,
+  computeHiddenFingerprint,
+  SubjectVisibilityUnavailableError,
+} from '../lib/subjectVisibility';
+import { toPublicSearchItem } from '../utils/searchEngine';
 
 export const prerender = false;
 
@@ -28,12 +33,6 @@ function extractSearchableNoteText(html: string, topicTitle?: string): { text: s
       if (Array.isArray(meta.sections)) {
         for (const sec of meta.sections) {
           if (sec.title) parts.push(sec.title);
-          if (sec.description) parts.push(sec.description.slice(0, 160));
-        }
-      }
-      if (Array.isArray(meta.examRevisionNotes)) {
-        for (const note of meta.examRevisionNotes) {
-          if (typeof note === 'string') parts.push(note.slice(0, 160));
         }
       }
     } catch {}
@@ -65,7 +64,29 @@ function cleanHtmlText(html: string): string {
 export const GET: APIRoute = async (context) => {
   const envBinding = await getEnv(context).catch(() => null);
   const isAdmin = Boolean((context.locals as any).isAdmin);
-  const hiddenSubjects = await getHiddenSubjectNames(envBinding?.DB);
+
+  let hiddenSubjects: Set<string>;
+  try {
+    hiddenSubjects = await getHiddenSubjectNames(envBinding?.DB);
+  } catch (err) {
+    if (err instanceof SubjectVisibilityUnavailableError) {
+      if (isAdmin) {
+        hiddenSubjects = new Set();
+      } else {
+        return new Response(JSON.stringify({ error: 'Subject visibility unavailable' }), {
+          status: 503,
+          headers: {
+            'Content-Type': 'application/json',
+            'Cache-Control': 'no-store',
+          },
+        });
+      }
+    } else {
+      throw err;
+    }
+  }
+
+  const hiddenFingerprint = await computeHiddenFingerprint(hiddenSubjects);
 
   function filterForViewer(items: any[]) {
     if (isAdmin || hiddenSubjects.size === 0) return items;
@@ -82,9 +103,9 @@ export const GET: APIRoute = async (context) => {
         headers: {
           'Content-Type': 'application/json',
           'Cache-Control': 'public, max-age=300',
-          'ETag': `"${manifest.version}-${isAdmin ? 'admin' : 'public'}"`,
-          'X-Robots-Tag': 'noindex, nofollow'
-        }
+          'ETag': `"${manifest.version}-${isAdmin ? 'admin' : 'public'}-${hiddenFingerprint}"`,
+          'X-Robots-Tag': 'noindex, nofollow',
+        },
       });
     }
 
@@ -101,13 +122,14 @@ export const GET: APIRoute = async (context) => {
 
           index.push({
             type: 'note',
+            indexVersion: 2,
             title,
             subject: subject.subject,
             folderName: lecture.folderName,
             slug: lecture.slug,
             topicTitle: lecture.topicTitle || '',
             text,
-            snippet
+            snippet,
           });
         }
       }
@@ -126,7 +148,7 @@ export const GET: APIRoute = async (context) => {
           slug: post.slug,
           topicTitle: post.frontmatter.description || '',
           text: cleanText,
-          snippet: cleanText.slice(0, 300)
+          snippet: cleanText.slice(0, 300),
         });
       }
     } catch (err: any) {
@@ -164,9 +186,9 @@ export const GET: APIRoute = async (context) => {
       headers: {
         'Content-Type': 'application/json',
         'Cache-Control': 'public, max-age=300',
-        'ETag': `"${manifest.version}-${isAdmin ? 'admin' : 'public'}"`,
-        'X-Robots-Tag': 'noindex, nofollow'
-      }
+        'ETag': `"${manifest.version}-${isAdmin ? 'admin' : 'public'}-${hiddenFingerprint}"`,
+        'X-Robots-Tag': 'noindex, nofollow',
+      },
     });
   }
 
@@ -176,21 +198,19 @@ export const GET: APIRoute = async (context) => {
     console.error('[search-index] NOTES_BUCKET binding not found.');
     return new Response(JSON.stringify({ error: 'R2 bucket binding not configured' }), {
       status: 500,
-      headers: { 'Content-Type': 'application/json' }
+      headers: { 'Content-Type': 'application/json' },
     });
   }
 
   try {
-    // Version the cache by the current manifest version so a content upload
-    // invalidates the cached search index (Phase 8.9).
     const manifest = await getManifest();
 
-    // Edge cache read: a warm isolate serves the compiled index without an R2
-    // round-trip or the map/re-serialize pass.
     const cache = typeof caches !== 'undefined' && (caches as any)?.default
       ? ((caches as any).default as Cache)
       : ((globalThis as any)?.caches?.default as Cache | undefined);
-    const cacheKey = new Request(`https://bitsnotes.com/__cache/search-index/${encodeURIComponent(manifest.version)}-${isAdmin ? 'admin' : 'public'}.json`);
+    const cacheKey = new Request(
+      `https://bitsnotes.com/__cache/search-index/${encodeURIComponent(manifest.version)}-${isAdmin ? 'admin' : 'public'}-${hiddenFingerprint}.json`,
+    );
     if (cache) {
       try {
         const hit = await cache.match(cacheKey);
@@ -202,35 +222,24 @@ export const GET: APIRoute = async (context) => {
     if (!obj) {
       console.warn('[search-index] search-index.json not found in R2 bucket.');
       return new Response(JSON.stringify([]), {
-        headers: { 'Content-Type': 'application/json' }
+        headers: { 'Content-Type': 'application/json' },
       });
     }
 
     const rawIndex = (await obj.json()) as any[];
-    // Serve the index with full text for client-side deep search, filtered for non-admins
-    const rawMapped = rawIndex.map((item: any) => ({
-      type: item.type || 'note',
-      title: item.title,
-      subject: item.subject,
-      folderName: item.folderName,
-      slug: item.slug || item.folderName,
-      topicTitle: item.topicTitle || '',
-      text: item.text || item.snippet || '',
-      snippet: item.snippet || (item.text || '').slice(0, 300)
-    }));
+    const rawMapped = rawIndex.map(toPublicSearchItem);
 
     const safeIndex = filterForViewer(rawMapped);
 
     const response = new Response(JSON.stringify(safeIndex), {
       headers: {
         'Content-Type': 'application/json',
-        'Cache-Control': 'public, max-age=86400',
-        'ETag': `"${manifest.version}-${isAdmin ? 'admin' : 'public'}"`,
-        'X-Robots-Tag': 'noindex, nofollow'
-      }
+        'Cache-Control': 'public, max-age=3600',
+        'ETag': `"${manifest.version}-${isAdmin ? 'admin' : 'public'}-${hiddenFingerprint}"`,
+        'X-Robots-Tag': 'noindex, nofollow',
+      },
     });
 
-    // Populate the edge cache for subsequent isolates (fire-and-forget).
     if (cache) {
       try {
         cache.put(cacheKey, response.clone()).catch(() => {});
@@ -242,7 +251,7 @@ export const GET: APIRoute = async (context) => {
     console.error('[search-index] Error loading index from R2:', err.message);
     return new Response(JSON.stringify({ error: 'Failed to load search index' }), {
       status: 500,
-      headers: { 'Content-Type': 'application/json' }
+      headers: { 'Content-Type': 'application/json' },
     });
   }
 };

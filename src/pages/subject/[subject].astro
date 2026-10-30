@@ -4,7 +4,7 @@ import { listLectures, getSubjectByNameOrSlug, getSubjectDetails } from '../../u
 import CommentsSection from '../../components/CommentsSection.astro';
 import { slugify } from '../../utils/lectureDisplay';
 import { getEnv } from '../../lib/apiHelpers';
-import { getHiddenSubjectNames } from '../../lib/subjectVisibility';
+import { getHiddenSubjectNames, SubjectVisibilityUnavailableError } from '../../lib/subjectVisibility';
 
 export const prerender = false;
 
@@ -18,7 +18,20 @@ if (!matchedSubject) return Astro.redirect('/');
 // Check visibility: hidden subjects are completely invisible to non-admins
 const env = await getEnv(Astro).catch(() => null);
 const isAdmin = Boolean((Astro.locals as any).isAdmin);
-const hiddenSubjects = await getHiddenSubjectNames(env?.DB);
+let hiddenSubjects: Set<string>;
+try {
+  hiddenSubjects = await getHiddenSubjectNames(env?.DB);
+} catch (err) {
+  if (err instanceof SubjectVisibilityUnavailableError) {
+    if (isAdmin) {
+      hiddenSubjects = new Set();
+    } else {
+      return new Response('Temporarily unavailable', { status: 503, headers: { 'Cache-Control': 'no-store' } });
+    }
+  } else {
+    throw err;
+  }
+}
 const isHidden = hiddenSubjects.has(matchedSubject.name);
 
 if (isHidden && !isAdmin) {

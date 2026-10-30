@@ -22,7 +22,7 @@ import { checkProfanity } from '../../../lib/moderation/profanity';
 import { checkSpam } from '../../../lib/moderation/spam';
 import { countLinks } from '../../../lib/moderation/normalize';
 import { listLectures, listSubjects } from '../../../utils/notesLoader';
-import { getHiddenSubjectNames } from '../../../lib/subjectVisibility';
+import { getHiddenSubjectNames, SubjectVisibilityUnavailableError } from '../../../lib/subjectVisibility';
 import {
   generateVisitorId,
   getVisitorId,
@@ -51,7 +51,20 @@ export const GET: APIRoute = async (context) => {
   }
 
   const isAdmin = Boolean((context.locals as any).isAdmin);
-  const hiddenSubjects = await getHiddenSubjectNames(env.DB);
+  let hiddenSubjects: Set<string>;
+  try {
+    hiddenSubjects = await getHiddenSubjectNames(env.DB);
+  } catch (err) {
+    if (err instanceof SubjectVisibilityUnavailableError) {
+      if (isAdmin) {
+        hiddenSubjects = new Set();
+      } else {
+        return json({ useful: 0, notYet: 0, myVote: null }, 200, { 'Cache-Control': 'no-store' });
+      }
+    } else {
+      throw err;
+    }
+  }
   if (!isAdmin && hiddenSubjects.has(subject)) {
     return json({ useful: 0, notYet: 0, myVote: null }, 200, { 'Cache-Control': 'no-store' });
   }
@@ -146,7 +159,20 @@ export const POST: APIRoute = async (context) => {
 
   // Verify subject/lecture exist in manifest.
   const isAdmin = Boolean((context.locals as any).isAdmin);
-  const hiddenSubjects = await getHiddenSubjectNames(env.DB);
+  let hiddenSubjects: Set<string>;
+  try {
+    hiddenSubjects = await getHiddenSubjectNames(env.DB);
+  } catch (err) {
+    if (err instanceof SubjectVisibilityUnavailableError) {
+      if (isAdmin) {
+        hiddenSubjects = new Set();
+      } else {
+        return json({ error: 'Subject visibility unavailable' }, 503);
+      }
+    } else {
+      throw err;
+    }
+  }
   if (!isAdmin && hiddenSubjects.has(subject)) {
     return badRequest('Unknown subject');
   }

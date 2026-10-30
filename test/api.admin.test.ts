@@ -89,8 +89,9 @@ import { createComment, addAdmin } from '../src/lib/comments';
 
 const BASE = 'https://bitsnotes.com';
 
-function makeContext(opts: { method: string; url: string; body?: unknown; user?: any; params?: Record<string, string> }): any {
+function makeContext(opts: { method: string; url: string; body?: unknown; user?: any; params?: Record<string, string>; origin?: string }): any {
   const headers = new Headers();
+  if (opts.origin) headers.set('Origin', opts.origin);
   const request = new Request(opts.url, {
     method: opts.method,
     headers,
@@ -145,7 +146,15 @@ describe('GET /api/admin/comments', () => {
 describe('POST /api/admin/comments/[id]', () => {
   it('rejects non-admin (403)', async () => {
     const { comment } = await createComment(db, { pageType: 'lecture', subject: 'NLP', lecture: 'L1', displayName: 'A', body: 'x', status: 'pending' });
-    const ctx = makeContext({ method: 'POST', url: BASE + '/api/admin/comments/' + comment.id, body: { action: 'publish' }, user: { id: 'u2' } });
+    const ctx = makeContext({ method: 'POST', url: BASE + '/api/admin/comments/' + comment.id, body: { action: 'publish' }, user: { id: 'u2' }, origin: BASE });
+    const res = await adminPost(ctx as any);
+    expect(res.status).toBe(403);
+  });
+
+  it('rejects missing or invalid Origin (403 CSRF)', async () => {
+    await addAdmin(db, 'u1');
+    const { comment } = await createComment(db, { pageType: 'lecture', subject: 'NLP', lecture: 'L1', displayName: 'A', body: 'x', status: 'pending' });
+    const ctx = makeContext({ method: 'POST', url: BASE + '/api/admin/comments/' + comment.id, body: { action: 'publish' }, user: { id: 'u1' }, params: { id: comment.id } });
     const res = await adminPost(ctx as any);
     expect(res.status).toBe(403);
   });
@@ -153,7 +162,7 @@ describe('POST /api/admin/comments/[id]', () => {
   it('publishes a pending comment (admin)', async () => {
     await addAdmin(db, 'u1');
     const { comment } = await createComment(db, { pageType: 'lecture', subject: 'NLP', lecture: 'L1', displayName: 'A', body: 'x', status: 'pending' });
-    const ctx = makeContext({ method: 'POST', url: BASE + '/api/admin/comments/' + comment.id, body: { action: 'publish' }, user: { id: 'u1' }, params: { id: comment.id } });
+    const ctx = makeContext({ method: 'POST', url: BASE + '/api/admin/comments/' + comment.id, body: { action: 'publish' }, user: { id: 'u1' }, params: { id: comment.id }, origin: BASE });
     const res = await adminPost(ctx as any);
     expect(res.status).toBe(200);
     const data = await res.json();
@@ -163,7 +172,7 @@ describe('POST /api/admin/comments/[id]', () => {
   it('rejects invalid action (400)', async () => {
     await addAdmin(db, 'u1');
     const { comment } = await createComment(db, { pageType: 'lecture', subject: 'NLP', lecture: 'L1', displayName: 'A', body: 'x', status: 'pending' });
-    const ctx = makeContext({ method: 'POST', url: BASE + '/api/admin/comments/' + comment.id, body: { action: 'explode' }, user: { id: 'u1' }, params: { id: comment.id } });
+    const ctx = makeContext({ method: 'POST', url: BASE + '/api/admin/comments/' + comment.id, body: { action: 'explode' }, user: { id: 'u1' }, params: { id: comment.id }, origin: BASE });
     const res = await adminPost(ctx as any);
     expect(res.status).toBe(400);
   });

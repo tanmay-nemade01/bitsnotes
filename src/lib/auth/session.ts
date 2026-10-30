@@ -113,11 +113,18 @@ export async function verifyRefreshToken(
   const now = Date.now();
 
   const row = await db.prepare(
-    'SELECT user_id, expires_at, revoked_at FROM refresh_tokens WHERE token_hash = ?',
-  ).bind(tokenHash).first<{ user_id: string; expires_at: number; revoked_at: number | null }>();
+    'SELECT user_id, expires_at, revoked_at, replaced_by FROM refresh_tokens WHERE token_hash = ?',
+  ).bind(tokenHash).first<{ user_id: string; expires_at: number; revoked_at: number | null; replaced_by: string | null }>();
 
   if (!row) return null;
-  if (row.revoked_at) return null;
+
+  if (row.revoked_at != null) {
+    if (row.replaced_by != null && (now - row.revoked_at > 60_000)) {
+      await revokeAllRefreshTokens(db, row.user_id);
+    }
+    return null;
+  }
+
   if (row.expires_at < now) return null;
 
   // Rotate: generate new token, revoke current and record successor, then insert new
@@ -141,6 +148,22 @@ export async function revokeAllRefreshTokens(db: AuthDb, userId: string): Promis
   await db.prepare(
     'UPDATE refresh_tokens SET revoked_at = ? WHERE user_id = ? AND revoked_at IS NULL',
   ).bind(Date.now(), userId).run();
+}
+
+/**
+ * Check whether an access token is revoked based on its associated refresh token hash.
+ * Returns true if the refresh token row is missing or was explicitly revoked
+ * (revoked_at is set and replaced_by is NULL, indicating logout or account deletion).
+ */
+export async function isAccessTokenRevoked(db: AuthDb, rtHash: string): Promise<boolean> {
+  if (!rtHash) return true;
+  const row = await db.prepare(
+    'SELECT revoked_at, replaced_by FROM refresh_tokens WHERE token_hash = ?',
+  ).bind(rtHash).first<{ revoked_at: number | null; replaced_by: string | null }>();
+
+  if (!row) return true;
+  if (row.revoked_at != null && row.replaced_by == null) return true;
+  return false;
 }
 
 // ─── Cookie helpers ─────────────────────────────────────────────────────────
@@ -190,13 +213,13 @@ export function clearRefreshCookie(headers: Headers, request?: Request): void {
 
 export function getSessionTokenFromCookie(cookieHeader: string | null): string | null {
   if (!cookieHeader) return null;
-  const match = cookieHeader.match(new RegExp(`${SESSION_COOKIE}=([^;]+)`));
+  const match = cookieHeader.match(new RegExp('(?:^|;\\s*)' + SESSION_COOKIE + '=([^;]+)'));
   return match?.[1] ?? null;
 }
 
 export function getRefreshTokenFromCookie(cookieHeader: string | null): string | null {
   if (!cookieHeader) return null;
-  const match = cookieHeader.match(new RegExp(`${REFRESH_COOKIE}=([^;]+)`));
+  const match = cookieHeader.match(new RegExp('(?:^|;\\s*)' + REFRESH_COOKIE + '=([^;]+)'));
   return match?.[1] ?? null;
 }
 
@@ -215,7 +238,7 @@ export function setOAuthStateCookie(headers: Headers, state: string, request?: R
 
 export function getOAuthStateFromCookie(cookieHeader: string | null): string | null {
   if (!cookieHeader) return null;
-  const match = cookieHeader.match(new RegExp(`${STATE_COOKIE}=([^;]+)`));
+  const match = cookieHeader.match(new RegExp('(?:^|;\\s*)' + STATE_COOKIE + '=([^;]+)'));
   return match?.[1] ?? null;
 }
 

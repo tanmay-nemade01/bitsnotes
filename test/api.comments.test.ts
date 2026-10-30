@@ -20,7 +20,9 @@ import { setTestEnv } from './cloudflare-shim';
 import { POST as commentsPost, GET as commentsGet } from '../src/pages/api/comments/index';
 import { DELETE as commentsDelete } from '../src/pages/api/comments/[id]';
 import { POST as votePost } from '../src/pages/api/comments/[id]/vote';
-import { createComment } from '../src/lib/comments';
+import { POST as reportPost } from '../src/pages/api/comments/[id]/report';
+import { createComment, addAdmin } from '../src/lib/comments';
+
 
 const BASE = 'https://bitsnotes.com';
 
@@ -31,6 +33,7 @@ function makeContext(opts: {
   origin?: string;
   headers?: Record<string, string>;
   params?: Record<string, string>;
+  user?: any;
 }): any {
   const headers = new Headers(opts.headers ?? {});
   if (opts.origin) headers.set('Origin', opts.origin);
@@ -46,7 +49,7 @@ function makeContext(opts: {
   return {
     request,
     params: opts.params ?? {},
-    locals: {},
+    locals: opts.user ? { user: opts.user } : {},
     url: new URL(opts.url),
   };
 }
@@ -254,7 +257,7 @@ describe('DELETE /api/comments/[id]', () => {
 });
 
 describe('POST /api/comments/[id]/vote', () => {
-  it('records an upvote and returns score', async () => {
+  it('rejects anonymous vote (401)', async () => {
     const { comment } = await createComment(db, { pageType: 'lecture', subject: 'NLP', lecture: 'Lecture_01', displayName: 'A', body: 'x', status: 'published' });
     const ctx = makeContext({
       method: 'POST',
@@ -264,10 +267,40 @@ describe('POST /api/comments/[id]/vote', () => {
       params: { id: comment.id },
     });
     const res = await votePost(ctx as any);
-    expect(res.status).toBe(200);
-    const data = await res.json();
-    expect(data.score).toBe(1);
-    expect(data.myVote).toBe(1);
+    expect(res.status).toBe(401);
+  });
+
+  it('records an upvote and returns score for signed-in user, and toggles on repeat vote', async () => {
+    const { comment } = await createComment(db, { pageType: 'lecture', subject: 'NLP', lecture: 'Lecture_01', displayName: 'A', body: 'x', status: 'published' });
+    const user = { id: 'user-vote-1', email: 'voter@example.com', role: 'user' };
+    const ctx1 = makeContext({
+      method: 'POST',
+      url: BASE + '/api/comments/' + comment.id + '/vote',
+      origin: BASE,
+      body: { value: 1 },
+      params: { id: comment.id },
+      user,
+    });
+    const res1 = await votePost(ctx1 as any);
+    expect(res1.status).toBe(200);
+    const data1 = await res1.json();
+    expect(data1.score).toBe(1);
+    expect(data1.myVote).toBe(1);
+
+    // Vote same value again -> toggle off (score = 0, myVote = 0)
+    const ctx2 = makeContext({
+      method: 'POST',
+      url: BASE + '/api/comments/' + comment.id + '/vote',
+      origin: BASE,
+      body: { value: 1 },
+      params: { id: comment.id },
+      user,
+    });
+    const res2 = await votePost(ctx2 as any);
+    expect(res2.status).toBe(200);
+    const data2 = await res2.json();
+    expect(data2.score).toBe(0);
+    expect(data2.myVote).toBe(0);
   });
 
   it('rejects invalid value (400)', async () => {
@@ -278,6 +311,7 @@ describe('POST /api/comments/[id]/vote', () => {
       origin: BASE,
       body: { value: 5 },
       params: { id: comment.id },
+      user: { id: 'user-vote-1', email: 'voter@example.com', role: 'user' },
     });
     const res = await votePost(ctx as any);
     expect(res.status).toBe(400);
@@ -291,9 +325,136 @@ describe('POST /api/comments/[id]/vote', () => {
       origin: 'https://evil.com',
       body: { value: 1 },
       params: { id: comment.id },
+      user: { id: 'user-vote-1', email: 'voter@example.com', role: 'user' },
     });
     const res = await votePost(ctx as any);
     expect(res.status).toBe(403);
+  });
+});
+
+describe('POST /api/comments/[id]/report', () => {
+  it('rejects anonymous report (401)', async () => {
+    const { comment } = await createComment(db, { pageType: 'lecture', subject: 'NLP', lecture: 'Lecture_01', displayName: 'A', body: 'x', status: 'published' });
+    const ctx = makeContext({
+      method: 'POST',
+      url: BASE + '/api/comments/' + comment.id + '/report',
+      origin: BASE,
+      body: { reason: 'spam' },
+      params: { id: comment.id },
+    });
+    const res = await reportPost(ctx as any);
+    expect(res.status).toBe(401);
+  });
+
+  it('rejects CSRF (403)', async () => {
+    const { comment } = await createComment(db, { pageType: 'lecture', subject: 'NLP', lecture: 'Lecture_01', displayName: 'A', body: 'x', status: 'published' });
+    const ctx = makeContext({
+      method: 'POST',
+      url: BASE + '/api/comments/' + comment.id + '/report',
+      origin: 'https://evil.com',
+      body: { reason: 'spam' },
+      params: { id: comment.id },
+      user: { id: 'u1', email: 'u1@example.com', role: 'user' },
+    });
+    const res = await reportPost(ctx as any);
+    expect(res.status).toBe(403);
+  });
+
+  it('auto-hides a regular comment after 3 reports from distinct users', async () => {
+    const { comment } = await createComment(db, { pageType: 'lecture', subject: 'NLP', lecture: 'Lecture_01', displayName: 'A', body: 'x', status: 'published' });
+
+    // User 1 report
+    const ctx1 = makeContext({
+      method: 'POST',
+      url: BASE + '/api/comments/' + comment.id + '/report',
+      origin: BASE,
+      body: { reason: 'spam' },
+      params: { id: comment.id },
+      user: { id: 'u1', email: 'u1@example.com', role: 'user' },
+    });
+    const res1 = await reportPost(ctx1 as any);
+    expect(res1.status).toBe(200);
+    const data1 = await res1.json();
+    expect(data1.hidden).toBe(false);
+
+    // Duplicate report from user 1 -> alreadyReported: true
+    const dupCtx = makeContext({
+      method: 'POST',
+      url: BASE + '/api/comments/' + comment.id + '/report',
+      origin: BASE,
+      body: { reason: 'spam' },
+      params: { id: comment.id },
+      user: { id: 'u1', email: 'u1@example.com', role: 'user' },
+    });
+    const dupRes = await reportPost(dupCtx as any);
+    expect(dupRes.status).toBe(200);
+    const dupData = await dupRes.json();
+    expect(dupData.alreadyReported).toBe(true);
+
+    // User 2 report
+    const ctx2 = makeContext({
+      method: 'POST',
+      url: BASE + '/api/comments/' + comment.id + '/report',
+      origin: BASE,
+      body: { reason: 'abuse' },
+      params: { id: comment.id },
+      user: { id: 'u2', email: 'u2@example.com', role: 'user' },
+    });
+    const res2 = await reportPost(ctx2 as any);
+    expect(res2.status).toBe(200);
+    const data2 = await res2.json();
+    expect(data2.hidden).toBe(false);
+
+    // User 3 report -> hides comment
+    const ctx3 = makeContext({
+      method: 'POST',
+      url: BASE + '/api/comments/' + comment.id + '/report',
+      origin: BASE,
+      body: { reason: 'spam' },
+      params: { id: comment.id },
+      user: { id: 'u3', email: 'u3@example.com', role: 'user' },
+    });
+    const res3 = await reportPost(ctx3 as any);
+    expect(res3.status).toBe(200);
+    const data3 = await res3.json();
+    expect(data3.hidden).toBe(true);
+
+    const row = await db.prepare('SELECT status, report_count FROM comments WHERE id = ?').bind(comment.id).first<{ status: string; report_count: number }>();
+    expect(row?.status).toBe('hidden');
+    expect(row?.report_count).toBe(3);
+  });
+
+  it('keeps admin-authored comment published after 3 reports', async () => {
+    const adminId = 'admin-comment-author';
+    await addAdmin(db, adminId);
+    const { comment } = await createComment(db, {
+      pageType: 'lecture',
+      subject: 'NLP',
+      lecture: 'Lecture_01',
+      displayName: 'Admin User',
+      body: 'Important announcement',
+      status: 'published',
+      authorUserId: adminId,
+    });
+
+    for (let i = 1; i <= 3; i++) {
+      const ctx = makeContext({
+        method: 'POST',
+        url: BASE + '/api/comments/' + comment.id + '/report',
+        origin: BASE,
+        body: { reason: 'spam' },
+        params: { id: comment.id },
+        user: { id: 'rep-user-' + i, email: 'rep' + i + '@example.com', role: 'user' },
+      });
+      const res = await reportPost(ctx as any);
+      expect(res.status).toBe(200);
+      const data = await res.json();
+      expect(data.hidden).toBe(false);
+    }
+
+    const row = await db.prepare('SELECT status, report_count FROM comments WHERE id = ?').bind(comment.id).first<{ status: string; report_count: number }>();
+    expect(row?.status).toBe('published');
+    expect(row?.report_count).toBe(3);
   });
 });
 
