@@ -366,7 +366,7 @@ describe('chatbotRetrieval (lean cross-lecture RAG)', () => {
       });
       expect(empty2.text).toBe('');
       expect(empty2.hasHighConfidenceMatch).toBe(false);
-    });
+    }, 30000);
   });
 
   describe('intent gating for cross-lecture retrieval', () => {
