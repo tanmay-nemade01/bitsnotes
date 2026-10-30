@@ -23,6 +23,7 @@ import {
   getCurrentLectureContext,
   getLastUserQuery,
   getRelatedSnippets,
+  normalizeAssistantReply,
   parseSubjectFromSystemPrompt,
   shouldRetrieveCompanion,
   shouldRetrieveRelated,
@@ -119,9 +120,9 @@ export const POST: APIRoute = async ({ locals, request }) => {
   }
 
   // ─── Progressive retrieval: current lecture + intent-gated auxiliary sources ────
-  let subject = (body.subject || '').trim();
-  let excludeFolder = (body.lectureFolder || '').trim();
-  let query = (body.query || '').trim();
+  let subject = (body.subject || '').replace(/["\r\n<>]/g, '').trim().slice(0, 120);
+  let excludeFolder = (body.lectureFolder || '').replace(/["\r\n<>]/g, '').trim().slice(0, 160);
+  let query = (body.query || '').trim().slice(0, 1000);
   const includeTextbook = body.includeTextbook !== false;
 
   const systemMsgForParse = body.messages.find((m) => m?.role === 'system');
@@ -233,7 +234,11 @@ export const POST: APIRoute = async ({ locals, request }) => {
   // 4. Construct rolling upstream conversation turns (max 6 turns)
   const conversationTurns = body.messages
     .filter((m) => m && (m.role === 'user' || m.role === 'assistant') && typeof m.content === 'string')
-    .slice(-6);
+    .slice(-6)
+    .map((m) => ({
+      role: m.role as 'user' | 'assistant',
+      content: (m.content as string).slice(0, 2000),
+    }));
 
   const upstreamMessages = [
     { role: 'system', content: fullSystemPrompt },
@@ -264,11 +269,11 @@ export const POST: APIRoute = async ({ locals, request }) => {
 
     const data = (await orResponse.json()) as Record<string, any>;
 
+    let assistantContent = '';
     if (data.choices && data.choices[0] && data.choices[0].message) {
       const rawContent = typeof data.choices[0].message.content === 'string' ? data.choices[0].message.content : '';
-      // Strip safety classifier artifacts if returned by any upstream provider
-      const cleaned = rawContent.replace(/^UserSafety\s*:\s*safe\s*(\n+|$)/i, '').trim();
-      data.choices[0].message.content = cleaned || rawContent;
+      const cleaned = normalizeAssistantReply(rawContent);
+      assistantContent = cleaned || rawContent.trim();
     }
 
     // ─── Increment usage counter on success ──────────────────────────
@@ -280,7 +285,7 @@ export const POST: APIRoute = async ({ locals, request }) => {
     }
 
     return jsonResponse({
-      ...data,
+      choices: [{ message: { role: 'assistant', content: assistantContent } }],
       _usage: finalUsage,
       _sources: relatedSources,
     }, 200);
