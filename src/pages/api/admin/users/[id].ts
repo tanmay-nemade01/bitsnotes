@@ -24,10 +24,16 @@ import { resetUserMonthlyUsage } from '../../../../lib/chatbotUsage';
 export const prerender = false;
 
 export const POST: APIRoute = async (context) => {
-  const env = await getEnv(context);
   const user = getUser(context);
   if (!user) return unauthorized();
-  if (!(await isAdmin(env.DB, user.id))) return forbidden();
+
+  const env = await getEnv(context);
+  const isAdminUser = Boolean((context.locals as any).isAdmin) || (env.DB ? await isAdmin(env.DB, user.id) : false);
+  if (!isAdminUser) return forbidden();
+
+  if (!env.DB) {
+    return serverError('Database unavailable.');
+  }
 
   if (!validateOrigin(context.request, env.APP_BASE_URL || 'https://bitsnotes.com')) {
     return csrfForbidden();

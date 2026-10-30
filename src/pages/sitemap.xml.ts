@@ -4,7 +4,11 @@ import { getPublishedPosts } from '../utils/blogLoader';
 import { getPublishedBits } from '../utils/bitsLoader';
 import { slugify } from '../utils/lectureDisplay';
 import { getEnv } from '../lib/apiHelpers';
-import { getHiddenSubjectNames } from '../lib/subjectVisibility';
+import {
+  getHiddenSubjectNames,
+  computeHiddenFingerprint,
+  SubjectVisibilityUnavailableError,
+} from '../lib/subjectVisibility';
 
 export const prerender = false;
 
@@ -23,8 +27,31 @@ export const GET: APIRoute = async (context) => {
   const manifest = await getManifest().catch(() => null);
   const version = manifest?.version || new Date().toISOString().split('T')[0];
 
+  const env = await getEnv(context).catch(() => null);
+  const isAdmin = Boolean((context.locals as any).isAdmin);
+
+  let hiddenSubjects: Set<string>;
+  try {
+    hiddenSubjects = await getHiddenSubjectNames(env?.DB);
+  } catch (err) {
+    if (err instanceof SubjectVisibilityUnavailableError) {
+      if (isAdmin) {
+        hiddenSubjects = new Set();
+      } else {
+        return new Response('Service Unavailable', {
+          status: 503,
+          headers: { 'Cache-Control': 'no-store' },
+        });
+      }
+    } else {
+      throw err;
+    }
+  }
+
+  const hiddenFingerprint = await computeHiddenFingerprint(hiddenSubjects);
+
   if (import.meta.env.DEV) {
-    if (devCachedXml && devCachedVersion === version) {
+    if (devCachedXml && devCachedVersion === `${version}-${hiddenFingerprint}`) {
       return new Response(devCachedXml, {
         status: 200,
         headers: {
@@ -40,7 +67,9 @@ export const GET: APIRoute = async (context) => {
   const cache = typeof caches !== 'undefined' && (caches as any)?.default
     ? ((caches as any).default as Cache)
     : ((globalThis as any)?.caches?.default as Cache | undefined);
-  const cacheKey = new Request(`https://bitsnotes.com/__cache/sitemap/${encodeURIComponent(version)}.xml`);
+  const cacheKey = new Request(
+    `https://bitsnotes.com/__cache/sitemap/${encodeURIComponent(version)}-${hiddenFingerprint}.xml`,
+  );
 
   if (cache) {
     try {
@@ -79,8 +108,6 @@ export const GET: APIRoute = async (context) => {
     });
   }
 
-  const env = await getEnv(context).catch(() => null);
-  const hiddenSubjects = await getHiddenSubjectNames(env?.DB);
   const subjects = await listSubjects();
   const publicSubjects = subjects.filter((s) => !hiddenSubjects.has(s.name));
 
@@ -113,7 +140,7 @@ export const GET: APIRoute = async (context) => {
     <lastmod>${lastmod}</lastmod>
     <changefreq>${changefreq}</changefreq>
     <priority>${priority}</priority>
-  </url>`
+  </url>`,
     )
     .join('');
 
@@ -128,15 +155,15 @@ export const GET: APIRoute = async (context) => {
 
   if (import.meta.env.DEV) {
     devCachedXml = xml;
-    devCachedVersion = version;
+    devCachedVersion = `${version}-${hiddenFingerprint}`;
   }
 
   const response = new Response(xml, {
     status: 200,
     headers: {
       'Content-Type': 'application/xml; charset=utf-8',
-      'Cache-Control': 'public, max-age=86400, s-maxage=86400', // cache for 24 hours at edge & browser
-      'X-Robots-Tag': 'noindex',                                // don't index the sitemap itself
+      'Cache-Control': 'public, max-age=86400, s-maxage=86400',
+      'X-Robots-Tag': 'noindex',
     },
   });
 

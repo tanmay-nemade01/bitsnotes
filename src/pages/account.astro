@@ -1,6 +1,6 @@
 ---
 /**
- * Account settings — self-serve account deletion (GDPR).
+ * Account settings — self-serve account deletion (GDPR) and backup account linking.
  */
 import BaseLayout from '../layouts/BaseLayout.astro';
 import { getUser, getEnv } from '../lib/apiHelpers';
@@ -19,14 +19,38 @@ if (!user) {
 const env = await getEnv();
 const row = env.DB ? await findUserById(env.DB, user.id) : null;
 const backupEligible = isBackupEmailEligible(user.email);
-const backupEmail = backupEligible ? (row?.backup_email ?? '') : '';
-const isBackupLocked = backupEligible && Boolean(backupEmail);
+const isBackupLocked = backupEligible && row?.backup_email_verified_at != null;
+const backupEmail = isBackupLocked ? (row?.backup_email ?? '') : '';
 const isAdminUser = env.DB ? await isAdmin(env.DB, user.id) : false;
 
 const userTag = row?.tags || user?.tags || 'normal';
 const accessExpiresAt = row?.access_expires_at ?? user?.accessExpiresAt ?? null;
 const isAccessExpired = Boolean(accessExpiresAt != null && Date.now() > accessExpiresAt && !isAdminUser);
 const formattedAccessDate = formatAccessDate(accessExpiresAt);
+
+const backupLinked = Astro.url.searchParams.get('backup') === 'linked';
+const backupError = Astro.url.searchParams.get('backup_error');
+let backupBannerMessage = '';
+let backupBannerSuccess = false;
+if (backupLinked) {
+  backupBannerMessage = 'Backup Google account linked.';
+  backupBannerSuccess = true;
+} else if (backupError) {
+  backupBannerSuccess = false;
+  if (backupError === 'unverified') {
+    backupBannerMessage = 'Google reports that email as unverified.';
+  } else if (backupError === 'same_as_primary') {
+    backupBannerMessage = 'Pick a different Google account from your main one.';
+  } else if (backupError === 'has_account') {
+    backupBannerMessage = 'That Google account already has its own BitsNotes account. Delete that account first, then try again.';
+  } else if (backupError === 'already_backup' || backupError === 'identity_taken') {
+    backupBannerMessage = 'That Google account is already linked to another BitsNotes account.';
+  } else if (backupError === 'already_set') {
+    backupBannerMessage = 'A backup account is already linked.';
+  } else {
+    backupBannerMessage = 'Could not link the backup account. Please try again.';
+  }
+}
 ---
 
 <BaseLayout
@@ -43,6 +67,19 @@ const formattedAccessDate = formatAccessDate(accessExpiresAt);
     <p class="text-sm text-[var(--text-muted)] mb-8">
       Signed in as <span class="font-medium text-[var(--text)]">{user.email}</span>
     </p>
+
+    {backupBannerMessage && (
+      <div
+        class={`p-3 text-sm rounded-[var(--r-sm)] border mb-6 ${
+          backupBannerSuccess
+            ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-800 dark:text-emerald-200'
+            : 'bg-rose-500/10 border-rose-500/30 text-rose-800 dark:text-rose-200'
+        }`}
+        role="status"
+      >
+        {backupBannerMessage}
+      </div>
+    )}
 
     {isAdminUser && (
       <a
@@ -131,25 +168,15 @@ const formattedAccessDate = formatAccessDate(accessExpiresAt);
       ) : backupEligible ? (
         <div class="space-y-3">
           <p class="text-sm text-[var(--text-muted)] leading-relaxed">
-            If your college email stops working, you can sign in to this same account with a Google account using your backup email.
+            If your college email stops working, you can sign in to this same account with your backup Google account. Linking is one-time and cannot be changed.
           </p>
-          <div class="p-3 text-xs rounded-[var(--r-sm)] bg-amber-500/10 border border-amber-500/30 text-amber-900 dark:text-amber-200">
-            <strong>One-time setup:</strong> Once added, your backup email <em>cannot be changed or removed</em>. Please make sure it is typed correctly.
-          </div>
-          <div class="flex flex-col sm:flex-row gap-2">
-            <input
-              type="email"
-              id="backup-email-input"
-              placeholder="you@example.com"
-              autocomplete="email"
-              class="flex-1 px-3 py-2 text-sm rounded-[var(--r-sm)] border border-[var(--border)] bg-[var(--bg)] text-[var(--text)]"
-            />
+          <div>
             <button
               type="button"
-              id="backup-email-save"
+              id="backup-link-btn"
               class="px-4 py-2 text-sm font-semibold rounded-[var(--r-sm)] border border-[var(--accent)] text-[var(--accent)] hover:bg-[var(--bg-subtle)] transition-colors cursor-pointer disabled:cursor-not-allowed disabled:border-[var(--border)] disabled:text-[var(--text-muted)]"
             >
-              Save
+              Link backup Google account
             </button>
           </div>
           <p id="backup-email-status" class="text-sm text-[var(--text-muted)] hidden" role="status"></p>
@@ -172,7 +199,7 @@ const formattedAccessDate = formatAccessDate(accessExpiresAt);
               disabled
               class="px-4 py-2 text-sm font-semibold rounded-[var(--r-sm)] border border-[var(--border)] text-[var(--text-muted)] disabled:cursor-not-allowed"
             >
-              Save
+              Link backup Google account
             </button>
           </div>
         </div>
@@ -200,47 +227,45 @@ const formattedAccessDate = formatAccessDate(accessExpiresAt);
 
 <script is:inline>
   (function () {
-    var save = document.getElementById('backup-email-save');
-    var input = document.getElementById('backup-email-input');
-    var msg = document.getElementById('backup-email-status');
-    function show(t) { if (msg) { msg.classList.remove('hidden'); msg.textContent = t; } }
-    function call(method, body) {
-      return fetch('/api/auth/backup-email', {
-        method: method,
-        headers: { 'Content-Type': 'application/json' },
-        credentials: 'same-origin',
-        body: body ? JSON.stringify(body) : undefined,
-      }).then(function (r) { return r.json().then(function (d) { return { ok: r.ok, data: d }; }); });
-    }
-    if (save && input) {
-      save.addEventListener('click', function () {
-        if (save.disabled) return;
-        var emailVal = (input.value || '').trim();
-        if (!emailVal) {
-          show('Please enter a valid backup email address.');
-          return;
-        }
+    var linkBtn = document.getElementById('backup-link-btn');
+    var status = document.getElementById('backup-email-status');
+    function show(t) { if (status) { status.classList.remove('hidden'); status.textContent = t; } }
+    if (linkBtn) {
+      linkBtn.addEventListener('click', function () {
+        if (linkBtn.disabled) return;
         var confirmed = window.confirm(
-          'Are you sure you want to set "' + emailVal + '" as your backup email?\\n\\nImportant: This can only be set ONCE and cannot be changed or removed later.'
+          'Are you sure you want to link a backup Google account?\\n\\nImportant: Linking is one-time and cannot be changed or removed later.'
         );
         if (!confirmed) return;
 
-        save.disabled = true;
-        save.textContent = 'Saving…';
-        call('POST', { email: emailVal }).then(function (res) {
-          if (res.ok) {
-            show('Backup email saved successfully.');
-            setTimeout(function () { location.reload(); }, 800);
-          } else {
-            save.disabled = false;
-            save.textContent = 'Save';
-            show((res.data && res.data.error) || 'Could not save backup email.');
-          }
-        }).catch(function () {
-          save.disabled = false;
-          save.textContent = 'Save';
-          show('Network error. Please try again.');
-        });
+        linkBtn.disabled = true;
+        linkBtn.textContent = 'Redirecting to Google…';
+
+        fetch('/api/auth/link-backup', {
+          method: 'POST',
+          credentials: 'same-origin',
+          headers: { 'Content-Type': 'application/json' },
+          body: '{}',
+        })
+          .then(function (res) {
+            return res.json().then(function (data) {
+              return { ok: res.ok, data: data };
+            });
+          })
+          .then(function (result) {
+            if (result.ok && result.data && result.data.url) {
+              window.location.href = result.data.url;
+            } else {
+              linkBtn.disabled = false;
+              linkBtn.textContent = 'Link backup Google account';
+              show((result.data && result.data.error) || 'Could not initiate Google link.');
+            }
+          })
+          .catch(function () {
+            linkBtn.disabled = false;
+            linkBtn.textContent = 'Link backup Google account';
+            show('Network error. Please try again.');
+          });
       });
     }
   })();

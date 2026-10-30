@@ -576,12 +576,6 @@ for (const subjectName of subjectFolders) {
       if (Array.isArray(metadata.sections)) {
         for (const sec of metadata.sections) {
           if (sec.title) parts.push(sec.title);
-          if (sec.description) parts.push(sec.description.slice(0, 160));
-        }
-      }
-      if (Array.isArray(metadata.examRevisionNotes)) {
-        for (const note of metadata.examRevisionNotes) {
-          if (typeof note === 'string') parts.push(note.slice(0, 160));
         }
       }
     }
@@ -590,6 +584,7 @@ for (const subjectName of subjectFolders) {
     const title = catalogEntry.displayTitle || defaultDisplayName;
     searchIndex.push({
       type: 'note',
+      indexVersion: 2,
       title,
       subject: subjectName,
       folderName: lectureFolder,

@@ -2,16 +2,14 @@
  * POST /api/comments/[id]/vote
  * Reddit-style up/down vote. Toggling the same direction removes the vote.
  * Body: { value: 1 | -1 }
- * Identity: signed-in user id, else hashed visitor cookie (anon).
+ * Identity: signed-in user id (u:<userId>).
  */
 
 import type { APIRoute } from 'astro';
-import { getEnv, json, badRequest, tooMany, serverError } from '../../../../lib/apiHelpers';
+import { getEnv, json, badRequest, tooMany, serverError, unauthorized, getUser } from '../../../../lib/apiHelpers';
 import { validateOrigin, csrfForbidden } from '../../../../lib/auth/csrf';
 import { getClientIp } from '../../../../lib/apiHelpers';
 import { voteComment } from '../../../../lib/comments';
-import { getVisitorId, hashVisitor } from '../../../../lib/visitor';
-import { getUser } from '../../../../lib/apiHelpers';
 
 export const prerender = false;
 
@@ -20,6 +18,11 @@ export const POST: APIRoute = async (context) => {
 
   if (!validateOrigin(context.request, env.APP_BASE_URL)) {
     return csrfForbidden();
+  }
+
+  const user = getUser(context);
+  if (!user) {
+    return unauthorized('Sign in to vote.');
   }
 
   const id = context.params.id;
@@ -44,19 +47,7 @@ export const POST: APIRoute = async (context) => {
     if (!success) return tooMany('Too many requests. Please try again later.');
   }
 
-  // Voter identity: signed-in user id, else hashed visitor cookie.
-  const user = getUser(context);
-  let voterHash: string;
-  if (user) {
-    voterHash = `u:${user.id}`;
-  } else {
-    const secret = (env as any).SESSION_SIGNING_KEY;
-    if (!secret) return serverError('Server misconfigured');
-    const visitorId = getVisitorId(context.request);
-    voterHash = visitorId
-      ? 'v:' + (await hashVisitor(visitorId, secret))
-      : `anon:${getClientIp(context.request)}`;
-  }
+  const voterHash = `u:${user.id}`;
 
   try {
     const result = await voteComment(env.DB, id, voterHash, value as 1 | -1);

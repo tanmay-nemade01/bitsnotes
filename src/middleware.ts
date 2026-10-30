@@ -99,6 +99,9 @@ export const onRequest = defineMiddleware(async (context, next) => {
           let claims = null;
           if (sessionToken) {
             claims = await sessionMod.verifyJwt(sessionToken, signingKey);
+            if (claims && (await sessionMod.isAccessTokenRevoked(db, claims.rt))) {
+              claims = null;
+            }
           }
 
           if (claims) {

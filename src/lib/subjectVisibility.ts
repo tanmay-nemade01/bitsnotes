@@ -12,6 +12,9 @@
  */
 
 import type { AuthDb } from './auth/db';
+import { sha256Hex } from './auth/crypto';
+
+export class SubjectVisibilityUnavailableError extends Error {}
 
 export interface SubjectSettingRow {
   subject_name: string;
@@ -46,11 +49,16 @@ export function invalidateSubjectVisibilityCache(): void {
 
 /**
  * Returns a Set of canonical subject names that are hidden (is_public = 0).
- * Safe against missing DB or missing table (returns empty Set on failure).
+ * Safe against missing DB or missing table.
  * Results are cached in worker memory for 60 seconds per isolate.
  */
 export async function getHiddenSubjectNames(db?: AuthDb | null): Promise<Set<string>> {
-  if (!db) return new Set();
+  if (!db) {
+    if (import.meta.env.DEV || (import.meta.env as any).MODE === 'test') {
+      return new Set();
+    }
+    throw new SubjectVisibilityUnavailableError('Database connection unavailable for subject visibility check');
+  }
 
   const now = Date.now();
   if (cachedHiddenSubjectNames && now < cachedHiddenSubjectNames.expiresAt) {
@@ -71,9 +79,20 @@ export async function getHiddenSubjectNames(db?: AuthDb | null): Promise<Set<str
     cachedHiddenSubjectNames = { data: hiddenSet, expiresAt: now + CACHE_TTL_MS };
     return hiddenSet;
   } catch (err: any) {
-    // Graceful fallback if table doesn't exist yet in older isolates or migrations
-    return new Set();
+    if (cachedHiddenSubjectNames) {
+      return cachedHiddenSubjectNames.data;
+    }
+    throw new SubjectVisibilityUnavailableError(`Subject visibility unavailable: ${err?.message || 'query failed'}`);
   }
+}
+
+/**
+ * Computes a 16-character hex fingerprint of the sorted hidden subjects set.
+ */
+export async function computeHiddenFingerprint(hiddenSubjects: Set<string> | string[]): Promise<string> {
+  const sorted = [...hiddenSubjects].sort().join('|');
+  const hash = await sha256Hex(sorted);
+  return hash.slice(0, 16);
 }
 
 /**
@@ -82,7 +101,7 @@ export async function getHiddenSubjectNames(db?: AuthDb | null): Promise<Set<str
  */
 export async function isSubjectPublic(
   db: AuthDb | null | undefined,
-  subjectName: string
+  subjectName: string,
 ): Promise<boolean> {
   if (!db || !subjectName) return true;
 
@@ -132,7 +151,7 @@ export async function setSubjectVisibility(
   db: AuthDb,
   subjectName: string,
   isPublic: boolean,
-  adminUserId?: string
+  adminUserId?: string,
 ): Promise<{ subjectName: string; isPublic: boolean }> {
   const canonical = normalizeSubjectName(subjectName);
   if (!canonical) {
@@ -150,7 +169,7 @@ export async function setSubjectVisibility(
        ON CONFLICT(subject_name) DO UPDATE SET
          is_public = excluded.is_public,
          updated_at = excluded.updated_at,
-         updated_by = excluded.updated_by`
+         updated_by = excluded.updated_by`,
     )
     .bind(canonical, publicVal, now, userId)
     .run();

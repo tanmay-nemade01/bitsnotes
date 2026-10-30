@@ -36,13 +36,17 @@ export interface ChatbotUsageInfo {
  * If users.chatbot_limit is NULL, returns DEFAULT_MONTHLY_LIMIT (20).
  */
 export async function getUserChatbotLimit(db: AuthDb, userId: string): Promise<number> {
-  const row = await db
-    .prepare('SELECT chatbot_limit FROM users WHERE id = ?')
-    .bind(userId)
-    .first<{ chatbot_limit: number | null }>();
+  try {
+    const row = await db
+      .prepare('SELECT chatbot_limit FROM users WHERE id = ?')
+      .bind(userId)
+      .first<{ chatbot_limit: number | null }>();
 
-  if (row && row.chatbot_limit !== null && row.chatbot_limit !== undefined) {
-    return Math.max(0, Number(row.chatbot_limit));
+    if (row && row.chatbot_limit !== null && row.chatbot_limit !== undefined) {
+      return Math.max(0, Number(row.chatbot_limit));
+    }
+  } catch {
+    // Column may not be migrated yet on older/unmigrated databases
   }
   return DEFAULT_MONTHLY_LIMIT;
 }

@@ -343,6 +343,14 @@ export async function reportComment(
   reporterHash: string,
   reason: string,
 ): Promise<{ ok: boolean; alreadyReported?: boolean; hidden?: boolean }> {
+  const comment = await db.prepare('SELECT author_user_id, status FROM comments WHERE id = ?')
+    .bind(commentId)
+    .first<{ author_user_id: string | null; status: string }>();
+
+  if (!comment || comment.status === 'deleted') {
+    return { ok: false };
+  }
+
   const existing = await db.prepare(
     'SELECT id FROM comment_reports WHERE comment_id = ? AND reporter_hash = ?',
   )
@@ -364,7 +372,8 @@ export async function reportComment(
     .bind(now, commentId)
     .first<{ report_count: number }>();
 
-  const hidden = (res?.report_count ?? 0) >= 3;
+  const isAuthorAdmin = comment.author_user_id ? await isAdmin(db, comment.author_user_id) : false;
+  const hidden = (res?.report_count ?? 0) >= 3 && !isAuthorAdmin;
   if (hidden) {
     await db.prepare(
       "UPDATE comments SET status = 'hidden', moderation_reason = 'auto-hidden: reports >= 3', updated_at = ? WHERE id = ?",

@@ -7,6 +7,7 @@
 import type { APIRoute } from 'astro';
 import { getEnv, json, unauthorized, forbidden, badRequest } from '../../../../lib/apiHelpers';
 import { getUser } from '../../../../lib/apiHelpers';
+import { validateOrigin, csrfForbidden } from '../../../../lib/auth/csrf';
 import { isAdmin, setCommentStatus, getCommentById } from '../../../../lib/comments';
 import { logAuthEvent } from '../../../../lib/auth';
 
@@ -24,6 +25,10 @@ export const POST: APIRoute = async (context) => {
   const user = getUser(context);
   if (!user) return unauthorized();
   if (!(await isAdmin(env.DB, user.id))) return forbidden();
+
+  if (!validateOrigin(context.request, env.APP_BASE_URL)) {
+    return csrfForbidden();
+  }
 
   const id = context.params.id;
   if (!id) return badRequest('Missing comment id');

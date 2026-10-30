@@ -15,7 +15,7 @@ import UsefulnessFeedback from '../../components/UsefulnessFeedback.astro';
 import ChatbotPanel from '../../components/ChatbotPanel.astro';
 import { getUser, getEnv } from '../../lib/apiHelpers';
 import { isVerifiedSearchBot } from '../../lib/searchBots';
-import { getHiddenSubjectNames } from '../../lib/subjectVisibility';
+import { getHiddenSubjectNames, SubjectVisibilityUnavailableError } from '../../lib/subjectVisibility';
 import { formatAccessDate } from '../../lib/auth/access';
 
 export const prerender = false;
@@ -47,7 +47,20 @@ if (!matchedSubject) {
 
 // Check visibility: hidden subjects and all their lectures are completely invisible to non-admins
 const env = await getEnv(Astro).catch(() => null);
-const hiddenSubjects = await getHiddenSubjectNames(env?.DB);
+let hiddenSubjects: Set<string>;
+try {
+  hiddenSubjects = await getHiddenSubjectNames(env?.DB);
+} catch (err) {
+  if (err instanceof SubjectVisibilityUnavailableError) {
+    if (isAdmin) {
+      hiddenSubjects = new Set();
+    } else {
+      return new Response('Temporarily unavailable', { status: 503, headers: { 'Cache-Control': 'no-store' } });
+    }
+  } else {
+    throw err;
+  }
+}
 const isHidden = hiddenSubjects.has(matchedSubject.name);
 
 if (isHidden && !isAdmin) {

@@ -6,15 +6,26 @@
 import type { APIRoute } from 'astro';
 import { getEnv, badRequest, serverError, getClientIp, normalizeEmail } from '../../../../lib/apiHelpers';
 import {
-  findIdentity, findUserByEmail, createUser, createIdentity, verifyUserEmail,
-  storeVerificationToken, signJwt, createRefreshToken,
-  setSessionCookie, setRefreshCookie, clearOAuthStateCookie,
-  logAuthEvent, sha256Hex, generateToken, hmacVerify,
+  findIdentity,
+  findUserByEmail,
+  createUser,
+  createIdentity,
+  verifyUserEmail,
+  signJwt,
+  createRefreshToken,
+  setSessionCookie,
+  setRefreshCookie,
+  clearOAuthStateCookie,
+  logAuthEvent,
+  hmacVerify,
   getEntitlement,
   findUserByBackupEmail,
+  decodeOAuthState,
+  safeRedirectPath,
   type OAuthProfile,
 } from '../../../../lib/auth';
-import { sendVerificationEmail } from '../../../../lib/auth/email';
+import { resetUnverifiedAccountLinks } from '../../../../lib/auth/db';
+import { handleBackupLink } from '../../../../lib/auth/backupLink';
 
 export const prerender = false;
 
@@ -34,33 +45,31 @@ export const GET: APIRoute = async (context) => {
 
   // Verify state — cookie is signed: base64(payload).base64url(hmac)
   const cookieHeader = request.headers.get('Cookie');
-  const stateCookie = cookieHeader?.match(/__oauth_state=([^;]+)/)?.[1];
+  const stateCookie = cookieHeader?.match(/(?:^|;\s*)__oauth_state=([^;]+)/)?.[1];
   if (!stateCookie) {
     return badRequest('Missing state cookie — please try signing in again.');
   }
 
-  const dotIdx = stateCookie.lastIndexOf('.');
-  if (dotIdx === -1) {
-    return badRequest('Invalid state cookie format');
-  }
-
-  const payloadB64 = stateCookie.slice(0, dotIdx);
-  const sig = stateCookie.slice(dotIdx + 1);
-
-  let stateData: { state: string; codeVerifier: string; provider: string; redirect: string | null };
-  try {
-    // Verify HMAC signature before trusting the payload
-    const valid = await hmacVerify(env.SESSION_SIGNING_KEY, payloadB64, sig);
-    if (!valid) {
-      const loggingDb = env.DB;
-      if (loggingDb) {
-        await logAuthEvent(loggingDb, { event: 'state_cookie_tampered', ip, ua: request.headers.get('User-Agent') || '' });
+  const stateData = await decodeOAuthState(stateCookie, env.SESSION_SIGNING_KEY);
+  if (!stateData) {
+    const dotIdx = stateCookie.lastIndexOf('.');
+    if (dotIdx !== -1) {
+      const payloadB64 = stateCookie.slice(0, dotIdx);
+      const sig = stateCookie.slice(dotIdx + 1);
+      const valid = await hmacVerify(env.SESSION_SIGNING_KEY, payloadB64, sig);
+      if (!valid) {
+        const loggingDb = env.DB;
+        if (loggingDb) {
+          await logAuthEvent(loggingDb, {
+            event: 'state_cookie_tampered',
+            ip,
+            ua: request.headers.get('User-Agent') || '',
+          });
+        }
+        return badRequest('State cookie tampered — please try signing in again.');
       }
-      return badRequest('State cookie tampered — please try signing in again.');
     }
-    stateData = JSON.parse(atob(payloadB64));
-  } catch {
-    return badRequest('Invalid state cookie');
+    return badRequest('State cookie invalid or expired — please try signing in again.');
   }
 
   const code = url.searchParams.get('code');
@@ -73,7 +82,11 @@ export const GET: APIRoute = async (context) => {
   if (returnedState !== stateData.state) {
     const loggingDb = env.DB;
     if (loggingDb) {
-      await logAuthEvent(loggingDb, { event: 'state_mismatch', ip, ua: request.headers.get('User-Agent') || '' });
+      await logAuthEvent(loggingDb, {
+        event: 'state_mismatch',
+        ip,
+        ua: request.headers.get('User-Agent') || '',
+      });
     }
     return badRequest('State mismatch — possible CSRF attack. Please try again.');
   }
@@ -105,122 +118,96 @@ export const GET: APIRoute = async (context) => {
   }
 
   const db = env.DB;
+
+  // Handle backup account linking
+  if (stateData.intent === 'link_backup') {
+    return handleBackupLink({ db, env, request, profile, stateData, ip });
+  }
+
+  // Login flow
   const normalizedEmail = normalizeEmail(profile.email);
 
-  // Upsert user + identity
-  let user: { id: string; status: string; email: string };
-  let isNewUser = false;
-
-  // Check if this email is a verified BACKUP email of an existing account
-  const backupOwner = await findUserByBackupEmail(db, normalizedEmail);
-
   const existingIdentity = await findIdentity(db, provider, profile.providerUid);
+  let user: { id: string; status: string; email: string };
 
-  if (backupOwner) {
-    if (!profile.emailVerified) {
-      return badRequest(`Please verify your email address on ${provider} before signing in.`);
-    }
-
-    // Merge any existing account that had this backup email as primary into backupOwner
-    const existingUser = await findUserByEmail(db, normalizedEmail);
-    if (existingUser && existingUser.id !== backupOwner.id) {
-      try {
-        await db.prepare('UPDATE OR IGNORE bookmarks SET user_id = ? WHERE user_id = ?').bind(backupOwner.id, existingUser.id).run();
-        await db.prepare('UPDATE OR IGNORE reading_progress SET user_id = ? WHERE user_id = ?').bind(backupOwner.id, existingUser.id).run();
-        await db.prepare('UPDATE OR IGNORE topic_progress SET user_id = ? WHERE user_id = ?').bind(backupOwner.id, existingUser.id).run();
-        await db.prepare('UPDATE OR IGNORE bit_reactions SET user_id = ? WHERE user_id = ?').bind(backupOwner.id, existingUser.id).run();
-        await db.prepare("UPDATE users SET status = 'deleted', email = ? WHERE id = ?")
-          .bind(`merged-${existingUser.id}@deleted.local`, existingUser.id).run();
-      } catch (err) {
-        console.error('Error merging existing user into backup owner:', err);
-      }
-    }
-
-    if (existingIdentity) {
-      if (existingIdentity.user_id !== backupOwner.id) {
-        await db.prepare('UPDATE identities SET user_id = ? WHERE id = ?')
-          .bind(backupOwner.id, existingIdentity.id)
-          .run();
-      }
-    } else {
-      await createIdentity(db, backupOwner.id, provider, profile.providerUid);
-    }
-
-    user = backupOwner;
-    await logAuthEvent(db, { userId: backupOwner.id, event: 'backup_email_login', provider, ip, ua: request.headers.get('User-Agent') || '' });
-  } else if (existingIdentity) {
-    // Existing user — find by id
+  if (existingIdentity) {
     const { findUserById } = await import('../../../../lib/auth/db');
     const existing = await findUserById(db, existingIdentity.user_id);
     if (!existing) {
       return badRequest('User account not found');
     }
     user = existing;
+    if (user.status === 'pending') {
+      if (profile.emailVerified && normalizedEmail === user.email) {
+        await verifyUserEmail(db, user.id);
+        user.status = 'active';
+      } else {
+        const response = new Response(null, {
+          status: 302,
+          headers: {
+            Location: '/auth/verify-email?pending=1',
+            'Cache-Control': 'no-store',
+          },
+        });
+        clearOAuthStateCookie(response.headers, request);
+        return response;
+      }
+    }
   } else {
-    // Check if email already exists (different provider)
-    const existingUser = await findUserByEmail(db, normalizedEmail);
-    if (existingUser) {
-      // Link new provider identity to the existing user
-      await createIdentity(db, existingUser.id, provider, profile.providerUid);
-      user = existingUser;
-    } else {
-      // Brand new user
-      const newUser = await createUser(db, {
-        email: normalizedEmail,
-        displayName: profile.displayName,
-        avatarUrl: profile.avatarUrl,
-      });
-      await createIdentity(db, newUser.id, provider, profile.providerUid);
-      user = newUser;
-      isNewUser = true;
-    }
-  }
-
-  // Handle email verification
-  if (isNewUser && !profile.emailVerified) {
-    // Send our own verification email
-    const token = generateToken(32);
-    const tokenHash = await sha256Hex(token);
-    await storeVerificationToken(db, user.id, tokenHash, 'signup', Date.now() + 24 * 60 * 60 * 1000);
-
-    try {
-      await sendVerificationEmail(env.SEND_EMAIL, normalizedEmail, token, env.APP_BASE_URL);
-    } catch (err) {
-      console.error('Failed to send verification email:', err);
-      // Don't block signup — they can resend later
-    }
-
-    await logAuthEvent(db, { userId: user.id, event: 'signup', provider, ip, ua: request.headers.get('User-Agent') || '' });
-
-    // Redirect to "check your email" page
-    const response = new Response(null, {
-      status: 302,
-      headers: {
-        Location: '/auth/verify-email?pending=1',
-        ...getRedirectHeaders(),
-      },
-    });
-    clearOAuthStateCookie(response.headers, request);
-    return response;
-  }
-
-  // User is verified (or provider said email is verified) — check status
-  if (user.status === 'pending') {
-    // Provider said verified but our DB still says pending — activate them
-    if (profile.emailVerified) {
-      await verifyUserEmail(db, user.id);
-      user.status = 'active';
-    } else {
-      // Can't sign in without verification
+    if (!profile.emailVerified) {
       const response = new Response(null, {
         status: 302,
         headers: {
           Location: '/auth/verify-email?pending=1',
-          ...getRedirectHeaders(),
+          'Cache-Control': 'no-store',
         },
       });
       clearOAuthStateCookie(response.headers, request);
       return response;
+    }
+
+    const backupOwner = await findUserByBackupEmail(db, normalizedEmail);
+    if (backupOwner && backupOwner.status === 'active') {
+      await createIdentity(db, backupOwner.id, provider, profile.providerUid);
+      user = backupOwner;
+      await logAuthEvent(db, {
+        userId: backupOwner.id,
+        event: 'backup_email_login',
+        provider,
+        ip,
+        ua: request.headers.get('User-Agent') || '',
+      });
+    } else {
+      const existing = await findUserByEmail(db, normalizedEmail);
+      if (existing) {
+        if (existing.status === 'pending') {
+          await resetUnverifiedAccountLinks(db, existing.id);
+          await verifyUserEmail(db, existing.id);
+          existing.status = 'active';
+          await createIdentity(db, existing.id, provider, profile.providerUid);
+          user = existing;
+        } else {
+          await createIdentity(db, existing.id, provider, profile.providerUid);
+          user = existing;
+        }
+      } else {
+        const newUser = await createUser(db, {
+          email: normalizedEmail,
+          displayName: profile.displayName,
+          avatarUrl: profile.avatarUrl,
+        });
+        await createIdentity(db, newUser.id, provider, profile.providerUid);
+        await verifyUserEmail(db, newUser.id);
+        newUser.status = 'active';
+        user = newUser;
+        await logAuthEvent(db, {
+          userId: user.id,
+          event: 'signup',
+          provider,
+          ip,
+          ua: request.headers.get('User-Agent') || '',
+        });
+      }
     }
   }
 
@@ -238,10 +225,16 @@ export const GET: APIRoute = async (context) => {
     env.SESSION_SIGNING_KEY,
   );
 
-  await logAuthEvent(db, { userId: user.id, event: 'login', provider, ip, ua: request.headers.get('User-Agent') || '' });
+  await logAuthEvent(db, {
+    userId: user.id,
+    event: 'login',
+    provider,
+    ip,
+    ua: request.headers.get('User-Agent') || '',
+  });
 
   // Redirect with session cookies
-  const postAuthRedirect = stateData.redirect || '/';
+  const postAuthRedirect = safeRedirectPath(stateData.redirect, env.APP_BASE_URL) ?? '/';
   const headers = new Headers({
     Location: postAuthRedirect,
     'Cache-Control': 'no-store',
@@ -252,7 +245,3 @@ export const GET: APIRoute = async (context) => {
 
   return new Response(null, { status: 302, headers });
 };
-
-function getRedirectHeaders(): Record<string, string> {
-  return { 'Cache-Control': 'no-store' };
-}

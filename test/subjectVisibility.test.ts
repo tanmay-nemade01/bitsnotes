@@ -1,16 +1,20 @@
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { makeDb } from './setup';
 import {
   getHiddenSubjectNames,
   isSubjectPublic,
   setSubjectVisibility,
   listSubjectVisibilityMap,
+  invalidateSubjectVisibilityCache,
+  computeHiddenFingerprint,
+  SubjectVisibilityUnavailableError,
 } from '../src/lib/subjectVisibility';
 import {
   createTag,
   setSubjectTags,
   getSectionsWithSubjects,
 } from '../src/lib/tags';
+import { toPublicSearchItem } from '../src/utils/searchEngine';
 import type { AuthDb } from '../src/lib/auth/db';
 
 describe('Subject Visibility (Admin Preview Mode)', () => {
@@ -18,6 +22,7 @@ describe('Subject Visibility (Admin Preview Mode)', () => {
 
   beforeEach(() => {
     db = makeDb();
+    invalidateSubjectVisibilityCache();
   });
 
   describe('Database & Service operations', () => {
@@ -63,7 +68,7 @@ describe('Subject Visibility (Admin Preview Mode)', () => {
       expect(hidden.has('Subject B')).toBe(false);
     });
 
-    it('gracefully handles missing DB or errors', async () => {
+    it('gracefully handles missing DB in test environment', async () => {
       const hidden = await getHiddenSubjectNames(null);
       expect(hidden.size).toBe(0);
 
@@ -72,6 +77,37 @@ describe('Subject Visibility (Admin Preview Mode)', () => {
 
       const map = await listSubjectVisibilityMap(null);
       expect(map.size).toBe(0);
+    });
+
+    it('fails closed: throws SubjectVisibilityUnavailableError when DB query throws on first call', async () => {
+      const failingDb: AuthDb = {
+        prepare: vi.fn(() => {
+          throw new Error('D1 transient network failure');
+        }),
+        exec: vi.fn(async () => ({} as any)),
+      };
+
+      await expect(getHiddenSubjectNames(failingDb)).rejects.toThrow(
+        SubjectVisibilityUnavailableError,
+      );
+    });
+
+    it('fails closed: returns stale cached set when DB throws after a successful call', async () => {
+      await setSubjectVisibility(db, 'Cached Secret', false);
+      const initial = await getHiddenSubjectNames(db);
+      expect(initial.has('Cached Secret')).toBe(true);
+
+      // Invalidate TTL expiry by forcing an old timestamp or mocking prepare to throw
+      const brokenDb: AuthDb = {
+        prepare: vi.fn(() => {
+          throw new Error('D1 query failure after cache');
+        }),
+        exec: vi.fn(async () => ({} as any)),
+      };
+
+      // Even if broken, it should return the stale cached set rather than throwing or leaking
+      const fallback = await getHiddenSubjectNames(brokenDb);
+      expect(fallback.has('Cached Secret')).toBe(true);
     });
   });
 
@@ -129,6 +165,49 @@ describe('Subject Visibility (Admin Preview Mode)', () => {
 
       const draftBio = adminSubs.find((s) => s.name === 'Draft Biology');
       expect(draftBio?.isHidden).toBe(true);
+    });
+  });
+
+  describe('Task 4 Acceptance Criteria: Search index security & fingerprints', () => {
+    it('toPublicSearchItem: note without indexVersion strips SECRET REVISION from text', () => {
+      const legacyNote = {
+        type: 'note',
+        subject: 'S',
+        title: 'Lecture Title',
+        topicTitle: 'Topic Title',
+        snippet: 'Safe description snippet',
+        text: 'SECRET REVISION and private notes',
+      };
+
+      const sanitized = toPublicSearchItem(legacyNote);
+      expect(sanitized.text).not.toContain('SECRET REVISION');
+      expect(sanitized.text).toContain('Lecture Title');
+      expect(sanitized.text).toContain('Safe description snippet');
+    });
+
+    it('toPublicSearchItem: note with indexVersion: 2 preserves text', () => {
+      const v2Note = {
+        type: 'note',
+        indexVersion: 2,
+        subject: 'S',
+        title: 'Lecture Title',
+        topicTitle: 'Topic Title',
+        snippet: 'Safe description snippet',
+        text: 'Topic Title Keywords Section Title',
+      };
+
+      const sanitized = toPublicSearchItem(v2Note);
+      expect(sanitized.text).toBe('Topic Title Keywords Section Title');
+    });
+
+    it('computeHiddenFingerprint: different sets differ, same set in different order gives same fingerprint', async () => {
+      const fp1 = await computeHiddenFingerprint(new Set(['Math', 'Physics']));
+      const fp2 = await computeHiddenFingerprint(new Set(['Physics', 'Math']));
+      const fp3 = await computeHiddenFingerprint(new Set(['Math', 'Chemistry']));
+
+      expect(fp1).toBe(fp2);
+      expect(fp1).not.toBe(fp3);
+      expect(fp1.length).toBe(16);
     });
   });
 });

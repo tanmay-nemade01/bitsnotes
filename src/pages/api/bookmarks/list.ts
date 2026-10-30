@@ -6,7 +6,7 @@
 import type { APIRoute } from 'astro';
 import { getEnv, json, getUser } from '../../../lib/apiHelpers';
 import { listCollections, listBookmarks } from '../../../lib/bookmarks';
-import { getHiddenSubjectNames } from '../../../lib/subjectVisibility';
+import { getHiddenSubjectNames, SubjectVisibilityUnavailableError } from '../../../lib/subjectVisibility';
 import { listCatalog } from '../../../utils/notesLoader';
 
 export const prerender = false;
@@ -22,7 +22,21 @@ export const GET: APIRoute = async (context) => {
   const rawBookmarks = await listBookmarks(env.DB, user.id);
 
   const isAdmin = Boolean((context.locals as any).isAdmin);
-  const hiddenSubjects = await getHiddenSubjectNames(env.DB);
+  let hiddenSubjects: Set<string>;
+  try {
+    hiddenSubjects = await getHiddenSubjectNames(env.DB);
+  } catch (err) {
+    if (err instanceof SubjectVisibilityUnavailableError) {
+      if (isAdmin) {
+        hiddenSubjects = new Set();
+      } else {
+        return json({ error: 'Subject visibility unavailable' }, 503);
+      }
+    } else {
+      throw err;
+    }
+  }
+
   const bookmarks = (!isAdmin && hiddenSubjects.size > 0)
     ? rawBookmarks.filter((bm) => !hiddenSubjects.has(bm.subject))
     : rawBookmarks;
@@ -49,8 +63,17 @@ export const GET: APIRoute = async (context) => {
     grouped[bm.collection_id].push(withTitles(bm));
   }
 
-  // Flat sorted list for "recently saved" (bookmarks already sorted by created_at DESC)
-  const recentBookmarks = bookmarks.slice(0, 5).map(withTitles);
+  // Also build list of up to 5 most recent bookmarks for quick access
+  const recentBookmarks = [...bookmarks]
+    .sort((a, b) => b.created_at - a.created_at)
+    .slice(0, 5)
+    .map(withTitles);
 
-  return json({ collections, bookmarks: grouped, uncategorized, recentBookmarks });
+  return json({
+    collections,
+    bookmarks: grouped,
+    uncategorized,
+    recentBookmarks,
+    loggedIn: true,
+  });
 };

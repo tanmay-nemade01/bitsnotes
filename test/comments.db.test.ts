@@ -109,6 +109,61 @@ describe('comments data layer', () => {
     expect(res.comments).toHaveLength(0); // hidden => not listed
   });
 
+  it('never auto-hides admin-authored comments even with >= 3 reports', async () => {
+    const adminUserId = 'admin-user-123';
+    await addAdmin(db, adminUserId);
+
+    const { comment } = await createComment(db, {
+      pageType: 'lecture',
+      subject: 'NLP',
+      lecture: 'L1',
+      displayName: 'Admin User',
+      body: 'Official notice',
+      status: 'published',
+      authorUserId: adminUserId,
+    });
+
+    const r1 = await reportComment(db, comment.id, 'hash1', 'spam');
+    expect(r1.ok).toBe(true);
+    expect(r1.hidden).toBe(false);
+
+    const r2 = await reportComment(db, comment.id, 'hash2', 'spam');
+    expect(r2.ok).toBe(true);
+    expect(r2.hidden).toBe(false);
+
+    const r3 = await reportComment(db, comment.id, 'hash3', 'spam');
+    expect(r3.ok).toBe(true);
+    expect(r3.hidden).toBe(false);
+
+    const check = await db.prepare('SELECT status, report_count FROM comments WHERE id = ?')
+      .bind(comment.id)
+      .first<{ status: string; report_count: number }>();
+    expect(check?.status).toBe('published');
+    expect(check?.report_count).toBe(3);
+
+    const res = await listComments(db, { pageType: 'lecture', subject: 'NLP', lecture: 'L1' });
+    expect(res.comments).toHaveLength(1);
+    expect(res.comments[0].id).toBe(comment.id);
+  });
+
+  it('rejects reporting a deleted or non-existent comment', async () => {
+    const resNonExistent = await reportComment(db, 'non-existent-id', 'hash1', 'spam');
+    expect(resNonExistent.ok).toBe(false);
+
+    const { comment, token } = await createComment(db, {
+      pageType: 'lecture',
+      subject: 'NLP',
+      lecture: 'L1',
+      displayName: 'A',
+      body: 'to be deleted',
+      status: 'published',
+    });
+    await deleteCommentByToken(db, comment.id, token);
+
+    const resDeleted = await reportComment(db, comment.id, 'hash1', 'spam');
+    expect(resDeleted.ok).toBe(false);
+  });
+
   it('admin can filter and change status', async () => {
     const { comment } = await createComment(db, { pageType: 'lecture', subject: 'NLP', lecture: 'L1', displayName: 'A', body: 'x', status: 'pending' });
     const pending = await listAdminComments(db, 'pending');

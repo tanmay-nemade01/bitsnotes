@@ -223,6 +223,14 @@ export async function createIdentity(db: AuthDb, userId: string, provider: strin
   return { id, user_id: userId, provider, provider_uid: providerUid, created_at: now };
 }
 
+/**
+ * Drop identities and verification tokens for an unverified pending account before handing it to the verified owner.
+ */
+export async function resetUnverifiedAccountLinks(db: AuthDb, userId: string): Promise<void> {
+  await db.prepare('DELETE FROM identities WHERE user_id = ?').bind(userId).run();
+  await db.prepare('DELETE FROM verification_tokens WHERE user_id = ?').bind(userId).run();
+}
+
 // ─── Verification tokens ────────────────────────────────────────────────────
 
 /**

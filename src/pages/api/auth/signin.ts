@@ -5,9 +5,15 @@
 
 import type { APIRoute } from 'astro';
 import { getEnv, badRequest, getClientIp } from '../../../lib/apiHelpers';
-import { verifyTurnstile, generateCodeVerifier, generateCodeChallenge, hmacSign } from '../../../lib/auth';
-import { isSecure } from '../../../lib/auth/session';
-import { validateOrigin, csrfForbidden, allowedOrigins } from '../../../lib/auth/csrf';
+import {
+  verifyTurnstile,
+  generateCodeVerifier,
+  generateCodeChallenge,
+  encodeOAuthState,
+  oauthStateCookie,
+  safeRedirectPath,
+} from '../../../lib/auth';
+import { validateOrigin, csrfForbidden } from '../../../lib/auth/csrf';
 
 export const prerender = false;
 
@@ -43,19 +49,9 @@ export const POST: APIRoute = async (context) => {
     return badRequest('Invalid request body');
   }
 
-  // Validate redirect URL (must be same-origin apex or www)
+  // Validate redirect URL using safeRedirectPath
   if (redirectUrl) {
-    try {
-      const parsed = new URL(redirectUrl, env.APP_BASE_URL);
-      if (!allowedOrigins(env.APP_BASE_URL).has(parsed.origin)) {
-        redirectUrl = undefined;
-      } else {
-        // Store path+search only to avoid open-redirect edge cases
-        redirectUrl = parsed.pathname + parsed.search + parsed.hash;
-      }
-    } catch {
-      redirectUrl = undefined;
-    }
+    redirectUrl = safeRedirectPath(redirectUrl, env.APP_BASE_URL) ?? undefined;
   }
 
   if (!provider || (provider !== 'google' && provider !== 'github')) {
@@ -84,10 +80,18 @@ export const POST: APIRoute = async (context) => {
   const state = `${provider}_${crypto.randomUUID()}`;
 
   // Store state + codeVerifier + redirect in a signed cookie for callback verification.
-  const statePayload = JSON.stringify({ state, codeVerifier, provider, redirect: redirectUrl || null });
-  const payloadB64 = btoa(statePayload);
-  const stateSig = await hmacSign(env.SESSION_SIGNING_KEY, payloadB64);
-  const stateToken = `${payloadB64}.${stateSig}`;
+  const stateToken = await encodeOAuthState(
+    {
+      state,
+      codeVerifier,
+      provider,
+      redirect: redirectUrl || null,
+      intent: 'login',
+      linkUserId: null,
+      issuedAt: Date.now(),
+    },
+    env.SESSION_SIGNING_KEY,
+  );
 
   // Build redirect URL
   const baseUrl = env.APP_BASE_URL;
@@ -118,7 +122,7 @@ export const POST: APIRoute = async (context) => {
       status: 200,
       headers: {
         'Content-Type': 'application/json',
-        'Set-Cookie': `__oauth_state=${stateToken}; Path=/api/auth/callback; HttpOnly;${isSecure(request) ? ' Secure;' : ''} SameSite=Lax; Max-Age=600`,
+        'Set-Cookie': oauthStateCookie(stateToken, request),
         'Cache-Control': 'no-store',
       },
     },
