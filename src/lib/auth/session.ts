@@ -170,6 +170,7 @@ export async function isAccessTokenRevoked(db: AuthDb, rtHash: string): Promise<
 
 const SESSION_COOKIE = '__session';
 const REFRESH_COOKIE = '__rt';
+const HAS_SESSION_COOKIE = '__has_session';
 
 /**
  * Check if a request is over HTTPS.
@@ -189,7 +190,11 @@ export function setSessionCookie(headers: Headers, token: string, request?: Requ
   const sec = request ? cookieSecure(request) : ' Secure;';
   headers.append(
     'Set-Cookie',
-    `${SESSION_COOKIE}=${token}; Path=/; HttpOnly;${sec} SameSite=Strict; Max-Age=${ACCESS_TOKEN_TTL}`,
+    `${SESSION_COOKIE}=${token}; Path=/; HttpOnly;${sec} SameSite=Lax; Max-Age=${ACCESS_TOKEN_TTL}`,
+  );
+  headers.append(
+    'Set-Cookie',
+    `${HAS_SESSION_COOKIE}=1; Path=/;${sec} SameSite=Lax; Max-Age=${ACCESS_TOKEN_TTL}`,
   );
 }
 
@@ -197,18 +202,19 @@ export function setRefreshCookie(headers: Headers, token: string, request?: Requ
   const sec = request ? cookieSecure(request) : ' Secure;';
   headers.append(
     'Set-Cookie',
-    `${REFRESH_COOKIE}=${token}; Path=/; HttpOnly;${sec} SameSite=Strict; Max-Age=${REFRESH_TOKEN_TTL}`,
+    `${REFRESH_COOKIE}=${token}; Path=/; HttpOnly;${sec} SameSite=Lax; Max-Age=${REFRESH_TOKEN_TTL}`,
   );
 }
 
 export function clearSessionCookie(headers: Headers, request?: Request): void {
   const sec = request ? cookieSecure(request) : ' Secure;';
-  headers.append('Set-Cookie', `${SESSION_COOKIE}=; Path=/; HttpOnly;${sec} SameSite=Strict; Max-Age=0`);
+  headers.append('Set-Cookie', `${SESSION_COOKIE}=; Path=/; HttpOnly;${sec} SameSite=Lax; Max-Age=0`);
+  headers.append('Set-Cookie', `${HAS_SESSION_COOKIE}=; Path=/;${sec} SameSite=Lax; Max-Age=0`);
 }
 
 export function clearRefreshCookie(headers: Headers, request?: Request): void {
   const sec = request ? cookieSecure(request) : ' Secure;';
-  headers.append('Set-Cookie', `${REFRESH_COOKIE}=; Path=/; HttpOnly;${sec} SameSite=Strict; Max-Age=0`);
+  headers.append('Set-Cookie', `${REFRESH_COOKIE}=; Path=/; HttpOnly;${sec} SameSite=Lax; Max-Age=0`);
 }
 
 export function getSessionTokenFromCookie(cookieHeader: string | null): string | null {
