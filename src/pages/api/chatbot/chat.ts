@@ -2,7 +2,7 @@
  * POST /api/chatbot/chat
  * Server-side proxy for BitsNotes AI chatbot mode.
  * - Requires authenticated user (session cookie)
- * - Enforces 20 messages/day/user via D1 chatbot_usage table
+ * - Enforces monthly message limit per user via D1 chatbot_usage table (admins exempt)
  * - Augments the system prompt with up to 2 related-lecture snippets from
  *   the same subject (lean keyword retrieval, edge-cached, non-fatal) plus
  *   up to 1 per-subject textbook excerpt (opt-out via includeTextbook=false)
@@ -14,23 +14,25 @@ import type { APIRoute } from 'astro';
 import { getEnv } from '../../../lib/getEnv';
 import { getHiddenSubjectNames } from '../../../lib/subjectVisibility';
 import {
+  buildBaseSystemPrompt,
   buildCompanionBlock,
+  buildCurrentLectureBlock,
   buildRelatedBlock,
   getCompanionSnippets,
+  getCurrentLectureContext,
   getLastUserQuery,
   getRelatedSnippets,
   parseSubjectFromSystemPrompt,
+  shouldRetrieveCompanion,
+  shouldRetrieveRelated,
+  type CurrentLectureContext,
 } from '../../../lib/chatbotRetrieval';
+import { getChatbotUsage, incrementChatbotUsage } from '../../../lib/chatbotUsage';
 
 export const prerender = false;
 
-const DAILY_LIMIT = 20;
 const OPENROUTER_CHAT_URL = 'https://openrouter.ai/api/v1/chat/completions';
 const OPENROUTER_MODEL = 'openrouter/free';
-
-function utcDateString(): string {
-  return new Date().toISOString().slice(0, 10); // YYYY-MM-DD
-}
 
 function jsonResponse(body: object, status: number): Response {
   return new Response(JSON.stringify(body), {
@@ -70,26 +72,23 @@ export const POST: APIRoute = async ({ locals, request }) => {
     }
   }
 
-  // ─── Daily limit check ───────────────────────────────────────────────
-  const today = utcDateString();
-  let messageCount = 0;
-
+  // ─── Monthly limit check (admins bypass) ─────────────────────────────
+  let usageInfo;
   try {
-    const row = await db.prepare(
-      'SELECT message_count FROM chatbot_usage WHERE user_id = ? AND usage_date = ?'
-    ).bind(user.id, today).first<{ message_count: number }>();
-    messageCount = row?.message_count ?? 0;
+    usageInfo = await getChatbotUsage(db, user.id, isAdmin);
   } catch (err) {
     console.error('[chatbot/chat] Failed to read usage:', err);
     return jsonResponse({ error: 'Chatbot is under heavy use, please try again later.' }, 503);
   }
 
-  if (messageCount >= DAILY_LIMIT) {
+  if (!isAdmin && usageInfo.remaining !== null && usageInfo.remaining <= 0) {
     return jsonResponse({
-      error: `You've reached your daily limit of ${DAILY_LIMIT} messages. Come back tomorrow!`,
+      error: `You've reached your monthly limit of ${usageInfo.limit} messages. Your limit will reset on the 1st of next month!`,
       limitReached: true,
-      used: messageCount,
-      limit: DAILY_LIMIT,
+      used: usageInfo.used,
+      limit: usageInfo.limit,
+      remaining: 0,
+      unlimited: false,
     }, 429);
   }
 
@@ -111,11 +110,7 @@ export const POST: APIRoute = async ({ locals, request }) => {
     return jsonResponse({ error: 'Messages array is required.' }, 400);
   }
 
-  // ─── Lean retrieval: related lectures + textbook (both non-fatal) ────
-  // Client sends explicit subject/folder/query; fall back to parsing the
-  // system prompt + last user message for backwards compatibility.
-  // Textbook excerpts are on by default; the client toggle sends
-  // includeTextbook=false to opt out.
+  // ─── Progressive retrieval: current lecture + intent-gated auxiliary sources ────
   let subject = (body.subject || '').trim();
   let excludeFolder = (body.lectureFolder || '').trim();
   let query = (body.query || '').trim();
@@ -136,14 +131,50 @@ export const POST: APIRoute = async ({ locals, request }) => {
     }
   }
 
+  // 1. Fetch current lecture section chunks (non-fatal)
+  let lectureContext: CurrentLectureContext = {
+    text: '',
+    confidence: 0,
+    hasHighConfidenceMatch: false,
+    matchedSections: [],
+    toString() {
+      return this.text;
+    },
+  };
+  try {
+    if (subject && excludeFolder) {
+      lectureContext = await getCurrentLectureContext({
+        subject,
+        lectureFolder: excludeFolder,
+        query,
+      });
+    }
+  } catch (err) {
+    console.error('[chatbot/chat] Current lecture retrieval failed (non-fatal):', err);
+  }
+
+  // 2. Intent-gated auxiliary retrieval
+  const needRelated = shouldRetrieveRelated({
+    query,
+    hasHighConfidenceMatch: lectureContext.hasHighConfidenceMatch,
+  });
+
+  const needCompanion = shouldRetrieveCompanion({
+    query,
+    includeTextbook,
+    hasHighConfidenceMatch: lectureContext.hasHighConfidenceMatch,
+    isLectureContextSparse: !lectureContext.text || lectureContext.text.length < 400,
+  });
+
   let relatedBlock = '';
   let companionBlock = '';
   let relatedSources: Array<{ kind: string; title: string; folderName: string; slug: string }> = [];
   try {
-    // Independent fetches — run together; each degrades to [] on failure.
     const [lectureSnippets, companionSnippets] = await Promise.all([
-      getRelatedSnippets({ subject, excludeFolder, query }),
-      includeTextbook
+      needRelated && subject && excludeFolder
+        ? getRelatedSnippets({ subject, excludeFolder, query })
+        : Promise.resolve([]),
+      needCompanion && subject
         ? getCompanionSnippets({ subject, query })
         : Promise.resolve([]),
     ]);
@@ -168,24 +199,31 @@ export const POST: APIRoute = async ({ locals, request }) => {
       }
     }
   } catch (err) {
-    // Retrieval must never break chat — fall back to single-lecture context.
-    console.error('[chatbot/chat] Related-lecture retrieval failed (non-fatal):', err);
+    console.error('[chatbot/chat] Auxiliary retrieval failed (non-fatal):', err);
   }
 
-  // Inject related excerpts into a COPY of the system message only.
-  const upstreamMessages = body.messages.map((m) => ({ ...m }));
-  const extraContext = relatedBlock + companionBlock;
-  if (extraContext) {
-    const sysIdx = upstreamMessages.findIndex((m) => m?.role === 'system');
-    if (sysIdx >= 0 && typeof upstreamMessages[sysIdx].content === 'string') {
-      upstreamMessages[sysIdx] = {
-        ...upstreamMessages[sysIdx],
-        content: (upstreamMessages[sysIdx].content as string) + extraContext,
-      };
-    } else {
-      upstreamMessages.unshift({ role: 'system', content: extraContext.trim() });
-    }
-  }
+  // 3. Assemble lean tiered context block server-side
+  const baseSystemPrompt = buildBaseSystemPrompt(subject);
+  const currentLectureBlock = buildCurrentLectureBlock(subject, excludeFolder, lectureContext.text);
+
+  const fullSystemPrompt = [
+    baseSystemPrompt,
+    currentLectureBlock,
+    relatedBlock,
+    companionBlock,
+  ]
+    .filter(Boolean)
+    .join('\n\n');
+
+  // 4. Construct rolling upstream conversation turns (max 6 turns)
+  const conversationTurns = body.messages
+    .filter((m) => m && (m.role === 'user' || m.role === 'assistant') && typeof m.content === 'string')
+    .slice(-6);
+
+  const upstreamMessages = [
+    { role: 'system', content: fullSystemPrompt },
+    ...conversationTurns,
+  ];
 
   // ─── Proxy to OpenRouter ─────────────────────────────────────────────
   try {
@@ -212,27 +250,16 @@ export const POST: APIRoute = async ({ locals, request }) => {
     const data = (await orResponse.json()) as Record<string, any>;
 
     // ─── Increment usage counter on success ──────────────────────────
+    let finalUsage = usageInfo;
     try {
-      await db.prepare(
-        `INSERT INTO chatbot_usage (user_id, usage_date, message_count)
-         VALUES (?, ?, 1)
-         ON CONFLICT (user_id, usage_date)
-         DO UPDATE SET message_count = message_count + 1`
-      ).bind(user.id, today).run();
+      finalUsage = await incrementChatbotUsage(db, user.id, isAdmin);
     } catch (err) {
-      // Non-fatal: the message was already sent, just log the counting failure
       console.error('[chatbot/chat] Failed to increment usage:', err);
     }
 
-    const newCount = messageCount + 1;
-
     return jsonResponse({
       ...data,
-      _usage: {
-        used: newCount,
-        limit: DAILY_LIMIT,
-        remaining: DAILY_LIMIT - newCount,
-      },
+      _usage: finalUsage,
       _sources: relatedSources,
     }, 200);
   } catch (err) {

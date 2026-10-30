@@ -1,19 +1,29 @@
 import { describe, it, expect } from 'vitest';
 import { setTestEnv } from './cloudflare-shim';
 import {
+  buildBaseSystemPrompt,
   buildCandidateText,
   buildCompanionBlock,
+  buildCurrentLectureBlock,
   buildRelatedBlock,
   cleanHtmlToText,
   cleanPlainText,
   deriveChapterTitle,
+  extractCurrentLectureChunks,
+  getCurrentLectureContext,
   extractSnippetWindow,
   getCompanionSnippets,
   getLastUserQuery,
+  hasCrossLectureIntent,
+  hasTextbookIntent,
   MAX_CHARS_PER_COMPANION,
+  MAX_CURRENT_LECTURE_CHARS,
   parseSubjectFromSystemPrompt,
   rankCandidates,
   rankCompanionCandidates,
+  scoreSectionAgainstQuery,
+  shouldRetrieveCompanion,
+  shouldRetrieveRelated,
   TOTAL_BUDGET_CHARS,
 } from '../src/lib/chatbotRetrieval';
 
@@ -253,6 +263,223 @@ describe('chatbotRetrieval (lean cross-lecture RAG)', () => {
         ])
       ).toBe('second?');
       expect(getLastUserQuery([{ role: 'assistant', content: 'hi' }])).toBe('');
+    });
+  });
+
+  describe('section-level chunking for current lecture', () => {
+    const sampleMetadata = {
+      summary: 'An in-depth study of cyclic redundancy checks and data integrity.',
+      keyConcepts: ['CRC-32', 'Generator Polynomial', 'Parity Bit', 'Checksum'],
+      sections: [
+        {
+          title: 'Section 1: Parity Bits and Simple Checksums',
+          description: 'Basic single-bit parity checks and 16-bit internet checksum calculation.',
+        },
+        {
+          title: 'Section 2: CRC-32 Error Detection',
+          description: 'How CRC-32 divides binary bitstreams using generator polynomial 0x04C11DB7 for robust Ethernet frame verification.',
+        },
+        {
+          title: 'Section 3: Hamming Codes and Forward Error Correction',
+          description: 'Hamming distance (7,4) code matrix multiplication for single bit error correction.',
+        },
+      ],
+    };
+
+    const sampleHtml = `
+      <div id="topic-content">
+        <h1>Error Detection Techniques</h1>
+        <p>In digital networks, CRC-32 is used for detecting burst transmission errors in Ethernet frames.</p>
+        <p>Hamming codes provide single-bit error correction and double-bit error detection.</p>
+      </div>
+    `;
+
+    it('scores relevant sections higher based on query terms', () => {
+      const scoreCRC = scoreSectionAgainstQuery(sampleMetadata.sections[1], 'What is CRC-32 used for?');
+      const scoreHamming = scoreSectionAgainstQuery(sampleMetadata.sections[2], 'What is CRC-32 used for?');
+      expect(scoreCRC).toBeGreaterThan(scoreHamming);
+      expect(scoreCRC).toBeGreaterThanOrEqual(20);
+    });
+
+    it('extracts top relevant section chunks and key concepts based on query', () => {
+      const result = extractCurrentLectureChunks({
+        metadata: sampleMetadata,
+        htmlContent: sampleHtml,
+        query: 'What is CRC-32 used for?',
+      });
+
+      expect(result.text).toContain('Overview:');
+      expect(result.text).toContain('Key Concepts:');
+      expect(result.text).toContain('CRC-32');
+      expect(result.text).toContain('Section 2: CRC-32 Error Detection');
+      expect(result.matchedSections).toContain('Section 2: CRC-32 Error Detection');
+      expect(result.hasHighConfidenceMatch).toBe(true);
+      expect(result.confidence).toBeGreaterThan(0.5);
+    });
+
+    it('enforces strict 4,000 character hard cap under massive input', () => {
+      const hugeMetadata = {
+        summary: 'Massive summary '.repeat(200),
+        keyConcepts: Array.from({ length: 50 }, (_, i) => `Concept_${i}`),
+        sections: [
+          {
+            title: 'Massive Section 1',
+            description: 'Huge description '.repeat(500),
+          },
+          {
+            title: 'Massive Section 2',
+            description: 'Another huge description '.repeat(500),
+          },
+        ],
+      };
+      const hugeHtml = '<p>' + 'Very long text content with gradient descent '.repeat(1000) + '</p>';
+
+      const result = extractCurrentLectureChunks({
+        metadata: hugeMetadata,
+        htmlContent: hugeHtml,
+        query: 'gradient descent',
+      });
+
+      expect(result.text.length).toBeLessThanOrEqual(MAX_CURRENT_LECTURE_CHARS);
+      expect(result.text.endsWith('…')).toBe(true);
+    });
+
+    it('handles missing metadata and empty queries gracefully', () => {
+      const result = extractCurrentLectureChunks({
+        metadata: null,
+        htmlContent: '<p>Only html content here</p>',
+        query: '',
+      });
+      expect(result.text).toBeDefined();
+      expect(result.hasHighConfidenceMatch).toBe(false);
+    });
+
+    it('getCurrentLectureContext handles empty parameters or missing lectures non-fatally', async () => {
+      const empty1 = await getCurrentLectureContext('', '', '');
+      expect(empty1.text).toBe('');
+      expect(empty1.hasHighConfidenceMatch).toBe(false);
+
+      const empty2 = await getCurrentLectureContext({
+        subject: 'NonExistentSubject',
+        lectureFolder: 'NonExistentFolder',
+        query: 'test query',
+      });
+      expect(empty2.text).toBe('');
+      expect(empty2.hasHighConfidenceMatch).toBe(false);
+    }, 30000);
+  });
+
+  describe('intent gating for cross-lecture retrieval', () => {
+    it('skips cross-lecture retrieval for specific single-lecture questions with high confidence', () => {
+      const shouldRetrieve = shouldRetrieveRelated({
+        query: 'What is CRC-32 used for?',
+        hasHighConfidenceMatch: true,
+      });
+      expect(shouldRetrieve).toBe(false);
+    });
+
+    it('triggers cross-lecture retrieval when query includes comparative keywords (difference, compare, versus, vs)', () => {
+      const diffQuery = shouldRetrieveRelated({
+        query: 'What is the difference between CRC-32 and MD5?',
+        hasHighConfidenceMatch: true,
+      });
+      expect(diffQuery).toBe(true);
+
+      const compareQuery = shouldRetrieveRelated({
+        query: 'Compare CRC-32 versus parity checksums',
+        hasHighConfidenceMatch: true,
+      });
+      expect(compareQuery).toBe(true);
+
+      const previousQuery = shouldRetrieveRelated({
+        query: 'How does this relate to the previous lecture?',
+        hasHighConfidenceMatch: true,
+      });
+      expect(previousQuery).toBe(true);
+    });
+
+    it('triggers cross-lecture retrieval when current lecture match confidence is low', () => {
+      const shouldRetrieve = shouldRetrieveRelated({
+        query: 'Explain B-Tree node splitting',
+        hasHighConfidenceMatch: false,
+      });
+      expect(shouldRetrieve).toBe(true);
+    });
+
+    it('returns false for pure stop words or short queries', () => {
+      expect(shouldRetrieveRelated({ query: 'a', hasHighConfidenceMatch: false })).toBe(false);
+      expect(shouldRetrieveRelated({ query: 'the and or', hasHighConfidenceMatch: false })).toBe(false);
+    });
+  });
+
+  describe('intent gating for textbook companion retrieval', () => {
+    it('skips when includeTextbook is false', () => {
+      expect(
+        shouldRetrieveCompanion({
+          query: 'give mathematical proof of CRC-32',
+          includeTextbook: false,
+          hasHighConfidenceMatch: true,
+        })
+      ).toBe(false);
+    });
+
+    it('triggers when query explicitly touches textbook concepts or proofs', () => {
+      expect(
+        shouldRetrieveCompanion({
+          query: 'Provide the formal mathematical proof for this algorithm',
+          includeTextbook: true,
+          hasHighConfidenceMatch: true,
+        })
+      ).toBe(true);
+
+      expect(
+        shouldRetrieveCompanion({
+          query: 'Can you give a textbook derivation of the formula?',
+          includeTextbook: true,
+          hasHighConfidenceMatch: true,
+        })
+      ).toBe(true);
+    });
+
+    it('triggers when current lecture context is sparse or lacks direct match', () => {
+      expect(
+        shouldRetrieveCompanion({
+          query: 'What is CRC-32?',
+          includeTextbook: true,
+          hasHighConfidenceMatch: false,
+          isLectureContextSparse: true,
+        })
+      ).toBe(true);
+    });
+
+    it('skips when lecture has high confidence match and no textbook intent', () => {
+      expect(
+        shouldRetrieveCompanion({
+          query: 'What is CRC-32 used for?',
+          includeTextbook: true,
+          hasHighConfidenceMatch: true,
+          isLectureContextSparse: false,
+        })
+      ).toBe(false);
+    });
+  });
+
+  describe('lean system prompt builders', () => {
+    it('buildBaseSystemPrompt produces lean prompt under ~1500 chars with exam tips and boundaries', () => {
+      const prompt = buildBaseSystemPrompt('Data Warehousing');
+      expect(prompt).toContain('Data Warehousing');
+      expect(prompt).toContain('⚡ **Exam tip:**');
+      expect(prompt).toContain('Strict Scope');
+      expect(prompt).toContain('Formatting');
+      expect(prompt.length).toBeLessThan(1500);
+    });
+
+    it('buildCurrentLectureBlock formats lecture context as primary ground truth', () => {
+      const block = buildCurrentLectureBlock('DW', 'L6', 'Section 1 text');
+      expect(block).toContain('CURRENT LECTURE CONTEXT (Primary Ground Truth)');
+      expect(block).toContain('- Subject: "DW"');
+      expect(block).toContain('- Lecture: "L6"');
+      expect(block).toContain('Section 1 text');
     });
   });
 });

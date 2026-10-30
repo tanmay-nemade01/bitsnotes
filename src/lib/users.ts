@@ -39,6 +39,7 @@ export interface AdminUserRow {
   last_login_at: number | null;
   tags?: string | null;
   access_expires_at?: number | null;
+  chatbot_limit?: number | null;
 }
 
 export interface AdminUserView {
@@ -53,6 +54,7 @@ export interface AdminUserView {
   tags: string;
   accessExpiresAt: number | null;
   isAccessExpired: boolean;
+  chatbotLimit: number | null;
   /** OAuth providers linked to the account, e.g. ['google']. */
   providers: string[];
   /** Epoch ms — account creation time. */
@@ -119,6 +121,7 @@ function toPublic(row: AdminUserRow): AdminUserView {
     tags: row.tags || getUserDefaultTag(row.email),
     accessExpiresAt,
     isAccessExpired: isExpired,
+    chatbotLimit: row.chatbot_limit !== undefined && row.chatbot_limit !== null ? Number(row.chatbot_limit) : null,
     tier: row.tier || 'free',
     isAdmin,
     providers: row.providers ? row.providers.split(',').filter(Boolean) : [],
@@ -168,6 +171,7 @@ const SELECT_COLUMNS = `
   u.updated_at,
   COALESCE(u.tags, 'normal') AS tags,
   u.access_expires_at,
+  u.chatbot_limit,
   COALESCE(e.tier, 'free') AS tier,
   CASE WHEN a.user_id IS NULL THEN 0 ELSE 1 END AS is_admin,
   (SELECT GROUP_CONCAT(i.provider) FROM identities i WHERE i.user_id = u.id) AS providers,
@@ -284,6 +288,7 @@ export async function updateUserAdminSettings(
   updates: {
     tags?: string;
     accessExpiresAt?: number | null;
+    chatbotLimit?: number | null;
   },
 ): Promise<AdminUserView | null> {
   const now = Date.now();
@@ -297,6 +302,10 @@ export async function updateUserAdminSettings(
   if (updates.accessExpiresAt !== undefined) {
     setClauses.push('access_expires_at = ?');
     params.push(updates.accessExpiresAt);
+  }
+  if (updates.chatbotLimit !== undefined) {
+    setClauses.push('chatbot_limit = ?');
+    params.push(updates.chatbotLimit === null ? null : Math.max(0, Math.trunc(updates.chatbotLimit)));
   }
 
   params.push(userId);
