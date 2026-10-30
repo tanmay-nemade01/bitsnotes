@@ -220,14 +220,17 @@
     if (!text) return '';
 
     var stash = [];
-    function saveToken(content) {
-      var key = '___BN_STASH_' + stash.length + '___';
-      stash.push(content);
+    function saveToken(content, isBlock) {
+      var prefix = isBlock ? '___BN_BLOCK_' : '___BN_INLINE_';
+      var key = prefix + stash.length + '___';
+      stash.push({ key: key, html: content, isBlock: Boolean(isBlock) });
       return key;
     }
 
+    var processed = String(text).replace(/\r\n/g, '\n');
+
     // 1. Stash fenced code blocks with header and 1-click copy
-    var processed = text.replace(/```([a-zA-Z0-9_\-\+]*)\n?([\s\S]*?)```/g, function (_match, lang, code) {
+    processed = processed.replace(/```([a-zA-Z0-9_\-\+]*)\n?([\s\S]*?)```/g, function (_match, lang, code) {
       var cleanCode = code.replace(/^\n+|\n+$/g, '');
       var langLabel = lang ? lang.toLowerCase() : 'code';
       return saveToken(
@@ -240,49 +243,66 @@
             '</button>' +
           '</div>' +
           '<pre><code>' + escapeHtml(cleanCode) + '</code></pre>' +
-        '</div>'
+        '</div>',
+        true
       );
     });
 
     // 2. Stash inline code
-    processed = processed.replace(/`([^`]+)`/g, function (_match, code) {
-      return saveToken('<code>' + escapeHtml(code) + '</code>');
+    processed = processed.replace(/`([^`\n]+)`/g, function (_match, code) {
+      return saveToken('<code>' + escapeHtml(code) + '</code>', false);
     });
 
     // 3. Stash Display Math: $$...$$ or \[...\]
     processed = processed.replace(/\$\$([\s\S]*?)\$\$/g, function (_match, math) {
       var cleanMath = math.trim();
-      return saveToken('<div class="bn-math-display">\\[' + cleanMath + '\\]</div>');
+      return '\n' + saveToken('<div class="bn-math-display">\\[' + cleanMath + '\\]</div>', true) + '\n';
     });
     processed = processed.replace(/\\\[([\s\S]*?)\\\]/g, function (_match, math) {
       var cleanMath = math.trim();
-      return saveToken('<div class="bn-math-display">\\[' + cleanMath + '\\]</div>');
+      return '\n' + saveToken('<div class="bn-math-display">\\[' + cleanMath + '\\]</div>', true) + '\n';
     });
 
-    // 4. Stash Inline Math: \(...\) or $...$
+    // 4. Stash Inline Math: \(...\) or $...$ (avoid matching currency like $5 and $10)
     processed = processed.replace(/\\\(([\s\S]*?)\\\)/g, function (_match, math) {
-      return saveToken('\\(' + math.trim() + '\\)');
+      return saveToken('\\(' + math.trim() + '\\)', false);
     });
-    processed = processed.replace(/(^|[^\\])\$([^\$\n]+?)\$/g, function (_match, prefix, math) {
-      return prefix + saveToken('\\(' + math.trim() + '\\)');
+    processed = processed.replace(/(^|[^\\\$])\$(?!\s)([^\$\n]+?)(?<!\s)\$(?!\d)/g, function (_match, prefix, math) {
+      return prefix + saveToken('\\(' + math.trim() + '\\)', false);
     });
 
     // 5. Escape rest of HTML text safely
     processed = escapeHtml(processed);
 
-    // 6. Markdown formatting
-    processed = processed.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
-    processed = processed.replace(/\*([^*]+)\*/g, '<em>$1</em>');
-    processed = processed.replace(/^### (.*$)/gim, '<h4 class="font-bold text-sm mt-3 mb-1">$1</h4>');
-    processed = processed.replace(/^## (.*$)/gim, '<h3 class="font-bold text-base mt-4 mb-1.5">$1</h3>');
+    // 6. Normalize leading `* ` or `• ` bullets to `- ` BEFORE inline emphasis runs
+    processed = processed.replace(/^[ \t]*(?:\*(?!\*)|[•‣▪])[ \t]+/gm, '- ');
 
-    // Lists & Tables
+    // 7. Inline bold & single-line italic formatting
+    processed = processed.replace(/\*\*([^\*\n]+?)\*\*/g, '<strong>$1</strong>');
+    processed = processed.replace(/(^|[^\*])\*(?!\s)([^\*\n]+?)(?<!\s)\*(?!\*)/g, '$1<em>$2</em>');
+
+    // 8. Block-level parsing: Headings, Lists, Tables, and Paragraphs
     var lines = processed.split('\n');
     var inUl = false;
     var inOl = false;
     var inTable = false;
     var tableRows = [];
-    var outLines = [];
+    var blocks = [];
+    var paraLines = [];
+
+    function flushParagraph() {
+      if (paraLines.length === 0) return;
+      var content = paraLines.join('<br/>').trim();
+      if (content) {
+        blocks.push('<p>' + content + '</p>');
+      }
+      paraLines = [];
+    }
+
+    function closeLists() {
+      if (inUl) { blocks.push('</ul>'); inUl = false; }
+      if (inOl) { blocks.push('</ol>'); inOl = false; }
+    }
 
     function flushTable() {
       if (tableRows.length === 0) return;
@@ -306,19 +326,57 @@
         html += '</tr>';
       }
       html += '</tbody></table></div>';
-      outLines.push(html);
+      blocks.push(html);
       tableRows = [];
       inTable = false;
+    }
+
+    function isNextNonEmptyLineListItem(startIdx, type) {
+      for (var j = startIdx; j < lines.length; j++) {
+        var t = lines[j].trim();
+        if (!t) continue;
+        if (type === 'ul') return /^[\-\*]\s+/.test(t);
+        if (type === 'ol') return /^\d+\.\s+/.test(t);
+        return false;
+      }
+      return false;
     }
 
     for (var i = 0; i < lines.length; i++) {
       var line = lines[i];
       var trimmed = line.trim();
 
+      // Blank line handling
+      if (!trimmed) {
+        flushParagraph();
+        if (inTable) flushTable();
+        if (inUl && !isNextNonEmptyLineListItem(i + 1, 'ul')) closeLists();
+        if (inOl && !isNextNonEmptyLineListItem(i + 1, 'ol')) closeLists();
+        continue;
+      }
+
+      // Skip standalone horizontal rule lines
+      if (/^(?:---|\*\*\*|___)$/.test(trimmed)) {
+        flushParagraph();
+        closeLists();
+        if (inTable) flushTable();
+        continue;
+      }
+
+      // Stashed block token on its own line (code block or display math)
+      if (/^___BN_BLOCK_\d+___$/.test(trimmed)) {
+        flushParagraph();
+        closeLists();
+        if (inTable) flushTable();
+        blocks.push(trimmed);
+        continue;
+      }
+
+      // Markdown table row
       var isTableRow = trimmed.length > 2 && trimmed.indexOf('|') !== -1 && (trimmed.startsWith('|') || trimmed.endsWith('|'));
       if (isTableRow) {
-        if (inUl) { outLines.push('</ul>'); inUl = false; }
-        if (inOl) { outLines.push('</ol>'); inOl = false; }
+        flushParagraph();
+        closeLists();
         inTable = true;
         var cells = trimmed.split('|');
         if (trimmed.startsWith('|')) cells.shift();
@@ -332,37 +390,58 @@
         flushTable();
       }
 
-      var ulMatch = line.match(/^\s*[\-\*]\s+(.*)$/);
-      var olMatch = line.match(/^\s*(\d+)\.\s+(.*)$/);
-
-      if (ulMatch) {
-        if (inOl) { outLines.push('</ol>'); inOl = false; }
-        if (!inUl) { outLines.push('<ul>'); inUl = true; }
-        outLines.push('<li>' + ulMatch[1] + '</li>');
-      } else if (olMatch) {
-        if (inUl) { outLines.push('</ul>'); inUl = false; }
-        if (!inOl) { outLines.push('<ol>'); inOl = true; }
-        outLines.push('<li>' + olMatch[2] + '</li>');
-      } else {
-        if (inUl) { outLines.push('</ul>'); inUl = false; }
-        if (inOl) { outLines.push('</ol>'); inOl = false; }
-        outLines.push(line);
+      // Headings (# to ####)
+      var hMatch = trimmed.match(/^(#{1,4})\s+(.*)$/);
+      if (hMatch) {
+        flushParagraph();
+        closeLists();
+        var level = hMatch[1].length;
+        if (level <= 2) {
+          blocks.push('<h3 class="font-bold text-base mt-3.5 mb-1.5">' + hMatch[2] + '</h3>');
+        } else {
+          blocks.push('<h4 class="font-bold text-sm mt-3 mb-1">' + hMatch[2] + '</h4>');
+        }
+        continue;
       }
+
+      // Unordered list item
+      var ulMatch = line.match(/^\s*[\-\*]\s+(.*)$/);
+      if (ulMatch) {
+        flushParagraph();
+        if (inOl) { blocks.push('</ol>'); inOl = false; }
+        if (!inUl) { blocks.push('<ul>'); inUl = true; }
+        blocks.push('<li>' + ulMatch[1] + '</li>');
+        continue;
+      }
+
+      // Ordered list item
+      var olMatch = line.match(/^\s*(\d+)\.\s+(.*)$/);
+      if (olMatch) {
+        flushParagraph();
+        if (inUl) { blocks.push('</ul>'); inUl = false; }
+        if (!inOl) { blocks.push('<ol>'); inOl = true; }
+        blocks.push('<li>' + olMatch[2] + '</li>');
+        continue;
+      }
+
+      // Normal paragraph line
+      closeLists();
+      paraLines.push(line);
     }
-    if (inUl) outLines.push('</ul>');
-    if (inOl) outLines.push('</ol>');
+
+    flushParagraph();
+    closeLists();
     if (inTable) flushTable();
 
-    processed = outLines.join('\n');
-    processed = processed.replace(/\n\n+/g, '</p><p>');
-    processed = processed.replace(/\n/g, '<br/>');
-    processed = '<p>' + processed + '</p>';
-    processed = processed.replace(/<p>\s*<\/p>/g, '');
+    processed = blocks.join('');
 
-    // 7. Restore stashed blocks in reverse order
+    // 9. Restore stashed tokens in reverse order using function replacer (prevents $$ corruption)
     for (var k = stash.length - 1; k >= 0; k--) {
-      var token = '___BN_STASH_' + k + '___';
-      processed = processed.replace(token, stash[k]);
+      (function (item) {
+        processed = processed.replace(item.key, function () {
+          return item.html;
+        });
+      })(stash[k]);
     }
 
     return processed;

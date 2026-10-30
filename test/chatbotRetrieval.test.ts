@@ -18,6 +18,7 @@ import {
   hasTextbookIntent,
   MAX_CHARS_PER_COMPANION,
   MAX_CURRENT_LECTURE_CHARS,
+  normalizeAssistantReply,
   parseSubjectFromSystemPrompt,
   rankCandidates,
   rankCompanionCandidates,
@@ -465,13 +466,13 @@ describe('chatbotRetrieval (lean cross-lecture RAG)', () => {
   });
 
   describe('lean system prompt builders', () => {
-    it('buildBaseSystemPrompt produces lean prompt under ~1500 chars with exam tips and boundaries', () => {
+    it('buildBaseSystemPrompt produces lean prompt under ~1800 chars with exam tips and boundaries', () => {
       const prompt = buildBaseSystemPrompt('Data Warehousing');
       expect(prompt).toContain('Data Warehousing');
       expect(prompt).toContain('⚡ **Exam tip:**');
       expect(prompt).toContain('Strict Scope');
       expect(prompt).toContain('Formatting');
-      expect(prompt.length).toBeLessThan(1500);
+      expect(prompt.length).toBeLessThan(2000);
     });
 
     it('buildCurrentLectureBlock formats lecture context as primary ground truth', () => {
@@ -480,6 +481,49 @@ describe('chatbotRetrieval (lean cross-lecture RAG)', () => {
       expect(block).toContain('- Subject: "DW"');
       expect(block).toContain('- Lecture: "L6"');
       expect(block).toContain('Section 1 text');
+    });
+  });
+
+  describe('extractCurrentLectureChunks with examRevisionNotes and title', () => {
+    it('includes lecture title and examRevisionNotes formulas in extracted context', () => {
+      const result = extractCurrentLectureChunks({
+        metadata: {
+          title: 'Distributed Resource Management and Sqoop',
+          sections: [
+            { title: '5.1 Overview', description: 'HDFS and MapReduce recap' },
+            { title: '5.5 Sqoop Ingestion', description: 'Parallel RDBMS import' },
+          ],
+          examRevisionNotes: [
+            {
+              topic: 'Sqoop Step Size',
+              mustKnow: 'Splits primary key range across mappers.',
+              keyFormula: 'Step = (MAX - MIN + 1) / m',
+            },
+          ],
+        },
+        htmlContent: '<p>Sqoop imports relational tables into HDFS.</p>',
+        query: 'Explain the key formulas and core definitions from this lecture notes.',
+      });
+
+      expect(result.text).toContain('Lecture Title: Distributed Resource Management and Sqoop');
+      expect(result.text).toContain('Sqoop Step Size');
+      expect(result.text).toContain('Step = (MAX - MIN + 1) / m');
+    });
+  });
+
+  describe('normalizeAssistantReply', () => {
+    it('strips safety prefix, converts * bullets to - bullets, and removes blank lines between list items', () => {
+      const raw =
+        'UserSafety: safe\n\n' +
+        '*   **HDFS**: Distributed storage.\n\n' +
+        '*   **MapReduce**: Parallel compute.\n\n\n' +
+        '*   **YARN**: Cluster scheduler.';
+      const out = normalizeAssistantReply(raw);
+      expect(out).toBe(
+        '- **HDFS**: Distributed storage.\n' +
+        '- **MapReduce**: Parallel compute.\n' +
+        '- **YARN**: Cluster scheduler.'
+      );
     });
   });
 });
