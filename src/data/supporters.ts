@@ -22,6 +22,7 @@ export interface Supporter {
   message?: string;
   date?: string; // e.g. '2026-03' or 'March 2026'
   avatarUrl?: string;
+  lecturesContributed?: number;
 }
 
 export const supporters: Supporter[] = [

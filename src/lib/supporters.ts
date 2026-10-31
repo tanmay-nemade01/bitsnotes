@@ -47,6 +47,7 @@ export interface SupporterRow {
   avatar_url: string | null;
   supporter_date: string | null;
   created_at: number;
+  lectures_contributed?: number | null;
 }
 
 /** Shape sent to the browser (camelCase, no internal columns). */
@@ -59,6 +60,7 @@ export interface PublicSupporter {
   avatarUrl?: string;
   date?: string;
   createdAt: number;
+  lecturesContributed?: number;
 }
 
 export interface SupporterInput {
@@ -68,6 +70,7 @@ export interface SupporterInput {
   message: string | null;
   avatarUrl: string | null;
   date: string | null;
+  lecturesContributed: number;
 }
 
 // ─── Validation ──────────────────────────────────────────────────────────────
@@ -136,9 +139,19 @@ export function normalizeSupporterInput(body: Record<string, unknown>): Validati
     }
   }
 
+  let lecturesContributed = 0;
+  const rawLectures = body.lecturesContributed ?? body.lectures_contributed;
+  if (rawLectures !== undefined && rawLectures !== null && rawLectures !== '') {
+    const parsedLectures = Number(rawLectures);
+    if (!Number.isInteger(parsedLectures) || parsedLectures < 0 || parsedLectures > 10000) {
+      return { ok: false, error: 'Lectures contributed must be a whole number between 0 and 10,000.' };
+    }
+    lecturesContributed = parsedLectures;
+  }
+
   return {
     ok: true,
-    value: { name, tier, tierLabel, message, avatarUrl, date },
+    value: { name, tier, tierLabel, message, avatarUrl, date, lecturesContributed },
   };
 }
 
@@ -156,6 +169,9 @@ function toPublic(row: SupporterRow): PublicSupporter {
   if (row.message) supporter.message = row.message;
   if (row.avatar_url) supporter.avatarUrl = row.avatar_url;
   if (row.supporter_date) supporter.date = row.supporter_date;
+  if (row.lectures_contributed != null && Number(row.lectures_contributed) > 0) {
+    supporter.lecturesContributed = Number(row.lectures_contributed);
+  }
   return supporter;
 }
 
@@ -174,6 +190,9 @@ export function fallbackSupporterList(order: 'asc' | 'desc' = 'asc'): PublicSupp
     if (s.message) supporter.message = s.message;
     if (s.avatarUrl) supporter.avatarUrl = s.avatarUrl;
     if (s.date) supporter.date = s.date;
+    if (s.lecturesContributed && s.lecturesContributed > 0) {
+      supporter.lecturesContributed = s.lecturesContributed;
+    }
     return supporter;
   });
 }
@@ -192,7 +211,7 @@ export async function listSupporters(
   const orderClause = order === 'asc' ? 'ORDER BY created_at ASC, id ASC' : 'ORDER BY created_at DESC, id DESC';
   const rows = await db
     .prepare(
-      `SELECT id, name, tier, tier_label, message, avatar_url, supporter_date, created_at
+      `SELECT id, name, tier, tier_label, message, avatar_url, supporter_date, created_at, lectures_contributed
          FROM supporters
         ${orderClause}
         LIMIT ?`,
@@ -212,7 +231,7 @@ export async function countSupporters(db: AuthDb): Promise<number> {
 export async function getSupporterById(db: AuthDb, id: string): Promise<PublicSupporter | null> {
   const row = await db
     .prepare(
-      `SELECT id, name, tier, tier_label, message, avatar_url, supporter_date, created_at
+      `SELECT id, name, tier, tier_label, message, avatar_url, supporter_date, created_at, lectures_contributed
          FROM supporters WHERE id = ?`,
     )
     .bind(id)
@@ -253,8 +272,8 @@ export async function addSupporter(
     await db
       .prepare(
         `INSERT INTO supporters
-           (id, name, tier, tier_label, message, avatar_url, supporter_date, created_at, created_by)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+           (id, name, tier, tier_label, message, avatar_url, supporter_date, created_at, created_by, lectures_contributed)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .bind(
         id,
@@ -266,6 +285,7 @@ export async function addSupporter(
         input.date,
         now,
         createdBy ?? null,
+        input.lecturesContributed ?? 0,
       )
       .run();
   } catch (err) {
@@ -292,10 +312,10 @@ export async function updateSupporter(
     await db
       .prepare(
         `UPDATE supporters
-            SET name = ?, tier = ?, tier_label = ?, message = ?, avatar_url = ?, supporter_date = ?
+            SET name = ?, tier = ?, tier_label = ?, message = ?, avatar_url = ?, supporter_date = ?, lectures_contributed = ?
           WHERE id = ?`,
       )
-      .bind(input.name, input.tier, input.tierLabel, input.message, input.avatarUrl, input.date, id)
+      .bind(input.name, input.tier, input.tierLabel, input.message, input.avatarUrl, input.date, input.lecturesContributed ?? 0, id)
       .run();
   } catch (err) {
     if (/UNIQUE/i.test(String(err))) throw new DuplicateSupporterError(input.name);
