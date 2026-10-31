@@ -207,6 +207,7 @@ CREATE TABLE IF NOT EXISTS supporters (
   supporter_date TEXT,
   created_at     INTEGER NOT NULL,
   created_by     TEXT,
+  lectures_contributed INTEGER DEFAULT 0,
   UNIQUE(name)
 );
 

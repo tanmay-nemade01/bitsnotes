@@ -266,6 +266,7 @@ CREATE TABLE IF NOT EXISTS supporters (
   supporter_date TEXT,                              -- Free-form, e.g. '2026-09'
   created_at     INTEGER NOT NULL,                  -- Epoch ms; drives newest-first order
   created_by     TEXT,                              -- Admin user id that added the row
+  lectures_contributed INTEGER DEFAULT 0,           -- Number of lectures contributed
   UNIQUE(name)
 );
 

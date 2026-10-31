@@ -65,7 +65,18 @@ export const POST: APIRoute = async (context) => {
     }
 
     // Update: re-validate the full record so partial payloads can't blank fields.
-    const parsed = normalizeSupporterInput({ ...body, name: body.name ?? existing.name });
+    const parsed = normalizeSupporterInput({
+      name: body.name ?? existing.name,
+      tier: body.tier ?? existing.tier,
+      tierLabel: body.tierLabel !== undefined ? body.tierLabel : (existing.tierLabel ?? null),
+      message: body.message !== undefined ? body.message : (existing.message ?? null),
+      avatarUrl: body.avatarUrl !== undefined ? body.avatarUrl : (existing.avatarUrl ?? null),
+      date: body.date !== undefined ? body.date : (existing.date ?? null),
+      lecturesContributed:
+        body.lecturesContributed !== undefined
+          ? body.lecturesContributed
+          : (body.lectures_contributed !== undefined ? body.lectures_contributed : (existing.lecturesContributed ?? 0)),
+    });
     if (!parsed.ok) return badRequest(parsed.error);
 
     const updated = await updateSupporter(env.DB, id, parsed.value);

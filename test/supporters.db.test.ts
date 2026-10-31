@@ -86,6 +86,17 @@ describe('normalizeSupporterInput', () => {
     expect(value.date).toBeNull();
     expect(value.avatarUrl).toBeNull();
     expect(value.tierLabel).toBe('Supporter');
+    expect(value.lecturesContributed).toBe(0);
+  });
+
+  it('validates lectures contributed', () => {
+    expect(parsed({ lecturesContributed: 4 }).lecturesContributed).toBe(4);
+    expect(parsed({ lecturesContributed: '1' }).lecturesContributed).toBe(1);
+    expect(parsed({ lecturesContributed: 0 }).lecturesContributed).toBe(0);
+    expect(normalizeSupporterInput(valid({ lecturesContributed: -1 })).ok).toBe(false);
+    expect(normalizeSupporterInput(valid({ lecturesContributed: 2.5 })).ok).toBe(false);
+    expect(normalizeSupporterInput(valid({ lecturesContributed: 'abc' })).ok).toBe(false);
+    expect(normalizeSupporterInput(valid({ lecturesContributed: 99999 })).ok).toBe(false);
   });
 });
 
@@ -96,13 +107,14 @@ describe('supporters data layer', () => {
   });
 
   it('adds a supporter and reads it back', async () => {
-    const created = await addSupporter(db, parsed({ message: 'Great notes!' }), 'admin-1');
+    const created = await addSupporter(db, parsed({ message: 'Great notes!', lecturesContributed: 4 }), 'admin-1');
 
     expect(created.id).toBeTruthy();
     expect(created.name).toBe('Chinmay Das');
     expect(created.tier).toBe('supporter');
     expect(created.tierLabel).toBe('Supporter');
     expect(created.message).toBe('Great notes!');
+    expect(created.lecturesContributed).toBe(4);
 
     const fetched = await getSupporterById(db, created.id);
     expect(fetched).toEqual(created);
@@ -151,12 +163,13 @@ describe('supporters data layer', () => {
     const updated = await updateSupporter(
       db,
       created.id,
-      parsed({ name: 'Chinmay D.', tier: 'meal', tierLabel: 'A Full Meal' }),
+      parsed({ name: 'Chinmay D.', tier: 'meal', tierLabel: 'A Full Meal', lecturesContributed: 3 }),
     );
 
     expect(updated?.name).toBe('Chinmay D.');
     expect(updated?.tier).toBe('meal');
     expect(updated?.tierLabel).toBe('A Full Meal');
+    expect(updated?.lecturesContributed).toBe(3);
     expect(await countSupporters(db)).toBe(1);
   });
 

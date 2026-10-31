@@ -97,7 +97,7 @@ describe('GET /api/supporters (Privacy & Leak Prevention)', () => {
   });
 
   it('returns supporters list to logged-in users', async () => {
-    const input = normalizeSupporterInput({ name: 'Secret Supporter', message: 'Proud to back!' });
+    const input = normalizeSupporterInput({ name: 'Secret Supporter', message: 'Proud to back!', lecturesContributed: 4 });
     if (input.ok) await addSupporter(db, input.value, 'admin-1');
 
     const ctx = makeContext({
@@ -119,6 +119,7 @@ describe('GET /api/supporters (Privacy & Leak Prevention)', () => {
     expect(body.supporters).toHaveLength(1);
     expect(body.supporters[0].name).toBe('Secret Supporter');
     expect(body.supporters[0].message).toBe('Proud to back!');
+    expect(body.supporters[0].lecturesContributed).toBe(4);
   });
 
   it('support page has SSR dynamic rendering and login gate contract', async () => {
