@@ -187,11 +187,12 @@ export async function getManifest(): Promise<NotesManifest> {
     return manifest;
   }
 
-  // Production: fetch from R2 with 60-second in-memory TTL cache, backed by
-  // the Cloudflare Cache API for a longer isolate-level TTL with
-  // stale-while-revalidate (Phase 8.8). Versioned by the manifest's own
-  // `version` field so a new upload invalidates the cached copy immediately.
-  if (manifestCache && (now - lastFetchedTime < 60000)) {
+  // Production: fetch from R2 with 30-second in-memory TTL cache.
+  // In-memory caching in the isolate keeps hot requests fast (~0ms) while
+  // ensuring new uploads to R2 are reflected within 30s across all isolates.
+  // Note: We deliberately avoid caching under an unversioned URL in caches.default
+  // so new R2 uploads are never trapped behind stale 24-hour edge caches.
+  if (manifestCache && (now - lastFetchedTime < 30000)) {
     return manifestCache;
   }
 
@@ -202,20 +203,11 @@ export async function getManifest(): Promise<NotesManifest> {
   }
 
   try {
+    // Actively evict any stale 24-hour unversioned manifest from the edge Cache API if present
     const cache = getEdgeCache();
-    const cacheKey = new Request('https://bitsnotes.com/__cache/notes-manifest.json');
-
-    // Edge cache read: a warm isolate skips the R2 round-trip.
     if (cache) {
-      try {
-        const hit = await cache.match(cacheKey);
-        if (hit) {
-          const manifest = (await hit.json()) as NotesManifest;
-          manifestCache = manifest;
-          lastFetchedTime = now;
-          return manifest;
-        }
-      } catch { /* cache read is best-effort */ }
+      const staleKey = new Request('https://bitsnotes.com/__cache/notes-manifest.json');
+      cache.delete(staleKey).catch(() => {});
     }
 
     let obj = await bucket.get('notes-manifest.json');
@@ -224,21 +216,6 @@ export async function getManifest(): Promise<NotesManifest> {
       return { version: 'empty', subjects_count: 0, total_lectures: 0, updatedAt: '', subjects: [] };
     }
     const manifest = (await obj.json()) as NotesManifest;
-
-    // Populate the edge cache, versioned by manifest version.
-    if (cache) {
-      try {
-        const cached = new Response(JSON.stringify(manifest), {
-          headers: {
-            'Content-Type': 'application/json',
-            'Cache-Control': 'public, max-age=86400',
-            'ETag': `"${manifest.version}"`,
-          },
-        });
-        // Fire-and-forget cache write (best-effort).
-        cache.put(cacheKey, cached).catch(() => {});
-      } catch { /* cache write is best-effort */ }
-    }
 
     manifestCache = manifest;
     lastFetchedTime = now;

@@ -304,7 +304,9 @@ export const onRequest = defineMiddleware(async (context, next) => {
     // signed-in), so a cached copy could leak full notes to anonymous users or serve
     // a teaser to Googlebot. Always no-store there.
     const isGatedNotes = pathname.startsWith('/view/');
-    if (!user && !isAdmin && !isMutation && !isGatedNotes) {
+    // Subject pages (/subject/) display real-time lists of lectures and should reflect newly uploaded notes immediately.
+    const isSubjectPage = pathname.startsWith('/subject/');
+    if (!user && !isAdmin && !isMutation && !isGatedNotes && !isSubjectPage) {
       // Edge-only caching: s-maxage lets Cloudflare cache anonymous page shells,
       // but no `max-age`/`public` means browsers never store HTML — so a page
       // cached while signed-out can never be shown to a just-signed-in user.
