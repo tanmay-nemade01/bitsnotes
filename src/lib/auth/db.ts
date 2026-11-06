@@ -181,6 +181,15 @@ export async function deleteUserAccount(db: AuthDb, userId: string): Promise<voi
   await db.prepare('DELETE FROM blog_likes WHERE user_id = ?').bind(userId).run();
   await db.prepare('DELETE FROM blog_follows WHERE user_id = ?').bind(userId).run();
   await db.prepare('DELETE FROM bit_reactions WHERE user_id = ?').bind(userId).run();
+  // These tables are created by migration 016. Guard them so account deletion
+  // still works on a database where that migration has not been applied yet.
+  try {
+    await db.prepare('DELETE FROM chatbot_questions WHERE user_id = ?').bind(userId).run();
+  } catch {}
+  try {
+    await db.prepare('DELETE FROM chatbot_requests WHERE user_id = ?').bind(userId).run();
+  } catch {}
+  await db.prepare('DELETE FROM chatbot_usage WHERE user_id = ?').bind(userId).run();
   await db.prepare('DELETE FROM admin_users WHERE user_id = ?').bind(userId).run();
   await db.prepare('DELETE FROM identities WHERE user_id = ?').bind(userId).run();
   await db.prepare('DELETE FROM entitlements WHERE user_id = ?').bind(userId).run();

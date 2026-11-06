@@ -5,7 +5,8 @@ import {
   DEFAULT_MONTHLY_LIMIT,
   currentUsageMonth,
   getChatbotUsage,
-  incrementChatbotUsage,
+  refundChatbotUsage,
+  reserveChatbotUsage,
   resetUserMonthlyUsage,
   getUserChatbotLimit,
 } from '../src/lib/chatbotUsage';
@@ -55,16 +56,43 @@ describe('Chatbot Monthly Usage & Limits', () => {
     });
   });
 
-  it('increments monthly usage properly and decreases remaining messages', async () => {
+  it('reserves monthly usage properly and decreases remaining messages', async () => {
     await seedUser('user-2', 'student2@bits-pilani.ac.in');
 
-    const u1 = await incrementChatbotUsage(db, 'user-2', false, '2026-10');
-    expect(u1.used).toBe(1);
-    expect(u1.remaining).toBe(19);
+    expect(await reserveChatbotUsage(db, 'user-2', 20, '2026-10')).toBe(true);
+    let usage = await getChatbotUsage(db, 'user-2', false, '2026-10');
+    expect(usage.used).toBe(1);
+    expect(usage.remaining).toBe(19);
 
-    const u2 = await incrementChatbotUsage(db, 'user-2', false, '2026-10');
-    expect(u2.used).toBe(2);
-    expect(u2.remaining).toBe(18);
+    expect(await reserveChatbotUsage(db, 'user-2', 20, '2026-10')).toBe(true);
+    usage = await getChatbotUsage(db, 'user-2', false, '2026-10');
+    expect(usage.used).toBe(2);
+    expect(usage.remaining).toBe(18);
+  });
+
+  it('refuses to reserve past the monthly limit', async () => {
+    await seedUser('user-limit', 'limit@bitsnotes.com', 2);
+
+    expect(await reserveChatbotUsage(db, 'user-limit', 2, '2026-10')).toBe(true);
+    expect(await reserveChatbotUsage(db, 'user-limit', 2, '2026-10')).toBe(true);
+    expect(await reserveChatbotUsage(db, 'user-limit', 2, '2026-10')).toBe(false);
+
+    const usage = await getChatbotUsage(db, 'user-limit', false, '2026-10');
+    expect(usage.used).toBe(2);
+    expect(usage.remaining).toBe(0);
+  });
+
+  it('refunds a reserved message on failure', async () => {
+    await seedUser('user-refund', 'refund@bitsnotes.com', 20);
+
+    expect(await reserveChatbotUsage(db, 'user-refund', 20, '2026-10')).toBe(true);
+    let usage = await getChatbotUsage(db, 'user-refund', false, '2026-10');
+    expect(usage.used).toBe(1);
+
+    await refundChatbotUsage(db, 'user-refund', '2026-10');
+    usage = await getChatbotUsage(db, 'user-refund', false, '2026-10');
+    expect(usage.used).toBe(0);
+    expect(usage.remaining).toBe(20);
   });
 
   it('exempts admin users completely (unlimited messages)', async () => {
@@ -75,11 +103,6 @@ describe('Chatbot Monthly Usage & Limits', () => {
     expect(usage.limit).toBeNull();
     expect(usage.remaining).toBeNull();
     expect(usage.isAdmin).toBe(true);
-
-    const afterIncrement = await incrementChatbotUsage(db, 'admin-1', true, '2026-10');
-    expect(afterIncrement.used).toBe(1);
-    expect(afterIncrement.unlimited).toBe(true);
-    expect(afterIncrement.remaining).toBeNull();
   });
 
   it('honors individual user limits configured by admin', async () => {
@@ -104,8 +127,8 @@ describe('Chatbot Monthly Usage & Limits', () => {
   it('resets usage for current month on demand', async () => {
     await seedUser('user-reset', 'reset@bitsnotes.com');
 
-    await incrementChatbotUsage(db, 'user-reset', false, '2026-10');
-    await incrementChatbotUsage(db, 'user-reset', false, '2026-10');
+    await reserveChatbotUsage(db, 'user-reset', 20, '2026-10');
+    await reserveChatbotUsage(db, 'user-reset', 20, '2026-10');
     let usage = await getChatbotUsage(db, 'user-reset', false, '2026-10');
     expect(usage.used).toBe(2);
 
@@ -120,7 +143,7 @@ describe('Chatbot Monthly Usage & Limits', () => {
 
     // Use 15 messages in October
     for (let i = 0; i < 15; i++) {
-      await incrementChatbotUsage(db, 'user-rollover', false, '2026-10');
+      await reserveChatbotUsage(db, 'user-rollover', 20, '2026-10');
     }
     const octUsage = await getChatbotUsage(db, 'user-rollover', false, '2026-10');
     expect(octUsage.used).toBe(15);

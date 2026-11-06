@@ -7,10 +7,61 @@
   'use strict';
 
   var HISTORY_STORAGE_KEY = 'bn_chatbot_history';
+  var CONVERSATION_ID_KEY = 'bn_chatbot_conversation_id';
+  var CONVERSATION_TURN_KEY = 'bn_chatbot_turn_count';
   var conversationHistory = [];
   var isSending = false;
   var bitsnotesUsage = { used: 0, limit: 20, remaining: 20, unlimited: false };
   var bitsnotesUser = null; // { displayName, ... } from /api/auth/me
+
+  // ─── Request / conversation identifiers ───────────────────────────────
+  function generateChatId() {
+    try {
+      if (window.crypto && typeof window.crypto.randomUUID === 'function') {
+        return window.crypto.randomUUID();
+      }
+    } catch (e) {}
+    return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function (c) {
+      var r = (Math.random() * 16) | 0;
+      var v = c === 'x' ? r : (r & 0x3) | 0x8;
+      return v.toString(16);
+    });
+  }
+
+  function getConversationId() {
+    try {
+      var existing = sessionStorage.getItem(CONVERSATION_ID_KEY);
+      if (existing) return existing;
+      var created = generateChatId();
+      sessionStorage.setItem(CONVERSATION_ID_KEY, created);
+      sessionStorage.setItem(CONVERSATION_TURN_KEY, '0');
+      return created;
+    } catch (e) {
+      return generateChatId();
+    }
+  }
+
+  function rotateConversationId() {
+    var next = generateChatId();
+    try {
+      sessionStorage.setItem(CONVERSATION_ID_KEY, next);
+      sessionStorage.setItem(CONVERSATION_TURN_KEY, '0');
+    } catch (e) {}
+    return next;
+  }
+
+  // Absolute turn index within the current conversation (0-based). Unlike the
+  // rolling 20-message history window, this keeps counting across trims.
+  function nextTurnIndex() {
+    try {
+      var current = parseInt(sessionStorage.getItem(CONVERSATION_TURN_KEY) || '0', 10);
+      if (!isFinite(current) || current < 0) current = 0;
+      sessionStorage.setItem(CONVERSATION_TURN_KEY, String(current + 1));
+      return current;
+    } catch (e) {
+      return 0;
+    }
+  }
 
   // Active streaming state
   var activeStreamTimer = null;
@@ -715,6 +766,7 @@
     if (container) container.innerHTML = '';
     conversationHistory = [];
     saveConversationHistory();
+    rotateConversationId();
     appendWelcomeMessage();
   }
 
@@ -953,11 +1005,17 @@
       return { role: m.role, content: m.content };
     });
 
+    var turnIndex = nextTurnIndex();
+
     try {
       var res = await fetch('/api/chatbot/chat', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
+          request_id: generateChatId(),
+          conversation_id: getConversationId(),
+          turn_index: turnIndex,
+          page_url: window.location.pathname + window.location.search,
           subject: getSubjectName(),
           lectureFolder: getLectureFolderName(),
           query: userQuery,

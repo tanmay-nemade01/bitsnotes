@@ -240,6 +240,81 @@ CREATE TABLE IF NOT EXISTS chatbot_usage (
 CREATE INDEX IF NOT EXISTS idx_chatbot_usage_date
   ON chatbot_usage (usage_date, user_id);
 
+-- ─── Chatbot Request Tracking ──────────────────────────────────────────────
+-- One row per request lifecycle (pending → success/error). The question text
+-- lives in chatbot_questions and joins 1:1 on request_id. Chatbot responses are
+-- never stored. `reserved` marks rows that hold a monthly quota slot.
+CREATE TABLE IF NOT EXISTS chatbot_requests (
+  request_id        TEXT PRIMARY KEY,
+  user_id           TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  conversation_id   TEXT,
+  status            TEXT NOT NULL DEFAULT 'pending'
+                    CHECK (status IN ('pending', 'success', 'error')),
+  error_code        TEXT,
+  http_status       INTEGER,
+  model             TEXT,
+  usage_month       TEXT NOT NULL,
+  created_at        INTEGER NOT NULL,
+  finished_at       INTEGER,
+  latency_ms        INTEGER,
+  prompt_tokens     INTEGER,
+  completion_tokens INTEGER,
+  reserved          INTEGER NOT NULL DEFAULT 0
+);
+
+CREATE INDEX IF NOT EXISTS idx_chatbot_requests_user_month
+  ON chatbot_requests (user_id, usage_month, status);
+
+CREATE INDEX IF NOT EXISTS idx_chatbot_requests_month_status
+  ON chatbot_requests (usage_month, status);
+
+CREATE INDEX IF NOT EXISTS idx_chatbot_requests_status_created
+  ON chatbot_requests (status, created_at);
+
+CREATE INDEX IF NOT EXISTS idx_chatbot_requests_user_created
+  ON chatbot_requests (user_id, created_at);
+
+CREATE INDEX IF NOT EXISTS idx_chatbot_requests_conversation
+  ON chatbot_requests (conversation_id);
+
+CREATE INDEX IF NOT EXISTS idx_chatbot_requests_created
+  ON chatbot_requests (created_at);
+
+CREATE TABLE IF NOT EXISTS chatbot_questions (
+  request_id       TEXT PRIMARY KEY REFERENCES chatbot_requests(request_id) ON DELETE CASCADE,
+  conversation_id  TEXT NOT NULL,
+  user_id          TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  question_text    TEXT NOT NULL,
+  turn_index       INTEGER NOT NULL DEFAULT 0,
+  subject          TEXT,
+  lecture_folder   TEXT,
+  lecture_title    TEXT,
+  lecture_number   INTEGER,
+  include_textbook INTEGER NOT NULL DEFAULT 1,
+  page_url         TEXT,
+  created_at       INTEGER NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_chatbot_questions_conversation
+  ON chatbot_questions (conversation_id, created_at);
+
+CREATE INDEX IF NOT EXISTS idx_chatbot_questions_subject
+  ON chatbot_questions (subject, created_at);
+
+CREATE INDEX IF NOT EXISTS idx_chatbot_questions_user
+  ON chatbot_questions (user_id, created_at);
+
+CREATE INDEX IF NOT EXISTS idx_chatbot_questions_created
+  ON chatbot_questions (created_at);
+
+-- ─── App Settings (admin-managed key/value) ────────────────────────────────
+CREATE TABLE IF NOT EXISTS app_settings (
+  key        TEXT PRIMARY KEY,
+  value      TEXT NOT NULL,
+  updated_at INTEGER NOT NULL,
+  updated_by TEXT
+);
+
 -- ─── Bit Reactions ─────────────────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS bit_reactions (
   id            TEXT PRIMARY KEY,

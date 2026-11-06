@@ -92,25 +92,84 @@ export async function getChatbotUsage(
 }
 
 /**
- * Increment monthly usage for a user by 1.
+ * Atomically reserve one message from a user's monthly quota.
+ *
+ * Returns `true` when a slot was reserved, `false` when the user is at/over
+ * their limit. The conditional UPDATE is the important part: it prevents two
+ * concurrent requests from both passing a read-then-write quota check.
+ *
+ * Callers MUST refund with `refundChatbotUsage` if the request fails.
  */
-export async function incrementChatbotUsage(
+export async function reserveChatbotUsage(
   db: AuthDb,
   userId: string,
-  isAdmin: boolean,
+  limit: number,
   month = currentUsageMonth()
-): Promise<ChatbotUsageInfo> {
+): Promise<boolean> {
+  const safeLimit = Math.max(0, Math.trunc(limit));
+
+  // Ensure the period row exists without consuming anything.
   await db
     .prepare(
-      `INSERT INTO chatbot_usage (user_id, usage_date, message_count)
-       VALUES (?, ?, 1)
-       ON CONFLICT (user_id, usage_date)
-       DO UPDATE SET message_count = message_count + 1`
+      `INSERT OR IGNORE INTO chatbot_usage (user_id, usage_date, message_count)
+       VALUES (?, ?, 0)`
     )
     .bind(userId, month)
     .run();
 
-  return getChatbotUsage(db, userId, isAdmin, month);
+  const result = await db
+    .prepare(
+      `UPDATE chatbot_usage
+       SET message_count = message_count + 1
+       WHERE user_id = ? AND usage_date = ? AND message_count < ?`
+    )
+    .bind(userId, month, safeLimit)
+    .run();
+
+  const changes = (result as any)?.meta?.changes ?? (result as any)?.changes ?? 0;
+  return changes > 0;
+}
+
+/**
+ * Return one reserved message to the user's monthly quota.
+ * Safe to call even if the counter is already at zero.
+ */
+export async function refundChatbotUsage(
+  db: AuthDb,
+  userId: string,
+  month = currentUsageMonth()
+): Promise<void> {
+  await db
+    .prepare(
+      `UPDATE chatbot_usage
+       SET message_count = CASE WHEN message_count > 0 THEN message_count - 1 ELSE 0 END
+       WHERE user_id = ? AND usage_date = ?`
+    )
+    .bind(userId, month)
+    .run();
+}
+
+/**
+ * Return several reserved messages to a user's quota at once (used by the
+ * stale-pending cleanup).
+ */
+export async function refundChatbotUsageBy(
+  db: AuthDb,
+  userId: string,
+  count: number,
+  month = currentUsageMonth()
+): Promise<void> {
+  const safeCount = Math.max(0, Math.trunc(count));
+  if (safeCount === 0) return;
+
+  await db
+    .prepare(
+      `UPDATE chatbot_usage
+       SET message_count = CASE WHEN message_count >= ? THEN message_count - ? ELSE 0 END
+       WHERE user_id = ? AND usage_date = ?`
+    )
+    .bind(safeCount, safeCount, userId, month)
+    .run();
 }
 
 /**
