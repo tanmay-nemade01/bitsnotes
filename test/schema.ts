@@ -218,6 +218,46 @@ CREATE TABLE IF NOT EXISTS chatbot_usage (
   PRIMARY KEY (user_id, usage_date)
 );
 
+CREATE TABLE IF NOT EXISTS chatbot_requests (
+  request_id        TEXT PRIMARY KEY,
+  user_id           TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  conversation_id   TEXT,
+  status            TEXT NOT NULL DEFAULT 'pending'
+                    CHECK (status IN ('pending', 'success', 'error')),
+  error_code        TEXT,
+  http_status       INTEGER,
+  model             TEXT,
+  usage_month       TEXT NOT NULL,
+  created_at        INTEGER NOT NULL,
+  finished_at       INTEGER,
+  latency_ms        INTEGER,
+  prompt_tokens     INTEGER,
+  completion_tokens INTEGER,
+  reserved          INTEGER NOT NULL DEFAULT 0
+);
+
+CREATE TABLE IF NOT EXISTS chatbot_questions (
+  request_id       TEXT PRIMARY KEY REFERENCES chatbot_requests(request_id) ON DELETE CASCADE,
+  conversation_id  TEXT NOT NULL,
+  user_id          TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  question_text    TEXT NOT NULL,
+  turn_index       INTEGER NOT NULL DEFAULT 0,
+  subject          TEXT,
+  lecture_folder   TEXT,
+  lecture_title    TEXT,
+  lecture_number   INTEGER,
+  include_textbook INTEGER NOT NULL DEFAULT 1,
+  page_url         TEXT,
+  created_at       INTEGER NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS app_settings (
+  key        TEXT PRIMARY KEY,
+  value      TEXT NOT NULL,
+  updated_at INTEGER NOT NULL,
+  updated_by TEXT
+);
+
 CREATE TABLE IF NOT EXISTS tags (
   id            TEXT PRIMARY KEY,
   name          TEXT NOT NULL UNIQUE,

@@ -1,0 +1,373 @@
+---
+/**
+ * Admin Settings — site-wide configuration.
+ *
+ * Currently hosts the AI chatbot model picker. The catalogue is fetched from
+ * OpenRouter on demand (text-output models only, free models included).
+ */
+import AdminLayout from '../../layouts/AdminLayout.astro';
+
+export const prerender = false;
+---
+
+<AdminLayout title="Settings" subtitle="Admin-managed site configuration">
+  <div data-admin-settings class="space-y-6">
+    <section
+      id="chatbot"
+      class="border border-[var(--border)] rounded-[var(--r-md)] bg-[var(--bg-elevated)] p-5 shadow-sm"
+    >
+      <div class="flex flex-wrap items-start justify-between gap-4">
+        <div class="min-w-0">
+          <h2 class="font-display font-bold text-lg text-[var(--text)]">AI Chatbot Model</h2>
+          <p class="mt-1 text-xs text-[var(--text-muted)] max-w-2xl">
+            Choose the OpenRouter model used by BitsNotes AI. Only text-output models are listed;
+            free models are included and marked with a badge. The selection applies to every new
+            chatbot request.
+          </p>
+        </div>
+        <span
+          id="chatbot-current-badge"
+          class="shrink-0 rounded-full border border-[var(--border)] bg-[var(--bg-subtle)] px-2.5 py-0.5 text-[10px] font-bold uppercase tracking-wider text-[var(--text-muted)]"
+        >Loading</span>
+      </div>
+
+      <div class="mt-5 grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_auto] gap-4 items-end">
+        <div class="min-w-0">
+          <p class="text-[10px] font-bold uppercase tracking-wider text-[var(--text-faint)]">Current model</p>
+          <p id="chatbot-current-model" class="mt-1 font-mono text-sm text-[var(--text)] break-all">Loading…</p>
+          <p id="chatbot-current-note" class="mt-1 text-xs text-[var(--text-muted)]">—</p>
+        </div>
+
+        <div class="flex flex-wrap items-center gap-2">
+          <button
+            type="button"
+            id="chatbot-load-models"
+            class="px-3 py-2 text-xs font-semibold rounded-[var(--r-sm)] border border-[var(--accent)] bg-[var(--accent-subtle)] text-[var(--accent)] hover:bg-[var(--accent)] hover:text-[var(--accent-contrast)] transition-colors cursor-pointer"
+          >
+            Choose model
+          </button>
+          <button
+            type="button"
+            id="chatbot-reset-model"
+            class="px-3 py-2 text-xs font-semibold rounded-[var(--r-sm)] border border-[var(--border)] text-[var(--text-muted)] hover:text-[var(--text)] hover:border-[var(--accent)] transition-colors cursor-pointer"
+          >
+            Reset to default
+          </button>
+        </div>
+      </div>
+
+      <!-- Model picker (loaded on demand) -->
+      <div id="chatbot-model-picker" class="hidden mt-5 border-t border-[var(--border)] pt-5">
+        <div class="flex flex-wrap items-center gap-3">
+          <div class="relative flex-1 min-w-[14rem]">
+            <svg
+              class="w-3.5 h-3.5 absolute left-3 top-1/2 -translate-y-1/2 text-[var(--text-faint)] pointer-events-none"
+              fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" aria-hidden="true"
+            ><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
+            <input
+              id="chatbot-model-search"
+              type="search"
+              placeholder="Search by name or model id…"
+              autocomplete="off"
+              aria-label="Search OpenRouter models"
+              class="w-full rounded-[var(--r-sm)] border border-[var(--border)] bg-[var(--bg)] pl-9 pr-3 py-2 text-sm text-[var(--text)] placeholder:text-[var(--text-faint)] focus:border-[var(--accent)] focus:outline-none"
+            />
+          </div>
+
+          <label class="inline-flex items-center gap-2 text-xs font-semibold text-[var(--text-muted)] cursor-pointer select-none">
+            <input type="checkbox" id="chatbot-free-only" class="accent-[var(--accent)]" />
+            Free only
+          </label>
+
+          <button
+            type="button"
+            id="chatbot-refresh-models"
+            class="px-3 py-1.5 text-xs font-semibold rounded-[var(--r-sm)] border border-[var(--border)] text-[var(--text-muted)] hover:text-[var(--text)] hover:border-[var(--accent)] transition-colors cursor-pointer"
+          >
+            Refresh catalogue
+          </button>
+        </div>
+
+        <p id="chatbot-model-count" class="mt-3 text-xs text-[var(--text-muted)]" role="status" aria-live="polite">—</p>
+
+        <div
+          id="chatbot-model-list"
+          class="mt-2 max-h-[28rem] overflow-y-auto rounded-[var(--r-sm)] border border-[var(--border)] bg-[var(--bg)]"
+          style="scrollbar-width:thin"
+        >
+          <p class="p-4 text-sm text-[var(--text-muted)]">Loading models…</p>
+        </div>
+
+        <div class="mt-4 flex flex-wrap items-center justify-between gap-3">
+          <p id="chatbot-selected-model" class="text-xs text-[var(--text-muted)]">No model selected</p>
+          <button
+            type="button"
+            id="chatbot-save-model"
+            disabled
+            class="px-3 py-2 text-xs font-semibold rounded-[var(--r-sm)] bg-[var(--accent)] text-[var(--accent-contrast)] hover:opacity-90 disabled:opacity-40 disabled:cursor-not-allowed transition-opacity cursor-pointer"
+          >
+            Save model
+          </button>
+        </div>
+      </div>
+
+      <p id="chatbot-settings-status" class="mt-3 text-xs text-[var(--text-muted)]" role="status" aria-live="polite"></p>
+    </section>
+  </div>
+</AdminLayout>
+
+<script is:inline data-astro-rerun>
+  (function () {
+    var root = document.querySelector('[data-admin-settings]');
+    var A = window.__bnAdmin;
+    if (!root || !A) return;
+
+    var currentModelEl = document.getElementById('chatbot-current-model');
+    var currentNoteEl = document.getElementById('chatbot-current-note');
+    var currentBadgeEl = document.getElementById('chatbot-current-badge');
+    var pickerEl = document.getElementById('chatbot-model-picker');
+    var listEl = document.getElementById('chatbot-model-list');
+    var countEl = document.getElementById('chatbot-model-count');
+    var searchEl = document.getElementById('chatbot-model-search');
+    var freeOnlyEl = document.getElementById('chatbot-free-only');
+    var selectedEl = document.getElementById('chatbot-selected-model');
+    var saveBtn = document.getElementById('chatbot-save-model');
+    var statusEl = document.getElementById('chatbot-settings-status');
+
+    var currentModel = null;
+    var selectedModel = null;
+    var allModels = [];
+    var modelsLoaded = false;
+    var loading = false;
+
+    function setStatus(message, tone) {
+      if (!statusEl) return;
+      statusEl.textContent = message || '';
+      statusEl.className =
+        'mt-3 text-xs ' +
+        (tone === 'error'
+          ? 'text-[var(--danger)]'
+          : tone === 'success'
+            ? 'text-[var(--success)]'
+            : 'text-[var(--text-muted)]');
+    }
+
+    function updateCurrentDisplay(config) {
+      var isDefault = !config || config.isDefault;
+      var effective = config && (config.model || config.effectiveModel) ? config.model || config.effectiveModel : null;
+
+      currentModel = config && config.model ? config.model : null;
+
+      if (currentModelEl) currentModelEl.textContent = effective || 'Built-in default';
+      if (currentNoteEl) {
+        currentNoteEl.textContent = isDefault
+          ? 'Using the built-in default model list. Choose a model to override it.'
+          : 'Custom model selected by an admin.';
+      }
+      if (currentBadgeEl) {
+        currentBadgeEl.textContent = isDefault ? 'Default' : 'Custom';
+        currentBadgeEl.className =
+          'shrink-0 rounded-full px-2.5 py-0.5 text-[10px] font-bold uppercase tracking-wider border ' +
+          (isDefault
+            ? 'border-[var(--border)] bg-[var(--bg-subtle)] text-[var(--text-muted)]'
+            : 'border-[var(--accent)]/30 bg-[var(--accent-subtle)] text-[var(--accent)]');
+      }
+    }
+
+    function updateSelectionUi() {
+      if (selectedEl) {
+        selectedEl.textContent = selectedModel ? 'Selected: ' + selectedModel : 'No model selected';
+      }
+      if (saveBtn) saveBtn.disabled = !selectedModel || selectedModel === currentModel || loading;
+    }
+
+    function renderModels() {
+      if (!listEl) return;
+
+      var term = (searchEl && searchEl.value ? searchEl.value : '').trim().toLowerCase();
+      var freeOnly = Boolean(freeOnlyEl && freeOnlyEl.checked);
+
+      var filtered = allModels.filter(function (model) {
+        if (freeOnly && !model.isFree) return false;
+        if (!term) return true;
+        return (
+          String(model.id).toLowerCase().indexOf(term) !== -1 ||
+          String(model.name).toLowerCase().indexOf(term) !== -1
+        );
+      });
+
+      var freeCount = allModels.filter(function (m) { return m.isFree; }).length;
+      if (countEl) {
+        countEl.textContent =
+          'Showing ' + filtered.length + ' of ' + allModels.length + ' text models (' + freeCount + ' free).';
+      }
+
+      if (!filtered.length) {
+        listEl.innerHTML = '<p class="p-4 text-sm text-[var(--text-muted)]">No matching models found.</p>';
+        return;
+      }
+
+      var html = '';
+      var rendered = 0;
+      for (var i = 0; i < filtered.length && rendered < 500; i++) {
+        var model = filtered[i];
+        var isSelected = selectedModel === model.id;
+        var context = model.contextLength ? Math.round(model.contextLength / 1000) + 'k ctx' : '—';
+        html +=
+          '<button type="button" data-model-id="' + A.esc(model.id) + '" ' +
+          'aria-pressed="' + (isSelected ? 'true' : 'false') + '" ' +
+          'class="w-full text-left px-4 py-3 border-b border-[var(--border)] last:border-b-0 transition-colors cursor-pointer ' +
+          (isSelected
+            ? 'bg-[var(--accent-subtle)]'
+            : 'hover:bg-[var(--bg-subtle)]') + '">' +
+          '<div class="flex flex-wrap items-center gap-2">' +
+          '<span class="text-sm font-semibold text-[var(--text)]">' + A.esc(model.name) + '</span>' +
+          (model.isFree
+            ? '<span class="rounded-full border border-emerald-500/30 bg-emerald-500/10 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wide text-emerald-500">Free</span>'
+            : '') +
+          '<span class="rounded-full border border-[var(--border)] bg-[var(--bg-subtle)] px-1.5 py-0.5 text-[9px] font-semibold text-[var(--text-muted)]">' + A.esc(context) + '</span>' +
+          '</div>' +
+          '<div class="mt-0.5 font-mono text-[11px] text-[var(--text-muted)] break-all">' + A.esc(model.id) + '</div>' +
+          (model.description
+            ? '<p class="mt-1 text-[11px] leading-snug text-[var(--text-faint)] line-clamp-2">' + A.esc(model.description) + '</p>'
+            : '') +
+          '</button>';
+        rendered++;
+      }
+
+      if (filtered.length > rendered) {
+        html +=
+          '<p class="p-3 text-xs text-[var(--text-muted)]">Showing the first ' + rendered +
+          ' matches. Refine your search to see more.</p>';
+      }
+
+      listEl.innerHTML = html;
+      updateSelectionUi();
+    }
+
+    function selectModel(modelId) {
+      selectedModel = modelId;
+      renderModels();
+    }
+
+    function loadSettings() {
+      return A.getJSON('/api/admin/chatbot/settings')
+        .then(function (config) {
+          updateCurrentDisplay(config);
+        })
+        .catch(function () {
+          setStatus('Could not load the current chatbot model.', 'error');
+        });
+    }
+
+    function loadModels(force) {
+      if (loading) return;
+      if (modelsLoaded && !force) {
+        if (pickerEl) pickerEl.classList.remove('hidden');
+        renderModels();
+        return;
+      }
+
+      loading = true;
+      updateSelectionUi();
+      if (pickerEl) pickerEl.classList.remove('hidden');
+      if (listEl) listEl.innerHTML = '<p class="p-4 text-sm text-[var(--text-muted)]">Loading models from OpenRouter…</p>';
+      if (countEl) countEl.textContent = 'Loading…';
+      setStatus('Fetching the OpenRouter catalogue…');
+
+      A.getJSON('/api/admin/chatbot/models')
+        .then(function (data) {
+          allModels = Array.isArray(data.models) ? data.models : [];
+          modelsLoaded = true;
+          if (!selectedModel && currentModel) selectedModel = currentModel;
+          setStatus('Loaded ' + allModels.length + ' text models.', 'success');
+          renderModels();
+        })
+        .catch(function () {
+          if (listEl) listEl.innerHTML = '<p class="p-4 text-sm text-[var(--danger)]">Could not load models from OpenRouter. Try again.</p>';
+          if (countEl) countEl.textContent = '—';
+          setStatus('Could not load models from OpenRouter.', 'error');
+        })
+        .then(function () {
+          loading = false;
+          updateSelectionUi();
+        });
+    }
+
+    function saveModel() {
+      if (!selectedModel || loading) return;
+      loading = true;
+      updateSelectionUi();
+      setStatus('Saving model…');
+
+      A.postJSON('/api/admin/chatbot/settings', { model: selectedModel })
+        .then(function (result) {
+          if (!result.ok) {
+            setStatus(result.data && result.data.error ? result.data.error : 'Could not save the model.', 'error');
+            return;
+          }
+          updateCurrentDisplay({ model: selectedModel, effectiveModel: selectedModel, isDefault: false });
+          setStatus('Chatbot model saved. New requests will use ' + selectedModel + '.', 'success');
+        })
+        .catch(function () {
+          setStatus('Could not save the model.', 'error');
+        })
+        .then(function () {
+          loading = false;
+          updateSelectionUi();
+        });
+    }
+
+    function resetModel() {
+      if (loading) return;
+      if (!window.confirm('Reset the chatbot to the built-in default model list?')) return;
+
+      loading = true;
+      updateSelectionUi();
+      setStatus('Resetting model…');
+
+      A.postJSON('/api/admin/chatbot/settings', null, 'DELETE')
+        .then(function (result) {
+          if (!result.ok) {
+            setStatus(result.data && result.data.error ? result.data.error : 'Could not reset the model.', 'error');
+            return;
+          }
+          selectedModel = null;
+          updateCurrentDisplay({ model: null, effectiveModel: null, isDefault: true });
+          setStatus('Chatbot model reset to the built-in default list.', 'success');
+          if (modelsLoaded) renderModels();
+        })
+        .catch(function () {
+          setStatus('Could not reset the model.', 'error');
+        })
+        .then(function () {
+          loading = false;
+          updateSelectionUi();
+        });
+    }
+
+    // Events
+    var loadBtn = document.getElementById('chatbot-load-models');
+    if (loadBtn) loadBtn.addEventListener('click', function () { loadModels(false); });
+
+    var refreshBtn = document.getElementById('chatbot-refresh-models');
+    if (refreshBtn) refreshBtn.addEventListener('click', function () { loadModels(true); });
+
+    if (searchEl) searchEl.addEventListener('input', renderModels);
+    if (freeOnlyEl) freeOnlyEl.addEventListener('change', renderModels);
+    if (saveBtn) saveBtn.addEventListener('click', saveModel);
+
+    var resetBtn = document.getElementById('chatbot-reset-model');
+    if (resetBtn) resetBtn.addEventListener('click', resetModel);
+
+    if (listEl) {
+      listEl.addEventListener('click', function (event) {
+        var button = event.target.closest('[data-model-id]');
+        if (!button) return;
+        selectModel(button.getAttribute('data-model-id'));
+      });
+    }
+
+    loadSettings();
+  })();
+</script>

@@ -3,6 +3,10 @@
  * Server-side proxy for BitsNotes AI chatbot mode.
  * - Requires authenticated user (session cookie)
  * - Enforces monthly message limit per user via D1 chatbot_usage table (admins exempt)
+ * - Reserves the quota slot atomically BEFORE calling the model, and refunds it
+ *   on failure, so concurrent requests cannot bypass the limit.
+ * - Tracks every request in chatbot_requests (pending → success/error) and stores
+ *   the user's question in chatbot_questions. Chatbot responses are never stored.
  * - Augments the system prompt with up to 2 related-lecture snippets from
  *   the same subject (lean keyword retrieval, edge-cached, non-fatal) plus
  *   up to 1 per-subject textbook excerpt (opt-out via includeTextbook=false)
@@ -29,16 +33,33 @@ import {
   shouldRetrieveRelated,
   type CurrentLectureContext,
 } from '../../../lib/chatbotRetrieval';
-import { getChatbotUsage, incrementChatbotUsage } from '../../../lib/chatbotUsage';
+import {
+  currentUsageMonth,
+  getChatbotUsage,
+  getUserChatbotLimit,
+  refundChatbotUsage,
+  reserveChatbotUsage,
+} from '../../../lib/chatbotUsage';
+import { getChatbotModel } from '../../../lib/chatbotSettings';
+import {
+  cleanupStalePendingRequests,
+  deriveLectureTitle,
+  insertQuestion,
+  insertRequestStart,
+  logBlockedRequest,
+  markRequestError,
+  markRequestReserved,
+  markRequestSuccess,
+  normalizeTurnIndex,
+  parseLectureNumber,
+  sanitizeConversationId,
+  sanitizeRequestId,
+} from '../../../lib/chatbotTracking';
 
 export const prerender = false;
 
 const OPENROUTER_CHAT_URL = 'https://openrouter.ai/api/v1/chat/completions';
-const OPENROUTER_CHAT_MODELS = [
-  'google/gemma-4-31b-it:free',
-  'google/gemma-4-26b-a4b-it:free',
-  'nvidia/nemotron-3.5-lightning:free',
-];
+const MAX_STORED_QUESTION_LENGTH = 4000;
 
 function jsonResponse(body: object, status: number): Response {
   return new Response(JSON.stringify(body), {
@@ -47,24 +68,81 @@ function jsonResponse(body: object, status: number): Response {
   });
 }
 
+function safeString(value: unknown, maxLength: number): string {
+  if (typeof value !== 'string') return '';
+  return value.replace(/[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]/g, '').trim().slice(0, maxLength);
+}
+
+function tokenCount(value: unknown): number | null {
+  return typeof value === 'number' && Number.isFinite(value) && value >= 0 ? Math.trunc(value) : null;
+}
+
 export const POST: APIRoute = async ({ locals, request }) => {
   const user = (locals as any).user;
   const isAdmin = Boolean((locals as any).isAdmin);
   if (!user) {
     return jsonResponse({ error: 'Authentication required. Please sign in to use BitsNotes AI.' }, 401);
   }
+
+  const env = await getEnv();
+  const db = env.DB;
+  const usageMonth = currentUsageMonth();
+  const startedAt = Date.now();
+
+  // ─── Parse request body (needed for request/conversation IDs) ────────
+  let body: {
+    messages?: Array<{ role?: string; content?: unknown }>;
+    subject?: string;
+    lectureFolder?: string;
+    query?: string;
+    includeTextbook?: boolean;
+    request_id?: string;
+    conversation_id?: string;
+    turn_index?: number;
+    page_url?: string;
+  };
+  try {
+    body = await request.json();
+  } catch {
+    return jsonResponse({ error: 'Invalid request body.' }, 400);
+  }
+
+  const requestId = sanitizeRequestId(body.request_id);
+  const conversationId = sanitizeConversationId(body.conversation_id, requestId);
+
+  // ─── Access checks ───────────────────────────────────────────────────
   if (!isAdmin && user.accessExpiresAt && Date.now() > user.accessExpiresAt) {
+    if (db) {
+      await logBlockedRequest(db, {
+        requestId,
+        userId: user.id,
+        conversationId,
+        errorCode: 'access_expired',
+        httpStatus: 403,
+        usageMonth,
+      });
+    }
     return jsonResponse({ error: 'Your access has expired. Please contact an administrator or support to renew access.' }, 403);
   }
 
-  const env = await getEnv();
   if (!validateOrigin(request, env.APP_BASE_URL)) {
     return csrfForbidden();
   }
-  const db = env.DB;
-  const openrouterKey = env.OPENROUTER_API_KEY;
 
-  if (!db || !openrouterKey) {
+  if (!db) {
+    return jsonResponse({ error: 'Chatbot is under heavy use, please try again later.' }, 503);
+  }
+
+  const openrouterKey = env.OPENROUTER_API_KEY;
+  if (!openrouterKey) {
+    await logBlockedRequest(db, {
+      requestId,
+      userId: user.id,
+      conversationId,
+      errorCode: 'config_missing',
+      httpStatus: 503,
+      usageMonth,
+    });
     return jsonResponse({ error: 'Chatbot is under heavy use, please try again later.' }, 503);
   }
 
@@ -74,6 +152,14 @@ export const POST: APIRoute = async ({ locals, request }) => {
     try {
       const rl = await rateLimiter.limit({ key: user.id });
       if (!rl.success) {
+        await logBlockedRequest(db, {
+          requestId,
+          userId: user.id,
+          conversationId,
+          errorCode: 'rate_limited',
+          httpStatus: 429,
+          usageMonth,
+        });
         return jsonResponse({ error: 'Chatbot is under heavy use, please try again later.' }, 429);
       }
     } catch {
@@ -81,49 +167,39 @@ export const POST: APIRoute = async ({ locals, request }) => {
     }
   }
 
-  // ─── Monthly limit check (admins bypass) ─────────────────────────────
-  let usageInfo;
-  try {
-    usageInfo = await getChatbotUsage(db, user.id, isAdmin);
-  } catch (err) {
-    console.error('[chatbot/chat] Failed to read usage:', err);
-    return jsonResponse({ error: 'Chatbot is under heavy use, please try again later.' }, 503);
-  }
-
-  if (!isAdmin && usageInfo.remaining !== null && usageInfo.remaining <= 0) {
-    return jsonResponse({
-      error: `You've reached your monthly limit of ${usageInfo.limit} messages. Your limit will reset on the 1st of next month!`,
-      limitReached: true,
-      used: usageInfo.used,
-      limit: usageInfo.limit,
-      remaining: 0,
-      unlimited: false,
-    }, 429);
-  }
-
-  // ─── Parse request body ──────────────────────────────────────────────
-  let body: {
-    messages?: Array<{ role?: string; content?: unknown }>;
-    subject?: string;
-    lectureFolder?: string;
-    query?: string;
-    includeTextbook?: boolean;
-  };
-  try {
-    body = await request.json();
-  } catch {
-    return jsonResponse({ error: 'Invalid request body.' }, 400);
-  }
-
   if (!body.messages || !Array.isArray(body.messages) || body.messages.length === 0) {
+    await logBlockedRequest(db, {
+      requestId,
+      userId: user.id,
+      conversationId,
+      errorCode: 'invalid_request',
+      httpStatus: 400,
+      usageMonth,
+    });
     return jsonResponse({ error: 'Messages array is required.' }, 400);
   }
 
   // ─── Progressive retrieval: current lecture + intent-gated auxiliary sources ────
-  let subject = (body.subject || '').replace(/["\r\n<>]/g, '').trim().slice(0, 120);
-  let excludeFolder = (body.lectureFolder || '').replace(/["\r\n<>]/g, '').trim().slice(0, 160);
-  let query = (body.query || '').trim().slice(0, 1000);
+  let subject = safeString(body.subject, 120);
+  let excludeFolder = safeString(body.lectureFolder, 160);
+  const rawQuery = safeString(
+    body.query || getLastUserQuery(body.messages),
+    MAX_STORED_QUESTION_LENGTH
+  );
+  const query = rawQuery.slice(0, 1000);
   const includeTextbook = body.includeTextbook !== false;
+
+  if (!rawQuery) {
+    await logBlockedRequest(db, {
+      requestId,
+      userId: user.id,
+      conversationId,
+      errorCode: 'invalid_request',
+      httpStatus: 400,
+      usageMonth,
+    });
+    return jsonResponse({ error: 'A question is required.' }, 400);
+  }
 
   const systemMsgForParse = body.messages.find((m) => m?.role === 'system');
   if ((!subject || !excludeFolder) && systemMsgForParse && typeof systemMsgForParse.content === 'string') {
@@ -131,12 +207,19 @@ export const POST: APIRoute = async ({ locals, request }) => {
     if (!subject) subject = parsed.subject;
     if (!excludeFolder) excludeFolder = parsed.lectureFolder;
   }
-  if (!query) query = getLastUserQuery(body.messages);
 
   if (!isAdmin && subject) {
     try {
       const hiddenSubjects = await getHiddenSubjectNames(db);
       if (hiddenSubjects.has(subject)) {
+        await logBlockedRequest(db, {
+          requestId,
+          userId: user.id,
+          conversationId,
+          errorCode: 'blocked_subject',
+          httpStatus: 404,
+          usageMonth,
+        });
         return jsonResponse({ error: 'Subject not found.' }, 404);
       }
     } catch (err) {
@@ -146,6 +229,107 @@ export const POST: APIRoute = async ({ locals, request }) => {
       throw err;
     }
   }
+
+  // ─── Create the request row BEFORE the model call ────────────────────
+  // This is the audit record: it exists even if the upstream call hangs or the
+  // worker dies. The quota slot is reserved immediately afterwards.
+  const insertResult = await insertRequestStart(db, {
+    requestId,
+    userId: user.id,
+    conversationId,
+    usageMonth,
+    createdAt: startedAt,
+    reserved: false,
+  });
+
+  if (insertResult === 'duplicate') {
+    return jsonResponse({ error: 'This request was already submitted. Please try again.' }, 409);
+  }
+  if (insertResult === 'error') {
+    return jsonResponse({ error: 'Chatbot is under heavy use, please try again later.' }, 503);
+  }
+
+  // ─── Atomic monthly quota reservation (admins bypass) ────────────────
+  let reserved = false;
+  if (!isAdmin) {
+    try {
+      await cleanupStalePendingRequests(db, user.id);
+      const limit = await getUserChatbotLimit(db, user.id);
+      reserved = await reserveChatbotUsage(db, user.id, limit, usageMonth);
+    } catch (err) {
+      console.error('[chatbot/chat] Quota reservation failed:', err);
+      await markRequestError(db, requestId, {
+        errorCode: 'internal',
+        httpStatus: 503,
+        latencyMs: Date.now() - startedAt,
+      });
+      return jsonResponse({ error: 'Chatbot is under heavy use, please try again later.' }, 503);
+    }
+
+    if (!reserved) {
+      await markRequestError(db, requestId, {
+        errorCode: 'quota_exceeded',
+        httpStatus: 429,
+        latencyMs: Date.now() - startedAt,
+      });
+
+      let usageInfo;
+      try {
+        usageInfo = await getChatbotUsage(db, user.id, isAdmin, usageMonth);
+      } catch {
+        usageInfo = null;
+      }
+
+      return jsonResponse({
+        error: usageInfo
+          ? `You've reached your monthly limit of ${usageInfo.limit} messages. Your limit will reset on the 1st of next month!`
+          : 'Monthly limit reached. Your limit will reset on the 1st of next month.',
+        limitReached: true,
+        used: usageInfo?.used ?? 0,
+        limit: usageInfo?.limit ?? 0,
+        remaining: 0,
+        unlimited: false,
+      }, 429);
+    }
+
+    const marked = await markRequestReserved(db, requestId);
+    if (!marked) {
+      // We could not persist the reservation; refund and fail closed rather than
+      // leaving an untracked quota slot.
+      try {
+        await refundChatbotUsage(db, user.id, usageMonth);
+      } catch (err) {
+        console.error('[chatbot/chat] Failed to refund unreserved request:', err);
+      }
+      await markRequestError(db, requestId, {
+        errorCode: 'internal',
+        httpStatus: 503,
+        latencyMs: Date.now() - startedAt,
+      });
+      return jsonResponse({ error: 'Chatbot is under heavy use, please try again later.' }, 503);
+    }
+  }
+
+  // ─── Store the question (content only, never the response) ───────────
+  const userTurns = body.messages.filter(
+    (m) => m && m.role === 'user' && typeof m.content === 'string'
+  ).length;
+  const turnIndex = normalizeTurnIndex(body.turn_index, Math.max(0, userTurns - 1));
+
+  await insertQuestion(db, {
+    requestId,
+    conversationId,
+    userId: user.id,
+    questionText: rawQuery,
+    turnIndex,
+    subject: subject && subject !== 'Subject' ? subject : null,
+    lectureFolder: excludeFolder || null,
+    lectureTitle: deriveLectureTitle(excludeFolder),
+    lectureNumber: parseLectureNumber(excludeFolder),
+    includeTextbook,
+    pageUrl: safeString(body.page_url, 500) || null,
+    createdAt: startedAt,
+  });
 
   // 1. Fetch current lecture section chunks (non-fatal)
   let lectureContext: CurrentLectureContext = {
@@ -245,6 +429,9 @@ export const POST: APIRoute = async ({ locals, request }) => {
     ...conversationTurns,
   ];
 
+  // 5. Resolve the admin-selected model (falls back to the default list)
+  const modelConfig = await getChatbotModel(db);
+
   // ─── Proxy to OpenRouter ─────────────────────────────────────────────
   try {
     const orResponse = await fetch(OPENROUTER_CHAT_URL, {
@@ -256,18 +443,38 @@ export const POST: APIRoute = async ({ locals, request }) => {
         'X-Title': 'BitsNotes AI Study Assistant',
       },
       body: JSON.stringify({
-        models: OPENROUTER_CHAT_MODELS,
+        models: modelConfig.models,
         messages: upstreamMessages,
         temperature: 0.3,
       }),
     });
 
     if (!orResponse.ok) {
-      console.error('[chatbot/chat] OpenRouter error:', orResponse.status, await orResponse.text().catch(() => ''));
+      const upstreamBody = await orResponse.text().catch(() => '');
+      console.error('[chatbot/chat] OpenRouter error:', orResponse.status, upstreamBody);
+      await markRequestError(db, requestId, {
+        errorCode: 'upstream_http',
+        httpStatus: orResponse.status,
+        model: modelConfig.models[0] || null,
+        latencyMs: Date.now() - startedAt,
+        refund: reserved,
+      });
       return jsonResponse({ error: 'Chatbot is under heavy use, please try again later.' }, 503);
     }
 
     const data = (await orResponse.json()) as Record<string, any>;
+
+    if (data?.error) {
+      console.error('[chatbot/chat] OpenRouter returned an error payload:', data.error);
+      await markRequestError(db, requestId, {
+        errorCode: 'upstream_error',
+        httpStatus: 502,
+        model: modelConfig.models[0] || null,
+        latencyMs: Date.now() - startedAt,
+        refund: reserved,
+      });
+      return jsonResponse({ error: 'Chatbot is under heavy use, please try again later.' }, 503);
+    }
 
     let assistantContent = '';
     if (data.choices && data.choices[0] && data.choices[0].message) {
@@ -276,12 +483,34 @@ export const POST: APIRoute = async ({ locals, request }) => {
       assistantContent = cleaned || rawContent.trim();
     }
 
-    // ─── Increment usage counter on success ──────────────────────────
-    let finalUsage = usageInfo;
+    if (!assistantContent) {
+      await markRequestError(db, requestId, {
+        errorCode: 'empty_response',
+        httpStatus: 502,
+        model: modelConfig.models[0] || null,
+        latencyMs: Date.now() - startedAt,
+        refund: reserved,
+      });
+      return jsonResponse({ error: 'Chatbot is under heavy use, please try again later.' }, 503);
+    }
+
+    const usedModel =
+      typeof data.model === 'string' && data.model.trim()
+        ? data.model.trim()
+        : modelConfig.models[0] || null;
+
+    await markRequestSuccess(db, requestId, {
+      model: usedModel,
+      promptTokens: tokenCount(data?.usage?.prompt_tokens),
+      completionTokens: tokenCount(data?.usage?.completion_tokens),
+      latencyMs: Date.now() - startedAt,
+    });
+
+    let finalUsage = null;
     try {
-      finalUsage = await incrementChatbotUsage(db, user.id, isAdmin);
+      finalUsage = await getChatbotUsage(db, user.id, isAdmin, usageMonth);
     } catch (err) {
-      console.error('[chatbot/chat] Failed to increment usage:', err);
+      console.error('[chatbot/chat] Failed to read final usage:', err);
     }
 
     return jsonResponse({
@@ -291,6 +520,13 @@ export const POST: APIRoute = async ({ locals, request }) => {
     }, 200);
   } catch (err) {
     console.error('[chatbot/chat] Proxy error:', err);
+    await markRequestError(db, requestId, {
+      errorCode: 'internal',
+      httpStatus: 503,
+      model: modelConfig.models[0] || null,
+      latencyMs: Date.now() - startedAt,
+      refund: reserved,
+    });
     return jsonResponse({ error: 'Chatbot is under heavy use, please try again later.' }, 503);
   }
 };
