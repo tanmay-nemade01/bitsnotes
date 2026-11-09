@@ -23,7 +23,7 @@ import {
 
 let db: AuthDb;
 
-const MONTH = '2026-10';
+const DAY = '2026-10-29';
 
 async function seedUser(id: string): Promise<void> {
   const now = Date.now();
@@ -56,7 +56,7 @@ describe('chatbotTracking', () => {
         requestId: id,
         userId: 'u1',
         conversationId,
-        usageMonth: MONTH,
+        usageDay: DAY,
         createdAt: now,
         reserved: false,
       })
@@ -67,7 +67,7 @@ describe('chatbotTracking', () => {
         requestId: id,
         userId: 'u1',
         conversationId,
-        usageMonth: MONTH,
+        usageDay: DAY,
         createdAt: now,
         reserved: false,
       })
@@ -90,15 +90,22 @@ describe('chatbotTracking', () => {
       })
     ).toBe(true);
 
-    expect(await markRequestSuccess(db, id, { model: 'test/model', latencyMs: 42 })).toBe(true);
+    expect(await markRequestSuccess(db, id, {
+      model: 'test/model',
+      latencyMs: 42,
+      promptTokens: 1234,
+      completionTokens: 567,
+    })).toBe(true);
 
     const request = await db
-      .prepare('SELECT status, model, latency_ms FROM chatbot_requests WHERE request_id = ?')
+      .prepare('SELECT status, model, latency_ms, prompt_tokens, completion_tokens FROM chatbot_requests WHERE request_id = ?')
       .bind(id)
       .first<any>();
     expect(request.status).toBe('success');
     expect(request.model).toBe('test/model');
     expect(request.latency_ms).toBe(42);
+    expect(request.prompt_tokens).toBe(1234);
+    expect(request.completion_tokens).toBe(567);
 
     const question = await db
       .prepare('SELECT question_text, conversation_id FROM chatbot_questions WHERE request_id = ?')
@@ -112,18 +119,18 @@ describe('chatbotTracking', () => {
     await seedUser('u2');
     const id = requestId(2);
 
-    expect(await reserveChatbotUsage(db, 'u2', 20, MONTH)).toBe(true);
+    expect(await reserveChatbotUsage(db, 'u2', 20, '2026-10-29')).toBe(true);
     await insertRequestStart(db, {
       requestId: id,
       userId: 'u2',
       conversationId: id,
-      usageMonth: MONTH,
+      usageDay: DAY,
       createdAt: Date.now(),
       reserved: false,
     });
     expect(await markRequestReserved(db, id)).toBe(true);
 
-    let usage = await getChatbotUsage(db, 'u2', false, MONTH);
+    let usage = await getChatbotUsage(db, 'u2', false, '2026-10-29');
     expect(usage.used).toBe(1);
 
     expect(
@@ -134,7 +141,7 @@ describe('chatbotTracking', () => {
       })
     ).toBe(true);
 
-    usage = await getChatbotUsage(db, 'u2', false, MONTH);
+    usage = await getChatbotUsage(db, 'u2', false, '2026-10-29');
     expect(usage.used).toBe(0);
   });
 
@@ -142,22 +149,22 @@ describe('chatbotTracking', () => {
     await seedUser('u3');
     const id = requestId(3);
 
-    expect(await reserveChatbotUsage(db, 'u3', 20, MONTH)).toBe(true);
+    expect(await reserveChatbotUsage(db, 'u3', 20, '2026-10-29')).toBe(true);
     await insertRequestStart(db, {
       requestId: id,
       userId: 'u3',
       conversationId: id,
-      usageMonth: MONTH,
+      usageDay: DAY,
       createdAt: Date.now() - 10 * 60 * 1000,
       reserved: true,
     });
 
-    let usage = await getChatbotUsage(db, 'u3', false, MONTH);
+    let usage = await getChatbotUsage(db, 'u3', false, '2026-10-29');
     expect(usage.used).toBe(1);
 
     await cleanupStalePendingRequests(db, 'u3', 5 * 60 * 1000);
 
-    usage = await getChatbotUsage(db, 'u3', false, MONTH);
+    usage = await getChatbotUsage(db, 'u3', false, '2026-10-29');
     expect(usage.used).toBe(0);
 
     const request = await db

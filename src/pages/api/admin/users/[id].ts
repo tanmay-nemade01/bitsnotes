@@ -1,5 +1,5 @@
 /**
- * Admin user mutation API — update individual user settings (access expiration, tags, chatbot limit).
+ * Admin user mutation API — update individual user settings (access expiration, tags, daily chatbot limit).
  *
  * POST /api/admin/users/[id]
  *   body: {
@@ -19,7 +19,7 @@ import { isAdmin } from '../../../../lib/comments';
 import { logAuthEvent } from '../../../../lib/auth';
 import { validateOrigin, csrfForbidden } from '../../../../lib/auth/csrf';
 import { findAdminUserById, updateUserAdminSettings } from '../../../../lib/users';
-import { resetUserMonthlyUsage } from '../../../../lib/chatbotUsage';
+import { resetUserDailyUsage } from '../../../../lib/chatbotUsage';
 
 export const prerender = false;
 
@@ -89,7 +89,7 @@ export const POST: APIRoute = async (context) => {
   // Validate chatbotLimit
   if (body.chatbotLimit !== undefined) {
     if (body.chatbotLimit === null || body.chatbotLimit === '') {
-      updates.chatbotLimit = null; // Revert to default 20/month
+      updates.chatbotLimit = null; // Revert to default 20/day
     } else {
       const parsedLimit = typeof body.chatbotLimit === 'number' ? body.chatbotLimit : Number(body.chatbotLimit);
       if (!Number.isFinite(parsedLimit) || parsedLimit < 0) {
@@ -107,7 +107,7 @@ export const POST: APIRoute = async (context) => {
 
   try {
     if (shouldResetUsage) {
-      await resetUserMonthlyUsage(env.DB, id);
+      await resetUserDailyUsage(env.DB, id);
     }
 
     const updated = Object.keys(updates).length > 0

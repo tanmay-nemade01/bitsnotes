@@ -2,7 +2,8 @@
  * POST /api/chatbot/chat
  * Server-side proxy for BitsNotes AI chatbot mode.
  * - Requires authenticated user (session cookie)
- * - Enforces monthly message limit per user via D1 chatbot_usage table (admins exempt)
+ * - Enforces a daily message limit per user via D1 chatbot_usage table (admins exempt).
+ *   The limit is intentionally internal (fair-use policy) and must not be exposed to users.
  * - Reserves the quota slot atomically BEFORE calling the model, and refunds it
  *   on failure, so concurrent requests cannot bypass the limit.
  * - Tracks every request in chatbot_requests (pending → success/error) and stores
@@ -34,8 +35,7 @@ import {
   type CurrentLectureContext,
 } from '../../../lib/chatbotRetrieval';
 import {
-  currentUsageMonth,
-  getChatbotUsage,
+  currentUsageDay,
   getUserChatbotLimit,
   refundChatbotUsage,
   reserveChatbotUsage,
@@ -86,7 +86,7 @@ export const POST: APIRoute = async ({ locals, request }) => {
 
   const env = await getEnv();
   const db = env.DB;
-  const usageMonth = currentUsageMonth();
+  const usageDay = currentUsageDay();
   const startedAt = Date.now();
 
   // ─── Parse request body (needed for request/conversation IDs) ────────
@@ -119,7 +119,7 @@ export const POST: APIRoute = async ({ locals, request }) => {
         conversationId,
         errorCode: 'access_expired',
         httpStatus: 403,
-        usageMonth,
+        usageDay,
       });
     }
     return jsonResponse({ error: 'Your access has expired. Please contact an administrator or support to renew access.' }, 403);
@@ -141,7 +141,7 @@ export const POST: APIRoute = async ({ locals, request }) => {
       conversationId,
       errorCode: 'config_missing',
       httpStatus: 503,
-      usageMonth,
+      usageDay,
     });
     return jsonResponse({ error: 'Chatbot is under heavy use, please try again later.' }, 503);
   }
@@ -158,7 +158,7 @@ export const POST: APIRoute = async ({ locals, request }) => {
           conversationId,
           errorCode: 'rate_limited',
           httpStatus: 429,
-          usageMonth,
+          usageDay,
         });
         return jsonResponse({ error: 'Chatbot is under heavy use, please try again later.' }, 429);
       }
@@ -174,7 +174,7 @@ export const POST: APIRoute = async ({ locals, request }) => {
       conversationId,
       errorCode: 'invalid_request',
       httpStatus: 400,
-      usageMonth,
+      usageDay,
     });
     return jsonResponse({ error: 'Messages array is required.' }, 400);
   }
@@ -196,7 +196,7 @@ export const POST: APIRoute = async ({ locals, request }) => {
       conversationId,
       errorCode: 'invalid_request',
       httpStatus: 400,
-      usageMonth,
+      usageDay,
     });
     return jsonResponse({ error: 'A question is required.' }, 400);
   }
@@ -218,7 +218,7 @@ export const POST: APIRoute = async ({ locals, request }) => {
           conversationId,
           errorCode: 'blocked_subject',
           httpStatus: 404,
-          usageMonth,
+          usageDay,
         });
         return jsonResponse({ error: 'Subject not found.' }, 404);
       }
@@ -237,7 +237,7 @@ export const POST: APIRoute = async ({ locals, request }) => {
     requestId,
     userId: user.id,
     conversationId,
-    usageMonth,
+    usageDay,
     createdAt: startedAt,
     reserved: false,
   });
@@ -249,13 +249,13 @@ export const POST: APIRoute = async ({ locals, request }) => {
     return jsonResponse({ error: 'Chatbot is under heavy use, please try again later.' }, 503);
   }
 
-  // ─── Atomic monthly quota reservation (admins bypass) ────────────────
+  // ─── Atomic daily quota reservation (admins bypass) ──────────────────
   let reserved = false;
   if (!isAdmin) {
     try {
       await cleanupStalePendingRequests(db, user.id);
       const limit = await getUserChatbotLimit(db, user.id);
-      reserved = await reserveChatbotUsage(db, user.id, limit, usageMonth);
+      reserved = await reserveChatbotUsage(db, user.id, limit, usageDay);
     } catch (err) {
       console.error('[chatbot/chat] Quota reservation failed:', err);
       await markRequestError(db, requestId, {
@@ -273,22 +273,10 @@ export const POST: APIRoute = async ({ locals, request }) => {
         latencyMs: Date.now() - startedAt,
       });
 
-      let usageInfo;
-      try {
-        usageInfo = await getChatbotUsage(db, user.id, isAdmin, usageMonth);
-      } catch {
-        usageInfo = null;
-      }
-
+      // Intentionally omit usage numbers: the fair-use threshold is internal.
       return jsonResponse({
-        error: usageInfo
-          ? `You've reached your monthly limit of ${usageInfo.limit} messages. Your limit will reset on the 1st of next month!`
-          : 'Monthly limit reached. Your limit will reset on the 1st of next month.',
+        error: "You've reached today's fair-use limit. Please try again tomorrow.",
         limitReached: true,
-        used: usageInfo?.used ?? 0,
-        limit: usageInfo?.limit ?? 0,
-        remaining: 0,
-        unlimited: false,
       }, 429);
     }
 
@@ -297,7 +285,7 @@ export const POST: APIRoute = async ({ locals, request }) => {
       // We could not persist the reservation; refund and fail closed rather than
       // leaving an untracked quota slot.
       try {
-        await refundChatbotUsage(db, user.id, usageMonth);
+        await refundChatbotUsage(db, user.id, usageDay);
       } catch (err) {
         console.error('[chatbot/chat] Failed to refund unreserved request:', err);
       }
@@ -446,6 +434,9 @@ export const POST: APIRoute = async ({ locals, request }) => {
         models: modelConfig.models,
         messages: upstreamMessages,
         temperature: 0.3,
+        // Ask OpenRouter to include token usage in the response so we can
+        // store per-request cost data for admin analytics.
+        usage: { include: true },
       }),
     });
 
@@ -506,16 +497,8 @@ export const POST: APIRoute = async ({ locals, request }) => {
       latencyMs: Date.now() - startedAt,
     });
 
-    let finalUsage = null;
-    try {
-      finalUsage = await getChatbotUsage(db, user.id, isAdmin, usageMonth);
-    } catch (err) {
-      console.error('[chatbot/chat] Failed to read final usage:', err);
-    }
-
     return jsonResponse({
       choices: [{ message: { role: 'assistant', content: assistantContent } }],
-      _usage: finalUsage,
       _sources: relatedSources,
     }, 200);
   } catch (err) {

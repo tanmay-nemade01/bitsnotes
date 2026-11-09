@@ -2,12 +2,12 @@ import { describe, it, expect, beforeEach } from 'vitest';
 import { makeDb } from './setup';
 import type { AuthDb } from '../src/lib/auth/db';
 import {
-  DEFAULT_MONTHLY_LIMIT,
-  currentUsageMonth,
+  DEFAULT_DAILY_LIMIT,
+  currentUsageDay,
   getChatbotUsage,
   refundChatbotUsage,
   reserveChatbotUsage,
-  resetUserMonthlyUsage,
+  resetUserDailyUsage,
   getUserChatbotLimit,
 } from '../src/lib/chatbotUsage';
 import { findAdminUserById, updateUserAdminSettings } from '../src/lib/users';
@@ -29,55 +29,55 @@ beforeEach(() => {
   db = makeDb();
 });
 
-describe('Chatbot Monthly Usage & Limits', () => {
-  it('formats current month as YYYY-MM', () => {
+describe('Chatbot Daily Usage & Limits', () => {
+  it('formats current day as YYYY-MM-DD in UTC', () => {
     const d = new Date('2026-10-29T12:00:00Z');
-    expect(currentUsageMonth(d)).toBe('2026-10');
+    expect(currentUsageDay(d)).toBe('2026-10-29');
 
-    const nextMonth = new Date('2026-11-01T00:00:00Z');
-    expect(currentUsageMonth(nextMonth)).toBe('2026-11');
+    const nextDay = new Date('2026-10-30T00:00:00Z');
+    expect(currentUsageDay(nextDay)).toBe('2026-10-30');
   });
 
-  it('provides default monthly limit of 20 for regular users with no override', async () => {
+  it('provides default daily limit of 20 for regular users with no override', async () => {
     await seedUser('user-1', 'student1@bits-pilani.ac.in');
 
     const limit = await getUserChatbotLimit(db, 'user-1');
-    expect(limit).toBe(DEFAULT_MONTHLY_LIMIT);
+    expect(limit).toBe(DEFAULT_DAILY_LIMIT);
     expect(limit).toBe(20);
 
-    const usage = await getChatbotUsage(db, 'user-1', false, '2026-10');
+    const usage = await getChatbotUsage(db, 'user-1', false, '2026-10-29');
     expect(usage).toEqual({
       used: 0,
       limit: 20,
       remaining: 20,
       unlimited: false,
       isAdmin: false,
-      month: '2026-10',
+      day: '2026-10-29',
     });
   });
 
-  it('reserves monthly usage properly and decreases remaining messages', async () => {
+  it('reserves daily usage properly and decreases remaining messages', async () => {
     await seedUser('user-2', 'student2@bits-pilani.ac.in');
 
-    expect(await reserveChatbotUsage(db, 'user-2', 20, '2026-10')).toBe(true);
-    let usage = await getChatbotUsage(db, 'user-2', false, '2026-10');
+    expect(await reserveChatbotUsage(db, 'user-2', 20, '2026-10-29')).toBe(true);
+    let usage = await getChatbotUsage(db, 'user-2', false, '2026-10-29');
     expect(usage.used).toBe(1);
     expect(usage.remaining).toBe(19);
 
-    expect(await reserveChatbotUsage(db, 'user-2', 20, '2026-10')).toBe(true);
-    usage = await getChatbotUsage(db, 'user-2', false, '2026-10');
+    expect(await reserveChatbotUsage(db, 'user-2', 20, '2026-10-29')).toBe(true);
+    usage = await getChatbotUsage(db, 'user-2', false, '2026-10-29');
     expect(usage.used).toBe(2);
     expect(usage.remaining).toBe(18);
   });
 
-  it('refuses to reserve past the monthly limit', async () => {
+  it('refuses to reserve past the daily limit', async () => {
     await seedUser('user-limit', 'limit@bitsnotes.com', 2);
 
-    expect(await reserveChatbotUsage(db, 'user-limit', 2, '2026-10')).toBe(true);
-    expect(await reserveChatbotUsage(db, 'user-limit', 2, '2026-10')).toBe(true);
-    expect(await reserveChatbotUsage(db, 'user-limit', 2, '2026-10')).toBe(false);
+    expect(await reserveChatbotUsage(db, 'user-limit', 2, '2026-10-29')).toBe(true);
+    expect(await reserveChatbotUsage(db, 'user-limit', 2, '2026-10-29')).toBe(true);
+    expect(await reserveChatbotUsage(db, 'user-limit', 2, '2026-10-29')).toBe(false);
 
-    const usage = await getChatbotUsage(db, 'user-limit', false, '2026-10');
+    const usage = await getChatbotUsage(db, 'user-limit', false, '2026-10-29');
     expect(usage.used).toBe(2);
     expect(usage.remaining).toBe(0);
   });
@@ -85,12 +85,12 @@ describe('Chatbot Monthly Usage & Limits', () => {
   it('refunds a reserved message on failure', async () => {
     await seedUser('user-refund', 'refund@bitsnotes.com', 20);
 
-    expect(await reserveChatbotUsage(db, 'user-refund', 20, '2026-10')).toBe(true);
-    let usage = await getChatbotUsage(db, 'user-refund', false, '2026-10');
+    expect(await reserveChatbotUsage(db, 'user-refund', 20, '2026-10-29')).toBe(true);
+    let usage = await getChatbotUsage(db, 'user-refund', false, '2026-10-29');
     expect(usage.used).toBe(1);
 
-    await refundChatbotUsage(db, 'user-refund', '2026-10');
-    usage = await getChatbotUsage(db, 'user-refund', false, '2026-10');
+    await refundChatbotUsage(db, 'user-refund', '2026-10-29');
+    usage = await getChatbotUsage(db, 'user-refund', false, '2026-10-29');
     expect(usage.used).toBe(0);
     expect(usage.remaining).toBe(20);
   });
@@ -98,7 +98,7 @@ describe('Chatbot Monthly Usage & Limits', () => {
   it('exempts admin users completely (unlimited messages)', async () => {
     await seedUser('admin-1', 'admin@bitsnotes.com');
 
-    const usage = await getChatbotUsage(db, 'admin-1', true, '2026-10');
+    const usage = await getChatbotUsage(db, 'admin-1', true, '2026-10-29');
     expect(usage.unlimited).toBe(true);
     expect(usage.limit).toBeNull();
     expect(usage.remaining).toBeNull();
@@ -111,7 +111,7 @@ describe('Chatbot Monthly Usage & Limits', () => {
     const limit = await getUserChatbotLimit(db, 'user-custom');
     expect(limit).toBe(50);
 
-    const usage = await getChatbotUsage(db, 'user-custom', false, '2026-10');
+    const usage = await getChatbotUsage(db, 'user-custom', false, '2026-10-29');
     expect(usage.limit).toBe(50);
     expect(usage.remaining).toBe(50);
   });
@@ -119,44 +119,44 @@ describe('Chatbot Monthly Usage & Limits', () => {
   it('handles disabling chatbot access when limit is set to 0', async () => {
     await seedUser('user-disabled', 'disabled@bitsnotes.com', 0);
 
-    const usage = await getChatbotUsage(db, 'user-disabled', false, '2026-10');
+    const usage = await getChatbotUsage(db, 'user-disabled', false, '2026-10-29');
     expect(usage.limit).toBe(0);
     expect(usage.remaining).toBe(0);
   });
 
-  it('resets usage for current month on demand', async () => {
+  it('resets usage for the current day on demand', async () => {
     await seedUser('user-reset', 'reset@bitsnotes.com');
 
-    await reserveChatbotUsage(db, 'user-reset', 20, '2026-10');
-    await reserveChatbotUsage(db, 'user-reset', 20, '2026-10');
-    let usage = await getChatbotUsage(db, 'user-reset', false, '2026-10');
+    await reserveChatbotUsage(db, 'user-reset', 20, '2026-10-29');
+    await reserveChatbotUsage(db, 'user-reset', 20, '2026-10-29');
+    let usage = await getChatbotUsage(db, 'user-reset', false, '2026-10-29');
     expect(usage.used).toBe(2);
 
-    await resetUserMonthlyUsage(db, 'user-reset', '2026-10');
-    usage = await getChatbotUsage(db, 'user-reset', false, '2026-10');
+    await resetUserDailyUsage(db, 'user-reset', '2026-10-29');
+    usage = await getChatbotUsage(db, 'user-reset', false, '2026-10-29');
     expect(usage.used).toBe(0);
     expect(usage.remaining).toBe(20);
   });
 
-  it('automatically rolls over at the month boundary with zero manual intervention', async () => {
+  it('automatically rolls over at the UTC day boundary with zero manual intervention', async () => {
     await seedUser('user-rollover', 'rollover@bitsnotes.com');
 
-    // Use 15 messages in October
+    // Use 15 messages on 29 October
     for (let i = 0; i < 15; i++) {
-      await reserveChatbotUsage(db, 'user-rollover', 20, '2026-10');
+      await reserveChatbotUsage(db, 'user-rollover', 20, '2026-10-29');
     }
-    const octUsage = await getChatbotUsage(db, 'user-rollover', false, '2026-10');
+    const octUsage = await getChatbotUsage(db, 'user-rollover', false, '2026-10-29');
     expect(octUsage.used).toBe(15);
     expect(octUsage.remaining).toBe(5);
 
-    // In November, the user automatically starts with 0 used and 20 remaining!
-    const novUsage = await getChatbotUsage(db, 'user-rollover', false, '2026-11');
-    expect(novUsage.used).toBe(0);
-    expect(novUsage.remaining).toBe(20);
+    // On 30 October, the user automatically starts with 0 used and 20 remaining!
+    const nextDayUsage = await getChatbotUsage(db, 'user-rollover', false, '2026-10-30');
+    expect(nextDayUsage.used).toBe(0);
+    expect(nextDayUsage.remaining).toBe(20);
 
-    // October historical usage is preserved
-    const octRecheck = await getChatbotUsage(db, 'user-rollover', false, '2026-10');
-    expect(octRecheck.used).toBe(15);
+    // Previous day's historical usage is preserved
+    const priorDayRecheck = await getChatbotUsage(db, 'user-rollover', false, '2026-10-29');
+    expect(priorDayRecheck.used).toBe(15);
   });
 
   it('allows updating user chatbotLimit via updateUserAdminSettings', async () => {
@@ -170,7 +170,7 @@ describe('Chatbot Monthly Usage & Limits', () => {
     userView = await findAdminUserById(db, 'user-admin-update');
     expect(userView?.chatbotLimit).toBe(75);
 
-    const usage = await getChatbotUsage(db, 'user-admin-update', false, '2026-10');
+    const usage = await getChatbotUsage(db, 'user-admin-update', false, '2026-10-29');
     expect(usage.limit).toBe(75);
 
     // Revert back to default (null)
@@ -179,4 +179,3 @@ describe('Chatbot Monthly Usage & Limits', () => {
     expect(userView?.chatbotLimit).toBeNull();
   });
 });
-

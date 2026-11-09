@@ -11,7 +11,6 @@
   var CONVERSATION_TURN_KEY = 'bn_chatbot_turn_count';
   var conversationHistory = [];
   var isSending = false;
-  var bitsnotesUsage = { used: 0, limit: 20, remaining: 20, unlimited: false };
   var bitsnotesUser = null; // { displayName, ... } from /api/auth/me
 
   // ─── Request / conversation identifiers ───────────────────────────────
@@ -118,68 +117,6 @@
   }
 
   conversationHistory = loadConversationHistory();
-
-  // ─── Usage tracking for BitsNotes ─────────────────────────────────────
-  async function fetchBitsNotesUsage() {
-    try {
-      var res = await fetch('/api/chatbot/usage');
-      if (res.ok) {
-        var data = await res.json();
-        bitsnotesUsage = {
-          used: data.used || 0,
-          limit: data.limit != null ? data.limit : 20,
-          remaining: data.remaining != null ? data.remaining : 20,
-          unlimited: Boolean(data.unlimited),
-        };
-      }
-    } catch (e) {
-      console.warn('[chatbot] Could not fetch usage:', e);
-    }
-    updateUsageUI();
-  }
-
-  function updateUsageUI() {
-    var remaining = bitsnotesUsage.remaining;
-    var used = bitsnotesUsage.used;
-    var limit = bitsnotesUsage.limit;
-    var isUnlimited = Boolean(bitsnotesUsage.unlimited);
-    var pct = (!isUnlimited && limit > 0) ? Math.min(100, Math.round((used / limit) * 100)) : 0;
-
-    // Settings panel usage counter
-    var bar = document.getElementById('bn-usage-bar');
-    var remainingEl = document.getElementById('bn-usage-remaining');
-    var detailEl = document.getElementById('bn-usage-detail');
-    if (bar) bar.style.width = pct + '%';
-    if (remainingEl) remainingEl.textContent = isUnlimited ? '∞' : remaining;
-    if (detailEl) {
-      detailEl.textContent = isUnlimited
-        ? used + ' used (Unlimited Admin)'
-        : used + ' / ' + limit + ' used';
-    }
-
-    // Chat header badge
-    var usageBadge = document.getElementById('bn-chat-usage-badge');
-    if (usageBadge) {
-      if (bitsnotesUser) {
-        if (isUnlimited) {
-          usageBadge.textContent = 'Admin (∞)';
-          usageBadge.title = 'Unlimited messages (Admin)';
-          usageBadge.classList.remove('hidden', 'bn-usage-low');
-        } else {
-          usageBadge.textContent = remaining + '/' + limit;
-          usageBadge.title = remaining + ' messages remaining this month';
-          usageBadge.classList.remove('hidden');
-          if (remaining <= 5) {
-            usageBadge.classList.add('bn-usage-low');
-          } else {
-            usageBadge.classList.remove('bn-usage-low');
-          }
-        }
-      } else {
-        usageBadge.classList.add('hidden');
-      }
-    }
-  }
 
   async function fetchBitsNotesUser() {
     try {
@@ -820,7 +757,6 @@
       if (loggedOut) loggedOut.classList.add('hidden');
       if (footer) footer.classList.remove('hidden');
       if (usernameEl) usernameEl.textContent = bitsnotesUser.displayName || bitsnotesUser.email || 'User';
-      fetchBitsNotesUsage();
     } else {
       if (loggedIn) loggedIn.classList.add('hidden');
       if (loggedOut) loggedOut.classList.remove('hidden');
@@ -834,7 +770,6 @@
 
     if (settingsView) settingsView.classList.remove('active');
     if (mainView) mainView.classList.add('active');
-    updateUsageUI();
 
     setTimeout(function () {
       var inputEl = document.getElementById('bn-chatbot-input');
@@ -888,11 +823,9 @@
   function openPanelWithFreshUser() {
     if (!bitsnotesUser) {
       fetchBitsNotesUser().then(function () {
-        if (bitsnotesUser) fetchBitsNotesUsage();
         openPanel();
       });
     } else {
-      fetchBitsNotesUsage();
       openPanel();
     }
   }
@@ -922,16 +855,6 @@
     }
     if (!bitsnotesUser) {
       openModal();
-      return;
-    }
-
-    // Check local monthly limit
-    if (!bitsnotesUsage.unlimited && bitsnotesUsage.remaining <= 0) {
-      appendMessage(
-        'system',
-        '⚠️ <strong>Monthly limit reached</strong><br/>You\'ve used all ' + bitsnotesUsage.limit + ' messages for this month. Your limit resets on the 1st of next month.',
-        true
-      );
       return;
     }
 
@@ -1036,13 +959,9 @@
         saveConversationHistory();
 
         if (errData.limitReached) {
-          bitsnotesUsage.remaining = 0;
-          bitsnotesUsage.used = errData.used || bitsnotesUsage.limit;
-          bitsnotesUsage.limit = errData.limit || bitsnotesUsage.limit;
-          updateUsageUI();
           appendMessage(
             'system',
-            '⚠️ <strong>Monthly limit reached</strong><br/>You\'ve used all ' + (errData.limit || bitsnotesUsage.limit) + ' messages for this month. Your limit resets on the 1st of next month.',
+            '⚠️ <strong>Daily fair-use limit reached</strong><br/>You\'ve reached today\'s fair-use limit. Please try again tomorrow.',
             true
           );
         } else if (res.status === 401) {
@@ -1077,15 +996,6 @@
         conversationHistory = conversationHistory.slice(-20);
       }
       saveConversationHistory();
-
-      // Update usage from response
-      if (data._usage) {
-        bitsnotesUsage.used = data._usage.used;
-        bitsnotesUsage.remaining = data._usage.remaining != null ? data._usage.remaining : bitsnotesUsage.remaining;
-        bitsnotesUsage.limit = data._usage.limit != null ? data._usage.limit : bitsnotesUsage.limit;
-        bitsnotesUsage.unlimited = Boolean(data._usage.unlimited);
-        updateUsageUI();
-      }
 
       // Stream assistant response with transformer typewriter animation
       await new Promise(function (resolve) {
@@ -1207,14 +1117,8 @@
       }
     }
 
-    // Fetch BitsNotes user status and usage on init
-    fetchBitsNotesUser().then(function () {
-      if (bitsnotesUser) {
-        fetchBitsNotesUsage();
-      } else {
-        updateUsageUI();
-      }
-    });
+    // Fetch BitsNotes user status on init
+    fetchBitsNotesUser();
   }
 
   // Delegated click listener (resilient to Astro ViewTransitions)
