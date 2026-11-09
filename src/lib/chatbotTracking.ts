@@ -3,7 +3,8 @@
  *
  * Two tables, one request lifecycle:
  *   chatbot_requests  — inserted as `pending` before the model call, then
- *                       updated in place to `success` or `error`.
+ *                       updated in place to `success` or `error`. Stores the
+ *                       upstream token counts for cost analysis.
  *   chatbot_questions — inserted once per request; stores the user's question
  *                       only. Chatbot responses are never persisted.
  *
@@ -12,7 +13,7 @@
  */
 
 import type { AuthDb } from './auth/db';
-import { currentUsageMonth, refundChatbotUsageBy } from './chatbotUsage';
+import { currentUsageDay, refundChatbotUsageBy } from './chatbotUsage';
 
 export type ChatbotRequestStatus = 'pending' | 'success' | 'error';
 
@@ -20,7 +21,7 @@ export interface ChatbotRequestStart {
   requestId: string;
   userId: string;
   conversationId: string;
-  usageMonth: string;
+  usageDay: string;
   createdAt: number;
   reserved: boolean;
 }
@@ -141,7 +142,7 @@ export async function insertRequestStart(
         data.requestId,
         data.userId,
         data.conversationId,
-        data.usageMonth,
+        data.usageDay,
         data.createdAt,
         data.reserved ? 1 : 0
       )
@@ -290,7 +291,7 @@ export async function logBlockedRequest(
     conversationId: string;
     errorCode: string;
     httpStatus: number;
-    usageMonth?: string;
+    usageDay?: string;
   }
 ): Promise<void> {
   try {
@@ -308,7 +309,7 @@ export async function logBlockedRequest(
         data.conversationId,
         data.errorCode,
         data.httpStatus,
-        data.usageMonth || currentUsageMonth(),
+        data.usageDay || currentUsageDay(),
         now,
         now
       )

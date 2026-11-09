@@ -41,14 +41,20 @@ This step reduces the volume of textbook data by extracting only the chapters re
 
 ## Step 2 — Clean Transcript Files
 
-Use `clean_vtt.py` to strip timestamps and metadata from `.vtt` files, reducing token usage by ~80%.
+Use `utils/clean_vtt.py` to strip timestamps and metadata from `.vtt` files, reducing token usage by ~80%.
 
 ```bash
-python clean_vtt.py
+# Process every .vtt in the current directory
+python utils/clean_vtt.py
+
+# Process one file into an explicit .txt output
+python utils/clean_vtt.py Lecture01.vtt Lecture01.txt
 ```
 
-- All `.vtt` files in the current directory are cleaned and saved as `.txt`.
-- Delete the original `.vtt` files to avoid naming confusion.
+- All `.vtt` files in the specified or current directory are cleaned and saved as `.txt`.
+- By default, source `.vtt` files are kept intact. Pass `--delete-vtt` to remove source `.vtt` files after conversion, or `--keep-vtt` to state the default explicitly.
+- Timestamps are removed by default. Pass `--keep-timestamps` to prefix each spoken line with its cue start time; use this when you want timestamp source anchors in the extraction manifest. Otherwise use transcript line ranges for `source_anchor`.
+- `NOTE`/`STYLE`/`REGION` blocks are skipped in full and short spoken lines (e.g. "Okay.") are preserved.
 
 ---
 
@@ -86,7 +92,7 @@ python clean_vtt.py
 1. Open a **new chat window**.
 2. Pass the Agent 2 output: `<LecturePrefix>_notes_enriched.md`.
 3. Attach the Agent 3 prompt: `SKILL_agent3_formatter.md`.
-4. Run the agent. It will automatically run script-based Markdown-to-HTML section conversion (`python scripts/section_splitter.py convert ...`), inspect HTML for structural errors (unclosed tags, nested callouts), fill metadata & exam revision notes, and run `lint.py`.
+4. Run the agent. It will automatically run script-based Markdown-to-HTML section conversion (`python scripts/section_splitter.py convert ...`), inspect HTML for structural errors (unclosed tags, nested callouts), fill metadata, and run `lint.py`.
 
 **Input:** Enriched markdown.
 **Output:** `<LecturePrefix>_notes.html` — final HTML file (800+ lines).
@@ -103,8 +109,11 @@ All outputs are saved under `outputs/<Subject>/<LecturePrefix>/`:
 ```
 outputs/<Subject>/<LecturePrefix>/
 ├── <LecturePrefix>_notes_dense.md          ← Agent 1 output
+├── <LecturePrefix>_extraction_manifest.json ← Agent 1 provenance checksum
 ├── <LecturePrefix>_notes_enriched.md       ← Agent 2 output
 ├── sections/                              ← Split sections for processing
+│   ├── _inventory.json                    ← Locked heading numbering
+│   └── section_XX_summary.json            ← Bound section summaries
 └── <LecturePrefix>_notes/
     └── <LecturePrefix>_notes.html          ← Agent 3 final HTML
 ```
@@ -113,7 +122,6 @@ outputs/<Subject>/<LecturePrefix>/
 
 ## Tips
 
-- **Agent 4 is optional and ignored** for now — skip it entirely.
 - **Section-by-section processing** is handled automatically by the toolkit's scripts (`section_splitter.py`).
 - **Topic mappings** are stored in `topic_mappings/<Subject>.yaml` and are updated automatically by Agent 2.
 - **Readability scores** are advisory only — never split formulas or rewrite derivations to improve scores.

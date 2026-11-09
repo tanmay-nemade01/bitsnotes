@@ -26,13 +26,13 @@ CREATE TABLE IF NOT EXISTS chatbot_requests (
   error_code        TEXT,                             -- Sanitized code, never raw upstream text
   http_status       INTEGER,                          -- Status associated with the failure (upstream or local)
   model             TEXT,                             -- Actual OpenRouter model used
-  usage_month       TEXT NOT NULL,                    -- YYYY-MM (UTC quota period)
+  usage_month       TEXT NOT NULL,                    -- YYYY-MM-DD (UTC quota day; legacy rows may be YYYY-MM)
   created_at        INTEGER NOT NULL,                 -- Request start (unix ms)
   finished_at       INTEGER,                          -- Request completion (unix ms)
   latency_ms        INTEGER,
   prompt_tokens     INTEGER,
   completion_tokens INTEGER,
-  reserved          INTEGER NOT NULL DEFAULT 0        -- 1 = holds a quota slot
+  reserved          INTEGER NOT NULL DEFAULT 0        -- 1 = holds a daily quota slot
 );
 
 CREATE INDEX IF NOT EXISTS idx_chatbot_requests_user_month

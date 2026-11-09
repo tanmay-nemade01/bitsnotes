@@ -20,7 +20,7 @@ CREATE TABLE IF NOT EXISTS users (
   -- Tags and timed access (migrations/012_user_tags_and_access.sql)
   tags                     TEXT NOT NULL DEFAULT 'normal',  -- 'batchmate' | 'normal'
   access_expires_at        INTEGER DEFAULT 1805155199999,   -- Epoch ms when access expires (15 March 2027 23:59:59.999 UTC)
-  chatbot_limit            INTEGER DEFAULT NULL              -- Monthly chatbot limit override (NULL = default 20)
+  chatbot_limit            INTEGER DEFAULT NULL              -- Daily chatbot limit override (NULL = default 20)
 );
 
 -- ─── Auth: OAuth Identities ─────────────────────────────────────────────────
@@ -232,7 +232,7 @@ CREATE INDEX IF NOT EXISTS idx_blog_follows_user ON blog_follows(user_id);
 -- ─── Chatbot Usage Tracking ────────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS chatbot_usage (
   user_id       TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-  usage_date    TEXT NOT NULL,             -- YYYY-MM (UTC monthly period) or legacy YYYY-MM-DD
+  usage_date    TEXT NOT NULL,             -- YYYY-MM-DD (UTC daily period) or legacy YYYY-MM
   message_count INTEGER NOT NULL DEFAULT 0,
   PRIMARY KEY (user_id, usage_date)
 );
@@ -243,7 +243,7 @@ CREATE INDEX IF NOT EXISTS idx_chatbot_usage_date
 -- ─── Chatbot Request Tracking ──────────────────────────────────────────────
 -- One row per request lifecycle (pending → success/error). The question text
 -- lives in chatbot_questions and joins 1:1 on request_id. Chatbot responses are
--- never stored. `reserved` marks rows that hold a monthly quota slot.
+-- never stored. `reserved` marks rows that hold a daily quota slot.
 CREATE TABLE IF NOT EXISTS chatbot_requests (
   request_id        TEXT PRIMARY KEY,
   user_id           TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -253,7 +253,7 @@ CREATE TABLE IF NOT EXISTS chatbot_requests (
   error_code        TEXT,
   http_status       INTEGER,
   model             TEXT,
-  usage_month       TEXT NOT NULL,
+  usage_month       TEXT NOT NULL,                    -- YYYY-MM-DD (UTC quota day; legacy rows may be YYYY-MM)
   created_at        INTEGER NOT NULL,
   finished_at       INTEGER,
   latency_ms        INTEGER,
