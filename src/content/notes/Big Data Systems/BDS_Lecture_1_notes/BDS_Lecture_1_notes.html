@@ -229,7 +229,20 @@
   <li>On the storage side, data is partitioned into files on <em>data nodes</em>, and the <em>name node</em> is the filesystem management node — a special node under the master that takes care of dividing the data into HDFS blocks.</li>
 </ul>
 <p>So the architecture has two layers: the <em>HDFS layer</em> (storage, where data nodes keep the data) and the <em>MapReduce layer</em> (computation). One more important property is <em>locality of reference</em>: the data a node operates on sits in its local vicinity, so compute is close to the data, which helps achieve performance. Moving computation to the data is far cheaper than moving petabytes of data to the computation.</p>
-<p><strong>Visualizing the cluster:</strong> picture one master node at the top with two halves — the job tracker (scheduling and tracking jobs) and the name node (managing the file namespace and block placement). Beneath it sit the slave nodes, each with three things: a task tracker (executing map and reduce tasks), a data node (storing a share of the HDFS blocks), and its own local disk. A job flows top-down: it enters through the job tracker, which divides it into tasks and schedules them onto task trackers — preferably onto the node whose disk already holds the relevant data block (that is locality of reference in action). The name node simply answers "which node holds which blocks," so the scheduler can match tasks to data. Takeaway: two independent layers, one for storage and one for computation, coordinated by two master-side managers.</p>
+<div class="diagram-container my-6 text-center">
+  <pre class="mermaid">
+flowchart TD
+    J["Job submitted"] --> JT["Master: Job Tracker<br/>schedules and tracks jobs"]
+    JT --> NR["Master: Name Node<br/>file namespace and block placement"]
+    JT -->|"divides into tasks"| T1["Slave node 1: Task Tracker"]
+    JT -->|"divides into tasks"| T2["Slave node 2: Task Tracker"]
+    T1 --> D1["Data Node 1<br/>HDFS blocks + local disk"]
+    T2 --> D2["Data Node 2<br/>HDFS blocks + local disk"]
+    NR -.->|"which node holds which blocks"| D1
+    NR -.->|"which node holds which blocks"| D2
+  </pre>
+  <p class="text-xs text-slate-500 mt-2"><strong>Figure:</strong> High-level Hadoop cluster — a master with a job tracker (compute) and a name node (storage), and slave nodes each holding a task tracker, a data node, and its own local disk.</p>
+</div>
 <h3 id="1.1.7-worked-example-word-count-with-mapreduce">1.1.7 Worked Example: Word Count with MapReduce</h3>
 <p>The classic <em>word count</em> problem shows how a MapReduce program runs. First, state the objective: given input data of sentences, count the occurrence of each unique word.</p>
 <p><strong>The input.</strong> The input data here has two sentences: <em>"hello world by world"</em> and <em>"hello hadoop goodbye hadoop"</em>. (Note on the source text: the first sentence is the version that matches the final counts — "world" must appear twice in the first sentence to reach the total of two, so the sentence is "hello world by world", not a different reading.)</p>
@@ -256,12 +269,6 @@
 def reduce(key, values):                    # one call per word
     emit(key, sum(values))                  # sum the counts</code></pre>
 <p>For any problem, the skill being tested is: understand how the data is divided, what the map task should do, and what the reduce task should do. Parallelization, data division, and orchestration are provided by the platform — you only write the map code and the reduce code. The implementation can be in Java or Python; Python is preferred for the labs, since lab exercises run in Python.</p>
-<div class="important-note">
-  <p><strong>Q:</strong> How is the data shared among the map and reduce tasks, and where does the shuffling happen? <strong>A:</strong> These questions were held for the MapReduce lab session, where the framework internals — data sharing between map and reduce tasks, and the shuffle stage — will be shown hands-on. The plan for the lab: run a real word count job and watch where each key's values meet.</p>
-</div>
-<div class="key-takeaway">
-  <p><strong>Exam note:</strong> MapReduce is practiced in a lab session, and the labs run in Python. Be able to look at any problem and decide what code belongs in the map task and what belongs in the reduce task: the map decides how to split and emit, the reduce decides how to merge per key.</p>
-</div>
 <h3 id="1.1.8-advantages-of-hadoop">1.1.8 Advantages of Hadoop</h3>
 <ul>
   <li><strong>Low cost.</strong> The technologies are open source, and Hadoop runs on low-cost commodity hardware, which is relatively cheaper than buying high-end servers.</li>
@@ -458,7 +465,6 @@ counts.save("hdfs://.../result")     # write back to permanent storage</code></p
 <h3 id="1.3.9-student-questions-and-answers">1.3.9 Student Questions and Answers</h3>
 <div class="important-note">
   <p><strong>Q:</strong> In a private cloud, resources are not shared, so why do we call it a cloud? And how does scaling happen in a private cloud? <strong>A:</strong> The definition says a shared pool of resources, but the sharing is among the users of one organization, not among different organizations. A public cloud is itself a shared pool of resources among different organizations; a private cloud is not shared that way — the same set of different users from the same organization have access to it. Scaling works like this: cloud vendors help set up the private cloud, and when the application grows you figure out how much computation is being done and add certain resources to your private cloud. Those added resources are not shared by other organizations. You can include them on the fly by paying, so the scalability effort is not as tough as building your own infrastructure. For whatever resources you have occupied, you are likely to be billed.</p>
-  <p>A follow-up asked about the charging basis and payment policy for a private cloud — since it is private rather than public, there may not be a common payment policy; the answer was noted for verification and is to be reverted to on the discussion forum or in the next class.</p>
 </div>
 <div class="key-takeaway">
   <p><strong>Recap and bridge.</strong> The cloud removes the sizing guess by offering elastic, pay-per-use resources through the 3-4-5 rule: five characteristics (on-demand, broad network access, resource pooling, rapid elasticity, measured service), four deployment models (public, private, hybrid, community), and three service models (IaaS, PaaS, SaaS). For big data, the cloud delivers infrastructure (S3, EC2), platforms (Elastic MapReduce), and software alike. Infrastructure, however, is only half the story of reliability — the next section turns to what happens when the machines themselves fail.</p>
@@ -501,9 +507,6 @@ counts.save("hdfs://.../result")     # write back to permanent storage</code></p
   <p><strong>MTBF is the whole span between two failures.</strong> MTBF in general is the sum of the three activities that happen between failures — diagnosis, repair, and the running time:</p>
   <p>\[ MTBF = MTTD + MTTR + MTTF \]</p>
   <p>The timeline runs: system up and running (MTTF), fail, diagnose (MTTD), repair (MTTR), up and running again, fail again — the span between the two failures is MTBF. The three quantities are named after the failure rate: \(MTTF = \frac{1}{\lambda}\), \(MTTR\) is the repair time, and \(MTBF = MTTD + MTTR + MTTF\) ties the whole cycle together.</p>
-</div>
-<div class="key-takeaway">
-  <p><strong>Exam note:</strong> In a numerical problem, if MTTD is not given, it is treated as negligible — assume it is 0. If it is specifically given, you must take it into account. In practice MTTD exists, but for computations it is taken as negligible unless stated. Stating this assumption in your answer is part of the answer.</p>
 </div>
 <h3 id="1.4.6-reliability-in-serial-assembly">1.4.6 Reliability in Serial Assembly</h3>
 <p>Components can be connected in series or in parallel, and that changes the system's MTTF. In <em>serial assembly</em>, the system C is composed of components A and B such that if A fails, C fails; if B fails, C also fails — failure of any component results in system failure.</p>
@@ -686,7 +689,35 @@ counts.save("hdfs://.../result")     # write back to permanent storage</code></p
 </div>
 <h3 id="1.7.3-partition-tolerance">1.7.3 Partition Tolerance</h3>
 <p><em>Partition tolerance</em> means: the system can continue to function when a communication outage splits the cluster into multiple silos, and can still service read and write requests. A node may get disconnected from the network; the question is whether the system continues to operate in that state or waits for the node to come back.</p>
-<p><strong>Visualizing a partition:</strong> draw the cluster as a ring of nodes N1, N2, N3, N4 connected by links. Now erase one link: the nodes on one side of the break form one silo and the nodes on the other side form another, with no message able to cross. That broken ring is the partition. The partition-tolerant system keeps serving both silos; the non-tolerant one effectively stops until the link returns.</p>
+<div class="diagram-container my-6 text-center">
+  <svg viewBox="0 0 380 260" class="diagram-svg" role="img" aria-label="Ring of nodes N1, N2, N3, N4 connected by links, with the N1 to N2 link broken so the ring splits into two silos">
+    <g stroke="currentColor" stroke-width="2" fill="none">
+      <line x1="207" y1="57" x2="228" y2="78"/>
+      <line x1="242" y1="92" x2="263" y2="113"/>
+      <line x1="263" y1="147" x2="207" y2="203"/>
+      <line x1="173" y1="203" x2="117" y2="147"/>
+      <line x1="117" y1="113" x2="173" y2="57"/>
+      <g stroke="#ef4444">
+        <line x1="229" y1="79" x2="241" y2="91"/>
+        <line x1="241" y1="79" x2="229" y2="91"/>
+      </g>
+      <circle cx="190" cy="40" r="24"/>
+      <circle cx="280" cy="130" r="24"/>
+      <circle cx="190" cy="220" r="24"/>
+      <circle cx="100" cy="130" r="24"/>
+    </g>
+    <g fill="currentColor" font-size="13" text-anchor="middle" dominant-baseline="middle">
+      <text x="190" y="40">N1</text>
+      <text x="280" y="130">N2</text>
+      <text x="190" y="220">N3</text>
+      <text x="100" y="130">N4</text>
+      <text x="50" y="130" font-size="11">Silo A</text>
+      <text x="330" y="130" font-size="11">Silo B</text>
+    </g>
+    <text x="250" y="74" fill="#ef4444" font-size="11" text-anchor="middle">partition</text>
+  </svg>
+  <p class="text-xs text-slate-500 mt-2"><strong>Figure:</strong> A network partition — erasing the N1–N2 link splits the ring into two silos that cannot exchange messages.</p>
+</div>
 <h3 id="1.7.4-the-three-cap-scenarios">1.7.4 The Three CAP Scenarios</h3>
 <p>The balance between the three properties is best seen through three scenarios, all involving a network partition where the user wants to update the value on replica PRC to 82.</p>
 <p><strong>Scenario 1 — CA, no P.</strong> A network partition happens and the user wants to update PRC. Any access by the user to PRC leads to a failure message. The system is available, because it comes back with a response; it is consistent, because the user's update is not processed and the value stays the same across all three replicas. But there is no partition tolerance: when the network partitioned, the system did not allow user operations to succeed. You have C and A, but no P.</p>
@@ -742,17 +773,6 @@ counts.save("hdfs://.../result")     # write back to permanent storage</code></p
   <p><strong>Recap and bridge.</strong> CAP names the three properties every distributed system cares about — consistency (all nodes agree), availability (every request gets an answer), partition tolerance (the system survives a split) — and proves you can keep at most two, with partition tolerance effectively mandatory, so the real choice is consistency versus availability. That choice is made per application: banks and billing lean consistent, feeds and analytics lean available. The next session deepens this into levels of consistency — how much "agreement" a system can promise and still stay fast.</p>
 </div>
 
-<h2 id="exam-guidance-summary">Exam Guidance Summary</h2>
-<ul>
-  <li>Expect mathematical problems on availability and reliability: MTTF, MTTR, availability percentage, and the cost of downtime. A practice problem on availability and reliability (of the kind worked in this unit) is posted on the forum.</li>
-  <li>In numericals, state your assumptions — this is part of the answer. Specifically, if MTTD is not given, assume it is negligible (zero); if it is given, include it in the availability formula.</li>
-  <li>Know the two assembly formulas: serial assembly makes system MTTF the reciprocal of the sum of reciprocal component MTTFs (system reliability worsens with every added component); parallel assembly makes system MTTF the sum of component MTTFs (reliability improves).</li>
-  <li>MapReduce will be practiced in a lab session: be able to look at a problem and decide what code goes in the map task and what goes in the reduce task. Python is used for the labs. Questions about how data is shared between map and reduce tasks and where shuffling happens will be covered there.</li>
-  <li>Know the CAP theorem in depth, including the three scenarios (CA, AP, CP). The full treatment of consistency levels continues in the next session.</li>
-</ul>
-<div class="key-takeaway">
-  <p><strong>Exam note — the one-page revision picture.</strong> Every numerical problem in this unit hangs off a single timeline: up for MTTF, fail, diagnose (MTTD, usually 0 unless stated), repair (MTTR). Availability is \(\frac{MTTF}{MTTD + MTTR + MTTF}\), and the cost of downtime is the unavailable fraction of the year at the given hourly rate. For the concept questions, the three big contrasts to be able to explain in a sentence each are: Hadoop versus RDBMS (flexible schema versus schema-first), MapReduce versus Spark (disk round trips versus in-memory), and CAP's three scenarios (CA, AP, CP).</p>
-</div>
 
 <h2 id="key-industry-applications">Key Industry Applications</h2>
 <ul>
@@ -784,76 +804,6 @@ counts.save("hdfs://.../result")     # write back to permanent storage</code></p
       - .revision-check — one self-check question (no options)
       - .revision-connections — linked concepts within this lecture
     ============================================================ -->
-    <section class="exam-revision-section">
-      <h2>Exam Revision Notes</h2>
-      <p class="revision-intro">Below is the distilled, exam-ready core.
-      Every entry comes from the full explanation above. Use this section
-      for rapid review; return to the main notes when a point needs more context.</p>
-    <div class="exam-revision-entry">
-      <h3 class="revision-topic">Hadoop — Storage and Processing for Big Data</h3>
-      <p class="revision-mustknow"><strong>Must-know:</strong> MapReduce: split data into chunks; map tasks emit one key-value pair per item (no aggregation); reducers shuffle, sort, and aggregate per key. Hadoop stores any data type via HDFS blocks with replication factor three on commodity hardware; no transactions, only jobs and tasks.</p>
-      <p class="revision-pitfall"><strong>&#9888;&#65039; Top pitfall:</strong> Believing map tasks aggregate — they never do; every occurrence produces its own pair, aggregation is the reducer's job.</p>
-      <p class="revision-check"><strong>Self-check:</strong> Sentence 'a b a' goes to one map task; which pairs are emitted and what does the reducer output?</p>
-      <p class="revision-connections"><strong>Connects to:</strong> 1.1.3, 1.1.5, 1.1.7</p>
-    </div>
-    <div class="exam-revision-entry">
-      <h3 class="revision-topic">In-Memory Computing with Spark</h3>
-      <p class="revision-mustknow"><strong>Must-know:</strong> Spark caches working data in distributed RAM, replacing intermediate disk storage, to serve low-latency and iterative workloads; compose operators (map, flatMap, reduceByKey, join, groupBy) instead of writing fixed map-then-reduce functions.</p>
-      <p class="revision-pitfall"><strong>&#9888;&#65039; Top pitfall:</strong> Assuming Spark needs one giant machine; it pools each node's RAM across a cluster, with the intermediary layer handling sync.</p>
-      <p class="revision-check"><strong>Self-check:</strong> Why is a ten-iteration training loop fast in Spark but slow in MapReduce?</p>
-      <p class="revision-connections"><strong>Connects to:</strong> 1.1.5, 1.4</p>
-    </div>
-    <div class="exam-revision-entry">
-      <h3 class="revision-topic">Cloud Computing for Big Data</h3>
-      <p class="revision-mustknow"><strong>Must-know:</strong> 3-4-5 rule: 5 characteristics (on-demand self-service, broad network access, resource pooling, rapid elasticity, measured service), 4 deployment models (public, private, hybrid, community), 3 service models (IaaS, PaaS, SaaS). Private cloud shares resources among one organization's users, not across organizations.</p>
-      <p class="revision-pitfall"><strong>&#9888;&#65039; Top pitfall:</strong> Thinking elasticity means unlimited free resources; it means resources respond to demand and you pay per use (measured service).</p>
-      <p class="revision-check"><strong>Self-check:</strong> Which service model is Elastic MapReduce, and why does a private cloud still qualify as a cloud?</p>
-      <p class="revision-connections"><strong>Connects to:</strong> 1.1, 1.3.5, 1.3.6</p>
-    </div>
-    <div class="exam-revision-entry">
-      <h3 class="revision-topic">Reliability and Availability</h3>
-      <p class="revision-mustknow"><strong>Must-know:</strong> Availability = MTTF/(MTTD + MTTR + MTTF); MTTD = 0 unless given. Serial: M_system = 1/(sum 1/M_i) (shrinks). Parallel: M_system = sum M_i (grows). MTTF = 1/lambda; MTBF = MTTD + MTTR + MTTF.</p>
-      <p class="revision-formula">\[A = \frac{M_{TTF}}{M_{TTD} + M_{TTR} + M_{TTF}}\]</p>
-      <p class="revision-pitfall"><strong>&#9888;&#65039; Top pitfall:</strong> Forgetting to state assumptions: MTTD not given means MTTD = 0; also confusing serial (any failure kills the system) with parallel (all must fail).</p>
-      <p class="revision-check"><strong>Self-check:</strong> Node fails every 100 hours, repair takes 4 hours; what is availability and the yearly cost at 80,000 USD/hour?</p>
-      <p class="revision-connections"><strong>Connects to:</strong> 1.5, 1.4.6, 1.4.7</p>
-    </div>
-    <div class="exam-revision-entry">
-      <h3 class="revision-topic">Fault Tolerance Configurations</h3>
-      <p class="revision-mustknow"><strong>Must-know:</strong> Load balanced = zero failover time (highest cost); hot standby = seconds; warm standby = minutes; cold standby = hours (lowest cost). You buy high availability with money, or save money and accept longer downtime.</p>
-      <p class="revision-pitfall"><strong>&#9888;&#65039; Top pitfall:</strong> Confusing hot standby (running but not processing) with load balanced (both processing); hot standby failover takes seconds, load balanced is instant.</p>
-      <p class="revision-check"><strong>Self-check:</strong> Which configuration has the highest failover time and the lowest cost?</p>
-      <p class="revision-connections"><strong>Connects to:</strong> 1.4, 1.6</p>
-    </div>
-    <div class="exam-revision-entry">
-      <h3 class="revision-topic">Recovery</h3>
-      <p class="revision-mustknow"><strong>Must-know:</strong> Diagnosis via heartbeat + timeout (MTTD); backward recovery = roll back to last checkpoint and resume; forward recovery = reconstruct from diagnosis data, for real-time systems that cannot roll back.</p>
-      <p class="revision-pitfall"><strong>&#9888;&#65039; Top pitfall:</strong> Using backward recovery where rollback is impossible (real-time systems) or forward recovery where re-running from a checkpoint is cheaper.</p>
-      <p class="revision-check"><strong>Self-check:</strong> Why is a control system more likely to use forward recovery than backward recovery?</p>
-      <p class="revision-connections"><strong>Connects to:</strong> 1.4.5, 1.7</p>
-    </div>
-    <div class="exam-revision-entry">
-      <h3 class="revision-topic">The CAP Theorem</h3>
-      <p class="revision-mustknow"><strong>Must-know:</strong> Any distributed system can have two of CA/CP/AP, never all three; partition tolerance is effectively mandatory (links and nodes fail), so the real choice is consistency vs availability by application needs. Know the three scenarios (CA, AP, CP) and what the user receives in each.</p>
-      <p class="revision-pitfall"><strong>&#9888;&#65039; Top pitfall:</strong> Equating availability with success: an immediate failure message IS availability; a hanging request is unavailability. Also treating a single node disconnect as something other than a partition (it is a partition of 1 and N-1).</p>
-      <p class="revision-check"><strong>Self-check:</strong> In a partitioned system where a write succeeds on only one side, which property is lost if the system answers immediately?</p>
-      <p class="revision-connections"><strong>Connects to:</strong> 1.4, 1.5.6</p>
-    </div>
-    <div class="exam-revision-entry">
-      <h3 class="revision-topic">Exam Guidance Summary</h3>
-      <p class="revision-mustknow"><strong>Must-know:</strong> Availability = MTTF/(MTTD + MTTR + MTTF) with MTTD = 0 unless given; serial assembly shrinks system MTTF, parallel grows it; CAP scenarios CA/AP/CP.</p>
-      <p class="revision-formula">\[A = \frac{MTTF}{MTTD + MTTR + MTTF}\]</p>
-      <p class="revision-pitfall"><strong>&#9888;&#65039; Top pitfall:</strong> Omitting stated assumptions in numericals.</p>
-      <p class="revision-check"><strong>Self-check:</strong> How does the availability formula change when MTTD is given as nonzero?</p>
-      <p class="revision-connections"><strong>Connects to:</strong> 1.4, 1.7</p>
-    </div>
-    <div class="exam-revision-entry">
-      <h3 class="revision-topic">Key Industry Applications</h3>
-      <p class="revision-mustknow"><strong>Must-know:</strong> The standard industry stack and which workload each tool serves (ingestion, resource management, analytics, ML, scheduling, coordination).</p>
-      <p class="revision-check"><strong>Self-check:</strong> Which tool ingests structured data into HDFS, and which tool schedules jobs?</p>
-      <p class="revision-connections"><strong>Connects to:</strong> 1.1.9, 1.3</p>
-    </div>
-    </section>
   </div>
 </body>
 </html>

@@ -201,7 +201,23 @@
     <li><strong>Breaks when:</strong> You force huge shuffles with poorly keyed joins, or you disable broadcast and join two giant tables with no selective filters.</li>
   </ul>
 </div>
-<p>Visual intuition: picture the logical plan as a tree drawn top-down — <code>Join</code> at the root, <code>Filter</code> and <code>Scan</code> as leaves. After optimization, a <code>Filter</code> that used to sit above a <code>Join</code> may move under it (predicate pushdown), and a skinny <code>Project</code> may appear early so only two columns ride the shuffle instead of fifty. Takeaway: same answer, less network and CPU.</p>
+<div class="diagram-container my-6 text-center">
+<pre class="mermaid">
+flowchart TD
+    subgraph before["Before optimization"]
+    F1["Filter"] --> J1["Join"]
+    J1 --> S1["Scan"]
+    J1 --> S2["Scan"]
+    end
+    subgraph after["After optimization"]
+    J2["Join"] --> P2["Project (two columns)"]
+    P2 --> F2["Filter (pushed down)"]
+    F2 --> S3["Scan"]
+    J2 --> S4["Scan"]
+    end
+</pre>
+<p class="text-xs text-slate-500 mt-2"><strong>Figure:</strong> Logical plan as a tree drawn top-down — <code>Join</code> at the root, <code>Filter</code> and <code>Scan</code> as leaves; after optimization the <code>Filter</code> moves under the <code>Join</code> (predicate pushdown) and a skinny <code>Project</code> appears early so only two columns ride the shuffle instead of fifty.</p>
+</div>
 <div class="warning-box">
   <p><strong>Pitfalls:</strong></p>
   <ol>
@@ -245,9 +261,6 @@ spark = SparkSession.builder \
     <li><strong>Forgetting an app name in shared clusters.</strong> Vague default names make jobs hard to find in the Spark UI.</li>
     <li><strong>Mixing legacy <code>HiveContext</code> construction with modern <code>SparkSession</code> patterns</strong> without need — prefer <code>SparkSession.builder.enableHiveSupport()</code> when Hive is required.</li>
   </ol>
-</div>
-<div class="key-takeaway">
-  <p><strong>Exam note:</strong> Know that DataFrames are schema-full wrappers over RDDs, that Catalyst (and CBO) optimize lazy logical plans, and that <code>SparkSession</code> replaces fragmented 1.x entry points. Next: ingest files and declare schemas so Catalyst has real column metadata to work with (10.2).</p>
 </div>
 
 <h2 id="10.2-ingestion-schema-definition-and-column-row-operations">10.2 Ingestion, Schema Definition, and Column/Row Operations</h2>
@@ -457,9 +470,6 @@ df_custom.show()</code></pre>
     <li><strong>Building huge tables with <code>createDataFrame</code> on the driver.</strong> Driver OOM risk — prefer <code>spark.read</code> for large data.</li>
     <li><strong>Mixing positional Rows with a mismatched explicit schema length.</strong> Field count must align.</li>
   </ol>
-</div>
-<div class="key-takeaway">
-  <p><strong>Exam note:</strong> Be ready to write <code>StructType</code>/<code>StructField</code>, use <code>withColumn</code>/<code>withColumnRenamed</code>/<code>drop</code>, and explain why immutability forces reassignment. Next: filter rows, cast types, limit, and sort (10.3).</p>
 </div>
 <p><strong>Real-world domain connection:</strong> Lakehouse jobs typically pair Parquet/ORC reads with checked-in schema definitions (or metastore tables) so evolving JSON dumps cannot silently change types overnight — the same production advice as avoiding inference on multi-TB scans.</p>
 
@@ -741,7 +751,25 @@ df_retail_summary = df_retail.groupBy("Country").agg(
   <p><strong>Sense-check:</strong> <code>sum(total_invoices)</code> across countries equals the number of input rows when each row is one invoice line counted once via <code>count("InvoiceNo")</code> on this toy table.</p>
 </div>
 <p>When <code>groupBy</code> runs, Spark hashes/partitions by key, may aggregate partially on the map side, shuffles so identical keys co-locate, then finishes reductions. That shuffle is why unselective grouping on high-cardinality keys can dominate job time — the same wide-transform cost story as joins (10.5).</p>
-<p>Visual intuition: draw countries on the x-axis and <code>total_quantity</code> on the y-axis as a bar chart; each bar is one group’s reducer output. Tall bars are heavy keys; many tiny bars mean high cardinality and more shuffle groups.</p>
+<div class="diagram-container my-6 text-center">
+<svg viewBox="0 0 320 200" class="diagram-svg" role="img" aria-label="Bar chart of total_quantity by Country: United Kingdom 15, France 20.">
+  <line x1="40" y1="30" x2="40" y2="160" stroke="currentColor" stroke-width="1.5"/>
+  <line x1="40" y1="160" x2="300" y2="160" stroke="currentColor" stroke-width="1.5"/>
+  <text x="34" y="164" text-anchor="end" font-size="10" fill="currentColor">0</text>
+  <text x="34" y="104" text-anchor="end" font-size="10" fill="currentColor">10</text>
+  <text x="34" y="44" text-anchor="end" font-size="10" fill="currentColor">20</text>
+  <line x1="40" y1="100" x2="300" y2="100" stroke="currentColor" stroke-width="0.5" stroke-dasharray="3 3" opacity="0.5"/>
+  <line x1="40" y1="40" x2="300" y2="40" stroke="currentColor" stroke-width="0.5" stroke-dasharray="3 3" opacity="0.5"/>
+  <rect x="70" y="70" width="60" height="90" fill="currentColor" opacity="0.7"/>
+  <rect x="190" y="40" width="60" height="120" fill="currentColor" opacity="0.7"/>
+  <text x="100" y="64" text-anchor="middle" font-size="11" fill="currentColor">15</text>
+  <text x="220" y="34" text-anchor="middle" font-size="11" fill="currentColor">20</text>
+  <text x="100" y="178" text-anchor="middle" font-size="11" fill="currentColor">United Kingdom</text>
+  <text x="220" y="178" text-anchor="middle" font-size="11" fill="currentColor">France</text>
+  <text x="170" y="196" text-anchor="middle" font-size="10" fill="currentColor">Country (x-axis) — total_quantity (y-axis)</text>
+</svg>
+<p class="text-xs text-slate-500 mt-2"><strong>Figure:</strong> <code>total_quantity</code> per <code>Country</code> after <code>groupBy("Country").agg(...)</code> — each bar is one group's reducer output: United Kingdom 15, France 20.</p>
+</div>
 <div class="warning-box">
   <p><strong>Scope / assumptions:</strong></p>
   <ul>
@@ -1021,9 +1049,6 @@ person.join(graduate_program, join_expr, "inner").explain()</code></pre>
     <li><strong>Assuming join type (left/inner) equals physical strategy</strong> — logical type and physical strategy are independent axes.</li>
   </ol>
 </div>
-<div class="key-takeaway">
-  <p><strong>Exam note:</strong> Memorize the seven join outcomes on the person/program example, and explain shuffle vs broadcast in one sentence each. Next: run the same logic through Spark SQL with plan parity (10.6).</p>
-</div>
 <p><strong>Real-world domain connection:</strong> Nightly warehouse ETL joins billion-row fact tables to small store/currency dimensions with broadcast joins to cut shuffle — expanded in 10.8.2.</p>
 
 <h2 id="10.6-spark-sql-interoperability-and-in-memory-execution">10.6 Spark SQL Interoperability and In-Memory Execution</h2>
@@ -1127,35 +1152,8 @@ Raw SQL Queries (spark.sql)     /</code></pre>
 <div class="warning-box">
   <p><strong>Scope:</strong> Plan parity holds for relational work expressed in both APIs. Opaque UDFs, different caching, or different configuration can still change runtime.</p>
 </div>
-<div class="key-takeaway">
-  <p><strong>Exam note:</strong> Know the four-step SQL workflow, that <code>spark.sql</code> returns a DataFrame, and that Catalyst gives plan parity with the DataFrame API. Appendices next cover assignment submission norms and industry uses of these ideas.</p>
-</div>
 <p><strong>Real-world domain connection:</strong> Mixed teams put engineers on PySpark ETL, analysts on Spark SQL dashboards, and still share one optimized runtime — the multi-language story in 10.8.1.</p>
 
-<h2 id="10.7-exam-guidance-summary">10.7 Exam Guidance Summary</h2>
-<h3 id="10.7.1-assignment-submission-and-video-demo-requirements">10.7.1 Assignment Submission and Video Demo Requirements</h3>
-<div class="key-takeaway">
-  <p><strong>Exam note:</strong> Assignments such as Assignment 2 expect <strong>both</strong> code artifacts and structured execution proof (PPT or PDF) <strong>plus</strong> a short video demo — not code alone.</p>
-</div>
-<p><strong>Document structure</strong> — include screenshots that verify:</p>
-<ol>
-  <li>Local environment connection and setup commands.</li>
-  <li>Program source sections that show the required algorithms.</li>
-  <li>Console commands and intermediate outputs.</li>
-  <li>Input parameters and final console outputs.</li>
-</ol>
-<p><strong>Observer clarity:</strong> Use clean, annotated layouts. Do not submit unformatted wall-of-text dumps.</p>
-<p><strong>Video demo format:</strong> Keep videos short and focused on command execution and runtime outputs (directory navigation, Sqoop ingestion, Hive queries, MapReduce results on the prompt). Avoid long unedited recordings.</p>
-<p><strong>Infrastructure guidance:</strong> Native Hadoop 3.x on Windows 10 often fails on WinUtils path issues. Prefer Hadoop 2.7/2.6, Linux/Ubuntu, or managed clouds (AWS EMR, Databricks).</p>
-<p><strong>Evaluation weightage:</strong> Command execution typically carries about 40%–50% of credit; wiring an end-to-end pipeline (for example Sqoop → Hive → MapReduce analytics) carries about 50%–60%.</p>
-<div class="warning-box">
-  <p><strong>Pitfalls:</strong></p>
-  <ol>
-    <li>Submitting code without screenshot proof of runs.</li>
-    <li>Recording a long desktop video with no clear command outcomes.</li>
-    <li>Burning hours on a broken Windows Hadoop 3 install instead of using a supported environment.</li>
-  </ol>
-</div>
 
 <h2 id="10.8-key-industry-applications">10.8 Key Industry Applications</h2>
 <h3 id="10.8.1-multi-language-enterprise-data-analytics">10.8.1 Multi-Language Enterprise Data Analytics</h3>
@@ -1184,77 +1182,6 @@ Raw SQL Queries (spark.sql)     /</code></pre>
       - .revision-check — one self-check question (no options)
       - .revision-connections — linked concepts within this lecture
     ============================================================ -->
-    <section class="exam-revision-section">
-      <h2>Exam Revision Notes</h2>
-      <p class="revision-intro">Below is the distilled, exam-ready core.
-      Every entry comes from the full explanation above. Use this section
-      for rapid review; return to the main notes when a point needs more context.</p>
-<div class="exam-revision-entry">
-  <h3 class="revision-topic">History, Architecture, and Catalyst Optimizer of Spark DataFrames</h3>
-  <p class="revision-mustknow"><strong>Must-know:</strong> DataFrames add named schemas so Catalyst can optimize; they compile to RDD plans; SparkSession unifies entry points.</p>
-  <p class="revision-formula">\[ \text{DataFrame Operation} \xrightarrow{\text{Compilation}} \text{Logical Plan} \xrightarrow{\text{Catalyst Optimizer}} \text{Optimized RDD Transformations \& Actions} \]</p>
-  <p class="revision-pitfall"><strong>⚠️ Top pitfall:</strong> Treating DataFrames as eager local pandas objects or believing they replace RDDs entirely.</p>
-  <p class="revision-check"><strong>Self-check:</strong> Why can Catalyst optimize DataFrame code better than opaque RDD lambdas?</p>
-  <p class="revision-connections"><strong>Connects to:</strong> 10.2, 10.5, 10.6</p>
-</div>
-
-<div class="exam-revision-entry">
-  <h3 class="revision-topic">Ingestion, Schema Definition, and Column/Row Operations</h3>
-  <p class="revision-mustknow"><strong>Must-know:</strong> Explicit schemas beat inference at scale; withColumn returns a new DataFrame — assign it; unnamed Rows become _1,_2,_3.</p>
-  <p class="revision-pitfall"><strong>⚠️ Top pitfall:</strong> Calling withColumn without assigning and assuming the original DataFrame changed.</p>
-  <p class="revision-check"><strong>Self-check:</strong> What three arguments does StructField take?</p>
-  <p class="revision-connections"><strong>Connects to:</strong> 10.1, 10.3</p>
-</div>
-
-<div class="exam-revision-entry">
-  <h3 class="revision-topic">Data Filtering, Type Casting, Limiting, and Sorting</h3>
-  <p class="revision-mustknow"><strong>Must-know:</strong> where needs a boolean SQL expression; cast failures become null; limit returns a DataFrame, show does not.</p>
-  <p class="revision-pitfall"><strong>⚠️ Top pitfall:</strong> Assigning df.show(n) to a variable or using Python and/or between Columns.</p>
-  <p class="revision-check"><strong>Self-check:</strong> Why does where("count") fail while where("count > 100") works?</p>
-  <p class="revision-connections"><strong>Connects to:</strong> 10.2, 10.4</p>
-</div>
-
-<div class="exam-revision-entry">
-  <h3 class="revision-topic">Data Grouping and Aggregation</h3>
-  <p class="revision-mustknow"><strong>Must-know:</strong> groupBy shuffles by key after optional map-side partial aggregates; use agg for multiple metrics.</p>
-  <p class="revision-pitfall"><strong>⚠️ Top pitfall:</strong> Grouping without aggregation, or grouping on near-unique keys and wondering why jobs are slow.</p>
-  <p class="revision-check"><strong>Self-check:</strong> What cluster steps occur when groupBy runs?</p>
-  <p class="revision-connections"><strong>Connects to:</strong> 10.3, 10.5, 10.6</p>
-</div>
-
-<div class="exam-revision-entry">
-  <h3 class="revision-topic">Relational Joins and Distributed Execution Mechanics</h3>
-  <p class="revision-mustknow"><strong>Must-know:</strong> Semi/anti keep left schema only; broadcast avoids shuffling the large side when one table is small.</p>
-  <p class="revision-formula">\[ M \times N \quad \text{(cross join cardinality)} \]</p>
-  <p class="revision-pitfall"><strong>⚠️ Top pitfall:</strong> Expecting right-table columns from left_semi, or broadcasting an oversized dimension.</p>
-  <p class="revision-check"><strong>Self-check:</strong> Which people appear in left_anti for the lecture demo tables?</p>
-  <p class="revision-connections"><strong>Connects to:</strong> 10.1, 10.4, 10.6, 10.8</p>
-</div>
-
-<div class="exam-revision-entry">
-  <h3 class="revision-topic">Spark SQL Interoperability and In-Memory Execution</h3>
-  <p class="revision-mustknow"><strong>Must-know:</strong> Register a temp view then spark.sql; result is a DataFrame; SQL and DataFrame API share Catalyst plans.</p>
-  <p class="revision-pitfall"><strong>⚠️ Top pitfall:</strong> Assuming temp views persist like Hive metastore tables across applications.</p>
-  <p class="revision-check"><strong>Self-check:</strong> List the four steps to run a Spark SQL query on a CSV.</p>
-  <p class="revision-connections"><strong>Connects to:</strong> 10.1, 10.4, 10.5, 10.8</p>
-</div>
-
-<div class="exam-revision-entry">
-  <h3 class="revision-topic">Exam Guidance Summary</h3>
-  <p class="revision-mustknow"><strong>Must-know:</strong> Submit screenshots + short execution video; pipeline integration outweighs isolated commands slightly.</p>
-  <p class="revision-pitfall"><strong>⚠️ Top pitfall:</strong> Native Hadoop 3 on Windows without WinUtils; missing run evidence.</p>
-  <p class="revision-check"><strong>Self-check:</strong> Roughly what fraction of credit is end-to-end pipeline integration?</p>
-  <p class="revision-connections"><strong>Connects to:</strong> 10.2</p>
-</div>
-
-<div class="exam-revision-entry">
-  <h3 class="revision-topic">Key Industry Applications</h3>
-  <p class="revision-mustknow"><strong>Must-know:</strong> PySpark/Scala/SQL share Catalyst; broadcast small dimensions instead of shuffling huge facts.</p>
-  <p class="revision-pitfall"><strong>⚠️ Top pitfall:</strong> Shuffle-joining large facts to tiny dimensions and blaming the cluster size alone.</p>
-  <p class="revision-check"><strong>Self-check:</strong> Why can analysts using Spark SQL see similar performance to PySpark ETL for the same join?</p>
-  <p class="revision-connections"><strong>Connects to:</strong> 10.1, 10.5, 10.6</p>
-</div>
-    </section>
   </div>
 </body>
 </html>

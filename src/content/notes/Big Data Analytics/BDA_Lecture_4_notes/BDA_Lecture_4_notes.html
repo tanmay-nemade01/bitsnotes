@@ -772,9 +772,6 @@ Block blk_1073741827: len=4194304 repl=3 [10.0.0.2:9866, 10.0.1.6:9866, 10.0.1.7
   <p><strong>Q:</strong> Why are intermediate key-value pairs produced by Mappers written to local disk on the DataNode rather than being written directly to HDFS?</p>
   <p><strong>A:</strong> Writing intermediate Map outputs to local disk avoids the high overhead of HDFS block replication (\(R=3\)). Intermediate map outputs are temporary data required only until the Reduce phase completes. If we wrote them to HDFS with replication factor 3, every intermediate byte would be written 3 times — tripling disk I/O and network traffic for data that will be deleted after the job finishes. If a DataNode crashes before the Reduce phase, the master simply re-executes the specific Map task on another DataNode hosting a replica of the original input block. This is the fault-tolerance strategy: recompute rather than replicate.</p>
 </div>
-<div class="important-note">
-  <p><strong>Exam note:</strong> Map tasks write output to local disk, not HDFS. Reduce tasks write output to HDFS (because it's the final result that must be persisted). This is a common exam question.</p>
-</div>
 <div class="warning-box">
   <p><strong>Assumptions & Scope:</strong></p>
   <p>MapReduce works best under these conditions:</p>
@@ -874,9 +871,6 @@ Block blk_1073741827: len=4194304 repl=3 [10.0.0.2:9866, 10.0.1.6:9866, 10.0.1.7
   <p><strong>Operations that ARE safe for Combiners:</strong> Sum, Count, Maximum, Minimum, Set Union <strong>Operations that are NOT safe for Combiners:</strong> Average, Median, Standard Deviation (unless restructured)</p>
 </div>
 <h3 id="4.3.3-detailed-counterexample-why-combiners-fail-for-average-computations">4.3.3 Detailed Counterexample: Why Combiners Fail for Average Computations</h3>
-<div class="warning-box">
-  <p><strong>Exam note:</strong> A classic exam question asks whether a Combiner can be directly assigned to calculate an average value across a dataset using a standard <code>reduce()</code> function. You must be prepared to prove why this fails.</p>
-</div>
 <div class="example-box">
   <p><strong>Worked Example — Proving Average is NOT Associative:</strong></p>
   <p>Consider a dataset containing three numerical observations: \(x_1 = 3\), \(x_2 = 2\), and \(x_3 = 5\).</p>
@@ -897,15 +891,6 @@ Block blk_1073741827: len=4194304 repl=3 [10.0.0.2:9866, 10.0.1.6:9866, 10.0.1.7
   <p><strong>Error:</strong> \(3.750 - 3.333 = 0.417\) — a 12.5% error from the correct answer!</p>
   <p><strong>Root Cause:</strong> Average is not associative because combining intermediate subset averages weights small partitions equally with large partitions, distorting the final global mean. The Mapper 1 average (2.5) is computed from 2 values, while Mapper 2 average (5.0) is computed from 1 value — but the Reducer treats them as equally weighted.</p>
   <p><strong>The Fix:</strong> To compute an average using a Combiner safely, Mappers must emit intermediate custom tuples containing both local sums and local counts \((\text{sum}, \text{count})\), allowing the Combiner and Reducer to sum both components independently before dividing: \[ \text{Average} = \frac{\sum \text{sum}_i}{\sum \text{count}_i} \] This works because sum and count are both commutative and associative.</p>
-</div>
-<div class="key-takeaway">
-  <p><strong>Exam Checklist for Combiner Questions:</strong></p>
-  <ol>
-    <li>State the two required properties (commutative + associative)</li>
-    <li>For Average: show the counterexample with concrete numbers</li>
-    <li>Explain the fix: emit (sum, count) tuples instead of averages</li>
-    <li>Mention that Combiner is optional — Hadoop may skip it entirely</li>
-  </ol>
 </div>
 <h3 id="4.3.4-the-partitioner-component">4.3.4 The Partitioner Component</h3>
 <div class="key-concept">
@@ -1247,9 +1232,6 @@ System.exit(job.waitForCompletion(true) ? 0 : 1);</code></pre>
     </tbody>
   </table>
   <p><strong>Performance impact:</strong> With 4 reducers, execution time is approximately \(\frac{1}{4}\) of the single-reducer case (assuming equal data distribution).</p>
-</div>
-<div class="important-note">
-  <p><strong>Exam note:</strong> Single Reducer processes keys serially in strict alphabetical key order. Multiple Reducers execute in parallel. The Partitioner determines which Reducer gets which key.</p>
 </div>
 <div class="key-takeaway">
   <p><strong>Recap + Bridge:</strong> The Writable serialization system replaces Java's Serializable for speed — raw bytes only, no metadata. The Driver class orchestrates the entire MapReduce job. The Average Unit Price example demonstrates the complete pattern with proper (sum, count) averaging. Now we explore advanced MapReduce patterns — sorting, composite keys, and SQL equivalence.</p>
@@ -1609,44 +1591,12 @@ if last_key:
     print "%s\t%s" % (last_key, total / count)</code></pre>
   <p><strong>How it works:</strong> The mapper reads CSV lines, extracts country and price, and emits <code>country\tprice</code>. The reducer detects key transitions (when country changes) and computes the average for each country. The framework handles the sorting and grouping between them.</p>
 </div>
-<div class="important-note">
-  <p><strong>Exam note:</strong> Hadoop Streaming uses tab-delimited (<code>\t</code>) key-value text streams. The framework sorts lines by key between map and reduce. The reducer must detect key transitions manually. Any language that can read stdin and write stdout can be used.</p>
-</div>
 <div class="key-takeaway">
   <p><strong>Recap + Bridge:</strong> Hadoop Streaming enables polyglot MapReduce by communicating via stdin/stdout with tab-delimited key-value pairs. The Mapper reads lines and emits <code>key\tvalue</code> to stdout. The Reducer reads sorted <code>key\tvalue</code> lines and must track key transitions itself. This completes our coverage of the MapReduce execution model — from HDFS storage through the Map/Reduce pipeline, optimizations (Combiner/Partitioner), Java API, advanced patterns, and now cross-language support.</p>
 </div>
 <div class="important-note">
   <p><strong>Real-World & Domain Connection:</strong> Hadoop Streaming was widely used by data science teams before Apache Spark became dominant. Python-based MapReduce via Streaming powered early recommendation systems at Spotify and YouTube. Today, the Streaming concept has evolved into frameworks like Apache Beam and Kafka Streams, which maintain the same stdin/stdout-like abstraction for language-agnostic stream processing.</p>
 </div>
-
-<h2 id="exam-guidance-summary">Exam Guidance Summary</h2>
-<div class="key-takeaway">
-  <p><strong>Exam note:</strong> This summary consolidates all exam-critical points from Lecture 4. Review each item and ensure you can explain it from memory.</p>
-</div>
-<p><strong>1. Rack Awareness Distance Rules:</strong> Memorize the network hop distance calculations:</p>
-<ul>
-  <li>Intra-rack node distance: <strong>2 hops</strong> (Node 1 \(\to\) Rack Switch \(\to\) Node 2)</li>
-  <li>Inter-rack node distance: <strong>4 hops</strong> (Node 1 \(\to\) Local Switch \(\to\) Core Switch \(\to\) Remote Switch \(\to\) Node 9)</li>
-</ul>
-<p><strong>2. HDFS File Read Locality Placement:</strong> On file read requests, NameNode returns DataNode addresses sorted by physical network hop distance relative to client. Local rack DataNodes are always prioritized over remote rack DataNodes.</p>
-<p><strong>3. Combiner Mathematical Eligibility:</strong> A Combiner can ONLY be applied if the reduction operation satisfies both:</p>
-<ul>
-  <li><strong>Commutative:</strong> \(a \oplus b = b \oplus a\)</li>
-  <li><strong>Associative:</strong> \((a \oplus b) \oplus c = a \oplus (b \oplus c)\)</li>
-</ul>
-<p><strong>4. Average Combiner Trap:</strong> Be prepared to prove why standard Average cannot use a simple Combiner. Show that: \[ \text{Avg}(\text{Avg}(3,2), 5) = \frac{2.5 + 5.0}{2} = 3.750 \] whereas true average is: \[ \frac{3+2+5}{3} = \frac{10}{3} = 3.333 \] Fix: Emit (sum, count) tuples instead of averages.</p>
-<p><strong>5. Partitioner Routing Formula:</strong> Default <code>HashPartitioner</code> routes keys to reducers via: \[ \text{Reducer Index} = \left| \text{hashCode}(\text{key}) \right| \pmod{\text{numReduceTasks}} \] Single reducer executes tasks serially in strict alphabetical key order; multiple reducers execute in parallel.</p>
-<p><strong>6. MapReduce Signature Types:</strong> Memorize the complete key-value signature transformation: \[ \text{Map}: (K_1, V_1) \to \text{List}(K_2, V_2) \] \[ \text{Shuffle}: \text{List}(K_2, V_2) \to (K_2, \text{Iterable}(V_2)) \] \[ \text{Reduce}: (K_2, \text{Iterable}(V_2)) \to \text{List}(K_3, V_3) \]</p>
-<p><strong>7. Hadoop Writable System:</strong> Understand why Java native serialization is replaced by Hadoop Writable types (<code>IntWritable</code>, <code>DoubleWritable</code>, <code>Text</code>). Keys must implement <code>WritableComparable</code>; values implement <code>Writable</code>.</p>
-<p><strong>8. Hadoop Streaming Mechanics:</strong> Non-Java programs interface via <code>stdin</code>/<code>stdout</code> using tab-delimited (<code>\t</code>) key-value text streams passed via <code>hadoop-streaming.jar</code>. Reducer must track key transitions manually.</p>
-<p><strong>9. Map vs Reduce Output Storage:</strong> Map output goes to <strong>local disk</strong> (temporary, no replication). Reduce output goes to <strong>HDFS</strong> (persistent, replicated). This is because map output is intermediate data; reduce output is the final result.</p>
-<p><strong>10. SQL-to-MapReduce Equivalents:</strong></p>
-<ul>
-  <li><code>WHERE</code> → Mapper filtering</li>
-  <li><code>GROUP BY</code> → Mapper key + Shuffle & Sort</li>
-  <li><code>ORDER BY</code> → Mapper key (sort column) + Shuffle & Sort</li>
-  <li><code>HAVING</code> → Reducer filtering</li>
-</ul>
 
 <h2 id="key-industry-applications">Key Industry Applications</h2>
 <div class="important-note">
@@ -1671,62 +1621,6 @@ if last_key:
       - .revision-check — one self-check question (no options)
       - .revision-connections — linked concepts within this lecture
     ============================================================ -->
-    <section class="exam-revision-section">
-      <h2>Exam Revision Notes</h2>
-      <p class="revision-intro">Below is the distilled, exam-ready core.
-      Every entry comes from the full explanation above. Use this section
-      for rapid review; return to the main notes when a point needs more context.</p>
-  <div class="exam-revision-entry">
-    <h3 class="revision-topic">HDFS Topology, Balancing, Rack Awareness, and File I/O Anatomy</h3>
-    <p class="revision-mustknow"><strong>Must-know:</strong> Network hop distances: 2 hops same rack, 4 hops cross-rack. NameNode sorts DataNode addresses by distance on read. Write pipeline: client→DN1→DN5→DN9 with ACK chain.</p>
-    <p class="revision-formula">\[\text{distance}(n_1, n_2) = d(n_1, \text{LCA}) + d(n_2, \text{LCA})\]</p>
-    <p class="revision-pitfall"><strong>⚠️ Top pitfall:</strong> Secondary NameNode is NOT a hot standby; cannot replace failed NameNode. 10-minute heartbeat timeout before DataNode declared dead.</p>
-    <p class="revision-check"><strong>Self-check:</strong> If a client on Rack 1 reads Block A replicated on DN1 (Rack 1), DN5 (Rack 2), DN9 (Rack 2), which DataNode serves the read and why?</p>
-    <p class="revision-connections"><strong>Connects to:</strong> MapReduce Programming Model, Execution Lifecycle, and Core Abstractions</p>
-  </div>
-
-  <div class="exam-revision-entry">
-    <h3 class="revision-topic">MapReduce Programming Model, Execution Lifecycle, and Core Abstractions</h3>
-    <p class="revision-mustknow"><strong>Must-know:</strong> MapReduce signature: Map(K1,V1)→List(K2,V2), Shuffle: List(K2,V2)→(K2,Iterable&lt;V2&gt;), Reduce(K2,Iterable&lt;V2&gt;)→List(K3,V3). Map output to local disk, Reduce output to HDFS.</p>
-    <p class="revision-formula">\[\text{Map: } (K_1, V_1) \longrightarrow \text{List}(K_2, V_2)\]</p>
-    <p class="revision-pitfall"><strong>⚠️ Top pitfall:</strong> Map output types (K2,V2) can differ from Reduce output types (K3,V3) — must set map output types explicitly if different.</p>
-    <p class="revision-check"><strong>Self-check:</strong> Why does MapReduce write map output to local disk instead of HDFS?</p>
-    <p class="revision-connections"><strong>Connects to:</strong> HDFS Topology, Balancing, Rack Awareness, and File I/O Anatomy; MapReduce Optimizations: Combiner and Partitioner</p>
-  </div>
-
-  <div class="exam-revision-entry">
-    <h3 class="revision-topic">MapReduce Optimizations: Combiner and Partitioner</h3>
-    <p class="revision-mustknow"><strong>Must-know:</strong> Combiner requires commutative (a⊕b=b⊕a) AND associative ((a⊕b)⊕c=a⊕(b⊕c)). Average fails: prove with Avg(Avg(3,2),5)=3.75≠3.33. Fix: emit (sum,count). Partitioner: hash(key) mod numReducers.</p>
-    <p class="revision-formula">\[\text{Reducer Index} = \left| \text{hashCode}(K_2) \right| \pmod{\text{numReduceTasks}}\]</p>
-    <p class="revision-pitfall"><strong>⚠️ Top pitfall:</strong> Average is NOT safe for naive Combiner. Combiner may run 0, 1, or many times — correctness must not depend on it.</p>
-    <p class="revision-check"><strong>Self-check:</strong> Can you use a Combiner for calculating median? Why or why not?</p>
-    <p class="revision-connections"><strong>Connects to:</strong> MapReduce Programming Model, Execution Lifecycle, and Core Abstractions; Java MapReduce API and Serialization Data Types</p>
-  </div>
-
-  <div class="exam-revision-entry">
-    <h3 class="revision-topic">Java MapReduce API and Serialization Data Types</h3>
-    <p class="revision-mustknow"><strong>Must-know:</strong> Writable vs Serializable: Writable has no metadata overhead. Keys must implement WritableComparable. Single Reducer processes keys serially in alphabetical order; multiple Reducers run in parallel.</p>
-    <p class="revision-pitfall"><strong>⚠️ Top pitfall:</strong> Text class is NOT Java String — mutable, UTF-8 based. Must call .toString() first.</p>
-    <p class="revision-check"><strong>Self-check:</strong> What interface must MapReduce keys implement, and why?</p>
-    <p class="revision-connections"><strong>Connects to:</strong> MapReduce Optimizations: Combiner and Partitioner; Advanced MapReduce Worked Examples and SQL Equivalence</p>
-  </div>
-
-  <div class="exam-revision-entry">
-    <h3 class="revision-topic">Advanced MapReduce Worked Examples and SQL Equivalence</h3>
-    <p class="revision-mustknow"><strong>Must-know:</strong> ORDER BY = put sort column as key. GROUP BY multiple columns = composite key with delimiter. WHERE = mapper filtering (don't emit non-matching records). HAVING = reducer-side filtering.</p>
-    <p class="revision-pitfall"><strong>⚠️ Top pitfall:</strong> Composite key delimiter must not appear in key values. Using underscore with country names that contain underscores will corrupt grouping.</p>
-    <p class="revision-check"><strong>Self-check:</strong> How would you implement SELECT year, country, AVG(sales) FROM table GROUP BY year, country in MapReduce?</p>
-    <p class="revision-connections"><strong>Connects to:</strong> MapReduce Programming Model, Execution Lifecycle, and Core Abstractions; MapReduce Optimizations: Combiner and Partitioner</p>
-  </div>
-
-  <div class="exam-revision-entry">
-    <h3 class="revision-topic">Polyglot MapReduce: Hadoop Streaming API</h3>
-    <p class="revision-mustknow"><strong>Must-know:</strong> Streaming uses stdin/stdout with tab-delimited (\t) key-value pairs. Reducer must detect key transitions manually. -files ships scripts to DataNodes. Any language that reads stdin/writes stdout works.</p>
-    <p class="revision-pitfall"><strong>⚠️ Top pitfall:</strong> In Streaming, the reducer must manually track key transitions (unlike Java MapReduce which provides Iterable&lt;V&gt;). Tab is the only valid delimiter.</p>
-    <p class="revision-check"><strong>Self-check:</strong> What is the key difference between Java MapReduce and Hadoop Streaming in terms of how the reducer processes grouped data?</p>
-    <p class="revision-connections"><strong>Connects to:</strong> MapReduce Programming Model, Execution Lifecycle, and Core Abstractions; Java MapReduce API and Serialization Data Types</p>
-  </div>
-    </section>
   </div>
 </body>
 </html>

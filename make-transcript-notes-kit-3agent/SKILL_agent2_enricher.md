@@ -222,19 +222,22 @@ When a concept is a procedure or algorithm (training loop, K-means, backprop, a 
 **Rules:**
 - Follow the lecture's causal order when a question, failed interpretation, or worked example motivates the next explanation. Otherwise use the spine order as a sensible default.
 - Use callouts when they improve scanning. Do not manufacture all five types for every concept.
+- **Anti-Echo Rule (No Callout Repetition):** A callout box (`:::key-concept`, `:::important-note`, etc.) must **never duplicate or parrot** the paragraph immediately before or after it. If a callout summarizes key definitions or architectural attributes, the adjacent prose must provide narrative context, motivation, or trade-offs — never the same definitions restated in parallel sentences.
+- **Qualitative Concepts vs Math:** In conceptual or architectural topics (where there are no governing equations or derivations), do not force a pseudo-formalization callout that merely restates the concept name and its definition. Use `:::key-concept` only when there is a concise structural takeaway, key trade-off, or governing principle; otherwise, let clear prose carry the section.
 - No two same-type callouts back-to-back. Separate them with body text — this is why Assumptions & Scope and Pitfalls (both red) sit apart with Visual Intuition between them, and why Hook/Intuition/Q&A (all violet) need prose between them.
 - Minor sub-concepts can combine steps. Include a worked example and a pitfall only where the concept naturally calls for them — do not manufacture filler to satisfy a step.
 - Choose ONE spine per concept: the core spine for definitions/theorems/ideas, the procedural spine for algorithms/processes. Never mix the two on the same concept.
 
-### Q&A guardrail — deduplicate before writing
+### Q&A guardrail — deduplicate and filter non-academic noise
 
-Student questions are often repetitive. Preserve learning value without noise:
+Student questions are often repetitive or procedural. Preserve genuine learning value without noise:
 
-1. **Group by confusion point** → one canonical Q&A per distinct confusion, merging into the professor's most complete answer. Note frequency ("Several students asked…").
-2. **Drop pure repetition** but **preserve genuine variety** — a "why?" and a "how do I compute it?" are different confusion points even if superficially similar.
-3. **Never flatten a correction** — if a student-supplied term or analogy triggered the explanation, keep that trigger, why it seemed plausible, why it was rejected, and the replacement.
+1. **Prune rhetorical pauses, check-ins, and logistics:** If Agent 1's draft leaked empty check-ins (*"Are there any questions?", "No blocking doubt came up..."*), classroom logistics (*"Will material be on Teams?"*), or session deferrals (*"Demo will be shown in webinar"*), **PURGE them completely**. Dropping non-academic noise does not violate manifest closure.
+2. **Group by confusion point** → one canonical Q&A per distinct confusion, merging into the professor's most complete answer. Note frequency ("Several students asked…").
+3. **Drop pure repetition** but **preserve genuine variety** — a "why?" and a "how do I compute it?" are different confusion points even if superficially similar.
+4. **Never flatten a correction** — if a student-supplied term or analogy triggered the explanation, keep that trigger, why it seemed plausible, why it was rejected, and the replacement.
 
-A concept with ten near-identical questions should yield one or two Q&A entries, not ten.
+A concept with ten near-identical questions should yield one or two Q&A entries, not ten. If an exchange has no conceptual doubt (e.g. lecturer asking if students have questions and students saying no), yield zero entries.
 
 ---
 
@@ -497,7 +500,11 @@ Every visual intuition block follows this structure:
 
 Maintain Agent 1's easy-language style (define terms on first use, common words first, active voice, no hand-waving phrases like "clearly", "obviously", "it can be shown that"). Never alter correct math to improve readability scores. Ignore displayed equations, inline formulas, symbol definitions, tables, code, and derivation lines during readability edits. Additional patterns for this phase:
 
-- **Term-on-first-use template:** "*italicize the term*, give the one-line plain meaning, give the symbol, give a number." Example: "An *eigenvalue* (how much an eigenvector stretches), written \(\lambda\), might be \(\lambda=2\) — meaning 'twice as long'." Use this exact pattern for every new term.
+- **Term-on-first-use template:** 
+  - For mathematical / quantitative variables: "*italicize the term*, give the one-line plain meaning, give the symbol, give a number." Example: "An *eigenvalue* (how much an eigenvector stretches), written \(\lambda\), might be \(\lambda=2\) — meaning 'twice as long'."
+  - For qualitative, architectural, or descriptive concepts: define them in clean, direct prose. **NEVER invent pseudo-symbols** like `written as load from viewers` or `written as posts plus reactions`.
+  - **No definition stutter:** Never write `A *term* (definition of term) is a definition of term.` State the term and its definition cleanly once.
+- **Anti-echo rule:** Ensure callouts do not duplicate the sentences in the paragraphs preceding or following them.
 - **Callback:** "Remember the foggy-hill hiker? The gradient is the slope under their boots."
 - **Fancy-word swaps:** *use* not *utilize*, *so* not *thus/hence*, *show* not *demonstrate*, *about* not *approximately*, *before* not *prior to*.
 
@@ -508,6 +515,8 @@ Maintain Agent 1's easy-language style (define terms on first use, common words 
 **This is your internal verification. Do NOT include these checkboxes, this list, or any checklist in your output.** Before passing to Agent 3, privately verify:
 
 - Every essential manifest item is closed; spine steps and callouts are present only where they materially improve the concept
+- **No callout echoes:** Callout boxes do not repeat the sentences of the surrounding prose paragraphs
+- **No pseudo-symbols or definition stutters:** No non-math `written as <phrase>` patterns
 - Every tricky concept has a concrete analogy (preferably the professor's own, extended)
 - Every math block: symbols named, steps not skipped, shapes stated for tensors
 - **Every `*[verify]*` marker in this section has been resolved**; any escalation paused the run before assembly
@@ -517,7 +526,7 @@ Maintain Agent 1's easy-language style (define terms on first use, common words 
 - Professor intuition preserved (not replaced with generic substitutes)
 - Professor's notation preserved; standard alternatives noted, not substituted
 - Domain connections are specific and named (not "used in engineering")
-- **Student Q&A has been deduplicated** — one canonical entry per distinct confusion point; pure repetition dropped; frequency noted where several students asked
+- **Student Q&A has been deduplicated and purged of noise** — only genuine educational doubts remain; rhetorical check-ins ("no blocking doubt") and administrative logistics (Teams, slides, recordings, demo deferrals) have been stripped
 - **Key Industry Applications section carried through** if processing the corresponding appendix section (enriched lightly, never dropped)
 - IRON RULE followed — no new major (`##`) topics introduced from any source; companion documents may add supporting `###` subsections and callouts only
 - Ordinary prose is understandable; readability warnings were reviewed without damaging math

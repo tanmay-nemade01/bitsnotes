@@ -280,3 +280,60 @@ def flesch_reading_ease(text):
              - 1.015 * (n_words / n_sent)
              - 84.6 * (syll / n_words))
     return (round(score, 1), n_words, n_sent)
+
+
+# --------------------------------------------------------------------------- #
+# 7. Non-academic / Rhetorical Q&A patterns & Pseudo-symbol detectors
+# --------------------------------------------------------------------------- #
+BOGUS_QA_PATTERNS = [
+    ("empty rhetorical check-in", re.compile(
+        r"\b(?:no\s+blocking\s+doubt|no\s+doubt\s+came\s+up|discussion\s+moved\s+on|are\s+there\s+any\s+questions\b.*?\bbefore\s+moving\s+on)\b",
+        re.IGNORECASE
+    )),
+    ("course/platform logistics in Q&A", re.compile(
+        r"\b(?:available\s+on\s+teams|shared\s+folder\s+the\s+course\s+uses|uploaded\s+there\s+for\s+reference|parked\s+in\s+the\s+shared\s+folder)\b",
+        re.IGNORECASE
+    )),
+    ("session deferral in Q&A", re.compile(
+        r"\b(?:untouched\s+portions\s+are\s+deferred|deferred\s+to\s+a\s+later\s+webinar|deferred\s+to\s+the\s+upcoming\s+session|accepted\s+for\s+the\s+next\s+meeting)\b",
+        re.IGNORECASE
+    )),
+]
+
+PSEUDO_SYMBOL_RE = re.compile(
+    r"\([^)]*\bwritten\s+as\s+[a-zA-Z\s,]{4,}[^)]*\)",
+    re.IGNORECASE
+)
+
+
+def find_bogus_qa(text):
+    """Return [(label, matched_text)] for non-academic/rhetorical Q&A content."""
+    hits = []
+    for label, rx in BOGUS_QA_PATTERNS:
+        for match in rx.finditer(text):
+            hits.append((label, match.group(0)))
+    return hits
+
+
+def find_pseudo_symbols(text):
+    """Return [matched_snippet] for awkward non-math '(..., written as ...)' occurrences."""
+    hits = []
+    for m in PSEUDO_SYMBOL_RE.finditer(text):
+        snippet = m.group(0)
+        if "\\" not in snippet and "mjx-" not in snippet:
+            hits.append(snippet)
+    return hits
+
+
+def find_duplicate_sentences(sentences, min_len=30):
+    """Return [(sentence, count)] for duplicate sentences of substantial length."""
+    from collections import Counter
+    cleaned = []
+    for s in sentences:
+        s_clean = s.strip()
+        if len(s_clean) >= min_len:
+            if not s_clean.startswith("|") and not s_clean.startswith("#"):
+                cleaned.append(s_clean)
+    counts = Counter(cleaned)
+    return [(s, c) for s, c in counts.items() if c > 1]
+

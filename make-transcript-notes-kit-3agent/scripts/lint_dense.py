@@ -382,6 +382,47 @@ def check_fancy_words(text, report):
     )
 
 
+def check_dense_repetition_and_qa(text, report):
+    """Detect duplicate sentences, pseudo-symbols, and non-academic Q&A in markdown drafts."""
+    warnings = []
+    
+    # 1. Duplicate sentences in prose
+    prose = extract_readable_prose(text)
+    sentences = [s.strip() for s in PL._SENT_SPLIT.split(prose) if s.strip()]
+    duplicates = PL.find_duplicate_sentences(sentences, min_len=35)
+    if duplicates:
+        detail = "; ".join(f"'{s[:50]}...' ({c}x)" for s, c in duplicates[:4])
+        warnings.append(f"Found {len(duplicates)} duplicate sentence(s): {detail}.")
+
+    # 2. Pseudo-symbols on qualitative terms
+    pseudo = PL.find_pseudo_symbols(text)
+    if pseudo:
+        detail = "; ".join(f"'{p[:50]}...'" for p in pseudo[:3])
+        warnings.append(f"Found {len(pseudo)} pseudo-symbol pattern(s) 'written as <phrase>' on non-math concepts: {detail}.")
+
+    # 3. Non-academic or rhetorical Q&A in markdown (> **Q:** / > **A:**)
+    qa_blocks = re.findall(
+        r'>\s*\*\*Q:\*\*(.*?)>\s*\*\*A:\*\*(.*?)(?=\n\n|\n#|$)',
+        text,
+        re.DOTALL | re.IGNORECASE
+    )
+    bogus_hits = []
+    for q, a in qa_blocks:
+        combined = f"Q: {q} A: {a}"
+        hits = PL.find_bogus_qa(combined)
+        if hits:
+            q_clean = re.sub(r'\s+', ' ', q).strip()
+            bogus_hits.append(f"'{q_clean[:60]}...' ({hits[0][0]})")
+
+    if bogus_hits:
+        warnings.append(f"Found {len(bogus_hits)} non-academic/rhetorical Q&A(s): {'; '.join(bogus_hits[:3])}. Prune rhetorical pauses and logistics.")
+
+    if warnings:
+        report.warned("draft repetition and Q&A relevance", "\n".join(warnings))
+    else:
+        report.passed("draft repetition and Q&A relevance", "No severe repetition, pseudo-symbols, or rhetorical Q&A detected.")
+
+
 def lint_dense_file(path, lecture_num=None, phase="dense"):
     if not os.path.exists(path):
         print(f"Error: file not found at {path}", file=sys.stderr)
@@ -409,6 +450,7 @@ def lint_dense_file(path, lecture_num=None, phase="dense"):
     
     check_writing_style(text, report)
     check_fancy_words(text, report)
+    check_dense_repetition_and_qa(text, report)
     
     return report
 
