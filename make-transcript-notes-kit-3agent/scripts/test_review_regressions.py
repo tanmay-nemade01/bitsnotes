@@ -19,6 +19,7 @@ import section_splitter
 import topic_mapping_utils as TMU
 import update_topic_mapping
 import verify_manifest
+import _plain_language as PL
 
 UTILS_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "utils"))
 if UTILS_DIR not in sys.path:
@@ -685,6 +686,70 @@ We call the difference an update term here.
 """
         report = _verify(manifest, markdown)
         self.assertFalse(report.failures)
+
+    # -- Repetition & Bogus Q&A Gates ------------------------------------
+    def test_pseudo_symbol_detection(self):
+        text_bad = "A streaming platform (a service that sends video, written as load from viewers) runs well."
+        hits_bad = PL.find_pseudo_symbols(text_bad)
+        self.assertEqual(len(hits_bad), 1)
+
+        text_good = r"An eigenvalue (how much an eigenvector stretches), written \(\lambda\), is positive."
+        hits_good = PL.find_pseudo_symbols(text_good)
+        self.assertEqual(len(hits_good), 0)
+
+    def test_bogus_qa_detection(self):
+        text_qa = "Q: Are there any questions on these platform needs before moving on? A: No blocking doubt came up at this point."
+        hits = PL.find_bogus_qa(text_qa)
+        self.assertTrue(len(hits) >= 1)
+
+        text_teams = "Q: Will material be available on Teams? A: Yes, parked in the shared folder the course uses."
+        hits_teams = PL.find_bogus_qa(text_teams)
+        self.assertTrue(len(hits_teams) >= 1)
+
+        text_legit = "Q: What is the difference between L1 and L2 regularization? A: L1 induces sparsity while L2 shrinks weights smoothly."
+        hits_legit = PL.find_bogus_qa(text_legit)
+        self.assertEqual(len(hits_legit), 0)
+
+    def test_verify_manifest_safely_omits_non_academic_qna(self):
+        manifest = {
+            "schema_version": 2,
+            "concepts": [{"id": "2.1", "title": "Platforms"}],
+            "lecture_flow": [{
+                "order": 1,
+                "concept": "2.1",
+                "type": "concept",
+                "summary": "Streaming platforms overview",
+                "anchor_quote": "Streaming platforms distribute video",
+                "keywords": ["streaming", "platforms"],
+                "source_anchor": "lines 1-2",
+            }],
+            "qna_exchanges": [{
+                "concept": "2.1",
+                "question_summary": "Are there any questions on these platform needs before moving on?",
+                "answer_summary": "No blocking doubt came up at this point, so discussion moved on.",
+                "salience": "essential",
+                "source_anchor": "lines 3-4",
+            }],
+        }
+        markdown = """# Platforms
+## 2.1 Platforms
+### 2.1.1 Overview
+Streaming platforms distribute video over high-speed networks.
+"""
+        report = _verify(manifest, markdown)
+        self.assertFalse(report.failures)
+
+    def test_lint_dense_repetition_and_qa_check(self):
+        md_text = """# Platforms
+## 2.1 Platforms
+### 2.1.1 Overview
+A streaming platform (a service that sends video, written as load from viewers) runs well.
+> **Q:** Are there any questions on these platform needs before moving on?
+> **A:** No blocking doubt came up at this point.
+"""
+        report = lint_dense.Report()
+        lint_dense.check_dense_repetition_and_qa(md_text, report)
+        self.assertTrue(report.counts["WARN"] >= 1)
 
 
 if __name__ == "__main__":

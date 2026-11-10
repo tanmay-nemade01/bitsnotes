@@ -40,6 +40,9 @@ description: >-
     - Enrichment source attribution (e.g., "Enrichment sources: Bishop §4.3, Tan §AppE")
     - Course codes in audience fields (e.g., "S1-25_AIMLCZG565")
     - Any text that reveals the internal pipeline to the reader
+    - Pseudo-symbols on non-math concepts (e.g., `written as load from viewers`, `written as posts plus reactions`)
+    - Rhetorical check-ins or administrative logistics disguised as Q&A (e.g., "no blocking doubt came up", "available on Teams", "shared folder", "demo deferred to webinar")
+    - Tautological definition stutters where a parenthetical definition immediately repeats in the predicate (e.g. `An X (definition) is a definition`)
 
     **What titles SHOULD look like:** Clean, descriptive topic titles. Examples:
     - ✅ `Logistic Regression` or `Logistic Regression — From Probability to Classification`
@@ -65,6 +68,7 @@ Before anything else, scan the enriched draft for intermediate/process metadata 
 - **The math verification queue / marker sweep lists** — Agent 2's internal R-step work lists. These are process artifacts.
 - **Any `*[verify]*` marker** — this is a blocking upstream defect. Stop conversion and return the section to Agent 2 or human review; do not remove it and continue.
 - **Any other process/verification metadata** — any section that reads like internal QA rather than educational material.
+- **Non-academic Q&A & rhetorical check-ins** — if any exchange with "no blocking doubt", "any questions before moving on", "available on Teams", or demo deferrals leaked into the markdown, prune it. Retain only substantive conceptual/academic doubts.
 - **Process-only placeholder tasks** — treat any TODO, placeholder, or task delegation as a blocking Agent 2 defect. Do not strip it and continue, because that would silently remove expected content.
 
 **How to identify:** Look for sections whose heading contains words like "checklist", "self-check", "verification", or sections that are just long bulleted/ticked lists of concept names with `[x]` markers. Also search for keywords like "TODO", "placeholder", and instructions such as "Define [Concept]". These have zero educational value for the end reader.

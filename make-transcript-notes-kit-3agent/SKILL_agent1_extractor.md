@@ -108,27 +108,33 @@ Every sentence in the transcript potentially belongs to one or more of these dim
 
 **This dimension is almost always under-extracted. Treat it as a primary content source, not a side note.**
 
-Capture these FULLY:
-- The student''s question (paraphrased if garbled, but preserve the core doubt)
-- The professor''s answer in full
+Capture these FULLY when they represent genuine educational doubts or discussion:
+- The student's question (paraphrased if garbled, but preserve the core doubt)
+- The professor's answer in full
 - Any follow-up questions or clarifications
-- The professor''s re-explanation if the student is still confused
+- The professor's re-explanation if the student is still confused
 - The "aha moment" when the student understands
 - Multiple students asking related questions (shows common confusion area)
 - **Vocabulary corrections** — when a student proposes a label such as "error" and the professor prefers another term, preserve the proposed term, preferred term, and the reason for the distinction
 - **Rejected analogies or interpretations** — preserve what looked plausible, why it fails, and the replacement mental model
 - **Professor-versus-reference terminology** — preserve both labels and the bridge between them; never silently let a textbook label overwrite the classroom explanation
 
+**STRICT NEGATIVE RULES FOR Q&A (NEVER capture as Q&A):**
+1. **Rhetorical pauses and silence:** When the professor asks *"Are there any questions?", "Does that make sense?", "Any doubts before we move on?"* and students do not ask anything (or reply *"no"*, *"all clear"*, or silence) — **DISCARD THIS ENTIRELY**. Never invent synthetic answers like `Q: Are there any questions? A: No blocking doubt came up...` or `A: The discussion moved on...`. That is filler, not educational content.
+2. **Administrative & course logistics:** Questions about whether slides/recordings will be on Microsoft Teams/portal, homework submission deadlines, exam hall schedules, attendance, or breaks.
+3. **Deferred demos / future sessions:** *"Can we see a demo?"* with an answer like *"We will do this in the webinar / lab next week."*
+4. **General course overlap queries:** *"Does this overlap with previous course?"* with casual administrative reassurance.
+
 **Why this matters:** Student questions reveal:
 1. Real confusion points that textbooks miss
-2. The professor''s BEST explanations (when forced to re-explain, professors give their clearest version)
+2. The professor's BEST explanations (when forced to re-explain, professors give their clearest version)
 3. Common mistakes that other students will also make
 4. Practical concerns ("can we use log base 10?", "how many decimal places?")
 
 **Format each Q&A exchange as:**
 
-> **Q:** [Student''s question or doubt]
-> **A:** [Professor''s full answer, including any re-explanation]
+> **Q:** [Student's question or doubt]
+> **A:** [Professor's full answer, including any re-explanation]
 
 ### Dimension 5 — Industry Applications and Real-World Connections
 
@@ -466,21 +472,23 @@ Use the Dimension 7 table above as the canonical list of professor intuition typ
 
 ---
 
-## MUST filter out (discard) — ONLY these and nothing else
+## MUST filter out (discard)
 
-- **Administrative chatter:** homework deadlines, exam dates (EXCEPT when tied to study advice), office hours, logistics about uploading slides
-- **Pure off-topic banter:** "how was everyone''s weekend?", family conversations, unrelated small talk
+- **Administrative chatter & course logistics:** homework deadlines, exam dates (EXCEPT when tied to study advice), office hours, slide/recording uploads, Microsoft Teams links/channels/folders, attendance, breaks
+- **Rhetorical pauses & empty check-ins:** "Are there any questions?", "Any doubts?", dead air, and students responding "No" or "Clear" without asking an actual doubt. Never turn conversational check-ins into Q&A blocks or notes content.
+- **Session deferrals & time warnings:** "We only have 5 minutes left so we will cover this next week", "live demo will be in the weekend webinar"
+- **Pure off-topic banter:** "how was everyone's weekend?", family conversations, unrelated small talk
 - **Technical difficulties:** "Is the projector working?", dead air, "can you see my screen?", filler ("um", "uh")
 - **PII:** professor names, institute/university names, student full names. The output must never contain these.
 - **Platform logistics:** "I will upload the slides", "check the e-learn portal", "I shared the Excel sheet"
-- **Time-sensitive references:** "yesterday''s email", "due to the snow day"
+- **Time-sensitive references:** "yesterday's email", "due to the snow day"
 
 **What NOT to filter (common mistakes):**
 - **Repeated explanations** — If the professor explained something 3 times, KEEP ALL THREE if they use different angles, examples, or phrasing. Each version may help a different type of learner. Only remove truly verbatim repetitions.
-- **Student questions that seem simple** — Even "basic" questions reveal confusion patterns and prompt the professor''s clearest explanations.
+- **Student questions that seem simple** — Even "basic" questions reveal confusion patterns and prompt the professor's clearest explanations.
 - **"Side comments" about industry** — "GPT-4 has 1024 dimensions" may seem like a throwaway line but is valuable context.
 - **Professor casual difficulty assessments** — "This is the tough part" is study planning information.
-- **Calculator/computation discussions** — "Should we use log base 10 or natural log?" and the professor''s answer are important practical guidance.
+- **Calculator/computation discussions** — "Should we use log base 10 or natural log?" and the professor's answer are important practical guidance.
 
 **Critical:** The output must never mention "transcript", "lecture", "recording", "slides", or "the professor said" as source attributions. It must read as a standalone educational document. However, it may preserve anonymous teaching structure through `Q:` / `A:`, "A common interpretation is…", and "The key correction is…" — do not erase the pedagogical interaction merely to avoid attribution phrases. Weave professor intuition into prose naturally — never as attributed quotes.
 
@@ -491,7 +499,11 @@ Use the Dimension 7 table above as the canonical list of professor intuition typ
 Write for a **smart beginner**: clever, motivated, meeting this topic for the first time.
 
 - **Prefer one clear idea at a time.** Treat 22 words as a review hint for ordinary prose, not a hard limit. Ignore displayed equations, inline formulas, symbol definitions, tables, and derivation lines. Never damage LaTeX or split a mathematical statement solely to satisfy a word count.
-- **Define every term on first use**: *italicize* the term -> give plain meaning -> give symbol if any. Example: "An *eigenvalue* — how much an eigenvector stretches — is written lambda."
+- **Define technical terms naturally on first use**: *Italicize* the term, followed by its plain meaning.
+  - **Mathematical vs Qualitative terms:**
+    - For mathematical or formal variables, state the symbol on first use: *"An *eigenvalue* (how much an eigenvector stretches) is written \(\lambda\)."*
+    - For qualitative, architectural, or descriptive concepts (e.g., *streaming platform*, *microservice*, *event broker*), define them directly in clean prose. **NEVER force "written as..." for qualitative concepts where no genuine mathematical symbol exists.**
+  - **Avoid definition stutter:** Never write an appositive definition that repeats right after the parenthesis: do NOT write *"A streaming platform (a service that sends video...) delivers video over the network to many viewers at once."* Instead write: *"A *streaming platform* delivers video over the network to many viewers simultaneously."*
 - **Common words first**: "average" before "mean", "spread" before "variance."
 - **Active voice**: "We compute the loss" not "The loss is computed."
 - **Name every symbol on first appearance**: "eta is the learning rate — how big each step is."

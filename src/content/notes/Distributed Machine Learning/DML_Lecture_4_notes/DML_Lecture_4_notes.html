@@ -277,7 +277,31 @@
           <li><strong>Micro-Batch Memory Tradeoff:</strong> Scaling the micro-batch count \(m\) lowers the bubble ratio, but it forces GPUs to retain intermediate activations for all in-flight micro-batches, creating a direct conflict between compute utilization and device memory capacity.</li>
         </ul>
       </div>
-      <p>#### Visual Intuition: Spacetime Execution Geometry In a spacetime execution grid, the horizontal axis represents discrete clock time steps \(t = 1, 2, \dots, T\), while the vertical axis represents physical GPUs from GPU 0 at the bottom to GPU \(p-1\) at the top. During pipeline warmup, execution resembles an ascending staircase as micro-batch \(F_1\) propagates upwards. The upper-left region of the grid forms an empty triangle of idle bubbles. In the steady-state middle phase, all GPUs execute concurrently along diagonal wavefronts. Finally, during cooldown, execution forms a descending staircase, leaving an empty triangle of idle bubbles in the lower-right region.</p>
+      <div class="diagram-container my-6 text-center">
+        <svg viewBox="0 0 560 300" class="diagram-svg" role="img" aria-label="Spacetime execution grid for p GPUs and T time steps showing an ascending warmup staircase, diagonal steady-state wavefronts, a descending cooldown staircase, and idle bubble triangles">
+          <rect x="80" y="50" width="440" height="180" fill="none" stroke="#94a3b8"/>
+          <polygon points="80,50 240,50 80,230" fill="#e2e8f0"/>
+          <polygon points="520,50 520,230 360,230" fill="#e2e8f0"/>
+          <line x1="80" y1="95" x2="520" y2="95" stroke="#cbd5e1"/>
+          <line x1="80" y1="140" x2="520" y2="140" stroke="#cbd5e1"/>
+          <line x1="80" y1="185" x2="520" y2="185" stroke="#cbd5e1"/>
+          <line x1="80" y1="50" x2="80" y2="230" stroke="#64748b" stroke-width="1.5"/>
+          <line x1="80" y1="230" x2="520" y2="230" stroke="#64748b" stroke-width="1.5"/>
+          <text x="300" y="285" font-size="12" fill="#475569" text-anchor="middle">time steps t = 1, 2, ... , T</text>
+          <text x="45" y="145" font-size="12" fill="#475569" text-anchor="middle" transform="rotate(-90 45 145)">GPU stage</text>
+          <text x="70" y="238" font-size="10" fill="#475569" text-anchor="end">GPU 0</text>
+          <text x="70" y="193" font-size="10" fill="#475569" text-anchor="end">GPU 1</text>
+          <text x="70" y="148" font-size="10" fill="#475569" text-anchor="end">GPU 2</text>
+          <text x="70" y="103" font-size="10" fill="#475569" text-anchor="end">GPU p-1</text>
+          <polyline points="100,220 180,170 260,120 340,70" fill="none" stroke="#2563eb" stroke-width="10" stroke-linecap="round" opacity="0.85"/>
+          <polyline points="320,70 380,120 440,170 500,220" fill="none" stroke="#d97706" stroke-width="10" stroke-linecap="round" opacity="0.85"/>
+          <text x="180" y="262" font-size="11" fill="#2563eb" text-anchor="middle">ascending warmup staircase</text>
+          <text x="410" y="262" font-size="11" fill="#d97706" text-anchor="middle">descending cooldown staircase</text>
+          <text x="140" y="72" font-size="11" fill="#64748b" text-anchor="middle">idle (warmup)</text>
+          <text x="455" y="210" font-size="11" fill="#64748b" text-anchor="middle">idle (cooldown)</text>
+        </svg>
+        <p class="text-xs text-slate-500 mt-2"><strong>Figure:</strong> Spacetime execution grid: ascending forward staircase during warmup, diagonal steady-state wavefronts, descending cooldown staircase, and idle bubble triangles.</p>
+      </div>
       <div class="warning-box">
         <p><strong>Common Pitfalls:</strong></p>
         <ul>
@@ -295,9 +319,6 @@
       <div class="important-note">
         <p><strong>Q:</strong> If we have a dataset of 1024 records and divide it into four frames, does each frame contain 256 records?</p>
         <p><strong>A:</strong> Yes. Dividing 1024 records into four frames yields 256 records per micro-batch. Each micro-batch is processed through the model independently, producing its own forward activations, loss value, and gradients.</p>
-      </div>
-      <div class="key-takeaway">
-        <p><strong>Exam note:</strong> Master the theoretical bubble fraction formula \(F_{\text{bubble}} = \frac{p-1}{m + p - 1}\) and be ready to compute both theoretical and empirical bubble percentages given stage count \(p\) and micro-batch count \(m\). Remember the three primary entities: hardware accelerators, data frames, and model chunks.</p>
       </div>
       <h3 id="4.1.5-decentralized-caching-precursor-and-transition-to-pipelining">4.1.5 Decentralized Caching Precursor and Transition to Pipelining</h3>
       <p>Prior to centralized pipeline parallelism in high-speed datacenters, decentralized mobile agents use model caching to maintain training progress across intermittently connected edge nodes. In decentralized federated systems, mobile agents perform local model updates: \[ \theta_i \leftarrow \theta_i - \eta \nabla \mathcal{L}_i(\theta_i) \] where \(\theta_i\) denotes the local model parameters of agent \(i\), \(\eta\) is the learning rate, and \(\nabla \mathcal{L}_i(\theta_i)\) is the local loss gradient computed on local data.</p>
@@ -497,7 +518,55 @@
           <li><strong>Synchronous Barrier:</strong> Gradient accumulation occurs across all \(m\) micro-batches before a global parameter update is applied, ensuring mathematical equivalence to standard mini-batch gradient descent.</li>
         </ul>
       </div>
-      <p>#### Visual Intuition: GPipe Spacetime Profile Plotting GPipe on a spacetime diagram highlights a distinct two-part structure separated by an execution valley. In the first half (\(t_1\) to \(t_7\)), a forward wave moves from bottom (GPU 0) to top (GPU 3). In the second half (\(t_8\) to \(t_{11}\)), a backward wave moves from top (GPU 3) back to bottom (GPU 0). The transition between \(t_5\) and \(t_{10}\) creates an hourglass-shaped region where only one or two GPUs compute while the others sit idle.</p>
+      <div class="diagram-container my-6 text-center">
+        <svg viewBox="0 0 620 290" class="diagram-svg" role="img" aria-label="GPipe spacetime schedule for four GPUs and four micro-batches, showing forward passes F1 to F4 from t1 to t7 and backward passes B1 to B4 from t8 to t11 around an execution valley">
+          <line x1="80" y1="70" x2="80" y2="240" stroke="#64748b" stroke-width="1.5"/>
+          <line x1="80" y1="240" x2="570" y2="240" stroke="#64748b" stroke-width="1.5"/>
+          <text x="75" y="229" font-size="10" fill="#475569" text-anchor="end">GPU 0</text>
+          <text x="75" y="189" font-size="10" fill="#475569" text-anchor="end">GPU 1</text>
+          <text x="75" y="149" font-size="10" fill="#475569" text-anchor="end">GPU 2</text>
+          <text x="75" y="109" font-size="10" fill="#475569" text-anchor="end">GPU 3</text>
+          <text x="325" y="275" font-size="12" fill="#475569" text-anchor="middle">time steps t</text>
+          <text x="109" y="256" font-size="9" fill="#475569" text-anchor="middle">t1</text>
+          <text x="151" y="256" font-size="9" fill="#475569" text-anchor="middle">t2</text>
+          <text x="193" y="256" font-size="9" fill="#475569" text-anchor="middle">t3</text>
+          <text x="235" y="256" font-size="9" fill="#475569" text-anchor="middle">t4</text>
+          <text x="277" y="256" font-size="9" fill="#475569" text-anchor="middle">t5</text>
+          <text x="319" y="256" font-size="9" fill="#475569" text-anchor="middle">t6</text>
+          <text x="361" y="256" font-size="9" fill="#475569" text-anchor="middle">t7</text>
+          <text x="403" y="256" font-size="9" fill="#475569" text-anchor="middle">t8</text>
+          <text x="445" y="256" font-size="9" fill="#475569" text-anchor="middle">t9</text>
+          <text x="487" y="256" font-size="9" fill="#475569" text-anchor="middle">t10</text>
+          <text x="529" y="256" font-size="9" fill="#475569" text-anchor="middle">t11</text>
+          <g font-size="10" text-anchor="middle"><rect x="90" y="210" width="38" height="30" rx="3" fill="#dbeafe" stroke="#3b82f6"/><text x="109" y="230" fill="#1d4ed8">F1</text></g>
+          <g font-size="10" text-anchor="middle"><rect x="132" y="210" width="38" height="30" rx="3" fill="#dbeafe" stroke="#3b82f6"/><text x="151" y="230" fill="#1d4ed8">F2</text></g>
+          <g font-size="10" text-anchor="middle"><rect x="132" y="170" width="38" height="30" rx="3" fill="#dbeafe" stroke="#3b82f6"/><text x="151" y="190" fill="#1d4ed8">F1</text></g>
+          <g font-size="10" text-anchor="middle"><rect x="174" y="210" width="38" height="30" rx="3" fill="#dbeafe" stroke="#3b82f6"/><text x="193" y="230" fill="#1d4ed8">F3</text></g>
+          <g font-size="10" text-anchor="middle"><rect x="174" y="170" width="38" height="30" rx="3" fill="#dbeafe" stroke="#3b82f6"/><text x="193" y="190" fill="#1d4ed8">F2</text></g>
+          <g font-size="10" text-anchor="middle"><rect x="174" y="130" width="38" height="30" rx="3" fill="#dbeafe" stroke="#3b82f6"/><text x="193" y="150" fill="#1d4ed8">F1</text></g>
+          <g font-size="10" text-anchor="middle"><rect x="216" y="210" width="38" height="30" rx="3" fill="#dbeafe" stroke="#3b82f6"/><text x="235" y="230" fill="#1d4ed8">F4</text></g>
+          <g font-size="10" text-anchor="middle"><rect x="216" y="170" width="38" height="30" rx="3" fill="#dbeafe" stroke="#3b82f6"/><text x="235" y="190" fill="#1d4ed8">F3</text></g>
+          <g font-size="10" text-anchor="middle"><rect x="216" y="130" width="38" height="30" rx="3" fill="#dbeafe" stroke="#3b82f6"/><text x="235" y="150" fill="#1d4ed8">F2</text></g>
+          <g font-size="10" text-anchor="middle"><rect x="216" y="90" width="38" height="30" rx="3" fill="#dbeafe" stroke="#3b82f6"/><text x="235" y="110" fill="#1d4ed8">F1</text></g>
+          <g font-size="10" text-anchor="middle"><rect x="258" y="170" width="38" height="30" rx="3" fill="#dbeafe" stroke="#3b82f6"/><text x="277" y="190" fill="#1d4ed8">F4</text></g>
+          <g font-size="10" text-anchor="middle"><rect x="258" y="130" width="38" height="30" rx="3" fill="#dbeafe" stroke="#3b82f6"/><text x="277" y="150" fill="#1d4ed8">F3</text></g>
+          <g font-size="10" text-anchor="middle"><rect x="258" y="90" width="38" height="30" rx="3" fill="#dbeafe" stroke="#3b82f6"/><text x="277" y="110" fill="#1d4ed8">F2</text></g>
+          <g font-size="10" text-anchor="middle"><rect x="300" y="130" width="38" height="30" rx="3" fill="#dbeafe" stroke="#3b82f6"/><text x="319" y="150" fill="#1d4ed8">F4</text></g>
+          <g font-size="10" text-anchor="middle"><rect x="300" y="90" width="38" height="30" rx="3" fill="#dbeafe" stroke="#3b82f6"/><text x="319" y="110" fill="#1d4ed8">F3</text></g>
+          <g font-size="10" text-anchor="middle"><rect x="342" y="90" width="38" height="30" rx="3" fill="#dbeafe" stroke="#3b82f6"/><text x="361" y="110" fill="#1d4ed8">F4</text></g>
+          <g font-size="10" text-anchor="middle"><rect x="384" y="90" width="38" height="30" rx="3" fill="#fef3c7" stroke="#d97706"/><text x="403" y="110" fill="#92400e">B4</text></g>
+          <g font-size="10" text-anchor="middle"><rect x="426" y="130" width="38" height="30" rx="3" fill="#fef3c7" stroke="#d97706"/><text x="445" y="150" fill="#92400e">B4</text></g>
+          <g font-size="10" text-anchor="middle"><rect x="426" y="90" width="38" height="30" rx="3" fill="#fef3c7" stroke="#d97706"/><text x="445" y="110" fill="#92400e">B3</text></g>
+          <g font-size="10" text-anchor="middle"><rect x="468" y="170" width="38" height="30" rx="3" fill="#fef3c7" stroke="#d97706"/><text x="487" y="190" fill="#92400e">B4</text></g>
+          <g font-size="10" text-anchor="middle"><rect x="468" y="130" width="38" height="30" rx="3" fill="#fef3c7" stroke="#d97706"/><text x="487" y="150" fill="#92400e">B3</text></g>
+          <g font-size="10" text-anchor="middle"><rect x="468" y="90" width="38" height="30" rx="3" fill="#fef3c7" stroke="#d97706"/><text x="487" y="110" fill="#92400e">B2</text></g>
+          <g font-size="10" text-anchor="middle"><rect x="510" y="210" width="38" height="30" rx="3" fill="#fef3c7" stroke="#d97706"/><text x="529" y="230" fill="#92400e">B4</text></g>
+          <g font-size="10" text-anchor="middle"><rect x="510" y="170" width="38" height="30" rx="3" fill="#fef3c7" stroke="#d97706"/><text x="529" y="190" fill="#92400e">B3</text></g>
+          <g font-size="10" text-anchor="middle"><rect x="510" y="130" width="38" height="30" rx="3" fill="#fef3c7" stroke="#d97706"/><text x="529" y="150" fill="#92400e">B2</text></g>
+          <g font-size="10" text-anchor="middle"><rect x="510" y="90" width="38" height="30" rx="3" fill="#fef3c7" stroke="#d97706"/><text x="529" y="110" fill="#92400e">B1</text></g>
+        </svg>
+        <p class="text-xs text-slate-500 mt-2"><strong>Figure:</strong> GPipe spacetime profile for p = 4, m = 4: the forward wave F1–F4 spans t1–t7, an execution valley sits between t5 and t10, and the backward wave B1–B4 drains through t8–t11.</p>
+      </div>
       <div class="warning-box">
         <p><strong>Common Pitfalls:</strong></p>
         <ul>
@@ -526,9 +595,6 @@
       <div class="important-note">
         <p><strong>Q:</strong> Does the weight update happen all at once at the end or during the backward pass?</p>
         <p><strong>A:</strong> The backward pass is an active weight adjustment process. Weights are updated stage by stage as gradients flow backward through each layer according to \(W \leftarrow W - \eta \nabla_W \mathcal{L}\).</p>
-      </div>
-      <div class="key-takeaway">
-        <p><strong>Exam note:</strong> Be prepared to draw the GPipe spacetime execution grid and explain why peak activation memory scales with micro-batch count \(m\) as \(\mathcal{O}(m)\). Remember that in GPipe, all forward passes must finish before backward passes begin, producing 18 idle slots out of 44 in a 4-GPU, 4-micro-batch setup.</p>
       </div>
       <h3 id="4.2.5-memory-bottlenecks-and-bubble-ratio-analysis">4.2.5 Memory Bottlenecks and Bubble Ratio Analysis</h3>
       <p>The mathematical core of GPipe's memory problem stems from the activation storage lifetime. Let \(S_{\text{act}}\) denote the memory in bytes required to store intermediate activations for a single micro-batch on one GPU stage. Because GPU 0 must store activations for frames \(F_1, F_2, \dots, F_m\) while waiting for the entire forward wave and backward wave to return, its peak activation memory consumption is: \[ M_{\text{activations}}^{\text{GPipe}} = m \times S_{\text{act}} \] When practitioners increase \(m\) to decrease the bubble fraction \(F_{\text{bubble}} = \frac{p-1}{m+p-1}\), the required activation memory increases linearly. On physical GPUs with finite memory (such as 40 GB or 80 GB VRAM), this creates a hard barrier: reducing the bubble to acceptable levels causes out-of-memory crashes.</p>
@@ -699,7 +765,57 @@
           <li><strong>Equal Duration Assumption:</strong> The clean 1F1B alternation assumes forward steps and backward steps take equal time (\(t_{\text{fwd}} \approx t_{\text{bwd}}\)). In practice, backward steps often take roughly twice as long as forward steps (\(t_{\text{bwd}} \approx 2 t_{\text{fwd}}\)), requiring specialized ratio scheduling (such as 1F2B) to maintain balance.</li>
         </ul>
       </div>
-      <p>#### Visual Intuition: 1F1B Zipper Schedule On a spacetime execution chart, 1F1B replaces GPipe's stark two-phase valley with a tight, interlocking zipper pattern. Warmup fills the lower-left diagonal, but starting at \(t_4\) and \(t_5\), backward blocks interleave directly between forward blocks. The steady-state middle section looks like a checkerboard where every forward pass is immediately followed by a memory-releasing backward pass.</p>
+      <div class="diagram-container my-6 text-center">
+        <svg viewBox="0 0 620 290" class="diagram-svg" role="img" aria-label="1F1B spacetime schedule for four GPUs and four micro-batches, showing backward pass B1 starting at t5 and forward and backward blocks interleaving like a zipper">
+          <line x1="80" y1="70" x2="80" y2="240" stroke="#64748b" stroke-width="1.5"/>
+          <line x1="80" y1="240" x2="570" y2="240" stroke="#64748b" stroke-width="1.5"/>
+          <text x="75" y="229" font-size="10" fill="#475569" text-anchor="end">GPU 0</text>
+          <text x="75" y="189" font-size="10" fill="#475569" text-anchor="end">GPU 1</text>
+          <text x="75" y="149" font-size="10" fill="#475569" text-anchor="end">GPU 2</text>
+          <text x="75" y="109" font-size="10" fill="#475569" text-anchor="end">GPU 3</text>
+          <text x="325" y="275" font-size="12" fill="#475569" text-anchor="middle">time steps t</text>
+          <text x="109" y="256" font-size="9" fill="#475569" text-anchor="middle">t1</text>
+          <text x="151" y="256" font-size="9" fill="#475569" text-anchor="middle">t2</text>
+          <text x="193" y="256" font-size="9" fill="#475569" text-anchor="middle">t3</text>
+          <text x="235" y="256" font-size="9" fill="#475569" text-anchor="middle">t4</text>
+          <text x="277" y="256" font-size="9" fill="#475569" text-anchor="middle">t5</text>
+          <text x="319" y="256" font-size="9" fill="#475569" text-anchor="middle">t6</text>
+          <text x="361" y="256" font-size="9" fill="#475569" text-anchor="middle">t7</text>
+          <text x="403" y="256" font-size="9" fill="#475569" text-anchor="middle">t8</text>
+          <text x="445" y="256" font-size="9" fill="#475569" text-anchor="middle">t9</text>
+          <text x="487" y="256" font-size="9" fill="#475569" text-anchor="middle">t10</text>
+          <text x="529" y="256" font-size="9" fill="#475569" text-anchor="middle">t11</text>
+          <g font-size="10" text-anchor="middle"><rect x="90" y="210" width="38" height="30" rx="3" fill="#dbeafe" stroke="#3b82f6"/><text x="109" y="230" fill="#1d4ed8">F1</text></g>
+          <g font-size="10" text-anchor="middle"><rect x="132" y="210" width="38" height="30" rx="3" fill="#dbeafe" stroke="#3b82f6"/><text x="151" y="230" fill="#1d4ed8">F2</text></g>
+          <g font-size="10" text-anchor="middle"><rect x="132" y="170" width="38" height="30" rx="3" fill="#dbeafe" stroke="#3b82f6"/><text x="151" y="190" fill="#1d4ed8">F1</text></g>
+          <g font-size="10" text-anchor="middle"><rect x="174" y="210" width="38" height="30" rx="3" fill="#dbeafe" stroke="#3b82f6"/><text x="193" y="230" fill="#1d4ed8">F3</text></g>
+          <g font-size="10" text-anchor="middle"><rect x="174" y="170" width="38" height="30" rx="3" fill="#dbeafe" stroke="#3b82f6"/><text x="193" y="190" fill="#1d4ed8">F2</text></g>
+          <g font-size="10" text-anchor="middle"><rect x="174" y="130" width="38" height="30" rx="3" fill="#dbeafe" stroke="#3b82f6"/><text x="193" y="150" fill="#1d4ed8">F1</text></g>
+          <g font-size="10" text-anchor="middle"><rect x="216" y="210" width="38" height="30" rx="3" fill="#dbeafe" stroke="#3b82f6"/><text x="235" y="230" fill="#1d4ed8">F4</text></g>
+          <g font-size="10" text-anchor="middle"><rect x="216" y="170" width="38" height="30" rx="3" fill="#dbeafe" stroke="#3b82f6"/><text x="235" y="190" fill="#1d4ed8">F3</text></g>
+          <g font-size="10" text-anchor="middle"><rect x="216" y="130" width="38" height="30" rx="3" fill="#dbeafe" stroke="#3b82f6"/><text x="235" y="150" fill="#1d4ed8">F2</text></g>
+          <g font-size="10" text-anchor="middle"><rect x="216" y="90" width="38" height="30" rx="3" fill="#dbeafe" stroke="#3b82f6"/><text x="235" y="110" fill="#1d4ed8">F1</text></g>
+          <g font-size="10" text-anchor="middle"><rect x="258" y="210" width="38" height="30" rx="3" fill="#fef3c7" stroke="#d97706"/><text x="277" y="230" fill="#92400e">B1</text></g>
+          <g font-size="10" text-anchor="middle"><rect x="258" y="170" width="38" height="30" rx="3" fill="#dbeafe" stroke="#3b82f6"/><text x="277" y="190" fill="#1d4ed8">F4</text></g>
+          <g font-size="10" text-anchor="middle"><rect x="258" y="130" width="38" height="30" rx="3" fill="#dbeafe" stroke="#3b82f6"/><text x="277" y="150" fill="#1d4ed8">F3</text></g>
+          <g font-size="10" text-anchor="middle"><rect x="258" y="90" width="38" height="30" rx="3" fill="#fef3c7" stroke="#d97706"/><text x="277" y="110" fill="#92400e">B1</text></g>
+          <g font-size="10" text-anchor="middle"><rect x="300" y="170" width="38" height="30" rx="3" fill="#fef3c7" stroke="#d97706"/><text x="319" y="190" fill="#92400e">B1</text></g>
+          <g font-size="10" text-anchor="middle"><rect x="300" y="130" width="38" height="30" rx="3" fill="#dbeafe" stroke="#3b82f6"/><text x="319" y="150" fill="#1d4ed8">F4</text></g>
+          <g font-size="10" text-anchor="middle"><rect x="300" y="90" width="38" height="30" rx="3" fill="#dbeafe" stroke="#3b82f6"/><text x="319" y="110" fill="#1d4ed8">F2</text></g>
+          <g font-size="10" text-anchor="middle"><rect x="342" y="130" width="38" height="30" rx="3" fill="#fef3c7" stroke="#d97706"/><text x="361" y="150" fill="#92400e">B1</text></g>
+          <g font-size="10" text-anchor="middle"><rect x="342" y="90" width="38" height="30" rx="3" fill="#fef3c7" stroke="#d97706"/><text x="361" y="110" fill="#92400e">B2</text></g>
+          <g font-size="10" text-anchor="middle"><rect x="384" y="210" width="38" height="30" rx="3" fill="#fef3c7" stroke="#d97706"/><text x="403" y="230" fill="#92400e">B2</text></g>
+          <g font-size="10" text-anchor="middle"><rect x="384" y="90" width="38" height="30" rx="3" fill="#fef3c7" stroke="#d97706"/><text x="403" y="110" fill="#92400e">B3</text></g>
+          <g font-size="10" text-anchor="middle"><rect x="426" y="170" width="38" height="30" rx="3" fill="#fef3c7" stroke="#d97706"/><text x="445" y="190" fill="#92400e">B2</text></g>
+          <g font-size="10" text-anchor="middle"><rect x="426" y="90" width="38" height="30" rx="3" fill="#fef3c7" stroke="#d97706"/><text x="445" y="110" fill="#92400e">B4</text></g>
+          <g font-size="10" text-anchor="middle"><rect x="468" y="210" width="38" height="30" rx="3" fill="#fef3c7" stroke="#d97706"/><text x="487" y="230" fill="#92400e">B3</text></g>
+          <g font-size="10" text-anchor="middle"><rect x="468" y="130" width="38" height="30" rx="3" fill="#fef3c7" stroke="#d97706"/><text x="487" y="150" fill="#92400e">B2</text></g>
+          <g font-size="10" text-anchor="middle"><rect x="510" y="210" width="38" height="30" rx="3" fill="#fef3c7" stroke="#d97706"/><text x="529" y="230" fill="#92400e">B4</text></g>
+          <g font-size="10" text-anchor="middle"><rect x="510" y="170" width="38" height="30" rx="3" fill="#fef3c7" stroke="#d97706"/><text x="529" y="190" fill="#92400e">B3</text></g>
+          <g font-size="10" text-anchor="middle"><rect x="510" y="130" width="38" height="30" rx="3" fill="#fef3c7" stroke="#d97706"/><text x="529" y="150" fill="#92400e">B4</text></g>
+        </svg>
+        <p class="text-xs text-slate-500 mt-2"><strong>Figure:</strong> 1F1B spacetime schedule for p = 4, m = 4: backward pass B1 begins at t5, interleaving forward and backward blocks into a zipper pattern with 16 idle slots (36.36%).</p>
+      </div>
       <div class="warning-box">
         <p><strong>Common Pitfalls:</strong></p>
         <ul>
@@ -760,9 +876,6 @@
           </tr>
         </tbody>
       </table>
-      <div class="key-takeaway">
-        <p><strong>Exam note:</strong> Remember that 1F1B restricts peak activation memory to \(\mathcal{O}(p)\) instead of \(\mathcal{O}(m)\). This allows training systems to scale to arbitrarily large micro-batch counts without running out of GPU memory.</p>
-      </div>
       <p>These architectural differences explain why virtually all modern foundation model training runs select 1F1B over GPipe when scaling cluster sizes.</p>
       <div class="key-takeaway">
         <p><strong>Recap & Bridge:</strong> 1F1B successfully resolves GPipe's activation memory explosion by interleaving forward and backward passes to bound peak memory at \(\mathcal{O}(p)\). However, the idle bubble fraction \(\frac{p-1}{m+p-1}\) during warmup and cooldown remains. Section 4.4 introduces Interleaved 1F1B, which divides each physical GPU into multiple virtual stages to shrink the bubble further.</p>
@@ -829,7 +942,50 @@
           <li><strong>Interconnect Bandwidth:</strong> Requires high-speed inter-GPU links (e.g. NVLink) to absorb the increased communication frequency without stalling compute cores.</li>
         </ul>
       </div>
-      <p>#### Visual Intuition: Dual-Loop Wavefronts On a spacetime schedule, interleaved 1F1B replaces large idle triangular blocks with multiple smaller, tightly packed diagonal bands. Instead of waiting for a single large wavefront to cross the entire cluster, two smaller wavefronts (Loop 1 for chunks \(C_1\)–\(C_4\) and Loop 2 for chunks \(C_5\)–\(C_8\)) ripple across the GPUs in rapid succession, cutting the visual area of the empty warmup and cooldown triangles by roughly \(1/v\).</p>
+      <div class="diagram-container my-6 text-center">
+        <svg viewBox="0 0 560 300" class="diagram-svg" role="img" aria-label="Interleaved 1F1B spacetime schedule with four GPUs and two virtual chunks per GPU, showing Loop 1 chunks C1 to C4 and Loop 2 chunks C5 to C8 rippling across the cluster">
+          <line x1="80" y1="50" x2="500" y2="50" stroke="#cbd5e1"/>
+          <line x1="80" y1="95" x2="500" y2="95" stroke="#cbd5e1"/>
+          <line x1="80" y1="140" x2="500" y2="140" stroke="#cbd5e1"/>
+          <line x1="80" y1="185" x2="500" y2="185" stroke="#cbd5e1"/>
+          <line x1="80" y1="230" x2="500" y2="230" stroke="#cbd5e1"/>
+          <line x1="80" y1="50" x2="80" y2="230" stroke="#64748b" stroke-width="1.5"/>
+          <line x1="80" y1="230" x2="500" y2="230" stroke="#64748b" stroke-width="1.5"/>
+          <text x="75" y="229" font-size="10" fill="#475569" text-anchor="end">GPU 0</text>
+          <text x="75" y="189" font-size="10" fill="#475569" text-anchor="end">GPU 1</text>
+          <text x="75" y="149" font-size="10" fill="#475569" text-anchor="end">GPU 2</text>
+          <text x="75" y="109" font-size="10" fill="#475569" text-anchor="end">GPU 3</text>
+          <text x="290" y="275" font-size="12" fill="#475569" text-anchor="middle">time steps t</text>
+          <text x="110" y="256" font-size="9" fill="#475569" text-anchor="middle">t1</text>
+          <text x="154" y="256" font-size="9" fill="#475569" text-anchor="middle">t2</text>
+          <text x="198" y="256" font-size="9" fill="#475569" text-anchor="middle">t3</text>
+          <text x="242" y="256" font-size="9" fill="#475569" text-anchor="middle">t4</text>
+          <text x="286" y="256" font-size="9" fill="#475569" text-anchor="middle">t5</text>
+          <text x="330" y="256" font-size="9" fill="#475569" text-anchor="middle">t6</text>
+          <text x="374" y="256" font-size="9" fill="#475569" text-anchor="middle">t7</text>
+          <text x="418" y="256" font-size="9" fill="#475569" text-anchor="middle">t8</text>
+          <text x="462" y="256" font-size="9" fill="#475569" text-anchor="middle">t9</text>
+          <g font-size="10" text-anchor="middle"><rect x="90" y="210" width="40" height="30" rx="3" fill="#dbeafe" stroke="#3b82f6"/><text x="110" y="230" fill="#1d4ed8">C1</text></g>
+          <g font-size="10" text-anchor="middle"><rect x="134" y="170" width="40" height="30" rx="3" fill="#dbeafe" stroke="#3b82f6"/><text x="154" y="190" fill="#1d4ed8">C2</text></g>
+          <g font-size="10" text-anchor="middle"><rect x="178" y="130" width="40" height="30" rx="3" fill="#dbeafe" stroke="#3b82f6"/><text x="198" y="150" fill="#1d4ed8">C3</text></g>
+          <g font-size="10" text-anchor="middle"><rect x="222" y="90" width="40" height="30" rx="3" fill="#dbeafe" stroke="#3b82f6"/><text x="242" y="110" fill="#1d4ed8">C4</text></g>
+          <g font-size="10" text-anchor="middle"><rect x="266" y="210" width="40" height="30" rx="3" fill="#ede9fe" stroke="#8b5cf6"/><text x="286" y="230" fill="#6d28d9">C5</text></g>
+          <g font-size="10" text-anchor="middle"><rect x="310" y="170" width="40" height="30" rx="3" fill="#ede9fe" stroke="#8b5cf6"/><text x="330" y="190" fill="#6d28d9">C6</text></g>
+          <g font-size="10" text-anchor="middle"><rect x="354" y="130" width="40" height="30" rx="3" fill="#ede9fe" stroke="#8b5cf6"/><text x="374" y="150" fill="#6d28d9">C7</text></g>
+          <g font-size="10" text-anchor="middle"><rect x="398" y="90" width="40" height="30" rx="3" fill="#ede9fe" stroke="#8b5cf6"/><text x="418" y="110" fill="#6d28d9">C8</text></g>
+          <g font-size="10" text-anchor="middle"><rect x="134" y="210" width="40" height="30" rx="3" fill="#dbeafe" stroke="#3b82f6" opacity="0.7"/><text x="154" y="230" fill="#1d4ed8">C1</text></g>
+          <g font-size="10" text-anchor="middle"><rect x="178" y="170" width="40" height="30" rx="3" fill="#dbeafe" stroke="#3b82f6" opacity="0.7"/><text x="198" y="190" fill="#1d4ed8">C2</text></g>
+          <g font-size="10" text-anchor="middle"><rect x="222" y="130" width="40" height="30" rx="3" fill="#dbeafe" stroke="#3b82f6" opacity="0.7"/><text x="242" y="150" fill="#1d4ed8">C3</text></g>
+          <g font-size="10" text-anchor="middle"><rect x="266" y="90" width="40" height="30" rx="3" fill="#dbeafe" stroke="#3b82f6" opacity="0.7"/><text x="286" y="110" fill="#1d4ed8">C4</text></g>
+          <g font-size="10" text-anchor="middle"><rect x="310" y="210" width="40" height="30" rx="3" fill="#ede9fe" stroke="#8b5cf6" opacity="0.7"/><text x="330" y="230" fill="#6d28d9">C5</text></g>
+          <g font-size="10" text-anchor="middle"><rect x="354" y="170" width="40" height="30" rx="3" fill="#ede9fe" stroke="#8b5cf6" opacity="0.7"/><text x="374" y="190" fill="#6d28d9">C6</text></g>
+          <g font-size="10" text-anchor="middle"><rect x="398" y="130" width="40" height="30" rx="3" fill="#ede9fe" stroke="#8b5cf6" opacity="0.7"/><text x="418" y="150" fill="#6d28d9">C7</text></g>
+          <g font-size="10" text-anchor="middle"><rect x="442" y="90" width="40" height="30" rx="3" fill="#ede9fe" stroke="#8b5cf6" opacity="0.7"/><text x="462" y="110" fill="#6d28d9">C8</text></g>
+          <text x="185" y="72" font-size="11" fill="#2563eb" text-anchor="middle">Loop 1: C1–C4</text>
+          <text x="380" y="72" font-size="11" fill="#6d28d9" text-anchor="middle">Loop 2: C5–C8</text>
+        </svg>
+        <p class="text-xs text-slate-500 mt-2"><strong>Figure:</strong> Interleaved 1F1B with p = 4 and v = 2: Loop 1 (C1–C4) and Loop 2 (C5–C8) ripple across the GPUs in rapid succession, shrinking the warmup and cooldown bubble area by roughly 1/v.</p>
+      </div>
       <div class="warning-box">
         <p><strong>Common Pitfalls & Engineering Tradeoffs:</strong></p>
         <ul>
@@ -854,9 +1010,6 @@
         <li><em>Communication Overhead:</em> Doubling \(v\) doubles inter-GPU transfers. In clusters connected via PCIe Gen4 instead of high-bandwidth NVLink, the additional communication latency can outweigh the bubble reduction gains.</li>
         <li><em>Memory Footprint:</em> Holding parameters for \(v\) distinct chunks increases static model state memory per GPU.</li>
       </ul>
-      <div class="key-takeaway">
-        <p><strong>Exam note:</strong> Understand how assigning \(v\) virtual stages per physical GPU reduces the theoretical bubble fraction by roughly \(\frac{1}{v}\) at the cost of multiplying inter-GPU network communication handovers by \(v\).</p>
-      </div>
       <p>The decision to adopt interleaved 1F1B ultimately depends on whether the system is compute-bound or communication-bound.</p>
       <div class="key-takeaway">
         <p><strong>Recap & Bridge:</strong> Interleaved 1F1B shrinks the pipeline bubble by a factor of \(\frac{1}{v}\) through virtual stage looping, but communication volume doubles and warmup/cooldown bubbles still persist. Section 4.5 explores DualPipe, a revolutionary bidirectional scheduling architecture that runs two opposing execution streams to achieve near-zero bubble overhead.</p>
@@ -930,7 +1083,44 @@
           <li><strong>Symmetric Model Chunks:</strong> Forward and backward computational complexity must be balanced in both directions across the model partitions.</li>
         </ul>
       </div>
-      <p>#### Visual Intuition: Opposing Wavefronts ("X-Pattern") On a spacetime diagram, DualPipe transforms the execution layout into an interlocking "X-pattern". Stream A forms an upward-sloping wavefront moving from GPU 0 to GPU 3, while Stream B forms a downward-sloping wavefront moving from GPU 3 to GPU 0. Where unidirectional pipelines leave empty triangular voids in the upper-left and lower-right, DualPipe fills those exact gaps with the opposing stream's active computations.</p>
+      <div class="diagram-container my-6 text-center">
+        <svg viewBox="0 0 540 290" class="diagram-svg" role="img" aria-label="DualPipe X-pattern for four GPUs, showing Stream A forward and backward waves in blue and Stream B forward and backward waves in orange, with both boundaries active at t1">
+          <line x1="80" y1="70" x2="80" y2="240" stroke="#64748b" stroke-width="1.5"/>
+          <line x1="80" y1="240" x2="500" y2="240" stroke="#64748b" stroke-width="1.5"/>
+          <text x="75" y="229" font-size="10" fill="#475569" text-anchor="end">GPU 0</text>
+          <text x="75" y="189" font-size="10" fill="#475569" text-anchor="end">GPU 1</text>
+          <text x="75" y="149" font-size="10" fill="#475569" text-anchor="end">GPU 2</text>
+          <text x="75" y="109" font-size="10" fill="#475569" text-anchor="end">GPU 3</text>
+          <text x="290" y="275" font-size="12" fill="#475569" text-anchor="middle">time steps t</text>
+          <text x="112" y="256" font-size="9" fill="#475569" text-anchor="middle">t1</text>
+          <text x="162" y="256" font-size="9" fill="#475569" text-anchor="middle">t2</text>
+          <text x="212" y="256" font-size="9" fill="#475569" text-anchor="middle">t3</text>
+          <text x="262" y="256" font-size="9" fill="#475569" text-anchor="middle">t4</text>
+          <text x="312" y="256" font-size="9" fill="#475569" text-anchor="middle">t5</text>
+          <text x="362" y="256" font-size="9" fill="#475569" text-anchor="middle">t6</text>
+          <text x="412" y="256" font-size="9" fill="#475569" text-anchor="middle">t7</text>
+          <text x="462" y="256" font-size="9" fill="#475569" text-anchor="middle">t8</text>
+          <g font-size="10" text-anchor="middle"><rect x="90" y="210" width="44" height="30" rx="3" fill="#dbeafe" stroke="#3b82f6"/><text x="112" y="230" fill="#1d4ed8">F_A1</text></g>
+          <g font-size="10" text-anchor="middle"><rect x="90" y="90" width="44" height="30" rx="3" fill="#ffedd5" stroke="#f97316"/><text x="112" y="110" fill="#9a3412">F_B1</text></g>
+          <g font-size="10" text-anchor="middle"><rect x="140" y="170" width="44" height="30" rx="3" fill="#dbeafe" stroke="#3b82f6"/><text x="162" y="190" fill="#1d4ed8">F_A1</text></g>
+          <g font-size="10" text-anchor="middle"><rect x="140" y="130" width="44" height="30" rx="3" fill="#ffedd5" stroke="#f97316"/><text x="162" y="150" fill="#9a3412">F_B1</text></g>
+          <g font-size="10" text-anchor="middle"><rect x="190" y="130" width="44" height="30" rx="3" fill="#dbeafe" stroke="#3b82f6"/><text x="212" y="150" fill="#1d4ed8">F_A1</text></g>
+          <g font-size="10" text-anchor="middle"><rect x="190" y="170" width="44" height="30" rx="3" fill="#ffedd5" stroke="#f97316"/><text x="212" y="190" fill="#9a3412">F_B1</text></g>
+          <g font-size="10" text-anchor="middle"><rect x="240" y="90" width="44" height="30" rx="3" fill="#dbeafe" stroke="#3b82f6"/><text x="262" y="110" fill="#1d4ed8">F_A1</text></g>
+          <g font-size="10" text-anchor="middle"><rect x="240" y="210" width="44" height="30" rx="3" fill="#ffedd5" stroke="#f97316"/><text x="262" y="230" fill="#9a3412">F_B1</text></g>
+          <g font-size="10" text-anchor="middle"><rect x="290" y="90" width="44" height="30" rx="3" fill="#bfdbfe" stroke="#2563eb"/><text x="312" y="110" fill="#1e40af">B_A1</text></g>
+          <g font-size="10" text-anchor="middle"><rect x="290" y="210" width="44" height="30" rx="3" fill="#fed7aa" stroke="#ea580c"/><text x="312" y="230" fill="#9a3412">B_B1</text></g>
+          <g font-size="10" text-anchor="middle"><rect x="340" y="130" width="44" height="30" rx="3" fill="#bfdbfe" stroke="#2563eb"/><text x="362" y="150" fill="#1e40af">B_A1</text></g>
+          <g font-size="10" text-anchor="middle"><rect x="340" y="170" width="44" height="30" rx="3" fill="#fed7aa" stroke="#ea580c"/><text x="362" y="190" fill="#9a3412">B_B1</text></g>
+          <g font-size="10" text-anchor="middle"><rect x="390" y="170" width="44" height="30" rx="3" fill="#bfdbfe" stroke="#2563eb"/><text x="412" y="190" fill="#1e40af">B_A1</text></g>
+          <g font-size="10" text-anchor="middle"><rect x="390" y="130" width="44" height="30" rx="3" fill="#fed7aa" stroke="#ea580c"/><text x="412" y="150" fill="#9a3412">B_B1</text></g>
+          <g font-size="10" text-anchor="middle"><rect x="440" y="210" width="44" height="30" rx="3" fill="#bfdbfe" stroke="#2563eb"/><text x="462" y="230" fill="#1e40af">B_A1</text></g>
+          <g font-size="10" text-anchor="middle"><rect x="440" y="90" width="44" height="30" rx="3" fill="#fed7aa" stroke="#ea580c"/><text x="462" y="110" fill="#9a3412">B_B1</text></g>
+          <text x="180" y="62" font-size="11" fill="#2563eb" text-anchor="middle">Stream A</text>
+          <text x="400" y="62" font-size="11" fill="#ea580c" text-anchor="middle">Stream B</text>
+        </svg>
+        <p class="text-xs text-slate-500 mt-2"><strong>Figure:</strong> DualPipe X-pattern for p = 4: Stream A (blue) and Stream B (orange) run opposing forward and backward waves, filling the idle triangles of unidirectional pipelines, with both boundaries active at t1.</p>
+      </div>
       <div class="warning-box">
         <p><strong>Common Pitfalls & Engineering Tradeoffs:</strong></p>
         <ul>
@@ -962,101 +1152,11 @@
         <li><em>Mixture of Experts (MoE)</em> — routes token activations dynamically through specialized expert feed-forward networks, activating only a fraction of total model parameters per token.</li>
       </ol>
       <p>By deploying DualPipe, DeepSeek achieves near-zero pipeline bubble overhead across massive GPU clusters, dramatically reducing the financial and computational cost of training state-of-the-art language models.</p>
-      <div class="key-takeaway">
-        <p><strong>Exam note:</strong> Expect exam questions on the bidirectional nature of DualPipe, how Stream A and Stream B overlap forward and backward passes, and why both boundaries of the GPU cluster (GPU 0 and GPU \(p-1\)) are active from time step 1.</p>
-      </div>
       <p>DualPipe demonstrates how innovative scheduling can overcome physical communication and memory bottlenecks in distributed AI systems.</p>
       <div class="key-takeaway">
         <p><strong>Recap & Bridge:</strong> DualPipe represents the frontier of pipeline parallelism, moving from unidirectional fill to bidirectional simultaneous saturation. Together, GPipe, 1F1B, Interleaved 1F1B, and DualPipe demonstrate a clear evolutionary progression: from basic pipeline execution to strict memory bounding, virtual stage reduction, and finally full bidirectional cluster overlap.</p>
       </div>
       <p>#### Real-World & Domain Placement In December 2024, DeepSeek released DeepSeek-V3, a 671-billion-parameter MoE model trained with unprecedented compute efficiency using DualPipe. DualPipe's ability to overlap communication and computation across bidirectional streams allowed DeepSeek to train a world-class frontier model at a fraction of traditional supercomputer training costs, establishing bidirectional pipelining as a cornerstone of next-generation distributed systems.</p>
-
-      <h2 id="exam-guidance-summary">Exam Guidance Summary</h2>
-      <h3 id="4.6.1-core-conceptual-questions-and-numerical-problem-patterns">4.6.1 Core Conceptual Questions and Numerical Problem Patterns</h3>
-      <p>Students preparing for examinations in Distributed Machine Learning should master the following core analytical, mathematical, and architectural problem patterns:</p>
-      <ol>
-        <li><strong>Pipeline Bubble Ratio Computations:</strong></li>
-      </ol>
-      <ul>
-        <li>Master both the empirical formula \(\text{Bubble Ratio} = \frac{S_{\text{idle}}}{S_{\text{total}}}\) and the theoretical formula:</li>
-      </ul>
-      <p>\[ F_{\text{bubble}} = \frac{p - 1}{m + p - 1} \]</p>
-      <ul>
-        <li>Be prepared to calculate total available slots, discrete idle slots, and bubble percentages for arbitrary cluster configurations. For example, given \(p = 4\) GPUs and \(m = 4\) micro-batches over 11 time steps, show that \(S_{\text{total}} = 44\), \(S_{\text{idle}} = 18\) (for GPipe) or \(16\) (for 1F1B), yielding bubble ratios of \(\approx 40.91\%\) and \(\approx 36.36\%\) respectively.</li>
-        <li>Show how scaling micro-batch count to \(m = 32\) on \(p = 4\) stages diminishes the theoretical bubble to \(\frac{3}{35} \approx 8.57\%\).</li>
-      </ul>
-      <ol>
-        <li><strong>Activation Memory Scaling Proofs:</strong></li>
-      </ol>
-      <ul>
-        <li><strong>GPipe Memory Explosion:</strong> Explain why GPipe peak activation memory scales linearly with micro-batch count as \(\mathcal{O}(m)\). Because all forward passes must complete before backpropagation begins, every stage must retain intermediate activations \(a_1, \dots, a_m\) simultaneously in VRAM.</li>
-        <li><strong>1F1B Memory Bound:</strong> Prove why 1F1B strictly caps peak activation memory to the number of pipeline stages \(\mathcal{O}(p)\). Because each stage alternates one forward pass with one backward pass during steady state, completed micro-batches immediately undergo backpropagation, releasing their activation tensors.</li>
-      </ul>
-      <ol>
-        <li><strong>Interleaved 1F1B Virtual Chunking:</strong></li>
-      </ol>
-      <ul>
-        <li>Understand how assigning \(v\) non-contiguous virtual stages per physical GPU reduces the theoretical bubble fraction to:</li>
-      </ul>
-      <p>\[ F_{\text{bubble}}^{\text{interleaved}} \approx \frac{1}{v} \times \frac{p - 1}{m} \]</p>
-      <ul>
-        <li>Identify the primary engineering tradeoff: slicing each GPU into \(v\) virtual chunks divides the warmup fill time by \(v\) (a 50% bubble reduction for \(v = 2\)), but multiplies cross-GPU network communication handovers by \(v\).</li>
-      </ul>
-      <ol>
-        <li><strong>DualPipe Bidirectional Scheduling:</strong></li>
-      </ol>
-      <ul>
-        <li>Describe how Stream A (left-to-right) and Stream B (right-to-left) run concurrently in opposing directions.</li>
-        <li>Explain why both boundaries of the GPU cluster (GPU 0 and GPU \(p - 1\)) are fully active from time step \(t_1\), eliminating one-sided warmup waiting and achieving an asymptotic bubble fraction of \(\lim_{m \to \infty} F_{\text{bubble}} \approx 0\).</li>
-      </ul>
-      <h3 id="4.6.2-key-architectural-contrasts-for-high-scoring-answers">4.6.2 Key Architectural Contrasts for High-Scoring Answers</h3>
-      <p>The summary table below provides a direct, comprehensive comparison across all four major pipeline parallelism architectures:</p>
-      <table>
-        <thead>
-          <tr>
-            <th>Pipeline Parallel Architecture</th>
-            <th>Scheduling Strategy</th>
-            <th>Peak Activation Memory</th>
-            <th>Empirical Bubble Ratio (\(p=4, m=4\))</th>
-            <th>Primary Bottleneck or Tradeoff</th>
-            <th>Key Industry Framework Adoption</th>
-          </tr>
-        </thead>
-        <tbody>
-          <tr>
-            <td><strong>GPipe</strong></td>
-            <td>Strict all-forward passes first, then all-backward passes</td>
-            <td>\(\mathcal{O}(m)\) — scales linearly with micro-batches</td>
-            <td>High (\(\approx 40.91\%\), approx. 42%)</td>
-            <td>Activation memory explosion; late backward idling</td>
-            <td>Early Transformer training; Lingvo</td>
-          </tr>
-          <tr>
-            <td><strong>1F1B</strong></td>
-            <td>Warmup \(p\) micro-batches, then strictly alternate one forward and one backward</td>
-            <td>\(\mathcal{O}(p)\) — bounded strictly by physical stages</td>
-            <td>Moderate (\(\approx 36.36\%\), approx. 36%)</td>
-            <td>Fixed warmup and cooldown bubbles (\(p-1\)) remain</td>
-            <td>Megatron-LM; Microsoft DeepSpeed</td>
-          </tr>
-          <tr>
-            <td><strong>Interleaved 1F1B</strong></td>
-            <td>Assign \(v\) non-contiguous virtual chunks per GPU; loop data back</td>
-            <td>\(\mathcal{O}(p)\) — bounded by physical stages</td>
-            <td>Low (\(\approx \frac{1}{v} \times \text{1F1B bubble}\))</td>
-            <td>Doubled communication frequency; context switching</td>
-            <td>Megatron-LM v2 / v3</td>
-          </tr>
-          <tr>
-            <td><strong>DualPipe</strong></td>
-            <td>Bidirectional dual streams (Stream A forward left-to-right, Stream B forward right-to-left)</td>
-            <td>\(\mathcal{O}(p)\) — bounded by physical stages</td>
-            <td>Near-zero in steady state (slashes warmup by 67%)</td>
-            <td>Interconnect traffic contention; state-tracking complexity</td>
-            <td>DeepSeek-V3 (2024)</td>
-          </tr>
-        </tbody>
-      </table>
 
       <h2 id="key-industry-applications">Key Industry Applications</h2>
       <h3 id="4.7.1-frontier-model-training-deepseek-v3-and-dualpipe">4.7.1 Frontier Model Training: DeepSeek-V3 and DualPipe</h3>
@@ -1090,65 +1190,6 @@
       - .revision-check — one self-check question (no options)
       - .revision-connections — linked concepts within this lecture
     ============================================================ -->
-    <section class="exam-revision-section">
-      <h2>Exam Revision Notes</h2>
-      <p class="revision-intro">Below is the distilled, exam-ready core.
-      Every entry comes from the full explanation above. Use this section
-      for rapid review; return to the main notes when a point needs more context.</p>
-      <div class="exam-revision-entry">
-        <h3 class="revision-topic">Foundational Pipeline Parallelism and the Bubble Problem</h3>
-        <p class="revision-mustknow"><strong>Must-know:</strong> The 3 core entities of pipeline parallelism are <strong>hardware accelerators</strong> (\(p\) GPUs), <strong>data frames</strong> (\(m\) micro-batches), and <strong>model chunks</strong> (\(p\) partitions). The theoretical bubble fraction is \(F_{\text{bubble}} = \frac{p - 1}{m + p - 1}\).</p>
-        <p class="revision-formula">\[ F_{\text{bubble}} = \frac{p - 1}{m + p - 1} \]</p>
-        <p class="revision-pitfall"><strong>⚠️ Top pitfall:</strong> Confusing data parallelism (full model replicated) with pipeline parallelism (layers partitioned sequentially), or forgetting that increasing \(m\) to reduce the bubble increases peak activation memory.</p>
-        <p class="revision-check"><strong>Self-check:</strong> What is the theoretical bubble fraction for 4 GPUs processing 4 micro-batches?</p>
-        <p class="revision-connections"><strong>Connects to:</strong> 4.2 GPipe: All-Forward First, All-Backward Architecture</p>
-      </div>
-
-      <div class="exam-revision-entry">
-        <h3 class="revision-topic">GPipe: All-Forward First, All-Backward Architecture</h3>
-        <p class="revision-mustknow"><strong>Must-know:</strong> GPipe runs <strong>all forward micro-batches first</strong> before starting any backward pass. Peak activation memory scales as \(\mathcal{O}(m)\), causing an <strong>activation memory explosion</strong> when scaling micro-batches.</p>
-        <p class="revision-formula">\[ M_{\text{peak}}^{\text{GPipe}} = \mathcal{O}(m), \quad W_j \leftarrow W_j - \eta \sum_{k=1}^m \nabla_{W_j} \mathcal{L}_k \]</p>
-        <p class="revision-pitfall"><strong>⚠️ Top pitfall:</strong> Attempting to calculate early stage gradients directly without downstream chain-rule propagation, or overlooking that GPipe activation memory scales with micro-batches \(m\) rather than stages \(p\).</p>
-        <p class="revision-check"><strong>Self-check:</strong> Why does GPipe suffer an activation memory explosion when \(m\) is large?</p>
-        <p class="revision-connections"><strong>Connects to:</strong> 4.1 Foundational Pipeline Parallelism and the Bubble Problem, 4.3 1F1B (One Forward, One Backward) Architecture</p>
-      </div>
-
-      <div class="exam-revision-entry">
-        <h3 class="revision-topic">1F1B (One Forward, One Backward) Architecture</h3>
-        <p class="revision-mustknow"><strong>Must-know:</strong> 1F1B alternates <strong>one forward pass and one backward pass</strong> on each stage during steady state. Peak activation memory is strictly capped at \(\mathcal{O}(p)\) rather than \(\mathcal{O}(m)\).</p>
-        <p class="revision-formula">\[ M_{\text{peak}}^{\text{1F1B}} = \mathcal{O}(p), \quad \text{Bubble Ratio}_{1F1B} = \frac{16}{44} \approx 36.36\% \]</p>
-        <p class="revision-pitfall"><strong>⚠️ Top pitfall:</strong> Assuming 1F1B eliminates all bubbles (warmup and cooldown bubbles still remain), or thinking early backward execution slows down subsequent forward frames.</p>
-        <p class="revision-check"><strong>Self-check:</strong> What is the peak activation memory complexity of 1F1B compared to GPipe?</p>
-        <p class="revision-connections"><strong>Connects to:</strong> 4.2 GPipe: All-Forward First, All-Backward Architecture, 4.4 Interleaved 1F1B Pipeline Parallelism</p>
-      </div>
-
-      <div class="exam-revision-entry">
-        <h3 class="revision-topic">Interleaved 1F1B Pipeline Parallelism</h3>
-        <p class="revision-mustknow"><strong>Must-know:</strong> Assigning \(v\) <strong>virtual stages</strong> per physical GPU reduces the pipeline bubble fraction by roughly \(\frac{1}{v}\) by looping execution back to earlier GPUs, but multiplies <strong>communication frequency</strong> by \(v\).</p>
-        <p class="revision-formula">\[ F_{\text{bubble}}^{\text{interleaved}} \approx \frac{1}{v} \times \frac{p - 1}{m} \]</p>
-        <p class="revision-pitfall"><strong>⚠️ Top pitfall:</strong> Ignoring the communication overhead of doubled network handovers, or assuming heterogeneous models with complex layers can always be sliced evenly into virtual chunks.</p>
-        <p class="revision-check"><strong>Self-check:</strong> By what factor does interleaved 1F1B reduce the theoretical bubble fraction when using \(v\) virtual stages per GPU?</p>
-        <p class="revision-connections"><strong>Connects to:</strong> 4.3 1F1B (One Forward, One Backward) Architecture, 4.5 DualPipe: Bidirectional Dual-Stream Pipelining</p>
-      </div>
-
-      <div class="exam-revision-entry">
-        <h3 class="revision-topic">DualPipe: Bidirectional Dual-Stream Pipelining</h3>
-        <p class="revision-mustknow"><strong>Must-know:</strong> DualPipe executes <strong>two concurrent streams in opposing directions</strong>, allowing GPU 0 and GPU \(p-1\) to start simultaneously at step 1 and pushing steady-state bubble overhead toward <strong>near zero</strong>.</p>
-        <p class="revision-formula">\[ \lim_{m \to \infty} F_{\text{bubble}}^{\text{DualPipe}} \approx 0, \quad \mathcal{W}_j(t) \in \{F_{A, k}, B_{A, k}, F_{B, k'}, B_{B, k'}\} \]</p>
-        <p class="revision-pitfall"><strong>⚠️ Top pitfall:</strong> Assuming DualPipe reaches 100% utilization (startup and drain bubbles still exist), or overlooking potential network contention on bidirectional interconnects.</p>
-        <p class="revision-check"><strong>Self-check:</strong> How does DualPipe eliminate the one-sided warmup delay seen in unidirectional pipelines like GPipe and 1F1B?</p>
-        <p class="revision-connections"><strong>Connects to:</strong> 4.3 1F1B (One Forward, One Backward) Architecture, 4.4 Interleaved 1F1B Pipeline Parallelism</p>
-      </div>
-
-      <div class="exam-revision-entry">
-        <h3 class="revision-topic">Pipeline Parallelism Architectural Synthesis and Bubble Analysis</h3>
-        <p class="revision-mustknow"><strong>Must-know:</strong> Understand the bubble fraction formula \(F_{\text{bubble}} = \frac{p-1}{m+p-1}\), why 1F1B caps memory to \(\mathcal{O}(p)\), how virtual factor \(v\) reduces bubble by \(\frac{1}{v}\), and why DualPipe achieves <strong>near-zero bubble overhead</strong>.</p>
-        <p class="revision-formula">\[ F_{\text{bubble}} = \frac{p - 1}{m + p - 1}, \quad F_{\text{bubble}}^{\text{interleaved}} \approx \frac{1}{v} \times \frac{p - 1}{m} \]</p>
-        <p class="revision-pitfall"><strong>⚠️ Top pitfall:</strong> Confusing empirical bubble calculation with theoretical formula, or forgetting that interleaved 1F1B multiplies network communication handovers by \(v\).</p>
-        <p class="revision-check"><strong>Self-check:</strong> How does 1F1B prevent the activation memory explosion observed in GPipe?</p>
-        <p class="revision-connections"><strong>Connects to:</strong> 4.1 Foundational Pipeline Parallelism, 4.2 GPipe, 4.3 1F1B, 4.4 Interleaved 1F1B, 4.5 DualPipe</p>
-      </div>
-    </section>
   </div>
 </body>
 </html>

@@ -1290,6 +1290,76 @@ def check_writing_style(parser, report):
                       "No obvious AI-cliche or formatting issues in prose.")
 
 
+def check_content_repetition(raw, parser, report):
+    """Detect repetitive content: duplicate sentences, pseudo-symbols, and callout echoes."""
+    warnings = []
+    
+    # 1. Duplicate sentences in prose
+    prose = PL.strip_verify_markers(parser.prose)
+    sentences = [s.strip() for s in PL._SENT_SPLIT.split(prose) if s.strip()]
+    duplicates = PL.find_duplicate_sentences(sentences, min_len=35)
+    if duplicates:
+        detail = "; ".join(f"'{s[:50]}...' ({c}x)" for s, c in duplicates[:4])
+        warnings.append(f"Found {len(duplicates)} duplicate sentence(s): {detail}. Review and deduplicate.")
+
+    # 2. Pseudo-symbols on qualitative terms (e.g., '(..., written as ...)')
+    pseudo = PL.find_pseudo_symbols(raw)
+    if pseudo:
+        detail = "; ".join(f"'{p[:50]}...'" for p in pseudo[:3])
+        warnings.append(f"Found {len(pseudo)} pseudo-symbol pattern(s) 'written as <phrase>' on non-math concepts: {detail}. Use natural prose instead.")
+
+    # 3. Callout echo: callout box immediately repeating preceding paragraph
+    echoes = re.findall(
+        r'<p>([^<]{30,})</p>\s*<div class="(?:key-concept|important-note)">\s*<p>(?:<strong>[^<]+:</strong>\s*)?([^<]{30,})</p>',
+        raw,
+        re.DOTALL | re.IGNORECASE
+    )
+    echo_hits = 0
+    for p_text, c_text in echoes:
+        p_words = set(w.lower() for w in re.findall(r'\b[a-zA-Z]{4,}\b', p_text))
+        c_words = set(w.lower() for w in re.findall(r'\b[a-zA-Z]{4,}\b', c_text))
+        if len(p_words) >= 6 and len(c_words) >= 6:
+            overlap = len(p_words & c_words) / min(len(p_words), len(c_words))
+            if overlap >= 0.75:
+                echo_hits += 1
+    if echo_hits > 0:
+        warnings.append(f"Found {echo_hits} instance(s) where a callout box echoes the preceding paragraph with >75% word overlap. Provide context in prose rather than restating the box.")
+
+    if warnings:
+        report.warned("content repetition", "\n".join(warnings))
+    else:
+        report.passed("content repetition", "No severe repetition, pseudo-symbols, or callout echoes detected.")
+
+
+def check_qa_relevance(raw, report):
+    """Detect non-academic or rhetorical check-ins mistakenly kept as Q&A."""
+    qa_blocks = re.findall(
+        r'<div class="important-note">\s*<p>\s*<strong>Q:</strong>(.*?)<strong>A:</strong>(.*?)</p>\s*</div>',
+        raw,
+        re.DOTALL | re.IGNORECASE
+    )
+    if not qa_blocks:
+        report.passed("Q&A academic relevance", "No Q&A blocks to assess or all formatted properly.")
+        return
+
+    bogus_hits = []
+    for q, a in qa_blocks:
+        combined = f"Q: {q} A: {a}"
+        hits = PL.find_bogus_qa(combined)
+        if hits:
+            q_clean = re.sub(r'\s+', ' ', re.sub(r'<[^>]+>', ' ', q)).strip()
+            bogus_hits.append(f"'{q_clean[:60]}...' ({hits[0][0]})")
+
+    if bogus_hits:
+        report.warned(
+            "Q&A academic relevance",
+            f"Found {len(bogus_hits)} potentially non-academic or rhetorical Q&A(s): {'; '.join(bogus_hits[:3])}. "
+            "Rhetorical pauses ('any questions? / no blocking doubt') and course logistics (Teams/recordings) should be pruned."
+        )
+    else:
+        report.passed("Q&A academic relevance", f"All {len(qa_blocks)} Q&A block(s) appear academically substantive.")
+
+
 def check_html_formatting(raw, report):
     """Detect if the HTML code is minified or written on a single line (or very few lines).
     Well-formatted HTML must have line breaks and proper indentation.
@@ -1421,6 +1491,8 @@ def lint_file(path):
     check_pipeline_jargon(raw, parser, report)
     check_placeholder_tasks(raw, parser, report)
     check_writing_style(parser, report)
+    check_content_repetition(raw, parser, report)
+    check_qa_relevance(raw, report)
     check_html_formatting(raw, report)
     return report
 
