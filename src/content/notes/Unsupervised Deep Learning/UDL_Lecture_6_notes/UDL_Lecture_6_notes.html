@@ -356,13 +356,6 @@
   <li><strong>Parameter counting</strong> — given a convolutional layer, writing down its number of trainable weights and biases from memory. For example, a layer with 16 filters of size \(3 \times 3\) operating on a single input channel has \(16 \times 3 \times 3 = 144\) weights plus 16 biases.</li>
 </ul>
 <p>PixelCNN will exercise all four skills, and the exam may too.</p>
-<div class="key-takeaway">
-  <p><strong>Exam note:</strong> The mid-sem exam may carry questions built around the assignment — expect about two. You will not write code, but you must read a snippet and explain what it does, based only on the lab sheets and the assignment. Nothing will ask you to understand code from material never taught. The questions sit <em>around</em> the assignment rather than <em>on</em> it. Also remember the standing expectation: your assignment observations should tally with what the technical community already knows — agreement with known findings is part of the grading.</p>
-</div>
-<h3 id="6.1.3-student-questions-and-answers">6.1.3 Student Questions and Answers</h3>
-<div class="important-note">
-  <p><strong>Q:</strong> Can we get sample papers early so we have time to practice? <strong>A:</strong> Past question papers will be shared shortly. Making extra practice questions with ChatGPT works well too — those tend to be quite nice. About two exam questions will sit around the assignment so that practical skills get tested in the exam setting; nothing will demand syntax recall or unseen code. The safe preparation strategy: re-derive your own assignment results until you can explain every line of it aloud.</p>
-</div>
 <p>With the recap done, the session now builds its main character: PixelCNN, the convolutional take on "predict the future from the past."</p>
 <div class="key-takeaway">
   <p><strong>Recap + bridge:</strong> Likelihood-based models can score any sample, train stably, but sample slowly — and the autoregressive trick is to factor the whole data distribution into a chain of per-position predictions conditioned only on the past. Next: how a masked convolution implements that chain for image pixels.</p>
@@ -375,7 +368,50 @@
 <p>PixelCNN puts convolutional-network machinery to work on pixels. The <strong>CNN</strong> part of the name points at convolution layers; the <strong>pixel</strong> part says the input is an image grid. A sibling model, <strong>PixelRNN</strong>, instead processes pixels row by row with recurrent units such as LSTM cells. PixelCNN processes each pixel through its neighborhood, which makes 2D convolution the natural engine — convolutions are built to combine a pixel's neighbors efficiently, and that is exactly what per-pixel prediction needs.</p>
 <p>Real-world: this model family is unusually well served by written walkthroughs. Multi-part blog series cover it from plain CNNs through every variant (one such series lives at thomasjubb.blog), and asking a chatbot "explain PixelCNN and its variant architectures step by step" walks the entire path in textual form with pictures. They make excellent second passes after these notes.</p>
 <h3 id="6.2.1-masked-2d-and-1d-convolutions">6.2.1 Masked 2D and 1D Convolutions</h3>
-<p>Picture a standard two-dimensional convolution with a three-by-three kernel. The kernel centers on a pixel and carries weights at all nine positions, so it reads the eight neighbors plus the center. Under an autoregressive ordering, though, some of those neighbors belong to the present or the future. If pixels arrive in raster-scan fashion — left to right along each row, top row first — then everything strictly to the right of a site, everything below it, and even the site's own value has not "happened yet" when we predict it.</p>
+<div class="diagram-container my-6 text-center">
+  <svg viewBox="0 0 340 292" class="diagram-svg" role="img" aria-label="A three-by-three kernel centered on target pixel x_i under raster-scan order: rows above the target row and columns strictly left on the same row are past; the target pixel, cells to its right, and all rows below are present or future, so mask M zeroes those taps.">
+    <rect x="50" y="30" width="220" height="88" fill="#dbeafe"/>
+    <rect x="50" y="118" width="88" height="44" fill="#dbeafe"/>
+    <rect x="138" y="118" width="44" height="44" fill="#fde68a"/>
+    <rect x="182" y="118" width="88" height="44" fill="#f1f5f9"/>
+    <rect x="50" y="162" width="220" height="88" fill="#f1f5f9"/>
+    <g stroke="#94a3b8" stroke-width="1">
+      <line x1="50" y1="30" x2="50" y2="250"/>
+      <line x1="94" y1="30" x2="94" y2="250"/>
+      <line x1="138" y1="30" x2="138" y2="250"/>
+      <line x1="182" y1="30" x2="182" y2="250"/>
+      <line x1="226" y1="30" x2="226" y2="250"/>
+      <line x1="270" y1="30" x2="270" y2="250"/>
+      <line x1="50" y1="30" x2="270" y2="30"/>
+      <line x1="50" y1="74" x2="270" y2="74"/>
+      <line x1="50" y1="118" x2="270" y2="118"/>
+      <line x1="50" y1="162" x2="270" y2="162"/>
+      <line x1="50" y1="206" x2="270" y2="206"/>
+      <line x1="50" y1="250" x2="270" y2="250"/>
+    </g>
+    <rect x="94" y="74" width="132" height="132" fill="none" stroke="#334155" stroke-width="2" stroke-dasharray="6 4"/>
+    <text x="160" y="145" font-size="13" text-anchor="middle" fill="#78350f">x_i</text>
+    <g font-size="10" text-anchor="end" fill="#64748b">
+      <text x="42" y="56">i-2</text>
+      <text x="42" y="100">i-1</text>
+      <text x="42" y="144">i</text>
+      <text x="42" y="188">i+1</text>
+      <text x="42" y="232">i+2</text>
+    </g>
+    <g font-size="10" text-anchor="middle" fill="#64748b">
+      <text x="72" y="22">j-2</text>
+      <text x="116" y="22">j-1</text>
+      <text x="160" y="22">j</text>
+      <text x="204" y="22">j+1</text>
+      <text x="248" y="22">j+2</text>
+    </g>
+    <rect x="56" y="268" width="14" height="14" fill="#dbeafe" stroke="#94a3b8"/>
+    <text x="78" y="279" font-size="10" fill="#475569">past (weights kept)</text>
+    <rect x="196" y="268" width="14" height="14" fill="#f1f5f9" stroke="#94a3b8"/>
+    <text x="218" y="279" font-size="10" fill="#475569">present / future (zeroed)</text>
+  </svg>
+  <p class="text-xs text-slate-500 mt-2"><strong>Figure:</strong> A \(3\times3\) kernel centered on target pixel \(x_i\) under raster-scan order — taps above the current row and strictly left on it are past; the center tap, everything to the right, and all rows below are present or future and are zeroed by mask \(M\).</p>
+</div>
 <p>Masked convolution fixes this by force: set the kernel entries that touch present-or-future positions to zero. For a raster-scan ordering, the surviving taps are the up-and-left neighborhood:</p>
 <pre><code>Kernel position      Mask M        Surviving weights
  w11  w12  w13        1  1  1       past rows: all columns
@@ -543,9 +579,6 @@ row i   :  X X ?              ? = target; left neighbors are fine
   </tbody>
 </table>
 <p>Real-world: this decomposition-plus-gating pattern — factor a global operation into clean directional streams, then let learned multiplicative gates route information — recurs across generative modeling, notably in WaveNet-style audio models where the same gated unit generates raw speech waveforms sample by sample.</p>
-<div class="key-takeaway">
-  <p><strong>Exam note:</strong> Remember the NLL comparison cold: baseline about 3.14 versus Gated PixelCNN 3.03 on CIFAR-10, and be ready to explain <em>why</em> smaller NLL means a better probability estimate and which architectural changes bought the improvement — blind-spot removal through the vertical/horizontal split, plus gating.</p>
-</div>
 <div class="key-takeaway">
   <p><strong>Recap + bridge:</strong> Two orthogonal streams cover all rows above and the current row's prefix — no stranded wedge — while sigmoid-gate-times-tanh-filter blocks and ResNet skips deepen the model safely, dropping CIFAR-10 NLL from about 3.14 to 3.03. Next: PixelCNN++ attacks a different weakness entirely — the wastefulness of those 256-way softmax heads.</p>
 </div>
@@ -836,20 +869,6 @@ row i   :  X X ?              ? = target; left neighbors are fine
   <p><strong>Recap + bridge:</strong> Change of variables — latent density times absolute slope — turns any invertible differentiable push into an explicit density, and maximizing the two-term objective trains it; monotonic functions (odd-power polynomials, exponentials, sigmoids, CDFs) supply legal layers. Next session: flows grow from one dimension to images, with dequantization bridging discrete pixels into the continuous world.</p>
 </div>
 
-<h2 id="exam-guidance-summary">Exam Guidance Summary</h2>
-<div class="key-takeaway">
-  <p><strong>Exam note:</strong> Everything in this list came from the instructor directly — treat it as the revision checklist for the mid-sem.</p>
-</div>
-<ul>
-  <li><strong>Assignment-anchored questions.</strong> Mid-sem questions may be framed around the assignment — expect about two. No code writing; you must read a snippet and explain what it does, drawing only on the lab sheets and the assignment. Nothing from untaught territory — the questions sit <em>around</em> the assignment, not <em>on</em> unseen material.</li>
-  <li><strong>Deep-learning prerequisites to retain by memory</strong> (from the earlier coursework): backpropagation, weight updates via gradient descent, small convolutions computed by hand or with a calculator, and parameter counting for convolution layers. For the last one, rehearse the pattern: filters × kernel height × kernel width × input channels weights + one bias per filter.</li>
-  <li><strong>Assignment observations must tally with known results.</strong> Alignment of your empirical findings with what the technical community already knows is part of the grading expectation — check your numbers against published behavior before submitting.</li>
-  <li><strong>Practice material.</strong> Past question papers will be shared shortly; supplement them with ChatGPT-generated practice questions, which work well for extra drilling.</li>
-  <li><strong>Know the NLL leaderboard cold</strong>, including <em>why</em> smaller is better: baseline about 3.14, Gated PixelCNN 3.03 on CIFAR-10, PixelCNN++ 2.92, PixelSnail lowest of all. Expect conceptual questions on why each variant improves: blind-spot removal (vertical/horizontal split), mixture-of-logistics outputs (smooth low-parameter pixel laws instead of 256-way softmax), and masked attention (full receptive field).</li>
-  <li><strong>Change of variables and the flow objective.</strong> Understand \(p_\theta(x) = p_Z(f_\theta(x))\,\lvert\partial f_\theta/\partial x\rvert\) and the two-term objective well enough to explain each symbol — the slope term and the latent-density term carry distinct roles: one rewards landing data where the latent law is generous, the other punishes compressing mass away.</li>
-</ul>
-<p>A suggested revision order: re-derive the chain-rule factorization and NLL from scratch; sketch the blind-spot staircase and its vertical/horizontal fix; compute one discretized-mixture probability end to end; then derive change of variables once without notes.</p>
-
 <h2 id="key-industry-applications">Key Industry Applications</h2>
 <ul>
   <li><strong>Cross-domain generation.</strong> Audio synthesis, language modeling, and image and 3D generation all run on the same autoregressive recipe — factor the joint into per-position conditionals and sample sequentially. The recipe transfers across dimensionalities, from one-dimensional waveforms to volumetric data. The same family underlies modern text generators: pre-trained autoregressive models power GPT-class systems and ChatGPT-style applications.</li>
@@ -876,79 +895,6 @@ row i   :  X X ?              ? = target; left neighbors are fine
       - .revision-check — one self-check question (no options)
       - .revision-connections — linked concepts within this lecture
     ============================================================ -->
-    <section class="exam-revision-section">
-      <h2>Exam Revision Notes</h2>
-      <p class="revision-intro">Below is the distilled, exam-ready core.
-      Every entry comes from the full explanation above. Use this section
-      for rapid review; return to the main notes when a point needs more context.</p>
-<div class="exam-revision-entry">
-  <h3 class="revision-topic">Likelihood-Based Autoregressive Models</h3>
-  <p class="revision-mustknow"><strong>Must-know:</strong> The three shared properties (inference ability, slow sequential sampling, stable training) and that about two mid-sem questions sit around the assignment (read-and-explain code from lab sheets only)</p>
-  <p class="revision-pitfall"><strong>⚠️ Top pitfall:</strong> Stable training does not imply good samples; a steady loss can still end in mediocre generation</p>
-  <p class="revision-check"><strong>Self-check:</strong> Name three properties every likelihood-based model shares.</p>
-  <p class="revision-connections"><strong>Connects to:</strong> PixelCNN Masked Convolutions (6.2), What We Want From a Generative Model (6.8)</p>
-</div>
-<div class="exam-revision-entry">
-  <h3 class="revision-topic">PixelCNN Masked Convolutions</h3>
-  <p class="revision-mustknow"><strong>Must-know:</strong> The chain-rule factorization p(x)=prod p(x_i|x_&lt;i), its log form, and why NLL minimization equals likelihood maximization; masked convolution zeroes present-and-future taps by force</p>
-  <p class="revision-formula">\[p(x) = \prod_{i=1}^{n^2} p(x_i \mid x_{\lt i}), \qquad \mathrm{NLL} = -\frac{1}{N}\sum_{k=1}^{N}\ln p_\theta(x^{(k)})\]</p>
-  <p class="revision-pitfall"><strong>⚠️ Top pitfall:</strong> A nonzero center tap in the first masked layer lets a pixel see itself; NLL collapsing to near zero instantly signals this mask bug</p>
-  <p class="revision-check"><strong>Self-check:</strong> Why does the first factor p(x_1) need no network while later conditionals do?</p>
-  <p class="revision-connections"><strong>Connects to:</strong> The Blind Spot Problem (6.3), PixelCNN++ (6.5), Conditional Generation (6.7)</p>
-</div>
-<div class="exam-revision-entry">
-  <h3 class="revision-topic">The Blind Spot Problem</h3>
-  <p class="revision-mustknow"><strong>Must-know:</strong> The blind spot: per-layer masking is causal, but stacked masks only extend coverage diagonally up-left, so a staircase of past pixels never influences the target's probability</p>
-  <p class="revision-pitfall"><strong>⚠️ Top pitfall:</strong> Believing depth fixes the blind spot — it widens coverage elsewhere but never recovers the stranded wedge</p>
-  <p class="revision-check"><strong>Self-check:</strong> Sketch which pixels a three-layer stack of masked 3x3 kernels can and cannot reach for a target pixel in raster-scan order.</p>
-  <p class="revision-connections"><strong>Connects to:</strong> PixelCNN Masked Convolutions (6.2), Gated PixelCNN (6.4), PixelSnail Masked Self-Attention (6.6)</p>
-</div>
-<div class="exam-revision-entry">
-  <h3 class="revision-topic">Gated PixelCNN</h3>
-  <p class="revision-mustknow"><strong>Must-know:</strong> The vertical+horizontal decomposition removes the blind spot; the gate g = sigma(a_gate) ⊙ tanh(a_filter); NLL drops 3.14 -> 3.03 on CIFAR-10 and smaller is better</p>
-  <p class="revision-formula">\[g = \sigma(a_{\mathrm{gate}}) \odot \tanh(a_{\mathrm{filter}})\]</p>
-  <p class="revision-pitfall"><strong>⚠️ Top pitfall:</strong> Quoting the improvement without the cause: the gain comes from both receptive-field repair and the more expressive gated architecture</p>
-  <p class="revision-check"><strong>Self-check:</strong> Why can no vertical blind spot exist in a mask that reads only strictly-above rows?</p>
-  <p class="revision-connections"><strong>Connects to:</strong> PixelCNN Masked Convolutions (6.2), The Blind Spot Problem (6.3), PixelCNN++ (6.5)</p>
-</div>
-<div class="exam-revision-entry">
-  <h3 class="revision-topic">PixelCNN++</h3>
-  <p class="revision-mustknow"><strong>Must-know:</strong> Why neighboring intensities make the 256-way softmax wasteful; the mixture-of-logistics law; P(X=v) = F(v+0.5) - F(v-0.5); the logistic CDF is exactly the sigmoid sigma((x-mu)/s)</p>
-  <p class="revision-formula">\[p(x \mid \pi,\mu,s) = \sum_{k=1}^{K} \pi_k\,\mathrm{logistic}(x;\mu_k,s_k), \qquad P(X=v) = F(v+0.5)-F(v-0.5)\]</p>
-  <p class="revision-pitfall"><strong>⚠️ Top pitfall:</strong> Forgetting the half-unit window edges: F(v+0.5) - F(v-0.5), not F(v) - F(v-1); the bin must straddle the integer symmetrically</p>
-  <p class="revision-check"><strong>Self-check:</strong> Compute P(X=100) for a single logistic component with mu=100, s=1 using sigmoid values.</p>
-  <p class="revision-connections"><strong>Connects to:</strong> PixelCNN Masked Convolutions (6.2), Gated PixelCNN (6.4), Foundations of Normalizing Flows (6.9)</p>
-</div>
-<div class="exam-revision-entry">
-  <h3 class="revision-topic">PixelSnail Masked Self-Attention</h3>
-  <p class="revision-mustknow"><strong>Must-know:</strong> Masked self-attention zeroes future keys to enforce causality; receptive-field ranking: PixelSnail (full past) > PixelCNN++ > Gated PixelCNN > plain PixelCNN; cost is quadratic in positions</p>
-  <p class="revision-pitfall"><strong>⚠️ Top pitfall:</strong> Forgetting that custom orderings are easier to express with attention (declare allowed keys) than with convolution kernels (redesign the 0/1 layout by hand)</p>
-  <p class="revision-check"><strong>Self-check:</strong> Why does attention's compute grow quadratically while convolution's grows linearly in image size?</p>
-  <p class="revision-connections"><strong>Connects to:</strong> The Blind Spot Problem (6.3), Gated PixelCNN (6.4), PixelCNN++ (6.5)</p>
-</div>
-<div class="exam-revision-entry">
-  <h3 class="revision-topic">Conditional Generation</h3>
-  <p class="revision-mustknow"><strong>Must-know:</strong> The conditioning recipe: one-hot label for class generation; 4x4 block averaging of a 28x28 image yields the 7x7 condition map for super-resolution; condition must appear in both training and generation</p>
-  <p class="revision-pitfall"><strong>⚠️ Top pitfall:</strong> Training without the condition and injecting it only at test time — the model never learned to read h and ignores it</p>
-  <p class="revision-check"><strong>Self-check:</strong> Why does 28/4 = 7 make four-by-four block averaging the natural way to build a super-resolution condition map?</p>
-  <p class="revision-connections"><strong>Connects to:</strong> PixelCNN Masked Convolutions (6.2), PixelSnail Masked Self-Attention (6.6)</p>
-</div>
-<div class="exam-revision-entry">
-  <h3 class="revision-topic">What We Want From a Generative Model</h3>
-  <p class="revision-mustknow"><strong>Must-know:</strong> The five bucket-list wishes in order; autoregressive models grant four of five but offer no samplable latent space; flows promise all five with dequantization bridging continuous math to discrete data</p>
-  <p class="revision-pitfall"><strong>⚠️ Top pitfall:</strong> Judging generative models by sample quality alone — likelihood evaluation (wish 4) is what makes model comparison fair</p>
-  <p class="revision-check"><strong>Self-check:</strong> Which single bucket-list wish do autoregressive models fail to grant?</p>
-  <p class="revision-connections"><strong>Connects to:</strong> Likelihood-Based Autoregressive Models (6.1), Foundations of Normalizing Flows (6.9)</p>
-</div>
-<div class="exam-revision-entry">
-  <h3 class="revision-topic">Foundations of Normalizing Flows</h3>
-  <p class="revision-mustknow"><strong>Must-know:</strong> Change of variables p_theta(x) = p_Z(f_theta(x))|df/dx| with every symbol's role; the two-term objective (latent-density term rewards landing near the latent peak, slope term punishes compression); even powers are not invertible while monotonic functions are; CDF parameterization makes derivative-of-CDF equal the fitted PDF</p>
-  <p class="revision-formula">\[p_\theta(x) = p_Z\big(f_\theta(x)\big)\left|\frac{\partial f_\theta(x)}{\partial x}\right|, \qquad \ln p_\theta(x_i) = \ln p_Z\big(f_\theta(x_i)\big) + \ln\left|\frac{\partial f_\theta(x_i)}{\partial x_i}\right|\]</p>
-  <p class="revision-pitfall"><strong>⚠️ Top pitfall:</strong> Ignoring the absolute value — slopes may be negative but densities cannot; also assuming x^4-style even powers qualify as flow layers when they fold two inputs into one output</p>
-  <p class="revision-check"><strong>Self-check:</strong> Why does squashing data into a tiny interval fail despite placing points at the latent peak?</p>
-  <p class="revision-connections"><strong>Connects to:</strong> What We Want From a Generative Model (6.8), PixelCNN++ (6.5)</p>
-</div>
-    </section>
   </div>
 </body>
 </html>

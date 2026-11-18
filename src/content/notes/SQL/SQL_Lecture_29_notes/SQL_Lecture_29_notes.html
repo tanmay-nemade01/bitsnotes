@@ -267,9 +267,6 @@ SELECT to_tsvector('washing');</code></pre>
 <h3 id="29.2.1-lexemes-and-stop-words">29.2.1 Lexemes and Stop Words</h3>
 <p>A lexeme folds suffix variants into one base. Walk, walks, walked, and walking share a base. Sit and sitting share a base. Stop words never reach the store. In the test <code>This is a test</code>, only test lands in the vector. In the test <code>This is a</code> with no content word, the vector holds nothing at all, because this, is, and a carry no search sense. In <code>This is an amazing story</code>, the store keeps amaze for amazing and story for story — the ING tail falls away through the English stemming rules. PostgreSQL also folds case, so PostgresSQL lands in lower case form.</p>
 <p>The language tag controls both foldings. <code>to_tsvector('english', ...)</code> applies English stemming and the English stop list; <code>spanish</code>, <code>german</code>, <code>french</code>, and the other installed configurations apply their own. Passing <code>simple</code> instead skips stemming: it lowercases and drops a minimal stop list but keeps word forms distinct, which is handy when exact tokens such as product codes matter more than sense. You can list installed configurations with <code>SELECT cfgname FROM pg_ts_config;</code>.</p>
-<div class="key-takeaway">
-  <p><strong>Exam note:</strong> tests on this topic often ask which tokens survive vector building and which fall away as stop words or punctuation. The rule to rehearse: content words survive as lowercased lexemes with kept-slot positions; glue words (I, am, is, the, a, with, to, over, you) and punctuation never reach the store; suffix variants of one root share one entry.</p>
-</div>
 <p>How other engines differ, briefly, so you place this idea correctly. MySQL's <code>FULLTEXT</code> index also drops stopwords and short tokens, but its stoplist and minimum token length (<code>innodb_ft_min_token_size</code>, default 3, and <code>innodb_ft_server_stopword_table</code>) decide survival instead of a stemming dictionary, and the stored form is an inverted list hidden inside the index rather than a visible <code>tsvector</code> column you can SELECT. Snowflake and Databricks/Spark SQL expose no lexeme type: <code>SPLIT(text, ' ')</code> plus <code>LOWER</code> plus filtering against your own stop list is the hand-rolled equivalent, and stemming needs an external library or Cortex/ML step. Same goal — a compact searchable form — with PostgreSQL giving you the most transparent version.</p>
 <h3 id="29.2.2-worked-examples">29.2.2 Worked Examples</h3>
 <div class="example-box">
@@ -422,9 +419,6 @@ WHERE doc_tsv @@ to_tsquery('jump');</code></pre>
 </div>
 <h3 id="29.4.4-practical-tips">29.4.4 Practical Tips</h3>
 <p>Store raw wording and vector side by side, so the raw side stays readable and the vector side stays fast. Fill the vector column with one UPDATE after bulk loads. Name the vector column with a short clear name, such as doc_tsv, to keep later queries short. Build distance asks by first confirming each arm with <code>&</code>, then tightening to <code><-></code> or <code>&lt;N&gt;</code>, so a zero-row result unambiguously means "too strict" rather than "term missing".</p>
-<div class="key-takeaway">
-  <p><strong>Exam note:</strong> expect a task that builds a table, fills the vector column, and then runs match, AND, and distance asks with booleans to explain. The flow to rehearse: <code>CREATE TABLE</code> with a <code>TSVECTOR</code> column, <code>INSERT</code> raw text, <code>UPDATE ... SET tsv = to_tsvector(...)</code>, <code>WHERE tsv @@ to_tsquery(...)</code>, and slot subtraction for any <code>&lt;N&gt;</code> ask.</p>
-</div>
 
 <h2 id="29.5-setup-presidents-speeches-data">29.5 Setup Presidents Speeches Data</h2>
 <p>Toy sentences prove the machinery. Now the module loads a real corpus: 35 presidential speeches from the 1940s onward, long enough that raw scanning hurts and vectors earn their keep.</p>
@@ -519,9 +513,6 @@ WHERE speech_tsv @@ to_tsquery('military &lt;-&gt; defense');</code></pre>
 </div>
 <h3 id="29.6.3-practical-tips">29.6.3 Practical Tips</h3>
 <p>Build one ask at a time and count rows before adding clips. Add ORDER BY speech_date for time stories. Use ts_headline only on the rows that pass — put the <code>@@</code> test in WHERE and the headline in SELECT — so the clip work stays small. When a theme count looks surprising, headline two or three rows before charting: a single odd sense of a word can inflate a whole series.</p>
-<div class="key-takeaway">
-  <p><strong>Exam note:</strong> be ready to turn a theme count into a one line story claim, such as which leader raised a theme most often. The rehearsed shape is filter with <code>@@</code>, group or count, order by date, and headline one clip per row to show the evidence.</p>
-</div>
 
 <h2 id="29.7-ranking-and-normalizing-text-results">29.7 Ranking and Normalizing Text Results</h2>
 <p>Matching says which speeches qualify. Ranking says which qualify most. This section scores the hits so the densest fit rises to the top — and then corrects for speech length so long speeches stop winning by sheer size.</p>
@@ -558,16 +549,7 @@ WHERE speech_tsv @@ to_tsquery('military &lt;-&gt; defense');</code></pre>
 <div class="warning-box">
   <p><strong>Scope:</strong> rank values compare rows within one query only. The assumption behind <code>ORDER BY score DESC</code> is a single fixed query over comparable documents. Comparing a 0.58 from one ask with a 0.35 from another, or ranking unnormalized scores across wildly different lengths, breaks that assumption — normalize first, and never sort across asks.</p>
 </div>
-<div class="key-takeaway">
-  <p><strong>Exam note:</strong> expect a rank task that asks for the function inputs, the alias, the DESC order step, and the reason length scaling matters. Rehearse the full shape: <code>ts_rank(vector, query[, flag]) AS score</code> in SELECT, the identical <code>@@</code> query in WHERE, <code>ORDER BY score DESC</code>, and one sentence on why flag 1 exists — fair comparison across lengths.</p>
-</div>
 
-<h2 id="exam-guidance-summary">Exam Guidance Summary</h2>
-<p>No mark split or paper pattern was stated. The testable moves are steady across sections, and they reward hands-on rehearsal over memorized definitions.</p>
-<div class="key-takeaway">
-  <p><strong>Exam note:</strong> know which tokens survive <code>to_tsvector</code> and which fall away as stop words, suffixes, case, or punctuation — content words survive as lowercased lexemes with kept-slot positions, glue and punctuation do not. Know the five query forms: match with <code>@@</code>, AND with ampersand, OR with pipe, NOT with exclamation, and distance with angle marks plus dash or gap number. Know that distance asks run low slot to high slot and fail backward, while AND and OR are order free. Know the table flow: create docs with a tsvector column, COPY or INSERT raw wording, UPDATE the vector twin with <code>to_tsvector</code>, add a GIN index with <code>USING gin</code>, filter with <code>WHERE vector @@ query</code>, show clips with <code>ts_headline</code>, and order with <code>ts_rank</code> plus <code>ORDER BY score DESC</code>. Know the COPY fields for the speeches case: pipe delimiter, CSV shape, no header, and at sign quote mark. Know the <code>ts_headline</code> dials StartSel and StopSel with MinWords, MaxWords, and MaxFragments, and the rank length flag idea behind the third <code>ts_rank</code> argument.</p>
-</div>
-<p>A practical revision drill: rebuild the small docs table from memory, fill it, and run one match, one AND, one OR, one NOT, one <code><-></code>, and one <code>&lt;N&gt;</code> ask, predicting each boolean before running. Then load the speeches shape, run <code>'war & peace'</code>, headline <code>'military <-> defense'</code>, and rank with and without the length flag. If every step behaves as predicted, the module is examination-ready.</p>
 
 <h2 id="key-industry-applications">Key Industry Applications</h2>
 <p>Web search engines scan tuned term stores rather than raw pages for each ask — the production great-grandchild of the tsvector plus GIN pattern built here. Help centers and product search mix AND, OR, NOT, and near asks to cut huge piles to the useful few, typically with phrase and proximity operators doing the precision work. News search shows headline clips with hit marks so readers see why a row matched, exactly the <code>ts_headline</code> role. Market call and investor note parsing counts theme hits across quarters and links bursts to price moves, pairing rank plus headline to separate dense signal from long-winded noise. Review and survey mining folds plural and tense forms to one base so counts stay whole across "loved", "loves", and "loving". Tools such as Elasticsearch and the PostgreSQL text engine share this vector plus inverted index design — learn it once here and the commercial dashboards read as familiar dialects.</p>
@@ -587,61 +569,6 @@ WHERE speech_tsv @@ to_tsquery('military &lt;-&gt; defense');</code></pre>
       - .revision-check — one self-check question (no options)
       - .revision-connections — linked concepts within this lecture
     ============================================================ -->
-    <section class="exam-revision-section">
-      <h2>Exam Revision Notes</h2>
-      <p class="revision-intro">Below is the distilled, exam-ready core.
-      Every entry comes from the full explanation above. Use this section
-      for rapid review; return to the main notes when a point needs more context.</p>
-<div class="exam-revision-entry">
-  <h3 class="revision-topic">Limits of LIKE and the Goal of Full Text Search</h3>
-  <p class="revision-mustknow"><strong>Must-know:</strong> LIKE letter limits motivate the semantic vector store.</p>
-  <p class="revision-pitfall"><strong>⚠️ Top pitfall:</strong> Using LIKE for sense asks such as plurals, tenses, or fox vs fox trot.</p>
-  <p class="revision-check"><strong>Self-check:</strong> Why does LIKE find fox trot when the intent was the animal fox?</p>
-  <p class="revision-connections"><strong>Connects to:</strong> 29.2</p>
-</div>
-<div class="exam-revision-entry">
-  <h3 class="revision-topic">Introducing tsvector</h3>
-  <p class="revision-mustknow"><strong>Must-know:</strong> Content words survive as lowercased lexemes with kept slots; glue and punctuation fall away.</p>
-  <p class="revision-pitfall"><strong>⚠️ Top pitfall:</strong> Reading alpha store order as source order instead of reading slot numbers after colons.</p>
-  <p class="revision-check"><strong>Self-check:</strong> Which tokens survive to_tsvector in This is a test and with what positions?</p>
-  <p class="revision-connections"><strong>Connects to:</strong> 29.1, 29.3</p>
-</div>
-<div class="exam-revision-entry">
-  <h3 class="revision-topic">Using tsquery with Operators</h3>
-  <p class="revision-mustknow"><strong>Must-know:</strong> One vector plus one query plus @@ gives a boolean; operators combine them into precise asks.</p>
-  <p class="revision-pitfall"><strong>⚠️ Top pitfall:</strong> Writing to_tsquery with a bare space instead of an explicit operator link.</p>
-  <p class="revision-check"><strong>Self-check:</strong> What query form expresses fox AND dog, and why does war peace fail?</p>
-  <p class="revision-connections"><strong>Connects to:</strong> 29.2, 29.4</p>
-</div>
-<div class="exam-revision-entry">
-  <h3 class="revision-topic">Full Text Search Within a Table</h3>
-  <p class="revision-mustknow"><strong>Must-know:</strong> CREATE TABLE with TSVECTOR column, UPDATE the twin, filter with WHERE vector @@ query.</p>
-  <p class="revision-pitfall"><strong>⚠️ Top pitfall:</strong> Running distance asks before confirming each arm with AND, hiding missing terms.</p>
-  <p class="revision-check"><strong>Self-check:</strong> Why does quartz &lt;2&gt; sphinx fail while sphinx &lt;2&gt; quartz passes?</p>
-  <p class="revision-connections"><strong>Connects to:</strong> 29.3, 29.5</p>
-</div>
-<div class="exam-revision-entry">
-  <h3 class="revision-topic">Setup Presidents Speeches Data</h3>
-  <p class="revision-mustknow"><strong>Must-know:</strong> Load with COPY pipe options, fill twin with english tag, index twin with GIN after load.</p>
-  <p class="revision-pitfall"><strong>⚠️ Top pitfall:</strong> Server COPY path confusion and mixing language configs in one vector column.</p>
-  <p class="revision-check"><strong>Self-check:</strong> Why GIN instead of B-tree for a tsvector column?</p>
-  <p class="revision-connections"><strong>Connects to:</strong> 29.4, 29.6</p>
-</div>
-<div class="exam-revision-entry">
-  <h3 class="revision-topic">Analyzing Presidents Speeches Text Data</h3>
-  <p class="revision-mustknow"><strong>Must-know:</strong> Filter with @@, count themes, order by date, headline one clip per row as evidence.</p>
-  <p class="revision-pitfall"><strong>⚠️ Top pitfall:</strong> Using different queries in WHERE filter and ts_headline so clips drift from matches.</p>
-  <p class="revision-check"><strong>Self-check:</strong> Does war &amp; peace in one row mean the words sit side by side?</p>
-  <p class="revision-connections"><strong>Connects to:</strong> 29.5, 29.7</p>
-</div>
-<div class="exam-revision-entry">
-  <h3 class="revision-topic">Ranking and Normalizing Text Results</h3>
-  <p class="revision-mustknow"><strong>Must-know:</strong> ts_rank(vector, query[, flag]) AS score with identical @@ filter and ORDER BY score DESC; flag 1 normalizes length.</p>
-  <p class="revision-pitfall"><strong>⚠️ Top pitfall:</strong> Comparing rank scores across different queries or unnormalized lengths.</p>
-  <p class="revision-check"><strong>Self-check:</strong> What are the minimum ts_rank inputs and what does the third flag do?</p>
-  <p class="revision-connections"><strong>Connects to:</strong> 29.6</p>
-</div>
-    </section>
   </div>
 </body>
 </html>

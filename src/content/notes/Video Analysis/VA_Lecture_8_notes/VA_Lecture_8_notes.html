@@ -265,9 +265,6 @@
 <p>The previous session covered three kinds of features and how video work reuses image work. <em>Spatial features</em> describe what one frame looks like: edges, textures, and regions in a single still image. <em>Temporal features</em> describe what changes between frames: movement and flicker along the time axis. <em>Spatio-temporal features</em> describe both at once: where something is and how it moves, in one pass. That session also touched <em>ImageNet pre-training</em>, which means starting from weights learned on millions of still images, and <em>transfer learning</em>, which means reusing those weights on video instead of training from nothing. It introduced <em>temporal segment networks</em>, which split a long video into a few segments, sample one short snippet from each, run a shared image network on each snippet, and average the scores, so a long video gets one verdict without watching every frame. And it laid out the two broad paths for video work: convolutional stacks that read space and time as volumes, and recurrent stacks that read frames as a sequence, plus combinations of the two.</p>
 <p>This session opens the first path fully. It asks what a 3D convolution does across space and time, how to count its outputs, parameters, and operations by hand, and how a factorized alternative reaches similar power with fewer weights.</p>
 <p>The plan follows the teaching order of the session. First, video as a time-indexed volume and the kernel as a box that spans frames. Then a toy hand computation with real numbers and the output-size rule. Then the loop structure that code actually runs, plus the hardware picture that decides wall-clock time. Then what the joint spatio-temporal view buys: direction, speed, and its transfer limits. Then the cost math on a real 16-frame network: parameters, operations, and memory. Then the factorized split with its double nonlinearity and the middle-width derivation. Finally clip settings, hybrid practice with domain experts, what comes after features, and the exam plan.</p>
-<div class="key-takeaway">
-  <p><strong>Exam note:</strong> parts of this session appear on the weekend exam, including numerical questions on output size and parameter counts. Practice the size rule input minus kernel plus one and the parameter rule with bias until both are automatic, because those two lines earn marks directly.</p>
-</div>
 <p>The size-first habit pays off everywhere later. When a later layer surprises you with a tiny map or a huge bill, the cause is almost always one of three things: the kernel extent along one axis, the stride that skips placements, or the channel counts that multiply everything. Fix the per-layer map first and the rest of the network stops being a mystery.</p>
 <h3 id="8.1.2-student-questions-and-answers">8.1.2 Student Questions and Answers</h3>
 <div class="important-note">
@@ -289,7 +286,29 @@
   <p>\[N = 60 \times 30 = 900\]</p>
   <p>So the clip holds 900 frames. Where indexing starts at \(T = 0\), the valid indices run \(T = 0, 1, \ldots, 899\), which is 900 frames with the last index \(N - 1 = 899\). Where indexing starts at 1, the last index equals the count \(N\).</p>
 </div>
-<p>Picture a number line from 0 to 899 with one tick per frame. The horizontal axis is the index \(T\) with no units, just position in sequence. Each tick holds a full image. The takeaway is that the line has 900 ticks but the rightmost tick is labeled 899, and every off-by-one bug in video code lives in that gap between count and last label.</p>
+<div class="diagram-container my-6 text-center">
+  <svg viewBox="0 0 640 140" class="diagram-svg" role="img" aria-label="Number line of frame indices from 0 to 899 for 900 frames">
+    <line x1="50" y1="80" x2="590" y2="80" stroke="currentColor" stroke-width="2"/>
+    <g stroke="currentColor" stroke-width="1.6">
+      <line x1="50" y1="66" x2="50" y2="94"/>
+      <line x1="90" y1="70" x2="90" y2="90"/>
+      <line x1="130" y1="70" x2="130" y2="90"/>
+      <line x1="170" y1="66" x2="170" y2="94"/>
+      <line x1="470" y1="66" x2="470" y2="94"/>
+      <line x1="510" y1="70" x2="510" y2="90"/>
+      <line x1="550" y1="70" x2="550" y2="90"/>
+      <line x1="590" y1="66" x2="590" y2="94"/>
+    </g>
+    <text x="320" y="86" text-anchor="middle" font-size="16" fill="currentColor">. . .</text>
+    <text x="50" y="118" text-anchor="middle" font-size="14" fill="currentColor">0</text>
+    <text x="90" y="118" text-anchor="middle" font-size="13" fill="currentColor">1</text>
+    <text x="130" y="118" text-anchor="middle" font-size="13" fill="currentColor">2</text>
+    <text x="170" y="118" text-anchor="middle" font-size="13" fill="currentColor">3</text>
+    <text x="590" y="118" text-anchor="middle" font-size="14" fill="currentColor">899</text>
+    <text x="320" y="34" text-anchor="middle" font-size="14" fill="currentColor">900 ticks, last index N - 1 = 899</text>
+  </svg>
+  <p class="text-xs text-slate-500 mt-2"><strong>Figure:</strong> Frame index \(T\) runs \(0\) to \(N - 1 = 899\): 900 ticks, last label 899.</p>
+</div>
 <div class="warning-box">
   <p><strong>Scope:</strong> the count formula assumes a fixed frame rate with no dropped frames. If the camera drops frames or the rate varies, \(S \times R\) overcounts and the true \(N\) must be read from the file header. The zero-based convention \(0\) to \(N - 1\) applies to the code and size formulas in this session; if you switch to one-based counting, shift every loop bound and every index by one.</p>
 </div>
@@ -300,7 +319,39 @@
   <p>A <em>3D kernel</em> is a small box of learnable weights with three extents: temporal depth \(K_t\), height \(K_h\), and width \(K_w\). A kernel described as \(3 \times 3 \times 3\) in \(T \times H \times W\) order has depth \(K_t = 3\) frames, height \(K_h = 3\) pixels, and width \(K_w = 3\) pixels. A kernel with a \(5 \times 5\) spatial window and depth 3 in time is \(3 \times 5 \times 5\) in that order. The same holds for \(7 \times 7 \times 3\).</p>
 </div>
 <p>The depth of three is the running example, not a law of nature. Kernels of temporal depth 3, 5, or 7 all exist, and larger depths watch longer motion at higher cost. The point the session stresses is that the temporal depth is always stated. A bare \(3 \times 3\) says nothing about time; a full \(3 \times 3 \times 3\) tells the whole story.</p>
-<p>Picture the box as a small glass cube sunk into a stack of transparencies, each transparency one frame. The cube always encloses three sheets at once, so whatever pattern it detects must explain all three sheets jointly. Slide the cube one sheet forward and it encloses a shifted triple. That joint enclosure is the whole selling point: the temporal axis carries the motion while the spatial axes carry position, edges, and texture, and one pass picks up both together.</p>
+<div class="diagram-container my-6 text-center">
+  <svg viewBox="0 0 460 400" class="diagram-svg" role="img" aria-label="A 3 by 3 by 3 kernel box enclosing a 3 by 3 patch on three consecutive frames stacked as transparencies">
+    <g fill="none" stroke="currentColor" stroke-width="1.5" opacity="0.85">
+      <rect x="120" y="40" width="200" height="86" rx="4"/>
+      <rect x="120" y="160" width="200" height="86" rx="4"/>
+      <rect x="120" y="280" width="200" height="86" rx="4"/>
+    </g>
+    <g fill="#2563eb" fill-opacity="0.16" stroke="#2563eb" stroke-width="1.2">
+      <rect x="136" y="52" width="66" height="62"/>
+      <rect x="136" y="172" width="66" height="62"/>
+      <rect x="136" y="292" width="66" height="62"/>
+    </g>
+    <g stroke="#2563eb" stroke-width="0.9" opacity="0.8">
+      <line x1="158" y1="52" x2="158" y2="114"/>
+      <line x1="180" y1="52" x2="180" y2="114"/>
+      <line x1="136" y1="72.7" x2="202" y2="72.7"/>
+      <line x1="136" y1="93.3" x2="202" y2="93.3"/>
+      <line x1="158" y1="172" x2="158" y2="234"/>
+      <line x1="180" y1="172" x2="180" y2="234"/>
+      <line x1="136" y1="192.7" x2="202" y2="192.7"/>
+      <line x1="136" y1="213.3" x2="202" y2="213.3"/>
+      <line x1="158" y1="292" x2="158" y2="354"/>
+      <line x1="180" y1="292" x2="180" y2="354"/>
+      <line x1="136" y1="312.7" x2="202" y2="312.7"/>
+      <line x1="136" y1="333.3" x2="202" y2="333.3"/>
+    </g>
+    <rect x="130" y="46" width="78" height="308" fill="none" stroke="#2563eb" stroke-width="2" stroke-dasharray="6 5"/>
+    <text x="336" y="88" font-size="14" fill="currentColor">frame t+2</text>
+    <text x="336" y="208" font-size="14" fill="currentColor">frame t+1</text>
+    <text x="336" y="328" font-size="14" fill="currentColor">frame t</text>
+  </svg>
+  <p class="text-xs text-slate-500 mt-2"><strong>Figure:</strong> The \(3 \times 3 \times 3\) box encloses a \(3 \times 3\) patch on frames \(t\), \(t+1\), and \(t+2\) at once.</p>
+</div>
 <div class="warning-box">
   <p><strong>Assumption:</strong> the box sees a local window in all three axes at once, so it can only model motion that fits inside its depth. A depth-3 kernel sees change across three frames, which at 30 fps is about a tenth of a second. Faster or longer gestures need either deeper kernels, stacked layers, or wider sampling, because a single shallow box simply never observes them.</p>
 </div>
@@ -341,7 +392,50 @@
   <p>The worked example fixes every size. In \(T \times H \times W\) order the input volume is \(3 \times 4 \times 4\): temporal extent \(T_{in} = 3\) frames, height \(H_{in} = 4\) rows, width \(W_{in} = 4\) columns. The kernel is \(3 \times 3 \times 3\): depth \(K_t = 3\), height \(K_h = 3\), width \(K_w = 3\). Stride is 1 along every axis, with no padding, so the box shifts by exactly one pixel or one frame between placements.</p>
 </div>
 <p>The concrete numbers are chosen for mental math. The frame at \(T = 0\) was read out row by row as 2, 1, 0, 3 on the first row, 1, 3, 2, 1 on the second, 0, 2, 1, 0 on the third, and 1, 0, 3, 2 on the fourth. The kernel slice at \(T = 0\) uses the simple pattern with rows 1, 0, minus 1, then 0, 1, 0, then 1, 0, 1, chosen so that many products vanish. The frames at \(T = 1\) and \(T = 2\) carry their own numbers, including rows such as 3, 0, 0, 0 and 0, 2, 2, 2 at \(T = 1\), and the \(T = 2\) patch starting 1, 0, 2, 1 on its top rows. Zeros were placed on purpose so the element-wise products stay tractable by hand: wherever either the pixel or the weight is zero, the product dies immediately.</p>
-<p>Picture the stack from the side: three \(4 \times 4\) sheets piled vertically with the \(3 \times 3 \times 3\) cube sitting in the top-left corner, covering rows 0 to 2 and columns 0 to 2 on all three sheets. The horizontal axes are pixel columns and rows; the vertical axis is time. The takeaway is that the cube never sees a single sheet alone, so every number it stamps out is joint evidence.</p>
+<div class="diagram-container my-6 text-center">
+  <svg viewBox="0 0 460 380" class="diagram-svg" role="img" aria-label="Three 4 by 4 frames stacked along a vertical time axis, with a 3 by 3 by 3 cube covering rows 0 to 2 and columns 0 to 2 of all three">
+    <g fill="none" stroke="currentColor" stroke-width="1.5" opacity="0.85">
+      <rect x="110" y="30" width="88" height="88"/>
+      <rect x="110" y="140" width="88" height="88"/>
+      <rect x="110" y="250" width="88" height="88"/>
+    </g>
+    <g stroke="currentColor" stroke-width="0.9" opacity="0.55">
+      <line x1="132" y1="30" x2="132" y2="118"/>
+      <line x1="154" y1="30" x2="154" y2="118"/>
+      <line x1="176" y1="30" x2="176" y2="118"/>
+      <line x1="110" y1="52" x2="198" y2="52"/>
+      <line x1="110" y1="74" x2="198" y2="74"/>
+      <line x1="110" y1="96" x2="198" y2="96"/>
+      <line x1="132" y1="140" x2="132" y2="228"/>
+      <line x1="154" y1="140" x2="154" y2="228"/>
+      <line x1="176" y1="140" x2="176" y2="228"/>
+      <line x1="110" y1="162" x2="198" y2="162"/>
+      <line x1="110" y1="184" x2="198" y2="184"/>
+      <line x1="110" y1="206" x2="198" y2="206"/>
+      <line x1="132" y1="250" x2="132" y2="338"/>
+      <line x1="154" y1="250" x2="154" y2="338"/>
+      <line x1="176" y1="250" x2="176" y2="338"/>
+      <line x1="110" y1="272" x2="198" y2="272"/>
+      <line x1="110" y1="294" x2="198" y2="294"/>
+      <line x1="110" y1="316" x2="198" y2="316"/>
+    </g>
+    <g fill="#2563eb" fill-opacity="0.16" stroke="#2563eb" stroke-width="1.2">
+      <rect x="110" y="30" width="66" height="66"/>
+      <rect x="110" y="140" width="66" height="66"/>
+      <rect x="110" y="250" width="66" height="66"/>
+    </g>
+    <rect x="104" y="24" width="78" height="300" fill="none" stroke="#2563eb" stroke-width="2" stroke-dasharray="6 5"/>
+    <line x1="78" y1="338" x2="78" y2="30" stroke="currentColor" stroke-width="1.6"/>
+    <polyline points="72,42 78,30 84,42" fill="none" stroke="currentColor" stroke-width="1.6"/>
+    <text transform="rotate(-90 60 190)" x="60" y="190" text-anchor="middle" font-size="13" fill="currentColor">time</text>
+    <text x="216" y="70" font-size="13" fill="currentColor">T = 2</text>
+    <text x="216" y="180" font-size="13" fill="currentColor">T = 1</text>
+    <text x="216" y="290" font-size="13" fill="currentColor">T = 0</text>
+    <text x="290" y="180" font-size="12" fill="currentColor">cube covers rows 0-2</text>
+    <text x="290" y="198" font-size="12" fill="currentColor">and columns 0-2</text>
+  </svg>
+  <p class="text-xs text-slate-500 mt-2"><strong>Figure:</strong> Three \(4 \times 4\) frames piled along time, with the \(3 \times 3 \times 3\) cube at rows 0-2 and columns 0-2 of all three sheets.</p>
+</div>
 <h3 id="8.3.2-mathematical-formulation">8.3.2 Mathematical Formulation</h3>
 <p>A <em>convolution</em> here means element-wise multiply followed by a sum. A <em>stride</em> is how far the box moves between placements; stride 1 means it shifts by one pixel or one frame at a time. The verbal rule was element-wise product, then take the sum, at each time step, then add the time steps. In other words: collapse each frame slice to a subtotal first, then collapse the subtotals across time into one number.</p>
 <div class="key-concept">
@@ -381,14 +475,29 @@
   <p>Here \(O_T = 1\) is the single temporal slot, while \(O_H = 2\) and \(O_W = 2\) are the two rows and two columns of placements. That is why the drawn feature map is \(1 \times 2 \times 2\): one collapsed time slot holding a \(2 \times 2\) spatial map.</p>
 </div>
 <p>The four spatial placements are concrete: the top-left patch just computed, the top-right patch shifted one column, and the two bottom patches shifted one row down. Stride 1 is what makes each shift exactly one pixel; stride 2 would halve the placements.</p>
-<p>Picture the output as a single thin tray holding a \(2 \times 2\) grid. The horizontal axes of the drawing are output columns and rows; there is only one tray because the three input frames collapse to one temporal slot. The takeaway: time collapsed from 3 to 1 while space shrank from \(4 \times 4\) to \(2 \times 2\).</p>
+<div class="diagram-container my-6 text-center">
+  <svg viewBox="0 0 420 340" class="diagram-svg" role="img" aria-label="One output tray holding a 2 by 2 grid of output positions">
+    <rect x="140" y="70" width="160" height="160" fill="#2563eb" fill-opacity="0.12" stroke="#2563eb" stroke-width="2"/>
+    <line x1="220" y1="70" x2="220" y2="230" stroke="#2563eb" stroke-width="1.4"/>
+    <line x1="140" y1="150" x2="300" y2="150" stroke="#2563eb" stroke-width="1.4"/>
+    <text x="180" y="115" text-anchor="middle" font-size="12" fill="currentColor">(0,0)</text>
+    <text x="260" y="115" text-anchor="middle" font-size="12" fill="currentColor">(0,1)</text>
+    <text x="180" y="195" text-anchor="middle" font-size="12" fill="currentColor">(1,0)</text>
+    <text x="260" y="195" text-anchor="middle" font-size="12" fill="currentColor">(1,1)</text>
+    <text x="220" y="46" text-anchor="middle" font-size="14" fill="currentColor">one tray: O_T = 1</text>
+    <line x1="140" y1="262" x2="300" y2="262" stroke="currentColor" stroke-width="1.6"/>
+    <polyline points="288,256 300,262 288,268" fill="none" stroke="currentColor" stroke-width="1.6"/>
+    <text x="220" y="292" text-anchor="middle" font-size="13" fill="currentColor">output columns (O_W = 2)</text>
+    <line x1="112" y1="230" x2="112" y2="70" stroke="currentColor" stroke-width="1.6"/>
+    <polyline points="106,82 112,70 118,82" fill="none" stroke="currentColor" stroke-width="1.6"/>
+    <text transform="rotate(-90 92 150)" x="92" y="150" text-anchor="middle" font-size="13" fill="currentColor">output rows (O_H = 2)</text>
+  </svg>
+  <p class="text-xs text-slate-500 mt-2"><strong>Figure:</strong> The output is one tray, \(O_T = 1\), holding a \(2 \times 2\) grid: \(O_H = 2\) rows and \(O_W = 2\) columns.</p>
+</div>
 <p>So the box has not yet touched the fourth frame of a four-frame input at this stage. The first output number consumes frames 0, 1, 2. Sliding the box one frame forward consumes frames 1, 2, 3 and yields the next temporal output. That sliding continues to the end of the clip, producing one output per window.</p>
 <p>Checkout counters use the same rule: a scanner window of width \(K\) sliding over \(I\) items with step 1 reads \(I - K + 1\) distinct windows. Video convolution is that counter running in three axes at once.</p>
 <div class="key-takeaway">
   <p>One placement means element-wise multiply, sum within each slice, sum across slices, add one bias. The map size follows \(O = I - K + 1\) per axis, giving \(1 \times 2 \times 2\) here. With the toy fully worked, the next step is to see the loops that repeat this placement thousands of times and the hardware that decides how long that takes.</p>
-</div>
-<div class="key-takeaway">
-  <p><strong>Exam note:</strong> output-size arithmetic of the form input minus kernel plus one is a likely numerical item. Write the per-axis line first, then substitute, then state the triple. Even a bare correct equation earns partial credit, so never skip writing it.</p>
 </div>
 <h3 id="8.3.5-student-questions-and-answers">8.3.5 Student Questions and Answers</h3>
 <div class="important-note">
@@ -418,7 +527,36 @@
 <div class="key-concept">
   <p><em>Batching</em> means applying the same operation to many items in one round instead of looping items one by one. The batch width is how many items one round covers. In the hall, the table length sets it. In code, memory and parallel units set it. Wider batches finish in fewer rounds, but only up to the physical ceiling.</p>
 </div>
-<p>Picture the hall from above: a long table as a horizontal bar, scripts as ticks along it, checkers as arrows walking the rows. The horizontal axis is items per round; the vertical axis is rounds to finish. Lengthen the table and the arrows finish in fewer passes. The takeaway is that throughput is a property of the table, not of any single checker working harder.</p>
+<div class="diagram-container my-6 text-center">
+  <svg viewBox="0 0 640 260" class="diagram-svg" role="img" aria-label="Top view of the hall table with scripts as ticks and checkers as arrows walking the rows">
+    <rect x="70" y="130" width="500" height="46" fill="currentColor" fill-opacity="0.08" stroke="currentColor" stroke-width="1.6"/>
+    <g stroke="currentColor" stroke-width="1.4">
+      <line x1="120" y1="130" x2="120" y2="176"/>
+      <line x1="200" y1="130" x2="200" y2="176"/>
+      <line x1="280" y1="130" x2="280" y2="176"/>
+      <line x1="360" y1="130" x2="360" y2="176"/>
+      <line x1="440" y1="130" x2="440" y2="176"/>
+    </g>
+    <g stroke="#2563eb" stroke-width="1.8">
+      <line x1="80" y1="112" x2="556" y2="112"/>
+      <line x1="80" y1="90" x2="556" y2="90"/>
+      <line x1="80" y1="68" x2="556" y2="68"/>
+    </g>
+    <g fill="#2563eb">
+      <polygon points="556,112 544,107 544,117"/>
+      <polygon points="556,90 544,85 544,95"/>
+      <polygon points="556,68 544,63 544,73"/>
+    </g>
+    <line x1="70" y1="206" x2="570" y2="206" stroke="currentColor" stroke-width="1.6"/>
+    <polyline points="558,200 570,206 558,212" fill="none" stroke="currentColor" stroke-width="1.6"/>
+    <text x="320" y="234" text-anchor="middle" font-size="13" fill="currentColor">items per round (table length)</text>
+    <text x="320" y="50" text-anchor="middle" font-size="12" fill="currentColor">checkers walk the rows</text>
+    <line x1="40" y1="176" x2="40" y2="60" stroke="currentColor" stroke-width="1.6"/>
+    <polyline points="34,72 40,60 46,72" fill="none" stroke="currentColor" stroke-width="1.6"/>
+    <text transform="rotate(-90 22 118)" x="22" y="118" text-anchor="middle" font-size="13" fill="currentColor">rounds to finish</text>
+  </svg>
+  <p class="text-xs text-slate-500 mt-2"><strong>Figure:</strong> The hall from above: ticks are scripts, arrows are checkers, and table length sets items per round.</p>
+</div>
 <div class="example-box">
   <p>Consider a concrete walkthrough of the answer-script and hall batching setup with 50 total answer scripts evaluated across 10 exam questions (kernels).</p>
   <p>Step 1, batching per question: The hall table accommodates 5 scripts simultaneously in one pass, representing a batch width of 5 scripts per placement. Finishing all 50 scripts for Question 1 requires: \[\text{Rounds} = \frac{50}{5} = \mathbf{10}\] ten successive rounds under the first question's rubric.</p>
@@ -435,9 +573,6 @@
 <p>Cloud GPU rental is the concrete instance students meet first: renting eight parallel units halves neither the bill nor the memory need automatically, because the provider charges for unit-hours and gigabyte-hours separately. Count rounds for time and bytes for memory, then rent to cover the larger of the two bottlenecks.</p>
 <div class="key-takeaway">
   <p>Outer loops visit every output position; inner loops finish one placement with multiply-and-add; batching covers many items per round up to a physical ceiling; parallel units cut rounds but not total work; and memory for videos, weights, and working space can each overflow independently. With the execution picture fixed, the next step is what all that execution buys: direction, speed, and joint features in one pass.</p>
-</div>
-<div class="key-takeaway">
-  <p><strong>Exam note:</strong> expect a conceptual question linking kernel count to parallel units and rounds, since resource limits decide wall-clock time as much as operation counts do. Answer with the three numbers: work per placement, placements per round from unit count, rounds to finish.</p>
 </div>
 <h3 id="8.4.4-student-questions-and-answers">8.4.4 Student Questions and Answers</h3>
 <div class="important-note">
@@ -459,7 +594,36 @@
   <p>A <em>spatio-temporal feature</em> is one number or vector that encodes where something is and how it moves, jointly. <em>Direction</em> uses sign: motion one way counts as positive and the opposite way as negative, on both the horizontal and vertical axes. <em>Speed</em> comes from how far the evidence shifts per frame: a large displacement between consecutive frames means fast, a small one means slow. <em>Acceleration</em> emerges across stacked layers, because layer two reads change-of-change from layer one's maps rather than from raw pixels.</p>
 </div>
 <p>A concrete pass makes the signs real. Suppose the character's horizontal center sits at columns 1, 3, and 4 across three frames. The frame-to-frame shifts are \(+2\) then \(+1\): positive, so rightward, and shrinking, so slowing. A vertical sequence of rows 5, 5, 2 gives shifts \(0\) then \(-3\): still, then sharply upward if up means decreasing row index. One layer reports these local shifts; it does not yet name the gesture.</p>
-<p>Picture a position-against-time plot: the horizontal axis is frame index \(t\), the vertical axis is pixel column. A still object draws a flat line. Steady motion draws a straight slope, whose tilt is speed and whose rising or falling direction is sign. Bending in the line is acceleration. The takeaway is that the 3D map stores slopes and bends, not just dots, which is why collapsing three frames to one never meant throwing time away.</p>
+<div class="diagram-container my-6 text-center">
+  <svg viewBox="0 0 560 360" class="diagram-svg" role="img" aria-label="Position-against-time plot with a flat line for a still object, a straight slope for steady motion, and a bending line for acceleration">
+    <g stroke="currentColor" stroke-width="0.8" opacity="0.3">
+      <line x1="70" y1="260" x2="470" y2="260"/>
+      <line x1="70" y1="220" x2="470" y2="220"/>
+      <line x1="70" y1="180" x2="470" y2="180"/>
+      <line x1="70" y1="140" x2="470" y2="140"/>
+      <line x1="70" y1="100" x2="470" y2="100"/>
+      <line x1="150" y1="60" x2="150" y2="300"/>
+      <line x1="230" y1="60" x2="230" y2="300"/>
+      <line x1="310" y1="60" x2="310" y2="300"/>
+      <line x1="390" y1="60" x2="390" y2="300"/>
+    </g>
+    <line x1="70" y1="300" x2="510" y2="300" stroke="currentColor" stroke-width="1.8"/>
+    <line x1="70" y1="300" x2="70" y2="40" stroke="currentColor" stroke-width="1.8"/>
+    <polygon points="510,300 498,295 498,305" fill="currentColor"/>
+    <polygon points="70,40 65,52 75,52" fill="currentColor"/>
+    <text x="290" y="336" text-anchor="middle" font-size="13" fill="currentColor">frame index t</text>
+    <text transform="rotate(-90 34 180)" x="34" y="180" text-anchor="middle" font-size="13" fill="currentColor">pixel column</text>
+    <text x="470" y="320" text-anchor="middle" font-size="12" fill="currentColor">5</text>
+    <text x="70" y="320" text-anchor="middle" font-size="12" fill="currentColor">0</text>
+    <line x1="70" y1="180" x2="470" y2="180" stroke="currentColor" stroke-width="2.2" stroke-dasharray="7 5"/>
+    <text x="410" y="168" font-size="12" fill="currentColor">still: flat</text>
+    <line x1="70" y1="290" x2="470" y2="90" stroke="#2563eb" stroke-width="2.4"/>
+    <text x="330" y="112" font-size="12" fill="#2563eb">steady: slope = speed</text>
+    <polyline points="70,290 150,240 230,210 310,196 390,192 470,190" fill="none" stroke="#f59e0b" stroke-width="2.4"/>
+    <text x="300" y="238" font-size="12" fill="#f59e0b">bending: acceleration</text>
+  </svg>
+  <p class="text-xs text-slate-500 mt-2"><strong>Figure:</strong> Position against time: flat is still, a straight slope is steady motion, and a bend is acceleration.</p>
+</div>
 <p>Traffic cameras use exactly this joint reading: one pass reports that a car sits in lane two and drifts leftward at a growing rate, which is position plus direction plus acceleration in a single verdict. A per-frame detector would need a separate tracker to recover the same story.</p>
 <div class="warning-box">
   <p><strong>Scope:</strong> one layer's claim is modest, only local change over about three frames. Fine flicker inside a single frame gap is invisible if sampling skips it, and motion far larger than the kernel window aliases into confusing evidence. The joint view is powerful within its window and blind outside it; longer stories need stacks, wider sampling, or explicit tracking.</p>
@@ -488,7 +652,34 @@
 </div>
 <p>The early 3D network discussed takes 16 frames of \(112 \times 112\) pixels in one go, written \(16 \times 112 \times 112\) in \(T \times H \times W\) order, then applies successive 3D convolution layers with 64, 128, and 256 kernels, ending in fully connected layers that emit class scores. The verbal summary was sixteen frames in, successive 3D layers with 64 up, then classification out. The shape above omits the channel axis; with color the leading channel count \(C_{in} = 3\) returns, giving a full input of \(3 \times 16 \times 112 \times 112\) in \(C \times T \times H \times W\) order.</p>
 <p>The headline is parameter growth. Holding the spatial window at \(3 \times 3\), the 3D form carries 27 weights per input channel against 9 in 2D, so the count roughly triples before channels and filter counts even enter. This fused stack is widely called C3D, the canonical early 3D convolutional network for clips. That triple-then-multiply effect is why training from scratch demands serious infrastructure and why transfer learning becomes the motivating question: few labs can afford to learn tens of millions of video weights from nothing.</p>
-<p>Picture the network as a funnel lying on its side. The wide mouth swallows a \(16 \times 112 \times 112\) block. Each 3D stage squeezes space and time while thickening the channel count from 64 toward 256, and the final fully connected neck squeezes everything to a short score vector. The horizontal axis is depth through the network; the vertical thickness is channels. The takeaway is that every stage of the funnel pays the tripled per-kernel price, so the bill compounds downward.</p>
+<div class="diagram-container my-6 text-center">
+  <svg viewBox="0 0 660 300" class="diagram-svg" role="img" aria-label="Funnel view of the 3D network: 16 by 112 by 112 input, 3D stages with 64, 128, and 256 channels, a fully connected neck, and a short score vector">
+    <rect x="30" y="70" width="80" height="160" fill="currentColor" fill-opacity="0.1" stroke="currentColor" stroke-width="1.8"/>
+    <g fill="#2563eb" fill-opacity="0.14" stroke="#2563eb" stroke-width="1.8">
+      <polygon points="110,70 210,92 210,208 110,230"/>
+      <polygon points="210,92 310,110 310,190 210,208"/>
+      <polygon points="310,110 410,128 410,172 310,190"/>
+      <polygon points="410,128 500,142 500,158 410,172"/>
+    </g>
+    <g fill="none" stroke="currentColor" stroke-width="1.6">
+      <rect x="525" y="112" width="70" height="15"/>
+      <rect x="525" y="131" width="70" height="15"/>
+      <rect x="525" y="150" width="70" height="15"/>
+      <rect x="525" y="169" width="70" height="15"/>
+    </g>
+    <text x="70" y="254" text-anchor="middle" font-size="12" fill="currentColor">16 x 112 x 112</text>
+    <text x="160" y="154" text-anchor="middle" font-size="12" fill="currentColor">64</text>
+    <text x="260" y="154" text-anchor="middle" font-size="12" fill="currentColor">128</text>
+    <text x="360" y="154" text-anchor="middle" font-size="12" fill="currentColor">256</text>
+    <text x="455" y="154" text-anchor="middle" font-size="11" fill="currentColor">FC</text>
+    <text x="560" y="102" text-anchor="middle" font-size="12" fill="currentColor">scores</text>
+    <line x1="110" y1="272" x2="560" y2="272" stroke="currentColor" stroke-width="1.6"/>
+    <polyline points="548,266 560,272 548,278" fill="none" stroke="currentColor" stroke-width="1.6"/>
+    <text x="335" y="294" text-anchor="middle" font-size="12" fill="currentColor">depth through the network</text>
+    <text x="30" y="52" font-size="12" fill="currentColor">vertical thickness = channels</text>
+  </svg>
+  <p class="text-xs text-slate-500 mt-2"><strong>Figure:</strong> The stack as a funnel: a \(16 \times 112 \times 112\) mouth, stages thickening \(64 \rightarrow 128 \rightarrow 256\), then a fully connected neck to a score vector.</p>
+</div>
 <h3 id="8.6.2-mathematical-formulation-of-parameters">8.6.2 Mathematical Formulation of Parameters</h3>
 <p>Let \(C_{in}\) be the input channel count, a positive integer, and \(C_{out}\) the number of filters, also a positive integer. Let \(K_t\), \(K_h\), \(K_w\) be the kernel depth, height, and width. The verbal rule was channels times kernel volume per filter, times filter count, plus one bias per filter:</p>
 <div class="key-concept">
@@ -547,7 +738,21 @@
   <p>Here 9 is the \(3 \times 3\) spatial window and 3 is the length-3 temporal window, against 27 for the fused box. The saving is more than half per channel, before channels and filter counts enter.</p>
 </div>
 <p>The extra win is expressiveness, and this is the point students underrate. The fused path applies one rectified linear unit, written \(\mathrm{ReLU}\), after its single convolution. The split path applies one \(\mathrm{ReLU}\) after the 2D step and another after the 1D step. A <em>rectified linear unit</em> keeps positive inputs and maps negatives to zero, which carves bends into the learned function. Two nonlinearities carve more bends than one, so the pair can express patterns the single step cannot, which is why the factorized form sometimes beats the fused form rather than merely matching it. Fewer weights plus more bends is the rare free lunch, paid for only by tuning the middle width.</p>
-<p>Picture bending a wire. One bend makes an angle; two bends make a zigzag that can trace shapes one bend never could. The horizontal axis of the sketch is the input value, the vertical axis the output; each \(\mathrm{ReLU}\) adds one kink. The takeaway is that the split's second kink is representational power the fused form lacks at any parameter count.</p>
+<div class="diagram-container my-6 text-center">
+  <svg viewBox="0 0 560 340" class="diagram-svg" role="img" aria-label="Input-output sketch showing one bend for the fused path and a two-bend zigzag for the split path with two nonlinearities">
+    <line x1="70" y1="290" x2="510" y2="290" stroke="currentColor" stroke-width="1.8"/>
+    <line x1="70" y1="290" x2="70" y2="40" stroke="currentColor" stroke-width="1.8"/>
+    <polygon points="510,290 498,285 498,295" fill="currentColor"/>
+    <polygon points="70,40 65,52 75,52" fill="currentColor"/>
+    <text x="290" y="326" text-anchor="middle" font-size="13" fill="currentColor">input value</text>
+    <text transform="rotate(-90 34 180)" x="34" y="180" text-anchor="middle" font-size="13" fill="currentColor">output</text>
+    <polyline points="70,240 300,240 480,70" fill="none" stroke="#2563eb" stroke-width="2.4"/>
+    <text x="330" y="228" font-size="12" fill="#2563eb">fused: one bend</text>
+    <polyline points="70,268 250,120 350,238 480,140" fill="none" stroke="#f59e0b" stroke-width="2.4"/>
+    <text x="360" y="96" font-size="12" fill="#f59e0b">split: two bends</text>
+  </svg>
+  <p class="text-xs text-slate-500 mt-2"><strong>Figure:</strong> Each \(\mathrm{ReLU}\) adds one kink: the fused path has one bend, the split path has two.</p>
+</div>
 <div class="warning-box">
   <p><strong>Scope:</strong> the 9-against-27 comparison is per input channel with one middle map. Real layers multiply by \(C_{in}\), \(C_{out}\), and the middle width \(M\), which can shrink or erase the headline saving if \(M\) is set too large. The per-channel count motivates the split; the full counts with \(M\) below decide whether it actually saves.</p>
 </div>
@@ -629,45 +834,12 @@
 </div>
 <p>The session promises multiple routes to each goal. The spatio-temporal stack gives route one: direct, joint, teachable. Later routes will beat it on some tasks, through attention, two-stream fusion, or inflated image backbones, and that is expected. Route one teaches the continuous thread that later hacks presuppose; later routes teach the stronger hack. Learn the thread first, then the hack earns its keep.</p>
 <p>Wildlife monitoring shows the ladder in one deployment: classify day versus night clips, detect and track the tiger across frames, then flag the track that paces the fence line as deviation from foraging normal. One feature stack feeds all three rungs.</p>
-<h3 id="8.8.4-exam-plan-and-study-advice">8.8.4 Exam Plan and Study Advice</h3>
-<div class="key-takeaway">
-  <p><strong>Exam note:</strong> the paper is closed-book with six questions of five marks each, totaling 30 marks, one question from each module, mixing easy, moderate, and hard items with both concept and scenario-based numerical parts.</p>
-</div>
-<div class="key-takeaway">
-  <p><strong>Exam note:</strong> no code-writing questions appear this time, since live demos were light and the paper already fills without them. Spend preparation on concepts, size arithmetic, parameter and operation counts, and scenario judgment rather than syntax.</p>
-</div>
-<p>Study advice follows the mark scale. Longer stems imply shorter answers: scenario wording carries the setup so assumptions stay small, and a five-mark application item wants a tight, direct answer, not a long essay. Where an assumption is still needed, write it on the paper, then answer. Every half mark counts at this scale, so a correct equation alone earns credit even if the arithmetic slips. Do not judge effort by marks per question; judge it by precision per line. Prior papers are posted for review, and the announcement note describes the module mix, so read both before the weekend sitting and confirm which module each question draws from.</p>
-<p>The numerical core to drill is small: output-size arithmetic of the form input minus kernel plus one, parameter totals with bias, and operation counts per position, alongside resource and transfer-judgment concepts. Those three formulas plus the batching-rounds argument and the domain-closeness test cover the likely numerical and conceptual items. Write each governing equation first on rough work, substitute second, and box the answer third.</p>
 <h3 id="8.8.5-student-questions-and-answers">8.8.5 Student Questions and Answers</h3>
-<div class="important-note">
-  <p><strong>Q:</strong> Will the exam include code questions like the earlier deep-network paper?</p>
-  <p><strong>A:</strong> No code questions appear on this paper. The mix is conceptual plus scenario-based numerical items, one per module, across easy, moderate, and hard levels. The six-by-five structure totals 30 marks closed-book.</p>
-</div>
-<div class="important-note">
-  <p><strong>Q:</strong> How should answers be sized when a question carries four or five marks?</p>
-  <p><strong>A:</strong> Match the question, not the marks. Longer scenario stems need short, exact answers. State any assumption briefly, write the governing equation, substitute, and stop. Correct equations earn half marks on their own, so the equation is never wasted ink even when time runs short.</p>
-</div>
 <div class="important-note">
   <p><strong>Q:</strong> What computing setup supports the long-video project work, given heavy upload and memory costs?</p>
   <p><strong>A:</strong> The shared remote lab is the given setup. Budget uploads as their own stage, since moving hour-long files can take a meal-length wait. Reuse idle windows such as exam weeks for GPU-heavy runs, keep pre-processed clips on the server, and optimize the tool choice per data source rather than assuming one stack fits all. Staged patience here is method, not delay.</p>
 </div>
 
-<h2 id="exam-guidance-summary">Exam Guidance Summary</h2>
-<div class="key-takeaway">
-  <p><strong>Exam note:</strong> six questions, five marks each, 30 marks total, closed book, one question per module, with an easy-moderate-hard mix and scenario-based numerical items alongside concepts.</p>
-</div>
-<div class="key-takeaway">
-  <p><strong>Exam note:</strong> no code-writing items appear on this paper. Aim preparation at concept judgment, size arithmetic, parameter and operation counts, and short scenario answers.</p>
-</div>
-<div class="key-takeaway">
-  <p><strong>Exam note:</strong> state assumptions explicitly, write governing equations for partial credit, and keep answers tight, since long stems expect short answers. A correct equation alone earns half marks, so lead with it.</p>
-</div>
-<div class="key-takeaway">
-  <p><strong>Exam note:</strong> the likely numerical items are 3D output-size arithmetic of the form input minus kernel plus one, parameter totals with bias, and operation counts per position, alongside resource-rounds reasoning and transfer-judgment concepts. Drill those three formulas until substitution is automatic.</p>
-</div>
-<div class="key-takeaway">
-  <p><strong>Exam note:</strong> prior papers and the posted announcement define the module mix and should be reviewed before the sitting. Confirm which module each question draws from so no module goes unrevised.</p>
-</div>
 
 <h2 id="key-industry-applications">Key Industry Applications</h2>
 <p>Joint spatio-temporal encoding powers action-clip systems that sort dance against fight scenes or animal against cooking videos on short inputs, reading position and motion in one pass rather than bolting a tracker onto a detector.</p>
@@ -692,86 +864,6 @@
       - .revision-check — one self-check question (no options)
       - .revision-connections — linked concepts within this lecture
     ============================================================ -->
-    <section class="exam-revision-section">
-      <h2>Exam Revision Notes</h2>
-      <p class="revision-intro">Below is the distilled, exam-ready core.
-      Every entry comes from the full explanation above. Use this section
-      for rapid review; return to the main notes when a point needs more context.</p>
-  <div class="exam-revision-entry">
-    <h3 class="revision-topic">Review and the Question 3D Convolution Answers</h3>
-    <p class="revision-mustknow"><strong>Must-know:</strong> After each layer, what is the size of the filtered output; weekend exam has numericals on sizes and counts.</p>
-    <p class="revision-pitfall"><strong>⚠️ Top pitfall:</strong> Revising final labels instead of per-layer maps.</p>
-    <p class="revision-check"><strong>Self-check:</strong> What is the guiding question of the first half?</p>
-    <p class="revision-connections"><strong>Connects to:</strong> 8.2, 8.3</p>
-  </div>
-  <div class="exam-revision-entry">
-    <h3 class="revision-topic">Video as a Time-Indexed Volume and the 3D Kernel Box</h3>
-    <p class="revision-mustknow"><strong>Must-know:</strong> N=SxR frames indexed 0..N-1; one 3x3x3 kernel holds 27 weights in TxHxW order.</p>
-    <p class="revision-formula">\[N = 60 \times 30 = 900\]</p>
-    <p class="revision-pitfall"><strong>⚠️ Top pitfall:</strong> Mixing board order with TxHxW code order; forgetting the depth extent.</p>
-    <p class="revision-check"><strong>Self-check:</strong> Why is the last index 899 for 900 frames?</p>
-    <p class="revision-connections"><strong>Connects to:</strong> 8.3</p>
-  </div>
-  <div class="exam-revision-entry">
-    <h3 class="revision-topic">Worked 3D Convolution: Numbers, Sliding, and Output Size</h3>
-    <p class="revision-mustknow"><strong>Must-know:</strong> One placement: multiply, sum per slice, sum across time, add bias; size O=I-K+1 per axis.</p>
-    <p class="revision-formula">\[O = I - K + 1\]</p>
-    <p class="revision-pitfall"><strong>⚠️ Top pitfall:</strong> Multiplying a neighboring row; dropping the single bias.</p>
-    <p class="revision-check"><strong>Self-check:</strong> Why does 3x4x4 with 3x3x3 give 1x2x2?</p>
-    <p class="revision-connections"><strong>Connects to:</strong> 8.2, 8.4</p>
-  </div>
-  <div class="exam-revision-entry">
-    <h3 class="revision-topic">Loop Structure, Answer-Script Analogy, and Parallel Hardware</h3>
-    <p class="revision-mustknow"><strong>Must-know:</strong> Outer loops visit every output; inner loops finish one placement; units cut rounds not total work.</p>
-    <p class="revision-pitfall"><strong>⚠️ Top pitfall:</strong> Thinking GPUs shrink flop totals instead of rounds.</p>
-    <p class="revision-check"><strong>Self-check:</strong> With 4 units and 10 questions, why more rounds?</p>
-    <p class="revision-connections"><strong>Connects to:</strong> 8.3, 8.6</p>
-  </div>
-  <div class="exam-revision-entry">
-    <h3 class="revision-topic">One-Go Spatio-Temporal Features, Direction, Speed, and Transfer Limits</h3>
-    <p class="revision-mustknow"><strong>Must-know:</strong> 3D pass reports slopes and bends (direction, speed); reuse needs matching motion vocabulary.</p>
-    <p class="revision-pitfall"><strong>⚠️ Top pitfall:</strong> Reading pure motion or pure appearance from one collapsed number.</p>
-    <p class="revision-check"><strong>Self-check:</strong> Why do car weights fail on dance spins?</p>
-    <p class="revision-connections"><strong>Connects to:</strong> 8.6</p>
-  </div>
-  <div class="exam-revision-entry">
-    <h3 class="revision-topic">Parameter, FLOP, Memory, and Compute Cost of 3D Convolution</h3>
-    <p class="revision-mustknow"><strong>Must-know:</strong> P=Cout*C_in*Kt*Kh*Kw+Cout; running layer costs 5248 parameters.</p>
-    <p class="revision-formula">\[P = C_{out} \times C_{in} \times K_t \times K_h \times K_w + C_{out}\]</p>
-    <p class="revision-pitfall"><strong>⚠️ Top pitfall:</strong> Forgetting the C_in multiplier and the bias tail.</p>
-    <p class="revision-check"><strong>Self-check:</strong> Why does color triple the count vs gray?</p>
-    <p class="revision-connections"><strong>Connects to:</strong> 8.4, 8.7</p>
-  </div>
-  <div class="exam-revision-entry">
-    <h3 class="revision-topic">Factorized R(2+1)D: Split, Double Nonlinearity, and the Intermediate Width M</h3>
-    <p class="revision-mustknow"><strong>Must-know:</strong> Split costs 220xM+64 vs fused 5248; ceiling M=24, operate below it for savings plus double ReLU.</p>
-    <p class="revision-formula">\[5248 = 220 \times M + 64\]</p>
-    <p class="revision-pitfall"><strong>⚠️ Top pitfall:</strong> Treating M=24 as the recommendation instead of the ceiling.</p>
-    <p class="revision-check"><strong>Self-check:</strong> At M=16 what does the pair cost vs 5248?</p>
-    <p class="revision-connections"><strong>Connects to:</strong> 8.6, 8.8</p>
-  </div>
-  <div class="exam-revision-entry">
-    <h3 class="revision-topic">Clips, Hybrid Practice, Downstream Tasks, and Exam Plan</h3>
-    <p class="revision-mustknow"><strong>Must-know:</strong> Closed-book 6x5=30, one per module, no code; lead answers with equations and assumptions.</p>
-    <p class="revision-pitfall"><strong>⚠️ Top pitfall:</strong> Writing essays where short exact answers are wanted.</p>
-    <p class="revision-check"><strong>Self-check:</strong> How should a 5-mark scenario answer be sized?</p>
-    <p class="revision-connections"><strong>Connects to:</strong> 8.7</p>
-  </div>
-  <div class="exam-revision-entry">
-    <h3 class="revision-topic">Exam Guidance Summary</h3>
-    <p class="revision-mustknow"><strong>Must-know:</strong> 6x5 closed-book; equations earn half marks; drill size, parameter, flop arithmetic.</p>
-    <p class="revision-pitfall"><strong>⚠️ Top pitfall:</strong> Skipping the governing equation under time pressure.</p>
-    <p class="revision-check"><strong>Self-check:</strong> What earns half marks even if arithmetic slips?</p>
-    <p class="revision-connections"><strong>Connects to:</strong> 8.1, 8.8</p>
-  </div>
-  <div class="exam-revision-entry">
-    <h3 class="revision-topic">Key Industry Applications</h3>
-    <p class="revision-mustknow"><strong>Must-know:</strong> Same stack serves action labels, tracking, anomaly; sampling and domain match decide deployment.</p>
-    <p class="revision-pitfall"><strong>⚠️ Top pitfall:</strong> Porting pipelines across data sources blindly.</p>
-    <p class="revision-check"><strong>Self-check:</strong> Name two rungs above clip labeling.</p>
-    <p class="revision-connections"><strong>Connects to:</strong> 8.5, 8.8</p>
-  </div>
-    </section>
   </div>
 </body>
 </html>

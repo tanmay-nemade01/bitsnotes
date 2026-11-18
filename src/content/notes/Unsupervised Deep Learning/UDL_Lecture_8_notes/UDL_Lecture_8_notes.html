@@ -288,10 +288,6 @@
 <p>So the primary purpose of flow models is to improve data generation speed. There is a secondary purpose as well: flow models are designed with the hope of also producing a latent representation of the data. The data you observe is \(x\), but something hidden may be generating it — those hidden values are the latents. In an autoencoder, the encoded dimensions are latent data: not observable directly, created by processing, and then used for decoding. Latent variables of this kind are absent from plain autoregressive models, so the flow model chases both goals at once: faster generation and a latent space.</p>
 <p>Scope check on the promise: the speed gain is real but conditional on design choices, and the rest of the lecture shows the trade-off precisely. Masked autoregressive flows keep the slow sequential walk in the generative direction; inverse autoregressive flows push the slowness into evaluation instead; coupling architectures such as RealNVP and Glow make both directions parallel by giving up full autoregression. No free lunch appears anywhere — each design moves the bottleneck somewhere it hurts less for the intended use.</p>
 <p>Real-world anchor: the sequential-decoding latency is not hypothetical. WaveNet produced striking audio quality but generated one audio sample after another, which pushed the follow-up system Parallel WaveNet toward exactly the flow ideas introduced here. Whenever a product needs <em>many</em> samples fast — image editing assistants, speech synthesizers, content filters — serial generation is the wall, and flows are one of the standard ladders against it.</p>
-<h3 id="8.1.3-exam-framing-for-this-topic">8.1.3 Exam Framing for This Topic</h3>
-<div class="key-takeaway">
-  <p><strong>Exam note:</strong> This course is closed book, and experience says you are always better off taking the regular exam rather than a makeup. Guessing is not a strategy — know the reasons, not just the names. Applied here: an answer like "MAF is used because it exists" earns little. Know why the mask exists (it enforces the chain-rule factorization), why flows exist (sequential generation is slow), and why the bijectivity requirement exists (sampling and scoring both need a well-defined inverse). Reasons survive exam pressure; memorized names do not.</p>
-</div>
 
 <h2 id="8.2-the-normalizing-flow-framework">8.2 The Normalizing Flow Framework</h2>
 <h3 id="8.2.1-base-distribution-transform-and-sampling">8.2.1 Base Distribution, Transform, and Sampling</h3>
@@ -327,7 +323,28 @@
   <p><strong>Scope:</strong> This requirement is also the price. Ordinary network layers such as a plain dense layer followed by a ReLU freely destroy information (ReLU maps every negative value to zero, merging uncountably many inputs into one output), which is exactly why ordinary networks are <em>not</em> valid flows. Everything in Section 8.6 — coupling layers, masks, one-by-one convolutions — is engineering that recovers expressive power while respecting invertibility.</p>
 </div>
 <p>An everyday analogy keeps the geometry honest. Think of kneading dough with a rolling pin. Pressing and stretching moves the dough around and reshapes each region — thick spots flatten out, narrow spots spread — yet the total amount of dough never changes, and you can always imagine rolling time backwards to undo every motion. A flow transformation does to probability mass what the rolling pin does to dough: it relocates and reshapes a fixed total mass of probability. The analogy breaks exactly where the mathematics is strict: real dough tears and folds over itself, while an invertible transformation may never fold — folding is precisely the failure that squaring exhibits.</p>
-<p>Visual intuition: picture the standard-normal bump as a smooth hill over the latent axis on the left. The transformation bends that axis like a flexible ruler — compressing some stretches, extending others — and on the right the hill reappears as a lumpy, multi-peaked landscape over data space. Arrows run both ways along the bent ruler: forward arrows generate samples (the <em>generative direction</em>), backward arrows take a real data point back to its latent coordinate. That backward trip earns the framework its name — pushing complex data densities through the inverse layers gradually <em>normalizes</em> them back to the Gaussian, giving us <em>normalizing flows</em>.</p>
+<div class="diagram-container my-6 text-center">
+  <svg viewBox="0 0 720 260" class="diagram-svg" role="img" aria-label="Standard normal density over the latent axis z bent into a lumpy multi-peaked density over data space x, with forward and backward arrows along the transformation">
+    <defs>
+      <marker id="udl8-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+        <path d="M 0 0 L 10 5 L 0 10 z" fill="currentColor"></path>
+      </marker>
+    </defs>
+    <line x1="40" y1="190" x2="220" y2="190" stroke="currentColor" stroke-width="1.5"></line>
+    <path d="M 55 190 C 88 190, 98 62, 130 62 C 162 62, 172 190, 205 190" fill="none" stroke="currentColor" stroke-width="2"></path>
+    <text x="130" y="48" text-anchor="middle" font-size="13">p_Z(z)</text>
+    <text x="212" y="212" text-anchor="middle" font-size="12">latent axis z</text>
+    <line x1="245" y1="110" x2="455" y2="110" stroke="currentColor" stroke-width="1.5" marker-end="url(#udl8-arrow)"></line>
+    <text x="350" y="98" text-anchor="middle" font-size="12">sampling: x = f⁻¹(z_s)</text>
+    <line x1="455" y1="170" x2="245" y2="170" stroke="currentColor" stroke-width="1.5" marker-end="url(#udl8-arrow)"></line>
+    <text x="350" y="192" text-anchor="middle" font-size="12">scoring: z = f(x)</text>
+    <line x1="475" y1="190" x2="690" y2="190" stroke="currentColor" stroke-width="1.5"></line>
+    <path d="M 482 190 C 492 190, 496 104, 512 104 C 524 104, 526 152, 538 152 C 550 152, 552 72, 572 72 C 588 72, 590 160, 604 160 C 614 160, 618 118, 630 118 C 640 118, 644 186, 656 186 L 686 190" fill="none" stroke="currentColor" stroke-width="2"></path>
+    <text x="572" y="58" text-anchor="middle" font-size="13">p_X(x)</text>
+    <text x="680" y="212" text-anchor="middle" font-size="12">data space x</text>
+  </svg>
+  <p class="text-xs text-slate-500 mt-2"><strong>Figure:</strong> A smooth standard-normal hill over the latent axis z is bent into a lumpy, multi-peaked density over data space x; arrows run both ways along the same transformation.</p>
+</div>
 <p>This is also why latents echo the autoencoder idea: hidden codes created by processing rather than observed directly, except here the transform is built to be invertible. The practical payoff of an exact, invertible latent code is a model that can score any data point with its true probability — the property behind anomaly detection systems that flag inputs receiving unusually low likelihood under a flow trained on normal data.</p>
 <h3 id="8.2.2-the-jacobian-constraint-in-many-dimensions">8.2.2 The Jacobian Constraint in Many Dimensions</h3>
 <p>In one dimension, finding \(f^{-1}\) is no big deal as long as the mapping is bijective. Many dimensions change the picture. For, say, 100-dimensional data, the inverse operation becomes a question about the Jacobian matrix of the transformation.</p>
@@ -369,7 +386,25 @@
 <div class="important-note">
   <p>Carry one sentence out of this warm-up: <strong>spread the support twice and the density height halves.</strong> Height is not stored anywhere — it is whatever value makes the total area come out to one after the transformation has had its way with the geometry.</p>
 </div>
-<p>Visual intuition: draw the before-picture as a unit square of density over the axis, and the after-picture as a wider, shorter rectangle of equal area sitting further along the axis. Mark the two landmarks: the leading edge moved from 1 to 3 (the stretch), and the plateau dropped from 1 to ½ (the compensation). Every change-of-variables computation later is bookkeeping for exactly this trade.</p>
+<div class="diagram-container my-6 text-center">
+  <svg viewBox="0 0 720 240" class="diagram-svg" role="img" aria-label="Before picture: uniform density of height 1 over the support 0 to 1. After picture: the same area as a wider rectangle of height one half over the support 1 to 3.">
+    <line x1="60" y1="180" x2="310" y2="180" stroke="currentColor" stroke-width="1.5"></line>
+    <line x1="60" y1="180" x2="60" y2="50" stroke="currentColor" stroke-width="1.5"></line>
+    <rect x="130" y="70" width="90" height="110" fill="currentColor" fill-opacity="0.18" stroke="currentColor" stroke-width="1.5"></rect>
+    <text x="175" y="60" text-anchor="middle" font-size="12">height 1</text>
+    <text x="130" y="196" text-anchor="middle" font-size="12">0</text>
+    <text x="220" y="196" text-anchor="middle" font-size="12">1</text>
+    <text x="185" y="224" text-anchor="middle" font-size="12">support [0, 1], area = 1 × 1 = 1</text>
+    <line x1="400" y1="180" x2="700" y2="180" stroke="currentColor" stroke-width="1.5"></line>
+    <line x1="400" y1="180" x2="400" y2="50" stroke="currentColor" stroke-width="1.5"></line>
+    <rect x="500" y="125" width="180" height="55" fill="currentColor" fill-opacity="0.18" stroke="currentColor" stroke-width="1.5"></rect>
+    <text x="590" y="115" text-anchor="middle" font-size="12">height ½</text>
+    <text x="500" y="196" text-anchor="middle" font-size="12">1</text>
+    <text x="680" y="196" text-anchor="middle" font-size="12">3</text>
+    <text x="590" y="224" text-anchor="middle" font-size="12">support [1, 3], area = ½ × 2 = 1</text>
+  </svg>
+  <p class="text-xs text-slate-500 mt-2"><strong>Figure:</strong> f(x) = 2x + 1 moves the leading edge from 1 to 3 (the stretch) and drops the plateau from 1 to ½ (the compensation), leaving the area at 1.</p>
+</div>
 <h3 id="8.3.2-the-change-of-variables-formula">8.3.2 The Change-of-Variables Formula</h3>
 <p>The verbal rule from class: the density of \(x\) equals the density of \(z\) times the absolute value of the determinant of the derivative of \(z\) with respect to \(x\). In higher dimensions:</p>
 <div class="key-concept">
@@ -759,7 +794,6 @@
 </div>
 
 <h2 id="8.9-exam-worked-example-convolutional-autoencoder-code-analysis">8.9 Exam Worked Example: Convolutional Autoencoder Code Analysis</h2>
-<p>A new exam angle deserves attention: questions grounded in the coding assignments. Nobody expects you to write pipelines of code or memorize syntax. What is tested is whether you understand the libraries you used, the arguments of the functions you called, what each argument does and does not do, and what changes if you edit one line. Such questions will be based on the assignment you already completed — not on, say, the autoregressive implementations covered elsewhere, which stay numerical.</p>
 <p>The running example is the encoder of a convolutional autoencoder, roughly:</p>
 <pre><code>Conv2D(32, (3, 3), padding="same", activation="relu", input_shape=(28, 28, 3))
 MaxPooling2D((2, 2))
@@ -873,10 +907,6 @@ Dense(30, name="latent")</code></pre>
   <p><strong>Q:</strong> What is the meaning of overfitting in the context of autoencoders, where the whole goal is reconstruction quality? <strong>A:</strong> It looks like success at first glance: near-zero training reconstruction error. That is precisely the trap. An overfit autoencoder drives reconstruction error toward zero on the training data alone, while the error on validation data climbs — the network has memorized the training set instead of learning to encode and decode general structure. Once memorization takes over, validation and test error rise even as training error falls. That is precisely why assignments demand numbers on all three splits: train the network on the training set, use the validation set to make sure you are neither over-training nor under-training, and verify final performance on the test set.</p>
 </div>
 <p>The correction matters because autoencoders make overfitting unusually sneaky: unlike a classifier, there is no accuracy number staring at you, and a beautiful reconstruction montage can be pure memorization. The honest signals live in the split comparison — train loss falling while validation loss turns upward is the classic crossing pattern to catch early.</p>
-<p>Exam grades aside, this is the habit that matters in the real world: getting exam numbers does not guarantee you will handle a live model well, and handling a live model well starts with disciplined experiments and honest validation.</p>
-<div class="key-takeaway">
-  <p><strong>Exam note:</strong> Assignment-code questions cover output-shape tracking, the meaning of library arguments like <code>padding</code> and <code>activation</code>, and the effect of changing one line — removing a pool, growing a kernel, widening the latent. Practice recomputing every table above by hand until the flow 28 → 28 → 14 → 14 → 7 → 3136 → 30 feels mechanical.</p>
-</div>
 
 <h2 id="8.10-exam-worked-example-binary-autoencoder-backpropagation">8.10 Exam Worked Example: Binary Autoencoder Backpropagation</h2>
 <h3 id="8.10.1-setup-and-architecture-choices">8.10.1 Setup and Architecture Choices</h3>
@@ -925,7 +955,6 @@ Dense(30, name="latent")</code></pre>
 <p>\[ \frac{\partial L}{\partial w_1} = (-0.3775) \cdot 1 \cdot h(1-h) \cdot x_1 = (-0.3775)(1)(0.25)(1) = -0.0944, \]</p>
 <p>using \(h(1-h) = 0.5 \times 0.5 = 0.25\). The gradient step then moves the weight uphill against this negative gradient:</p>
 <p>\[ w_1^{\text{new}} = w_1 - 0.25 \times (-0.0944) + \alpha\,\Delta w_{1,t-1} = w_1 + 0.0236 + \alpha\,\Delta w_{1,t-1}, \]</p>
-<p>with the final numeric value completed by inserting the supplied momentum constant and previous-update values from the problem sheet. The finished numerical answer sits in the posted problem set, and ChatGPT reproduces it on request — but the repetition odds for this exact question are ten to fifteen percent, so treat it as practice for the method, not a prediction. Practice several such problems; doing all of them can only help.</p>
 <div class="warning-box">
   <p><strong>Pitfalls:</strong></p>
   <ul>
@@ -935,24 +964,6 @@ Dense(30, name="latent")</code></pre>
     <li>Adding momentum with the wrong sign or using weights from t−1 where <em>updates</em> from t−1 belong: momentum carries the previous change, not the previous parameter value.</li>
   </ul>
 </div>
-<div class="key-takeaway">
-  <p><strong>Exam note:</strong> Expect quantitative numericals like this one; practice the posted papers and repeat-chance problems run ten to fifteen percent. The reusable skeleton is fixed: forward pass with real numbers, per-node cross entropy, error signals via \(y - t\), chain rule back through the hidden layer, gradient step plus momentum.</p>
-</div>
-
-<h2 id="exam-guidance-summary">Exam Guidance Summary</h2>
-<ul>
-  <li>Closed book exam. Take the regular exam rather than a makeup whenever possible.</li>
-  <li>Carry a scientific calculator. Most problems are quantitative, and minor calculation slips cost only small deductions given the working-professional audience.</li>
-  <li>The course continues the deep neural networks course: refresh backpropagation-based weight updates, CNN architectures, convolution operations of every kind — including transposed convolutions — and parameter counting. Those are memory-refresh items, not new study.</li>
-  <li>Syllabus scope is what was covered in class sessions so far: PCA and its variants; the autoencoder family — undercomplete, overcomplete, denoising, sparse, regularized, and the linearized version that implements PCA; autoregressive models — WaveNet, Parallel WaveNet, MADE, PixelCNN, PixelCNN++, and Gated PixelCNN; flow models and variants — MAF, IAF, RealNVP, affine flows. Material sitting in decks but never discussed in class will not appear.</li>
-  <li>Previous question papers are posted with roughly twelve to fourteen questions; practicing them puts you in good shape. Generate extra problems with ChatGPT — for example on WaveNet or PixelCNN, sized small enough for hand calculation — and verify your results there. When answers disagree, the cause is usually a technique outside class coverage, and you will spot it.</li>
-  <li>New this time: questions about your assignment code. Expect output-dimension tracking, the meaning of library arguments, and what one changed line does to the output. Not syntax memorization, and not implementation questions on the autoregressive models handled elsewhere — those stay numerical.</li>
-  <li>Four main questions with sub-questions, mirroring the posted papers' patterns.</li>
-  <li>Grading is relative across the whole class cohort: scoring 90 means trouble if everyone scores above 90; scoring 35 is comfortable when others sit at 30 or below. Do not obsess over individual question marks.</li>
-  <li>Question difficulty aims low on purpose — typical averages near thirty percent, with strong students reaching eighty. Worked problems shown in class have a ten to fifteen percent chance of repeating in some form.</li>
-  <li>Study the posted solutions; where understanding feels shaky, prompt ChatGPT for elaborate explanations with a reasonable prompt rather than a lazy one.</li>
-</ul>
-<p>A practical reading order for revision falls straight out of this list: first re-derive the two worked autoencoder problems until each numeric step is automatic; second, re-run the parameter-counting and shape-tracking tables from the assignment code with one deliberate change per pass (remove a pool, grow a kernel, widen the latent); third, generate fresh small numericals on WaveNet-style and PixelCNN-style factorizations and solve them by hand against the calculator. Relative grading rewards steady, boring correctness over brilliance on any single question.</p>
 
 <h2 id="key-industry-applications">Key Industry Applications</h2>
 <ul>
@@ -981,104 +992,6 @@ Dense(30, name="latent")</code></pre>
       - .revision-check — one self-check question (no options)
       - .revision-connections — linked concepts within this lecture
     ============================================================ -->
-    <section class="exam-revision-section">
-      <h2>Exam Revision Notes</h2>
-      <p class="revision-intro">Below is the distilled, exam-ready core.
-      Every entry comes from the full explanation above. Use this section
-      for rapid review; return to the main notes when a point needs more context.</p>
-<div class="exam-revision-entry">
-  <h3 class="revision-topic">Masking and Autoregressive Modelling Recap</h3>
-  <p class="revision-mustknow"><strong>Must-know:</strong> Autoregressive generation is inherently sequential (x1 then x2 then x3); flows exist to generate in parallel and to provide latents — vanishing gradients are NOT the motivation.</p>
-  <p class="revision-pitfall"><strong>⚠️ Top pitfall:</strong> Masking leaks: letting even one future position through breaks the factorization while training likelihood still looks fine.</p>
-  <p class="revision-check"><strong>Self-check:</strong> Under raster-scan ordering on a 4x4 grid, which positions may inform the density of pixel 7?</p>
-  <p class="revision-connections"><strong>Connects to:</strong> The Normalizing Flow Framework (8.2); Masked Autoregressive Flow (8.4).</p>
-</div>
-<div class="exam-revision-entry">
-  <h3 class="revision-topic">The Normalizing Flow Framework</h3>
-  <p class="revision-mustknow"><strong>Must-know:</strong> Flow transformations must be bijective (squaring fails: +a and -a collide), latents match data dimension, and the Jacobian determinant must be easily computed and nonzero — triangular structure guarantees both.</p>
-  <p class="revision-formula">\[ z_s \sim p_Z(z), \qquad x_{\text{new}} = f^{-1}(z_s) \]</p>
-  <p class="revision-pitfall"><strong>⚠️ Top pitfall:</strong> A zero diagonal entry in a triangular Jacobian collapses volume to zero and breaks the model.</p>
-  <p class="revision-check"><strong>Self-check:</strong> Why is f(x) = x^2 unacceptable as a flow transformation?</p>
-  <p class="revision-connections"><strong>Connects to:</strong> Change of Variables and Maximum Likelihood Training (8.3); Flow Building Blocks from Affine Coupling to Glow (8.6).</p>
-</div>
-<div class="exam-revision-entry">
-  <h3 class="revision-topic">Change of Variables and Maximum Likelihood Training</h3>
-  <p class="revision-mustknow"><strong>Must-know:</strong> p_X(x) = p_Z(z)|det(dz/dx)|: stretch the support twice and the density height halves (f(x)=2x+1 on [0,1] gives height 1/2 on [1,3], area still 1).</p>
-  <p class="revision-formula">\[ p_\theta(x) = p_Z(f_\theta(x))\,\left|\det \frac{\partial f_\theta(x)}{\partial x}\right| \]</p>
-  <p class="revision-pitfall"><strong>⚠️ Top pitfall:</strong> The determinant must be easy to calculate AND easy to differentiate, or the model cannot train at all.</p>
-  <p class="revision-check"><strong>Self-check:</strong> Why does an autoregressive construction make the Jacobian determinant trivial to compute?</p>
-  <p class="revision-connections"><strong>Connects to:</strong> The Normalizing Flow Framework (8.2); Masked Autoregressive Flow (8.4).</p>
-</div>
-<div class="exam-revision-entry">
-  <h3 class="revision-topic">Masked Autoregressive Flow (MAF)</h3>
-  <p class="revision-mustknow"><strong>Must-know:</strong> x_i = z_i*exp(alpha_i) + mu_i with mu_i, alpha_i functions of x_1..x_{i-1}; each conditional is N(mu_i, exp(alpha_i)^2), so exp(alpha) is the standard deviation.</p>
-  <p class="revision-formula">\[ x_i = z_i \exp(\alpha_i) + \mu_i, \qquad i = 1, \ldots, n \]</p>
-  <p class="revision-pitfall"><strong>⚠️ Top pitfall:</strong> Confusing the variance exp(alpha)^2 with the standard deviation exp(alpha); also evaluating densities by sampling instead of using the fast parallel scoring path.</p>
-  <p class="revision-check"><strong>Self-check:</strong> Why must MAF sample sequentially even though its Jacobian determinant is cheap?</p>
-  <p class="revision-connections"><strong>Connects to:</strong> Masking and Autoregressive Modelling Recap (8.1); Inverse Autoregressive Flow (IAF) (8.5).</p>
-</div>
-<div class="exam-revision-entry">
-  <h3 class="revision-topic">Inverse Autoregressive Flow (IAF)</h3>
-  <p class="revision-mustknow"><strong>Must-know:</strong> MAF: fast scoring, slow sampling. IAF: fast sampling, slow scoring and direct training; Parallel WaveNet distills a slow teacher into a fast IAF student.</p>
-  <p class="revision-formula">\[ z_i = \frac{x_i - \mu_i}{\exp(\alpha_i)} \]</p>
-  <p class="revision-pitfall"><strong>⚠️ Top pitfall:</strong> The name misleads: IAF is the flow whose generative pass is parallel — "IAF samples fast".</p>
-  <p class="revision-check"><strong>Self-check:</strong> Which model would you deploy for real-time speech generation, and why?</p>
-  <p class="revision-connections"><strong>Connects to:</strong> Masked Autoregressive Flow (8.4).</p>
-</div>
-<div class="exam-revision-entry">
-  <h3 class="revision-topic">Flow Building Blocks from Affine Coupling to Glow</h3>
-  <p class="revision-mustknow"><strong>Must-know:</strong> Additive coupling keeps det = 1 (volume preservation); affine coupling gives det = exp(sum of scale outputs), so RealNVP is non-volume-preserving by design.</p>
-  <p class="revision-formula">\[ x_{d+1:n} = z_{d+1:n} \odot \exp(s_\theta(z_{1:d})) + m_\theta(z_{1:d}) \]</p>
-  <p class="revision-pitfall"><strong>⚠️ Top pitfall:</strong> Stacking identical coupling layers without alternating masks or shuffles leaves half the coordinates permanently copied — nothing mixes.</p>
-  <p class="revision-check"><strong>Self-check:</strong> Why does the NICE Jacobian's determinant ignore everything m_theta computes?</p>
-  <p class="revision-connections"><strong>Connects to:</strong> The Normalizing Flow Framework (8.2); Discrete Data and Dequantization (8.7).</p>
-</div>
-<div class="exam-revision-entry">
-  <h3 class="revision-topic">Discrete Data and Dequantization</h3>
-  <p class="revision-mustknow"><strong>Must-know:</strong> Dequantization: x-tilde = x + u with u ~ Uniform(0,1)^D turns discrete atoms into smooth plateaus; quantized data trains erratically while dequantized data settles.</p>
-  <p class="revision-formula">\[ \tilde{x} = x + u, \qquad u \sim \mathrm{Uniform}(0,1)^{D} \]</p>
-  <p class="revision-pitfall"><strong>⚠️ Top pitfall:</strong> Mistaking dequantization for regularization noise — its purpose is restoring the continuity that derivatives need, not preventing overfitting.</p>
-  <p class="revision-check"><strong>Self-check:</strong> What does one 8-bit pixel value of 128 become after dequantization?</p>
-  <p class="revision-connections"><strong>Connects to:</strong> Change of Variables and Maximum Likelihood Training (8.3); Flow Building Blocks from Affine Coupling to Glow (8.6).</p>
-</div>
-<div class="exam-revision-entry">
-  <h3 class="revision-topic">Applications of Flow Models</h3>
-  <p class="revision-mustknow"><strong>Must-know:</strong> SRFlow = flows for super-resolution; flows also cover text, audio, and point clouds — exact likelihood enables scoring, invertible latents enable control.</p>
-  <p class="revision-pitfall"><strong>⚠️ Top pitfall:</strong> Assuming regression-style decoders and flow decoders behave the same: regression averages away uncertainty, flows sample distinct plausible outputs.</p>
-  <p class="revision-check"><strong>Self-check:</strong> What advantage does SRFlow's invertible latent space give over a plain regression decoder?</p>
-  <p class="revision-connections"><strong>Connects to:</strong> Flow Building Blocks from Affine Coupling to Glow (8.6).</p>
-</div>
-<div class="exam-revision-entry">
-  <h3 class="revision-topic">Exam Worked Example: Convolutional Autoencoder Code Analysis</h3>
-  <p class="revision-mustknow"><strong>Must-know:</strong> Conv parameter count = (kernel area * input channels + 1 bias) * filters: layer one of the example is (3*3*3+1)*32 = 896; removing both pools grows Dense inputs sixteen-fold to 50176.</p>
-  <p class="revision-formula">\[ (k_h \cdot k_w \cdot C_{\text{in}} + 1) \cdot C_{\text{out}} \]</p>
-  <p class="revision-pitfall"><strong>⚠️ Top pitfall:</strong> Overfit autoencoders hit near-zero training reconstruction error while validation error climbs — always report all three splits.</p>
-  <p class="revision-check"><strong>Self-check:</strong> Why do stacked 3x3 filters reach a receptive field of 5 with fewer parameters than one direct 7x7 filter?</p>
-  <p class="revision-connections"><strong>Connects to:</strong> Binary Autoencoder Backpropagation (8.10).</p>
-</div>
-<div class="exam-revision-entry">
-  <h3 class="revision-topic">Exam Worked Example: Binary Autoencoder Backpropagation</h3>
-  <p class="revision-mustknow"><strong>Must-know:</strong> Sigmoid output + binary cross entropy gives the shortcut dL/du = y - t; here L = -ln(0.6225) - ln(0.5) = about 1.17.</p>
-  <p class="revision-formula">\[ L = -\sum_{k=1}^{2}\Big[ t_k \ln y_k + (1-t_k)\ln(1-y_k) \Big] \]</p>
-  <p class="revision-pitfall"><strong>⚠️ Top pitfall:</strong> Dropping one output node from the loss, or losing the sigmoid derivative factor y(1-y) inside the chain rule.</p>
-  <p class="revision-check"><strong>Self-check:</strong> Why is the second output's loss contribution exactly -ln(0.5)?</p>
-  <p class="revision-connections"><strong>Connects to:</strong> Convolutional Autoencoder Code Analysis (8.9).</p>
-</div>
-<div class="exam-revision-entry">
-  <h3 class="revision-topic">Exam Guidance Summary</h3>
-  <p class="revision-mustknow"><strong>Must-know:</strong> Know reasons over names; practice posted papers (12-14 questions); worked problems repeat at ten to fifteen percent.</p>
-  <p class="revision-pitfall"><strong>⚠️ Top pitfall:</strong> Obsessing over individual question marks — grading is relative across the cohort.</p>
-  <p class="revision-check"><strong>Self-check:</strong> What scope does the exam cover?</p>
-  <p class="revision-connections"><strong>Connects to:</strong> Convolutional Autoencoder Code Analysis (8.9); Binary Autoencoder Backpropagation (8.10).</p>
-</div>
-<div class="exam-revision-entry">
-  <h3 class="revision-topic">Key Industry Applications</h3>
-  <p class="revision-mustknow"><strong>Must-know:</strong> Two capabilities transfer everywhere: sample on demand and price any input exactly.</p>
-  <p class="revision-pitfall"><strong>⚠️ Top pitfall:</strong> Deploying flows on raw quantized sensor data without dequantization destabilizes training.</p>
-  <p class="revision-check"><strong>Self-check:</strong> Which flow application needs dequantization first, and why?</p>
-  <p class="revision-connections"><strong>Connects to:</strong> Discrete Data and Dequantization (8.7); Applications of Flow Models (8.8).</p>
-</div>
-    </section>
   </div>
 </body>
 </html>

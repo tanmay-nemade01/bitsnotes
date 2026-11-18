@@ -381,11 +381,19 @@
   <p>A PostgreSQL trigger is a special user-defined function bound to a table, view, or foreign table that the database invokes automatically on <code>INSERT</code>, <code>UPDATE</code>, <code>DELETE</code>, or <code>TRUNCATE</code>, with timing <code>BEFORE</code>, <code>AFTER</code>, or <code>INSTEAD OF</code> deciding whether it runs ahead of, behind, or in place of the event.</p>
 </div>
 <p>A <em>user-defined function</em> — a routine stored in the database and written by a database user — differs from a trigger in exactly this calling habit. A user-defined function waits until someone calls it inside a procedure or a query, for example <code>SELECT percent_change(110, 108, 2)</code>. A trigger never waits for a manual call. It listens for its event, which is one of insert, update, delete, or truncate, and then it runs. That is the single sentence that separates the two: functions wait to be called, triggers listen and fire.</p>
-<p>Picture the flow as a small timeline. Application issues <code>UPDATE players SET name = 'Linda Two' WHERE player_id = 2</code>. The database notices a trigger is bound to <code>UPDATE</code> on <code>players</code>, pauses the write for a moment, runs the trigger function with the old and new row images available, and then completes or cancels the write depending on what the function returned. The application never mentioned the trigger by name.</p>
-<p>Across database systems the same idea wears different clothes, and keeping one version in mind saves confusion later. In PostgreSQL the worker is a function returning the special <code>trigger</code> type written in <code>plpgsql</code> (never plain SQL), bound with <code>EXECUTE PROCEDURE</code>. In MySQL the worker is written inline in the <code>CREATE TRIGGER</code> body with <code>FOR EACH ROW</code> only — there is no separate function step and no statement-level form. In SQL Server the worker reads set-like <code>inserted</code> and <code>deleted</code> tables instead of per-row <code>NEW</code> and <code>OLD</code>, and there is no <code>BEFORE</code> timing, only <code>AFTER</code> and <code>INSTEAD OF</code>. Snowflake and Databricks/Spark SQL offer no classic row triggers at all; the matching pattern there is Streams plus Tasks or Delta Live Table expectations. The common core is identical — automatic code on a data change — and only the spelling changes.</p>
-<div class="key-takeaway">
-  <p><strong>Exam note:</strong> Be able to state the definition cold: a trigger is a special user-defined function the database fires by itself on insert, update, delete, or truncate. The contrast the checker wants is "function waits for a call, trigger listens for an event."</p>
+<div class="diagram-container my-6 text-center">
+<pre class="mermaid">
+flowchart TD
+  A["Application issues UPDATE players SET name = 'Linda Two' WHERE player_id = 2"] --> B["Database notices a trigger bound to UPDATE on players"]
+  B --> C["Write paused"]
+  C --> D["Trigger function runs, old and new row images available"]
+  D --> E{"What the function returned"}
+  E -- "continue" --> F["Write completes"]
+  E -- "cancel" --> G["Write cancels"]
+</pre>
+<p class="text-xs text-slate-500 mt-2"><strong>Figure:</strong> The <code>UPDATE</code> on <code>players</code> pausing while the trigger function runs with the <code>OLD</code> and <code>NEW</code> images, then completing or cancelling.</p>
 </div>
+<p>Across database systems the same idea wears different clothes, and keeping one version in mind saves confusion later. In PostgreSQL the worker is a function returning the special <code>trigger</code> type written in <code>plpgsql</code> (never plain SQL), bound with <code>EXECUTE PROCEDURE</code>. In MySQL the worker is written inline in the <code>CREATE TRIGGER</code> body with <code>FOR EACH ROW</code> only — there is no separate function step and no statement-level form. In SQL Server the worker reads set-like <code>inserted</code> and <code>deleted</code> tables instead of per-row <code>NEW</code> and <code>OLD</code>, and there is no <code>BEFORE</code> timing, only <code>AFTER</code> and <code>INSTEAD OF</code>. Snowflake and Databricks/Spark SQL offer no classic row triggers at all; the matching pattern there is Streams plus Tasks or Delta Live Table expectations. The common core is identical — automatic code on a data change — and only the spelling changes.</p>
 <p>One-line recap: a trigger is self-firing database code bound to a data change. That idea now needs its vocabulary — which events, which targets, and which timing — taken up next.</p>
 <h3 id="35.1.2-events-and-targets">35.1.2 Events and targets</h3>
 <p>An <em>event</em> — the data change a trigger listens for — is one of four operations in ordinary PostgreSQL work: <code>INSERT</code>, <code>UPDATE</code>, <code>DELETE</code>, or <code>TRUNCATE</code>. Adding rows, changing rows, removing rows, or emptying a table fast can each wake a trigger. There is deliberately no fifth event for reading: a <code>SELECT</code> only looks at rows, so there is nothing for the trigger to react to.</p>
@@ -520,7 +528,43 @@
 </div>
 <p>The headline pattern is simple. <code>BEFORE</code> triggers on insert, update, and delete work at row level on tables, and at statement level on tables and views. <code>BEFORE</code> on truncate works only at statement level on tables, never at row level. <code>AFTER</code> triggers on insert, update, and delete work at row level on tables, and at statement level on tables and views. <code>AFTER</code> on truncate works only at statement level on tables, never at row level and never on views. <code>TRUNCATE</code> is the narrow case throughout: statement level and tables only.</p>
 <p>Put another way, before and after triggers on insert, update, and delete are the flexible everyday tools on tables and views at both levels, while truncate triggers always stay at statement level on tables. Keeping this table close prevents wasted effort such as asking for a row-level truncate trigger, which PostgreSQL rejects with an explicit "row triggers on TRUNCATE are not supported" error — the exact failure the truncate-guard demo hits on its first attempt.</p>
-<p>Picture the table as a grid in words. Down the left edge run the three timings. Across the top run the four events. Each cell then answers "row on table? statement on table? statement on view?" Mark every truncate-row cell with a cross — that column never allows row level. Mark every view cell in the truncate column with a cross as well. Everything else in the insert, update, and delete columns is a tick. One glance then tells you whether a planned trigger can exist before you write a line of function code.</p>
+<div class="diagram-container my-6 text-center">
+<table class="mx-auto text-sm">
+  <thead>
+    <tr>
+      <th>Timing</th>
+      <th><code>INSERT</code></th>
+      <th><code>UPDATE</code></th>
+      <th><code>DELETE</code></th>
+      <th><code>TRUNCATE</code></th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><code>BEFORE</code></td>
+      <td>✓ row on table<br>✓ statement on table<br>✓ statement on view</td>
+      <td>✓ row on table<br>✓ statement on table<br>✓ statement on view</td>
+      <td>✓ row on table<br>✓ statement on table<br>✓ statement on view</td>
+      <td>✗ row on table<br>✓ statement on table<br>✗ statement on view</td>
+    </tr>
+    <tr>
+      <td><code>AFTER</code></td>
+      <td>✓ row on table<br>✓ statement on table<br>✓ statement on view</td>
+      <td>✓ row on table<br>✓ statement on table<br>✓ statement on view</td>
+      <td>✓ row on table<br>✓ statement on table<br>✓ statement on view</td>
+      <td>✗ row on table<br>✓ statement on table<br>✗ statement on view</td>
+    </tr>
+    <tr>
+      <td><code>INSTEAD OF</code></td>
+      <td>✓ on views</td>
+      <td>✓ on views</td>
+      <td>✓ on views</td>
+      <td>✗ statement on view</td>
+    </tr>
+  </tbody>
+</table>
+<p class="text-xs text-slate-500 mt-2"><strong>Figure:</strong> The timing × event grid: each cell reads row on table, statement on table, statement on view; every truncate-row cell is a cross and the truncate column never allows a view.</p>
+</div>
 <p>Dialect extras worth filing in the margin rather than memorizing as new topics: MySQL has no truncate-trigger cell and no statement-level cells at all; SQL Server has no before row at all and reads affected rows from <code>inserted</code>/<code>deleted</code>; Snowflake and Databricks have no cells in this grid because they have no row triggers — auditing there moves to Streams, Change Data Feed, or append-only history tables.</p>
 <div class="warning-box">
   <p><strong>Pitfalls:</strong> Requesting <code>FOR EACH ROW</code> with <code>TRUNCATE</code> — always rejected. Requesting any trigger on a view for <code>TRUNCATE</code> — rejected. Assuming <code>INSTEAD OF</code> works on plain tables — it is a view technique. Forgetting that <code>BEFORE</code> statement triggers on views exist but cannot supply row images.</p>
@@ -732,7 +776,30 @@ EXECUTE PROCEDURE fn_players_name_changes_log();</code></pre>
   temperature NUMERIC
 );</code></pre>
 <p>A short <code>t</code> prefix marks a table at a glance, matching a naming habit where views and materialized views get their own prefixes in large estates. The business rule for the demo: any inserted temperature below negative thirty is replaced with zero before it lands. Values at or above that floor pass through untouched. Negative thirty is the plausibility floor for this sensor — anything colder is treated as a faulty reading rather than real weather.</p>
-<p>Visualize a number line from -100 to +30 with a gate at -30. Readings landing right of the gate walk through unchanged; readings landing left of the gate are carried to zero before they enter the table. One-sentence takeaway: the trigger is a gate, not a camera.</p>
+<div class="diagram-container my-6 text-center">
+<svg viewBox="0 0 640 240" class="diagram-svg" role="img" aria-label="Number line from -100 to +30 with a gate at -30; readings left of the gate are carried to 0 before entering the table, readings right of the gate pass through unchanged.">
+  <line x1="60" y1="130" x2="600" y2="130" stroke="currentColor" stroke-width="2"/>
+  <line x1="60" y1="122" x2="60" y2="138" stroke="currentColor" stroke-width="2"/>
+  <text x="60" y="160" text-anchor="middle" font-size="13" fill="currentColor">-100</text>
+  <line x1="350" y1="122" x2="350" y2="138" stroke="currentColor" stroke-width="2"/>
+  <text x="350" y="160" text-anchor="middle" font-size="13" fill="currentColor">-30</text>
+  <line x1="475" y1="122" x2="475" y2="138" stroke="currentColor" stroke-width="2"/>
+  <text x="475" y="160" text-anchor="middle" font-size="13" fill="currentColor">0</text>
+  <line x1="600" y1="122" x2="600" y2="138" stroke="currentColor" stroke-width="2"/>
+  <text x="600" y="160" text-anchor="middle" font-size="13" fill="currentColor">+30</text>
+  <line x1="350" y1="64" x2="350" y2="130" stroke="currentColor" stroke-width="3" stroke-dasharray="6 4"/>
+  <text x="350" y="50" text-anchor="middle" font-size="13" fill="currentColor">gate at -30</text>
+  <circle cx="150" cy="130" r="5" fill="currentColor"/>
+  <text x="150" y="112" text-anchor="middle" font-size="12" fill="currentColor">left of the gate</text>
+  <circle cx="545" cy="130" r="5" fill="currentColor"/>
+  <text x="545" y="112" text-anchor="middle" font-size="12" fill="currentColor">right of the gate</text>
+  <path d="M150 176 Q312 216 468 138" fill="none" stroke="currentColor" stroke-width="2" stroke-dasharray="5 4"/>
+  <polygon points="474,131 461,128 464,142" fill="currentColor"/>
+  <text x="250" y="232" text-anchor="middle" font-size="12" fill="currentColor">carried to 0 before it enters the table</text>
+  <text x="545" y="178" text-anchor="middle" font-size="12" fill="currentColor">passes through unchanged</text>
+</svg>
+<p class="text-xs text-slate-500 mt-2"><strong>Figure:</strong> A number line from <strong>-100</strong> to <strong>+30</strong> with the gate at <strong>-30</strong>: readings left of the gate are carried to <strong>0</strong> before they enter the table, readings right of it pass through unchanged.</p>
+</div>
 <div class="key-takeaway">
   <p><strong>Recap:</strong> One log table, one floor rule — below -30 becomes zero. Next, the worker that enforces it.</p>
 </div>
@@ -1066,9 +1133,6 @@ EXECUTE PROCEDURE generic_cancel_op();</code></pre>
   <p><strong>Pitfalls:</strong> Using triggers where constraints, defaults, or foreign keys already answer — heavier and harder to see. Letting trigger bodies grow into multi-page procedures — split and delegate to tested functions. Skipping the per-table trigger register on a busy table — the next incident review will ask for it.</p>
 </div>
 <p>Real-world: mature teams review every new trigger against this four-habit list plus a load test on production-sized writes before it ships, and they schedule periodic trigger audits because estates drift.</p>
-<div class="key-takeaway">
-  <p><strong>Exam note:</strong> Memorize the four habits as "no key rewrites, no write-while-reading, no read-while-writing, no heavy rollups on the write path." They are compact, quotable, and exactly the kind of list a checker rewards. With discipline covered, the lecture steps up from row triggers to server-level event triggers.</p>
-</div>
 
 <h2 id="35.16-event-triggers">35.16 Event Triggers</h2>
 <h3 id="35.16.1-how-event-triggers-differ">35.16.1 How event triggers differ</h3>
@@ -1211,15 +1275,7 @@ EXECUTE PROCEDURE fn_event_abort_create_table();</code></pre>
   <p><strong>Pitfalls:</strong> Binding prevention to command end instead of start — the table lands before the guard speaks. Leaving test windows in place after the demo — later creates fail mysteriously. Forgetting the tag filter so the window blocks alters and drops the policy never meant to touch.</p>
 </div>
 <p>Real-world: release teams enforce exactly this shape during business hours — schema changes queue outside the window while data writes flow normally — keeping shared estates stable when most users are active.</p>
-<div class="key-takeaway">
-  <p><strong>Exam note:</strong> Be able to explain why prevention needs <code>ddl_command_start</code>: start hooks can abort, end hooks can only record. That one sentence separates the audit build from the policy build and closes the lecture arc.</p>
-</div>
 
-<h2 id="exam-guidance-summary">Exam Guidance Summary</h2>
-<p>No mark splits, question types, or study chapters are stated in this material. The usable test signals are emphasis cues woven through the builds. Treat the before-versus-after split, the row-versus-statement split, and the truncate-only-at-statement-level rule as high-value checks. Expect hands-on tasks such as writing a two-step trigger with a function plus binding, tracing <code>NEW</code> and <code>OLD</code> through an audit insert, predicting whether a guard raises an exception or a notice, and explaining why a row-level truncate binding fails.</p>
-<div class="key-takeaway">
-  <p><strong>Exam note:</strong> The fixed alphabetical firing order and the <code>WHEN</code>-clause boolean rule with no subqueries are compact facts worth memorizing word for word. Add to the memory card: <code>BEFORE</code> reshapes while <code>AFTER</code> follows up, <code>FOR EACH ROW</code> visits rows while <code>FOR EACH STATEMENT</code> visits the statement once, event-trigger workers return <code>event_trigger</code> in any language but SQL, and prevention needs <code>ddl_command_start</code> while auditing can sit on start or end.</p>
-</div>
 
 <h2 id="key-industry-applications">Key Industry Applications</h2>
 <p>Real-world auditing tops the list, from player-name history to pay-table trails that no application path can bypass — the universal JSON logger in this lecture is the reusable form of that pattern. Cross-database checks mimic constraints where built-in keys cannot reach, with trigger-called routines standing in across the gap. Always-on steel-barrier logic guarantees summary-table pushes, count tables, and complex defaults on every write, including the notify-then-materialize shape that keeps counter estates fast. Schema-change audit trails and time-window creation bans protect shared estates during business hours through event triggers. Start and stop hooks aid speed study, fault tracing, replication toward far sites, and cascading follow-on work. The <code>plpgsql</code> functions, JSON row images with the row-to-JSON helper, UTC-normalized timestamps, and session-user capture form the reusable toolkit behind all of these builds — the same six-column log serves payroll, gaming, warehousing, and schema governance without rewrites.</p>
@@ -1240,139 +1296,6 @@ EXECUTE PROCEDURE fn_event_abort_create_table();</code></pre>
       - .revision-check — one self-check question (no options)
       - .revision-connections — linked concepts within this lecture
     ============================================================ -->
-    <section class="exam-revision-section">
-      <h2>Exam Revision Notes</h2>
-      <p class="revision-intro">Below is the distilled, exam-ready core.
-      Every entry comes from the full explanation above. Use this section
-      for rapid review; return to the main notes when a point needs more context.</p>
-  <div class="exam-revision-entry">
-    <h3 class="revision-topic">What a Trigger Is</h3>
-    <p class="revision-mustknow"><strong>Must-know:</strong> A trigger is a self-firing function on insert update delete truncate.</p>
-    <p class="revision-pitfall"><strong>Top pitfall:</strong> Calling a trigger manually.</p>
-    <p class="revision-check"><strong>Self-check:</strong> Function vs trigger?</p>
-    <p class="revision-connections"><strong>Connects to:</strong> 35.2</p>
-  </div>
-  <div class="exam-revision-entry">
-    <h3 class="revision-topic">Row-Level and Statement-Level Triggers</h3>
-    <p class="revision-mustknow"><strong>Must-know:</strong> FOR EACH ROW runs per row; FOR EACH STATEMENT runs once.</p>
-    <p class="revision-pitfall"><strong>Top pitfall:</strong> Expecting row images in a statement trigger.</p>
-    <p class="revision-check"><strong>Self-check:</strong> Twenty rows: how many calls?</p>
-    <p class="revision-connections"><strong>Connects to:</strong> 35.3</p>
-  </div>
-  <div class="exam-revision-entry">
-    <h3 class="revision-topic">Trigger Reference Table</h3>
-    <p class="revision-mustknow"><strong>Must-know:</strong> Truncate is statement-on-table only.</p>
-    <p class="revision-pitfall"><strong>Top pitfall:</strong> Requesting row-level truncate.</p>
-    <p class="revision-check"><strong>Self-check:</strong> Which cells allow truncate?</p>
-    <p class="revision-connections"><strong>Connects to:</strong> 35.4</p>
-  </div>
-  <div class="exam-revision-entry">
-    <h3 class="revision-topic">Pros and Cons of Triggers</h3>
-    <p class="revision-mustknow"><strong>Must-know:</strong> Triggers guarantee follow-on work on every write path.</p>
-    <p class="revision-pitfall"><strong>Top pitfall:</strong> Giant trigger bodies.</p>
-    <p class="revision-check"><strong>Self-check:</strong> Audit too much or too little?</p>
-    <p class="revision-connections"><strong>Connects to:</strong> 35.5</p>
-  </div>
-  <div class="exam-revision-entry">
-    <h3 class="revision-topic">Trigger Key Points</h3>
-    <p class="revision-mustknow"><strong>Must-know:</strong> Reads use views; writes share many alphabetical triggers.</p>
-    <p class="revision-pitfall"><strong>Top pitfall:</strong> Asking for a SELECT trigger.</p>
-    <p class="revision-check"><strong>Self-check:</strong> Can one trigger watch three events?</p>
-    <p class="revision-connections"><strong>Connects to:</strong> 35.6</p>
-  </div>
-  <div class="exam-revision-entry">
-    <h3 class="revision-topic">Steps to Create a Trigger</h3>
-    <p class="revision-mustknow"><strong>Must-know:</strong> Build the function first, then bind it.</p>
-    <p class="revision-pitfall"><strong>Top pitfall:</strong> Binding before the function exists.</p>
-    <p class="revision-check"><strong>Self-check:</strong> Which clause picks row vs statement?</p>
-    <p class="revision-connections"><strong>Connects to:</strong> 35.7</p>
-  </div>
-  <div class="exam-revision-entry">
-    <h3 class="revision-topic">Data Auditing with a Players Trigger</h3>
-    <p class="revision-mustknow"><strong>Must-know:</strong> Compare images; log OLD on genuine change; return NEW.</p>
-    <p class="revision-pitfall"><strong>Top pitfall:</strong> Logging without the IF guard.</p>
-    <p class="revision-check"><strong>Self-check:</strong> Why store OLD.name?</p>
-    <p class="revision-connections"><strong>Connects to:</strong> 35.8</p>
-  </div>
-  <div class="exam-revision-entry">
-    <h3 class="revision-topic">Modify Data at INSERT Time</h3>
-    <p class="revision-mustknow"><strong>Must-know:</strong> Only BEFORE can reshape the landing row.</p>
-    <p class="revision-pitfall"><strong>Top pitfall:</strong> Using equals instead of assign operator.</p>
-    <p class="revision-check"><strong>Self-check:</strong> Before or after for repair?</p>
-    <p class="revision-connections"><strong>Connects to:</strong> 35.9</p>
-  </div>
-  <div class="exam-revision-entry">
-    <h3 class="revision-topic">Trigger Variables Display</h3>
-    <p class="revision-mustknow"><strong>Must-know:</strong> Row images plus context variables drive generic workers.</p>
-    <p class="revision-pitfall"><strong>Top pitfall:</strong> Hard-coding table names.</p>
-    <p class="revision-check"><strong>Self-check:</strong> What does TG_WHEN hold?</p>
-    <p class="revision-connections"><strong>Connects to:</strong> 35.10</p>
-  </div>
-  <div class="exam-revision-entry">
-    <h3 class="revision-topic">Disallow DELETE on a Table</h3>
-    <p class="revision-mustknow"><strong>Must-know:</strong> Return null cancels; after raises, before notifies.</p>
-    <p class="revision-pitfall"><strong>Top pitfall:</strong> Deploying both guards at once.</p>
-    <p class="revision-check"><strong>Self-check:</strong> Why two delete triggers?</p>
-    <p class="revision-connections"><strong>Connects to:</strong> 35.11</p>
-  </div>
-  <div class="exam-revision-entry">
-    <h3 class="revision-topic">Disallow TRUNCATE on a Table</h3>
-    <p class="revision-mustknow"><strong>Must-know:</strong> TRUNCATE fires statement-only; guard with exception.</p>
-    <p class="revision-pitfall"><strong>Top pitfall:</strong> Retrying FOR EACH ROW.</p>
-    <p class="revision-check"><strong>Self-check:</strong> Why did row truncate fail?</p>
-    <p class="revision-connections"><strong>Connects to:</strong> 35.12</p>
-  </div>
-  <div class="exam-revision-entry">
-    <h3 class="revision-topic">Universal Audit Trigger</h3>
-    <p class="revision-mustknow"><strong>Must-know:</strong> Guarded row_to_json capture; null on the correct side.</p>
-    <p class="revision-pitfall"><strong>Top pitfall:</strong> Converting null image without guard.</p>
-    <p class="revision-check"><strong>Self-check:</strong> Why JSON over named columns?</p>
-    <p class="revision-connections"><strong>Connects to:</strong> 35.13</p>
-  </div>
-  <div class="exam-revision-entry">
-    <h3 class="revision-topic">Conditional Triggers with WHEN</h3>
-    <p class="revision-mustknow"><strong>Must-know:</strong> WHEN true fires; subqueries barred; statement grain for clocks.</p>
-    <p class="revision-pitfall"><strong>Top pitfall:</strong> RAISE without format specifier.</p>
-    <p class="revision-check"><strong>Self-check:</strong> Why no subquery in WHEN?</p>
-    <p class="revision-connections"><strong>Connects to:</strong> 35.14</p>
-  </div>
-  <div class="exam-revision-entry">
-    <h3 class="revision-topic">Disallow Changes on a Primary Key</h3>
-    <p class="revision-mustknow"><strong>Must-know:</strong> UPDATE OF id blocks key edits, frees sibling edits.</p>
-    <p class="revision-pitfall"><strong>Top pitfall:</strong> Guarding the whole row.</p>
-    <p class="revision-check"><strong>Self-check:</strong> Does the guard block deletes?</p>
-    <p class="revision-connections"><strong>Connects to:</strong> 35.15</p>
-  </div>
-  <div class="exam-revision-entry">
-    <h3 class="revision-topic">Cautious Use of Triggers</h3>
-    <p class="revision-mustknow"><strong>Must-know:</strong> Keep trigger bodies lean and off the write path.</p>
-    <p class="revision-pitfall"><strong>Top pitfall:</strong> Triggers where constraints answer.</p>
-    <p class="revision-check"><strong>Self-check:</strong> Name the four habits?</p>
-    <p class="revision-connections"><strong>Connects to:</strong> 35.16</p>
-  </div>
-  <div class="exam-revision-entry">
-    <h3 class="revision-topic">Event Triggers</h3>
-    <p class="revision-mustknow"><strong>Must-know:</strong> Event workers return event_trigger, any language but SQL.</p>
-    <p class="revision-pitfall"><strong>Top pitfall:</strong> Declaring RETURNS trigger.</p>
-    <p class="revision-check"><strong>Self-check:</strong> Start or end for prevention?</p>
-    <p class="revision-connections"><strong>Connects to:</strong> 35.17</p>
-  </div>
-  <div class="exam-revision-entry">
-    <h3 class="revision-topic">Audit Event Trigger Build</h3>
-    <p class="revision-mustknow"><strong>Must-know:</strong> Log user event tag moment; drop to remove watcher.</p>
-    <p class="revision-pitfall"><strong>Top pitfall:</strong> Missing RAISE format specifier.</p>
-    <p class="revision-check"><strong>Self-check:</strong> Scoped or unscoped net?</p>
-    <p class="revision-connections"><strong>Connects to:</strong> 35.18</p>
-  </div>
-  <div class="exam-revision-entry">
-    <h3 class="revision-topic">Prevent Schema Changes by Policy</h3>
-    <p class="revision-mustknow"><strong>Must-know:</strong> Prevention needs start hooks; end hooks only record.</p>
-    <p class="revision-pitfall"><strong>Top pitfall:</strong> Binding prevention to command end.</p>
-    <p class="revision-check"><strong>Self-check:</strong> Why start for blocking?</p>
-    <p class="revision-connections"><strong>Connects to:</strong> 35.17</p>
-  </div>
-
-    </section>
   </div>
 </body>
 </html>

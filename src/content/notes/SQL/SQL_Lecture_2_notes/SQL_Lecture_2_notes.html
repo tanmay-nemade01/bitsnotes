@@ -271,7 +271,16 @@
   <p>A <em>transaction table</em> (one row per event, here one row per film in movies) sits at the center. <em>Entity tables</em> (actors, directors) describe the who. <em>Link and outcome tables</em> (movies_actors, movies_revenues) describe the pairings and the money that result from the event. This center-plus-satellites shape is the standard pattern in media catalogs, shops, and booking systems.</p>
 </div>
 <p>Across database systems this map looks the same. In Postgres the five tables live in the public schema of the movies database. In MySQL the same five tables live inside the movies schema with the same column names. In Snowflake and Databricks the same logical map applies, only the physical storage differs: Snowflake stores each table as micro-partitioned files with automatic indexing, while Databricks stores each table as Delta files with a transaction log. The table names and their roles stay fixed, so work learned here transfers directly.</p>
-<p>Picture the map as a hub with spokes. The hub is movies. One spoke runs to directors, one spoke runs to movies_revenues, and one spoke runs through movies_actors out to actors. The takeaway in one line: people tables feed the center, and outcome tables hang off the center. Every later join follows these spokes.</p>
+<div class="diagram-container my-6 text-center">
+<pre class="mermaid">
+graph TD
+  directors[directors] --> movies[movies]
+  movies --> movies_revenues[movies_revenues]
+  movies --> movies_actors[movies_actors]
+  movies_actors --> actors[actors]
+</pre>
+<p class="text-xs text-slate-500 mt-2"><strong>Figure:</strong> Movies is the hub. One spoke runs to directors, one runs to movies_revenues, and one runs through movies_actors out to actors; people tables feed the center and outcome tables hang off it.</p>
+</div>
 <h3 id="2.1.2-primary-keys-and-foreign-keys-at-a-glance">2.1.2 Primary Keys and Foreign Keys at a Glance</h3>
 <p>Each people table and each main table has its own primary key. A <em>primary key</em> (a column whose value is unique for each row and belongs to that table) keeps every row addressable. So actor_id is the primary key of actors, director_id is the primary key of directors, movie_id is the primary key of movies, and revenue_id is the primary key of movies_revenues.</p>
 <div class="key-concept">
@@ -283,9 +292,6 @@
   <p><strong>Scope:</strong> primary keys promise uniqueness inside one table only. They do not promise that two tables use the same numbering. Actor 7 and movie 7 are unrelated numbers that happen to match. <strong>Assumption:</strong> foreign keys assume the parent row already exists. Load parents before children, or the check fails by design.</p>
 </div>
 <p>Cross-system note: the idea is identical everywhere, and only the declaration wording shifts. Postgres uses SERIAL PRIMARY KEY with a separate REFERENCES clause, MySQL uses INT AUTO_INCREMENT PRIMARY KEY with FOREIGN KEY REFERENCES, Snowflake often uses NUMBER AUTOINCREMENT PRIMARY KEY with REFERENCES, and Databricks Delta uses plain INT with FOREIGN KEY constraints that are informational (not enforced) in older runtimes. The lecture uses the Postgres form because the exercises run in pgAdmin against Postgres.</p>
-<div class="key-takeaway">
-  <p><strong>Exam note:</strong> be ready to name all four single-column primary keys (actor_id, director_id, movie_id, revenue_id), point out that movies_actors carries two foreign keys, and state that domestic means inside the US while international means outside the US.</p>
-</div>
 <h3 id="2.1.3-data-types-seen-in-a-quick-browse">2.1.3 Data Types Seen in a Quick Browse</h3>
 <p>Browsing the data shows the intended types. Movie length is an integer value such as hours or minutes of run time. Movie language is character or varchar with length 20. Age certificate is a short code such as PG, 12, 13, 15, and similar ratings. Release date is a date. Director_id is an integer that matches the serial key in directors. In movies_revenues, movie_id is an integer foreign key, and revenues_domestic and revenues_international are numeric values with decimal places.</p>
 <div class="key-concept">
@@ -352,9 +358,6 @@
 <div class="example-box">
   <p>Small-number trace: insert a row with only last_name supplied. The engine pulls ticket 1 for actor_id, stores the given last_name, leaves first_name empty, and stamps the dates supplied. Insert a second row and actor_id becomes <strong>2 automatically</strong>. Try inserting with no last_name and the statement is rejected for violating NOT NULL. That accept-then-reject pair is the full behavior check.</p>
 </div>
-<div class="key-takeaway">
-  <p><strong>Exam note:</strong> SERIAL auto-fills plus one and stays unique; VARCHAR needs its length; NOT NULL forces a value; a missing comma points at the next column.</p>
-</div>
 <h3 id="2.2.4-audit-columns-add-date-and-update-date">2.2.4 Audit Columns Add Date and Update Date</h3>
 <p>Two extra date columns, add_date and update_date, track when a row was added and when it was last changed. They are simple to add and they pay off when fresh rows need review. A larger team setup can also add add_by as VARCHAR(100) to record who added the row. That gives who plus when for both creation and last change. For now the example keeps only add_date and update_date.</p>
 <div class="key-concept">
@@ -410,9 +413,6 @@
 <div class="warning-box">
   <p>SELECT star is a structure flashlight here, not a production query pattern. On wide or huge tables it drags back every column. For checks it is ideal; for application code, name only the columns needed.</p>
 </div>
-<div class="key-takeaway">
-  <p><strong>Exam note:</strong> copy the people-table template, run the directors table build, then prove it with the empty SELECT structure check before loading any rows.</p>
-</div>
 
 <h2 id="2.4-creating-the-movies-table-with-a-foreign-key">2.4 Creating the Movies Table With a Foreign Key</h2>
 <h3 id="2.4.1-movie-columns-and-types">2.4.1 Movie Columns and Types</h3>
@@ -452,9 +452,6 @@
 <div class="warning-box">
   <p>Two traps: typing the link as the wrong type (VARCHAR pointing at an INT key) fails or silently blocks the constraint, and loading movies before directors fails every row because no parent exists yet. Match the type, keep the name, and load directors first.</p>
 </div>
-<div class="key-takeaway">
-  <p><strong>Exam note:</strong> state the REFERENCES recipe (same-type column plus REFERENCES table plus column), name the proof constraint movies_director_id_fkey, and explain why same-name links keep future joins readable.</p>
-</div>
 
 <h2 id="2.5-creating-the-movies-revenues-table">2.5 Creating the Movies Revenues Table</h2>
 <h3 id="2.5.1-build-statement-with-money-columns">2.5.1 Build Statement With Money Columns</h3>
@@ -487,9 +484,6 @@
 <p>Picture airport luggage tags. Revenue_id is the unique tag on each money bag. Movie_id is the destination tag that must match a real flight (a real movie). The Constraints tab is the tag scanner readout: one line per tag type. When the scanner shows both tags, the table can board data.</p>
 <div class="example-box">
   <p>Audit trace: expand movies_revenues, then Constraints, and confirm <strong>movies_revenues_movie_id_fkey is listed</strong>. Run the empty SELECT and confirm <strong>revenue_id integer, movie_id integer, revenues_domestic numeric, revenues_international numeric</strong>. Both confirmations together mean the link and the money types are stored correctly.</p>
-</div>
-<div class="key-takeaway">
-  <p><strong>Exam note:</strong> money stays NUMERIC with cents, every revenue row points at a real movie, and the fkey entry plus the empty SELECT prove both facts before loading.</p>
 </div>
 
 <h2 id="2.6-junction-table-for-movies-and-actors">2.6 Junction Table for Movies and Actors</h2>
@@ -527,9 +521,6 @@
 <div class="warning-box">
   <p>A junction table with its own extra id column and no pair key allows silent duplicates, which then double-count cast queries. When only the pair key guards the sheet, duplicates cannot sneak in. Keep the pair key even when an id column is added for tooling.</p>
 </div>
-<div class="key-takeaway">
-  <p><strong>Exam note:</strong> two REFERENCES guard the names, one composite key guards the pair, and the sign-up sheet stays narrow no matter how casts grow.</p>
-</div>
 
 <h2 id="2.7-loading-sample-data-in-the-right-order">2.7 Loading Sample Data in the Right Order</h2>
 <h3 id="2.7.1-file-order-and-insert-steps">2.7.1 File Order and Insert Steps</h3>
@@ -562,9 +553,6 @@ ORDER BY cast_size DESC;</code></pre>
 <p>The first two confirm the headline counts. The third confirms the shape behind 70: most films show one or two cast rows, a few show more, and none show zero in this sample. In MySQL, Snowflake, and Databricks the same counts and the same COUNT star checks apply; only the file-open path differs (MySQL Workbench, Snowflake worksheets, Databricks notebooks).</p>
 <div class="example-box">
   <p>Count audit: directors <strong>37</strong>, actors <strong>147</strong>, movies <strong>53</strong>, movies_actors <strong>70</strong>, movies_revenues <strong>53</strong>. The sense-check: pairs exceed films because casts share films, while revenue rows equal films because money here is one row per film. When all five match, the load is done.</p>
-</div>
-<div class="key-takeaway">
-  <p><strong>Exam note:</strong> load parents before children, then match the five counts 37, 147, 53, 70, 53. Out-of-order loads fail on REFERENCES by design.</p>
 </div>
 
 <h2 id="2.8-creating-tables-with-the-pgadmin-gui">2.8 Creating Tables With the pgAdmin GUI</h2>
@@ -630,9 +618,6 @@ ALTER TABLE accounts ALTER COLUMN is_enabled SET NOT NULL;</code></pre>
 <div class="warning-box">
   <p>Adding a NOT NULL column to a table that already holds rows needs a plan for old rows: backfill them first or add the column with a default in one move. Adding the bare column, then flipping NOT NULL with NULLs still present, fails on existing data.</p>
 </div>
-<div class="key-takeaway">
-  <p><strong>Exam note:</strong> two views prove structure (headers plus Properties with accounts_pkey), and the flag pattern is create, then quote the default as 'Y', then require NOT NULL.</p>
-</div>
 
 <h2 id="2.10-rename-drop-and-change-column-type">2.10 Rename, Drop, and Change Column Type</h2>
 <h3 id="2.10.1-rename-a-column">2.10.1 Rename a Column</h3>
@@ -678,9 +663,6 @@ ALTER TABLE public.accounts ALTER COLUMN is_enabled TYPE varchar(2);</code></pre
 <div class="example-box">
   <p>Type-move trace: is_enabled as varchar(2) holds 'Y'. Convert to character(2), Save, and the value still reads <strong>'Y'</strong> with padding rules changed. Convert back to varchar and the SQL tab shows <strong>ALTER COLUMN is_enabled TYPE varchar</strong>. Same value, new container, both moves confirmed in Properties.</p>
 </div>
-<div class="key-takeaway">
-  <p><strong>Exam note:</strong> rename with RENAME, drop only the highlighted and confirmed column, and change types only inside one family in the GUI; cross-family moves need a copy with casts.</p>
-</div>
 
 <h2 id="2.11-deleting-tables-from-a-database">2.11 Deleting Tables From a Database</h2>
 <h3 id="2.11.1-drop-table-by-gui-and-by-sql">2.11.1 DROP TABLE by GUI and by SQL</h3>
@@ -717,18 +699,6 @@ DROP TABLE roles CASCADE;</code></pre>
 <div class="example-box">
   <p>Safety drill: in the test database, confirm no Constraints entry in any other table names roles. Run DROP TABLE roles there and re-run the smoke SELECT counts. Only when the test run shows <strong>no dependent errors</strong> is the live run even considered. That test-first gate is the behavior that exams and employers both reward.</p>
 </div>
-<div class="key-takeaway">
-  <p><strong>Exam note:</strong> test DROP TABLE in a test database first, check foreign key links, and confirm removal with both the does-not-exist error and a refreshed table list.</p>
-</div>
-
-<h2 id="exam-guidance-summary">Exam Guidance Summary</h2>
-<p>No formal mark plan is stated in this material. Practical checks that act like exam checks are: refresh Tables after each CREATE and confirm the table shows; open Constraints to confirm each foreign key such as movies_director_id_fkey; run SELECT * after each CREATE to confirm types and lengths; load sample files in parent-before-child order and match counts 37 directors, 147 actors, 53 movies, 70 movies_actors, 53 revenues; when adding a default in pgAdmin, use quoted 'Y' not bare Y; when dropping a column, confirm the highlighted row name; when changing types across families such as numeric to varchar, do not rely on the GUI drop-down and use a planned copy with casts instead; before DROP TABLE, test first and check foreign key links.</p>
-<div class="key-takeaway">
-  <p><strong>Exam note:</strong> the five counts to memorize are 37 directors, 147 actors, 53 movies, 70 cast pairs, and 53 revenues, loaded parents-first. Quote text defaults as 'Y' in pgAdmin or the save fails. Test DROP TABLE in a test database first and check foreign key links before any live drop.</p>
-</div>
-<div class="example-box">
-  <p>Self-test sweep: name the four single-column keys, spell the REFERENCES recipe, quote the 'Y' default correctly, and recite the 37, 147, 53, 70, 53 load counts. When all four answers come without notes, this lecture is <strong>exam-ready</strong>.</p>
-</div>
 
 <h2 id="key-industry-applications">Key Industry Applications</h2>
 <p>Real-world: movies database as a small model of media catalog plus transactions and revenues. Real-world: SERIAL auto-increment keys for clean primary keys. Real-world: VARCHAR lengths tuned per field such as 150 for names, 100 for film names, 20 for language and nationality, 10 for age codes. Real-world: NOT NULL rules to force required data such as last names and film names. Real-world: REFERENCES foreign keys to keep movies tied to directors, revenues tied to movies, and cast pairs tied to both. Real-world: NUMERIC(10, 2) for money with cents. Real-world: junction narrow pair table for many-to-many cast links with composite key to block dupes and speed lookups. Real-world: parent-before-child load order for fixtures and restores. Real-world: audit columns add_date, update_date, and add_by for who and when. Real-world: pgAdmin GUI create, properties, constraints, SQL preview for fast admin. Real-world: UUID for secure tight keys and JSON for flexible payloads in Postgres. Real-world: ALTER TABLE RENAME, DROP COLUMN, ALTER COLUMN TYPE for live schema changes. Real-world: DROP TABLE caution on live systems with dependency checks.</p>
@@ -752,90 +722,6 @@ DROP TABLE roles CASCADE;</code></pre>
       - .revision-check — one self-check question (no options)
       - .revision-connections — linked concepts within this lecture
     ============================================================ -->
-    <section class="exam-revision-section">
-      <h2>Exam Revision Notes</h2>
-      <p class="revision-intro">Below is the distilled, exam-ready core.
-      Every entry comes from the full explanation above. Use this section
-      for rapid review; return to the main notes when a point needs more context.</p>
-<div class="exam-revision-entry">
-  <h3 class="revision-topic">Movie Database Overview</h3>
-  <p class="revision-mustknow"><strong>Must-know:</strong> Movies is the hub; actors and directors are people tables; movies_actors links pairs and movies_revenues holds domestic inside US plus international outside US money.</p>
-  <p class="revision-pitfall"><strong>Top pitfall:</strong> Storing dates or money as text, breaking sorts and sums</p>
-  <p class="revision-check"><strong>Self-check:</strong> Which four columns are single-column primary keys and which table carries two foreign keys?</p>
-  <p class="revision-connections"><strong>Connects to:</strong> 2.2, 2.4</p>
-</div>
-<div class="exam-revision-entry">
-  <h3 class="revision-topic">Creating the Movies Database and the Actors Table</h3>
-  <p class="revision-mustknow"><strong>Must-know:</strong> CREATE DATABASE movies then CREATE TABLE actors statement with SERIAL key and audit dates; last_name NOT NULL forces a value.</p>
-  <p class="revision-pitfall"><strong>Top pitfall:</strong> Missing comma between column lines fails at the next column</p>
-  <p class="revision-check"><strong>Self-check:</strong> What does SERIAL do and which actor column is NOT NULL?</p>
-  <p class="revision-connections"><strong>Connects to:</strong> 2.3, 2.4</p>
-</div>
-<div class="exam-revision-entry">
-  <h3 class="revision-topic">Creating the Directors Table</h3>
-  <p class="revision-mustknow"><strong>Must-know:</strong> Directors table build copies the people-table template with nationality VARCHAR(20); empty SELECT structure check proves stored types.</p>
-  <p class="revision-pitfall"><strong>Top pitfall:</strong> Misspelling VARCHAR as VARCHRA fails at run time</p>
-  <p class="revision-check"><strong>Self-check:</strong> Why does director_id show as integer after using SERIAL?</p>
-  <p class="revision-connections"><strong>Connects to:</strong> 2.2, 2.4</p>
-</div>
-<div class="exam-revision-entry">
-  <h3 class="revision-topic">Creating the Movies Table With a Foreign Key</h3>
-  <p class="revision-mustknow"><strong>Must-know:</strong> Movies REFERENCES directors link via same-type director_id plus REFERENCES clause; movies_director_id_fkey proves the stored constraint.</p>
-  <p class="revision-pitfall"><strong>Top pitfall:</strong> Wrong link type or loading movies before directors breaks the REFERENCES check</p>
-  <p class="revision-check"><strong>Self-check:</strong> What two parts make a foreign key column plus clause?</p>
-  <p class="revision-connections"><strong>Connects to:</strong> 2.1, 2.5</p>
-</div>
-<div class="exam-revision-entry">
-  <h3 class="revision-topic">Creating the Movies Revenues Table</h3>
-  <p class="revision-mustknow"><strong>Must-know:</strong> CREATE TABLE movies_revenues with NUMERIC money columns NUMERIC(10,2); movies_revenues_movie_id_fkey plus empty SELECT prove link and types.</p>
-  <p class="revision-pitfall"><strong>Top pitfall:</strong> Using float for money drifts by cents; NUMERIC keeps exact decimals</p>
-  <p class="revision-check"><strong>Self-check:</strong> What do precision 10 and scale 2 mean in NUMERIC(10, 2)?</p>
-  <p class="revision-connections"><strong>Connects to:</strong> 2.4, 2.7</p>
-</div>
-<div class="exam-revision-entry">
-  <h3 class="revision-topic">Junction Table for Movies and Actors</h3>
-  <p class="revision-mustknow"><strong>Must-know:</strong> Junction composite primary key PRIMARY KEY (movie_id, actor_id) with two REFERENCES guards; sign-up sheet movies actors pairs stay narrow.</p>
-  <p class="revision-pitfall"><strong>Top pitfall:</strong> Adding only an id key without the pair key allows silent duplicate pairs</p>
-  <p class="revision-check"><strong>Self-check:</strong> Why is neither junction column unique alone but the pair unique?</p>
-  <p class="revision-connections"><strong>Connects to:</strong> 2.4, 2.7</p>
-</div>
-<div class="exam-revision-entry">
-  <h3 class="revision-topic">Loading Sample Data in the Right Order</h3>
-  <p class="revision-mustknow"><strong>Must-know:</strong> Load sample directors actors movies and verify row counts in parent order: 37, 147, 53, 70 pairs, 53 revenues.</p>
-  <p class="revision-pitfall"><strong>Top pitfall:</strong> Running a child file before its parent fails every row on REFERENCES</p>
-  <p class="revision-check"><strong>Self-check:</strong> What is the safe five-file load order and the five counts?</p>
-  <p class="revision-connections"><strong>Connects to:</strong> 2.4, 2.6</p>
-</div>
-<div class="exam-revision-entry">
-  <h3 class="revision-topic">Creating Tables With the pgAdmin GUI</h3>
-  <p class="revision-mustknow"><strong>Must-know:</strong> Build accounts table in pgAdmin GUI with timestamp columns; plain varchar passwords are a starter stand-in and UUID plus JSON get later topics.</p>
-  <p class="revision-pitfall"><strong>Top pitfall:</strong> Saving on the wrong database builds a look-alike table nobody finds</p>
-  <p class="revision-check"><strong>Self-check:</strong> Which GUI toggle makes account_id the primary key?</p>
-  <p class="revision-connections"><strong>Connects to:</strong> 2.2, 2.9</p>
-</div>
-<div class="exam-revision-entry">
-  <h3 class="revision-topic">Viewing Structure and Adding a Column</h3>
-  <p class="revision-mustknow"><strong>Must-know:</strong> Add is_enabled column with quoted default and NOT NULL; unquoted default Y save fails and quoted &#x27;Y&#x27; saves.</p>
-  <p class="revision-pitfall"><strong>Top pitfall:</strong> Adding NOT NULL over existing NULL rows fails until old rows are backfilled</p>
-  <p class="revision-check"><strong>Self-check:</strong> Why does DEFAULT Y fail but DEFAULT &#x27;Y&#x27; save?</p>
-  <p class="revision-connections"><strong>Connects to:</strong> 2.8, 2.10</p>
-</div>
-<div class="exam-revision-entry">
-  <h3 class="revision-topic">Rename, Drop, and Change Column Type</h3>
-  <p class="revision-mustknow"><strong>Must-know:</strong> Rename drop and change column type with ALTER TABLE; confirm highlighted column name before drop; GUI type moves stay inside one family.</p>
-  <p class="revision-pitfall"><strong>Top pitfall:</strong> Dropping the wrong highlighted row destroys live data with no Undo</p>
-  <p class="revision-check"><strong>Self-check:</strong> Which ALTER TABLE form renames add_date to add_date_new?</p>
-  <p class="revision-connections"><strong>Connects to:</strong> 2.9, 2.11</p>
-</div>
-<div class="exam-revision-entry">
-  <h3 class="revision-topic">Deleting Tables From a Database</h3>
-  <p class="revision-mustknow"><strong>Must-know:</strong> CREATE roles practice table then DROP TABLE roles; test DROP TABLE and check foreign keys before any live drop.</p>
-  <p class="revision-pitfall"><strong>Top pitfall:</strong> Dropping a parent with live children breaks queries and loads</p>
-  <p class="revision-check"><strong>Self-check:</strong> What two checks prove roles is truly gone?</p>
-  <p class="revision-connections"><strong>Connects to:</strong> 2.10, 2.7</p>
-</div>
-
-    </section>
   </div>
 </body>
 </html>

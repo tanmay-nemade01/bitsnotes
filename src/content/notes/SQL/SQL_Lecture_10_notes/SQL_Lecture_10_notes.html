@@ -339,12 +339,18 @@ DETAIL: column value_num of table sample depends on type positive_numeric</code>
     <li><strong>Cross-row / Cross-table restrictions:</strong> A domain <code>CHECK</code> constraint can evaluate only the candidate value (<code>VALUE</code>). It cannot query other columns, reference other tables, or call non-immutable subqueries.</li>
   </ul>
 </div>
-<p><strong>Visualizing Domain Architecture:</strong> Think of a database column as a three-tiered pipeline:</p>
-<ol>
-  <li><strong>Base Storage Layer (Bottom):</strong> The primitive engine type (such as <code>VARCHAR</code> or <code>INT</code>) determining physical disk representation and byte width.</li>
-  <li><strong>Domain Validation Layer (Middle):</strong> The custom constraint gate enforcing defaults, nullability rules, and check predicates.</li>
-  <li><strong>Application Table Layer (Top):</strong> The table schemas (<code>locations</code>, <code>addresses</code>, <code>users</code>) declaring columns typed as the domain. Any data reaching the storage layer must pass through the validation gate.</li>
-</ol>
+<div class="diagram-container my-6 text-center">
+  <pre class="mermaid">
+flowchart TD
+    A["Application Table Layer<br/>locations, addresses, users<br/>columns typed as the domain"]
+    B["Domain Validation Layer<br/>DEFAULT, NOT NULL, CHECK predicates"]
+    C["Base Storage Layer<br/>VARCHAR or INT disk representation"]
+    A -->|"assigned, inserted, updated, cast"| B
+    B -->|"P(v) = TRUE"| C
+    B -->|"P(v) = FALSE"| R["Transaction aborted, value rejected"]
+  </pre>
+  <p class="text-xs text-slate-500 mt-2"><strong>Figure:</strong> The three-tiered domain pipeline: values from application tables must pass the domain validation layer before reaching base storage.</p>
+</div>
 <p><strong>Cross-Engine Implementation Differences:</strong> Different database engines take fundamentally different approaches to reusable type constraints:</p>
 <table>
   <thead>
@@ -395,9 +401,6 @@ DETAIL: column value_num of table sample depends on type positive_numeric</code>
   <p><strong>Recap + Bridge:</strong> A domain encapsulates a single scalar base type with reusable check constraints and default values, standardizing validation across tables. But what if your application needs to group multiple related fields—such as a street, city, and postal code—into a single cohesive record type? For multi-attribute data structures, PostgreSQL provides composite types, which we examine next in Section 10.2.</p>
 </div>
 <p><strong>Real-World & Domain Connection:</strong> In enterprise architectures, centralizing domain definitions like <code>proper_email</code>, <code>us_postal_code</code>, and <code>currency_code</code> ensures company-wide data standardization across multiple microservices sharing a PostgreSQL database. For example, financial compliance systems use domains to guarantee that monetary transaction columns across billing, payroll, and invoicing tables never store negative amounts or unapproved ISO currency symbols.</p>
-<div class="key-takeaway">
-  <p><strong>Exam note:</strong> Questions frequently test whether a domain can be used outside its schema; remember that domains are schema-scoped and only accessible within their schema unless qualified. Additionally, be prepared to explain why <code>DROP DOMAIN ... CASCADE</code> is dangerous (it drops dependent columns) and how to safely migrate away from a domain using <code>ALTER TABLE ... ALTER COLUMN TYPE</code>.</p>
-</div>
 <h3 id="10.1.7-student-questions-and-answers">10.1.7 Student Questions and Answers</h3>
 <div class="important-note">
   <p><strong>Q:</strong> Why did <code>INSERT INTO locations VALUES ('123 London');</code> trigger a syntax error when inserting into the locations table?</p>
@@ -527,12 +530,17 @@ ALTER TYPE my_underscore_address SET SCHEMA test_sqm;</code></pre>
     <li><strong>Relational Normalization:</strong> Composite types should represent tightly coupled attributes (such as 2D/3D points or address coordinates). They should not be used to bypass normalization for one-to-many relationships, which belong in separate tables with foreign keys.</li>
   </ul>
 </div>
-<p><strong>Visualizing Composite Records in Table Storage:</strong> A standard table stores primitive columns as sequential values in the row tuple header. When a composite type is introduced:</p>
-<ol>
-  <li><strong>Outer Row Header:</strong> Contains column pointers for the main table.</li>
-  <li><strong>Composite Field Payload:</strong> The composite column contains an internal tuple descriptor packing the subfield values (<code>city</code>, <code>country</code>).</li>
-  <li><strong>Subfield Accessor:</strong> The SQL parser resolves <code>(table.column).subfield</code> by looking up the composite type's catalog definition and extracting the attribute at the matching byte offset.</li>
-</ol>
+<div class="diagram-container my-6 text-center">
+  <pre class="mermaid">
+flowchart LR
+    H["Outer Row Header<br/>column pointers for the main table"]
+    P["Composite Field Payload<br/>internal tuple descriptor: city, country"]
+    S["Subfield Accessor<br/>(table.column).subfield<br/>catalog lookup, matching byte offset"]
+    H --> P
+    P --> S
+  </pre>
+  <p class="text-xs text-slate-500 mt-2"><strong>Figure:</strong> A composite column stores an internal tuple descriptor whose subfields are resolved through the type's catalog definition.</p>
+</div>
 <p><strong>Cross-Engine Implementation Differences:</strong> Support for structured composite types varies significantly across modern database engines:</p>
 <table>
   <thead>
@@ -582,9 +590,6 @@ ALTER TYPE my_underscore_address SET SCHEMA test_sqm;</code></pre>
   <p><strong>Recap + Bridge:</strong> Composite types group heterogeneous fields into a single structured record, providing clean encapsulation for multi-attribute entities. However, what if your application does not need multi-field records, but instead requires a column to strictly allow a static, ordered list of discrete labels (such as currency codes or workflow states)? For this requirement, PostgreSQL provides Enumerated Data Types (ENUMs), which we explore in Section 10.3.</p>
 </div>
 <p><strong>Real-World & Domain Connection:</strong> Composite types such as <code>address</code> or <code>inventory_item</code> allow e-commerce, logistics, and enterprise resource planning (ERP) platforms to package related fields into cohesive table columns. For instance, shipping services store origin and destination addresses as composite records, simplifying stored procedures and ensuring that address attributes are always transferred together.</p>
-<div class="key-takeaway">
-  <p><strong>Exam note:</strong> Remember the mandatory parentheses in <code>(column_name).field_name</code>; writing <code>column_name.field_name</code> without parentheses is a common exam trick that causes syntax errors. Also remember that when qualifying with a table name, both table and column must be enclosed in parentheses: <code>(companies.address).country</code>.</p>
-</div>
 <h3 id="10.2.7-student-questions-and-answers">10.2.7 Student Questions and Answers</h3>
 <div class="important-note">
   <p><strong>Q:</strong> Why does querying <code>SELECT address.country FROM companies;</code> produce an error or unexpected behavior?</p>
@@ -757,12 +762,17 @@ END;
     <li><strong>Storage and Indexing:</strong> Each enum value occupies only 4 bytes of disk space per table row, making enum columns significantly faster to index (B-tree) and compare than raw <code>VARCHAR</code> strings.</li>
   </ul>
 </div>
-<p><strong>Visualizing Enum Storage in PostgreSQL:</strong></p>
-<ol>
-  <li><strong>Catalog Layer (<code>pg_enum</code>):</strong> Contains rows mapping <code>(enumtypid, enumsortorder, enumlabel)</code>.</li>
-  <li><strong>Table Storage Layer:</strong> Each row in a user table stores a 4-byte OID pointing to the corresponding <code>pg_enum</code> entry.</li>
-  <li><strong>Display Layer:</strong> During query projection (<code>SELECT</code>), the engine resolves the 4-byte OID to its text label string.</li>
-</ol>
+<div class="diagram-container my-6 text-center">
+  <pre class="mermaid">
+flowchart LR
+    T["Table Storage Layer<br/>4-byte OID per row"]
+    C["Catalog Layer: pg_enum<br/>enumtypid, enumsortorder, enumlabel"]
+    D["Display Layer<br/>SELECT resolves the OID to its label"]
+    T -->|"points to pg_enum entry"| C
+    C -->|"query projection"| D
+  </pre>
+  <p class="text-xs text-slate-500 mt-2"><strong>Figure:</strong> Enum storage: each table row holds a 4-byte OID that resolves through <code>pg_enum</code> to the displayed label.</p>
+</div>
 <p><strong>Cross-Engine Implementation Differences:</strong> Support for enumerated data types differs sharply across major database systems:</p>
 <table>
   <thead>
@@ -813,9 +823,6 @@ END;
   <p><strong>Recap + Bridge:</strong> Enumerated types deliver high performance and compile-time type safety for discrete label sequences. Combined with Domains (which constrain single scalar base types) and Composite Types (which group multiple heterogeneous fields into records), PostgreSQL provides a robust, extensible type system for complex data modeling.</p>
 </div>
 <p><strong>Real-World & Domain Connection:</strong> The 5-stage enum migration strategy is standard DevOps practice in high-availability financial, healthcare, and e-commerce platforms to avoid downtime. For example, payment processing pipelines use enums to represent transaction states (<code>'authorized'</code>, <code>'captured'</code>, <code>'refunded'</code>, <code>'chargeback'</code>), ensuring high-speed index lookups while preventing invalid state transitions.</p>
-<div class="key-takeaway">
-  <p><strong>Exam note:</strong> Be prepared to write the five-step production migration sequence for removing an enum value, specifically highlighting the <code>USING column::text::new_enum</code> cast. Also remember how to create types idempotently in PL/pgSQL by querying <code>pg_type</code>.</p>
-</div>
 <h3 id="10.3.7-student-questions-and-answers">10.3.7 Student Questions and Answers</h3>
 <div class="important-note">
   <p><strong>Q:</strong> Why does PostgreSQL not provide an <code>ALTER TYPE ... DROP VALUE</code> command, and how do we remove an enum value safely?</p>
@@ -826,18 +833,6 @@ END;
   <p><strong>Q:</strong> Why is <code>USING job_status::text::status_enum</code> required when altering a column to a newly created enum?</p>
   <p><strong>A:</strong> PostgreSQL cannot directly cast between two distinct user-defined enum types even if they share identical label names. Casting first to <code>text</code> converts the enum label into an intermediate string, which can then be safely converted into the new enum type.</p>
 </div>
-
-<h2 id="exam-guidance-summary">Exam Guidance Summary</h2>
-<ul>
-  <li><strong>Domain Scope</strong>: Domains are schema-bound. A domain defined in <code>public</code> cannot be accessed in another schema without qualification (<code>public.domain_name</code>).</li>
-  <li><strong>Dropping Domains with CASCADE</strong>: Executing <code>DROP DOMAIN ... CASCADE</code> deletes all dependent table columns and their data. Always alter dependent columns to base types first before dropping the domain.</li>
-  <li><strong>Composite Column Parentheses</strong>: Wrap composite column names in parentheses when extracting fields: <code>(address).city</code>. Omitting parentheses causes syntax errors because the parser interprets <code>address.city</code> as <code>table.column</code>.</li>
-  <li><strong>Disambiguating Table and Composite Field</strong>: Place both table and column inside parentheses when joining or qualifying: <code>(companies.address).city</code>.</li>
-  <li><strong>Inserting Composite Records</strong>: Always use the SQL standard <code>ROW(...)</code> constructor when inserting values into composite columns: <code>ROW('London', 'UK')</code>.</li>
-  <li><strong>Enum In-Place Additions</strong>: Enums allow adding values before or after existing elements using <code>ALTER TYPE ... ADD VALUE 'val' BEFORE 'existing'</code> or <code>AFTER 'existing'</code>.</li>
-  <li><strong>Enum Dropping Workaround</strong>: PostgreSQL lacks <code>ALTER TYPE ... DROP VALUE</code>. To drop enum values, execute the 5-stage migration: update table rows, rename the old enum, create the new enum, alter the column with <code>USING column::text::new_enum</code>, and drop the old enum.</li>
-  <li><strong>Idempotent Type Creation</strong>: Because PostgreSQL lacks <code>CREATE TYPE IF NOT EXISTS</code>, wrap type creation in a conditional PL/pgSQL block querying <code>pg_type</code> to ensure deployment scripts run idempotently.</li>
-</ul>
 
 <h2 id="key-industry-applications">Key Industry Applications</h2>
 <ul>
@@ -862,36 +857,6 @@ END;
       - .revision-check — one self-check question (no options)
       - .revision-connections — linked concepts within this lecture
     ============================================================ -->
-    <section class="exam-revision-section">
-      <h2>Exam Revision Notes</h2>
-      <p class="revision-intro">Below is the distilled, exam-ready core.
-      Every entry comes from the full explanation above. Use this section
-      for rapid review; return to the main notes when a point needs more context.</p>
-<div class="exam-revision-entry">
-  <h3 class="revision-topic">Domain Data Types (CREATE DOMAIN)</h3>
-  <p class="revision-mustknow"><strong>Must-know:</strong> Domains are schema-scoped scalar types; dropping with CASCADE deletes dependent columns, so columns must be altered to base types first.</p>
-  <p class="revision-formula">\[ D = \{ v \in T \mid P(v) \} \]</p>
-  <p class="revision-pitfall"><strong>⚠️ Top pitfall:</strong> Using DROP DOMAIN CASCADE in production which destroys dependent columns and their data.</p>
-  <p class="revision-check"><strong>Self-check:</strong> Can a domain created in the public schema be used in another schema without qualification?</p>
-  <p class="revision-connections"><strong>Connects to:</strong> 10.2, 10.3</p>
-</div>
-<div class="exam-revision-entry">
-  <h3 class="revision-topic">Composite Data Types (CREATE TYPE ... AS)</h3>
-  <p class="revision-mustknow"><strong>Must-know:</strong> Subfield extraction requires parentheses around column name: (address).city or (companies.address).city; omitting parentheses causes syntax errors.</p>
-  <p class="revision-formula">\[ C = T_1 \times T_2 \times \dots \times T_n \]</p>
-  <p class="revision-pitfall"><strong>⚠️ Top pitfall:</strong> Omitting parentheses when selecting composite subfields, which causes the parser to interpret column.field as table.column.</p>
-  <p class="revision-check"><strong>Self-check:</strong> What syntax is required to extract field 'country' from composite column 'address' in table 'companies'?</p>
-  <p class="revision-connections"><strong>Connects to:</strong> 10.1, 10.3</p>
-</div>
-<div class="exam-revision-entry">
-  <h3 class="revision-topic">Enumerated Data Types (CREATE TYPE ... AS ENUM)</h3>
-  <p class="revision-mustknow"><strong>Must-know:</strong> PostgreSQL lacks ALTER TYPE DROP VALUE; removing a value requires the 5-stage migration using USING column::text::new_enum.</p>
-  <p class="revision-formula">\[ f_{\text{cast}}(v) = (v::\text{text})::E_{\text{new}} \]</p>
-  <p class="revision-pitfall"><strong>⚠️ Top pitfall:</strong> Attempting to cast directly between two enum types without the intermediate text conversion, or expecting enums to sort alphabetically.</p>
-  <p class="revision-check"><strong>Self-check:</strong> Why can you not cast directly from old_enum to new_enum when replacing an enum type?</p>
-  <p class="revision-connections"><strong>Connects to:</strong> 10.1, 10.2</p>
-</div>
-    </section>
   </div>
 </body>
 </html>
