@@ -317,17 +317,6 @@ model.evaluate(x_test, y_test)</code></pre>
   <p>where \(H_{out}\) is output height, \(W_{out}\) is output width, and \(C_{out}\) is channel count. Next, Dense 128 maps the flatten vector to 128 scores with relu, then Dense 10 with softmax maps 128 to 10 class scores. Here \(x\_train\) holds training images, \(y\_train\) holds integer labels 0 to 9, <code>sparse_categorical_crossentropy</code> compares predicted class scores with the true integer label, and <code>accuracy</code> counts how often the top score matches the label. For regression the last line would use one neuron with linear output and a squared-error loss. <strong>Answer: one linked model trains across two cards with a single compile, fit, and evaluate.</strong> Sense-check: forward flow crosses the card boundary once, and gradients cross back once, so the user sees one input and one output.</p>
 </div>
 <p>The key point is that after linking, training looks like normal training. Input flows forward through both devices. Error flows back through both devices. From the user side there is one input and one output. Internally the framework tracks ops across scopes so gradients reach both \(W_{1}\) and \(W_{2}\).</p>
-<h3 id="1.2.3-student-questions-and-answers">1.2.3 Student Questions and Answers</h3>
-<div class="important-note">
-  <p><strong>Q:</strong> A model is just learned parameters, so what does splitting a model mean? Can you give an example? <strong>A:</strong> It means placing different weights on different machines. In a convolution network, put early Conv2D plus pooling on machine one and later flatten plus dense on machine two. Feed data to machine one, send its convolution output maps to machine two, and let machine two finish the job. That chain with a hand-off is the split model. Learned parameters stay the same in value; only their home card changes.</p>
-</div>
-<p>The next two doubts refine the same chain, so they are grouped here rather than repeated.</p>
-<div class="important-note">
-  <p><strong>Q:</strong> This example parallelizes feature extraction, but the final decision layer is not parallelized. Is that right? <strong>A:</strong> Yes for this chain. The split spreads feature extraction across machines while the decision block stays single. The same extracted features can feed a classifier head with 10 softmax outputs or a regression head with one plain output. Only the head and loss change, while early blocks keep building the same features.</p>
-</div>
-<div class="important-note">
-  <p><strong>Q:</strong> Does the same split work for a regression model with no classes? <strong>A:</strong> Yes. Convolution blocks still extract features in the same way. The last layer changes from 10 softmax outputs to one plain output with a squared-error loss. Data keeps moving through the same pipe from convolution output to flatten to dense. The head decides the task, not the early pipe.</p>
-</div>
 <div class="key-takeaway">
   <p><strong>Recap:</strong> A split CNN is one logical model with weights housed on two cards, joined by a feature-map hand-off. <strong>Bridge:</strong> Data parallelism takes the opposite route: it keeps full model copies everywhere and instead splits the data, with replicas that train in parallel and sync.</p>
 </div>
@@ -467,10 +456,6 @@ m.evaluate(x_test, y_test)</code></pre>
 </div>
 <p>You can chain more than two stages. Common splits are feature extraction, then shaping, then decision. Each new stage adds its own weights to the joint update set. Forward order is \(Stage_{1} \rightarrow Stage_{2} \rightarrow Loss\). Backward order is the reverse: loss gradients enter \(Stage_{2}\), then flow into \(Stage_{1}}\).</p>
 <p>A tiny numeric pass shows the hand-off. Let \(x\) be one 28 by 28 image. Stage 1 with \(V_{1}\) maps it to \(h\) with 1600 entries as named. Stage 2 with \(V_{2}\) maps those 1600 entries through Dense 128 to 10 logits, then softmax to \(\hat{y}\). Loss compares \(\hat{y}\) with integer \(y\) and returns one scalar \(L\), for example \(L = 0.42\). Tape then yields \(\partial L / \partial V_{2}\) and \(\partial L / \partial V_{1}\) in turn.</p>
-<h3 id="1.4.3-student-questions-and-answers">1.4.3 Student Questions and Answers</h3>
-<div class="important-note">
-  <p><strong>Q:</strong> Stage 1 feeds stage 2 in order, so where is the parallelism? When stage 2 runs, stage 1 looks free. <strong>A:</strong> It looks serial for one mini-batch, but the gain comes across mini-batches. While stage 2 works on mini-batch 1, stage 1 starts mini-batch 2. After the short fill phase, every stage works on a different mini-batch at the same tick. Stage works on mini-batch flow in overlap, and that overlap is the speed gain.</p>
-</div>
 <div class="key-takeaway">
   <p><strong>Recap:</strong> One mini-batch still moves serially, but many mini-batches move in overlap so the pipe stays full. <strong>Bridge:</strong> Row and column cuts apply the same idea to data tables, where the join rule depends on whether rows or columns were split.</p>
 </div>
@@ -481,7 +466,7 @@ m.evaluate(x_test, y_test)</code></pre>
   <p>If every site collects the same fields but sees different people, how do you build one model without moving all rows together?</p>
 </div>
 <p>A <em>row</em> (one sample with all its features), for example one image plus its label, is the unit that moves in a horizontal cut. A <em>column</em> (one feature across all samples), for example pixel 100 across all images, stays whole here. A <em>schema</em> (the list of columns and their types), for example 784 pixel columns plus one label column, stays the same on every shard.</p>
-<p><em>Horizontal partitioning</em> (a cut by rows where all partitions keep the same columns) means only the row sets differ. Example used in the lecture: rows 1 to 10 in partition A and rows 11 to 20 in partition B. Horizontal rows share the schema, so each partition trains its own model copy with the same shapes. Each partition trains its own model copy. Then the weights must join because each copy saw only part of the patterns. The goal is a combined model that acts like a model trained on all rows.</p>
+<p><em>Horizontal partitioning</em> (a cut by rows where all partitions keep the same columns) means only the row sets differ. Example used in the lecture: rows 1 to 10 in partition A and rows 11 to 20 in partition B. Horizontal rows share the schema, so each partition trains its own model copy with the same shapes. Then the weights must join because each copy saw only part of the patterns. The goal is a combined model that acts like a model trained on all rows.</p>
 <div class="key-concept">
   <p>Horizontal weight averaging across row partitions is a slot-wise mean. Let \(w_{k}\) hold the weights from partition \(k\), let \(K\) be the count of row partitions, and let \(w_{global}\) be the averaged model:</p>
   <p>\[ w_{global} = \frac{1}{K} \sum_{k=1}^{K} w_{k} \]</p>
@@ -548,12 +533,6 @@ m.evaluate(x_test, y_test)</code></pre>
   <p><strong>Scope:</strong> Fusion fits column shards with matched row IDs and a shared label column. <strong>Assumption:</strong> Row linkage is exact across sites. When IDs do not match, the task drifts toward separate problems and needs overlap plus fill-in before fusion can help.</p>
 </div>
 <h3 id="1.5.3-student-questions-and-answers">1.5.3 Student Questions and Answers</h3>
-<div class="important-note">
-  <p><strong>Q:</strong> What is the core difference between horizontal and vertical partitioning from a data view? <strong>A:</strong> Horizontal cuts rows and keeps the schema the same in each shard. Vertical cuts columns and gives each shard a different schema. One student put it as rows 1 to 10 versus columns for features, which matches this rule. Row cuts change who is seen; column cuts change what is seen about the same who.</p>
-</div>
-<div class="important-note">
-  <p><strong>Q:</strong> Which is more complex to join? <strong>A:</strong> Vertical is more complex. Each branch learns from different features, so plain averaging does not line up. You need a fusion step such as concatenation plus joint training. Horizontal can often start with averaging because shapes match slot by slot.</p>
-</div>
 <div class="important-note">
   <p><strong>Q:</strong> For a horizontal row split, must each shard mirror the full mix or can we just take rows in order? <strong>A:</strong> You must plan the mix. Each shard needs enough rows to avoid underfit and a fair share of each class. If one shard sees only one class, its local model learns a narrow view and the join suffers. Design shard size and class mix with care, and prefer shuffled or stratified cuts over blind ordered cuts.</p>
 </div>
@@ -633,15 +612,6 @@ m.evaluate(x_test, y_test)</code></pre>
 <p>A common trap is to think weight files can just be added. They can only be added when layers line up. When features differ, the early layers learn different views, so slot-by-slot addition mixes unlike things. Imagine adding a cardiac-filter weight to an eye-filter weight because both sit at index 5 — the sum has no meaning. Shape checks catch this fast: if \(W_{1} \in \mathbb{R}^{392 \times 64}\) and \(W_{2} \in \mathbb{R}^{392 \times 64}\) they can average, but if one is \(\mathbb{R}^{392 \times 64}\) and the other is \(\mathbb{R}^{400 \times 64}\) they cannot.</p>
 <p>Research directions follow the failure modes. For skewed mixes, methods weight by sample counts or add proximal terms that keep local models near the shared core. For heterogeneous cards, methods let fast cards do more steps while still counting slow cards through delayed or compensated updates. For faulty or hostile updates, robust means such as medians or trimmed means replace the plain mean. The shared theme is the same: keep useful signals, down-weight noise, and handle shape mismatch by design rather than by blind addition.</p>
 <h3 id="1.6.3-student-questions-and-answers">1.6.3 Student Questions and Answers</h3>
-<div class="important-note">
-  <p><strong>Q:</strong> When would we ever need vertical partitioning in real work? Wide feature sets with few rows seem rare. <strong>A:</strong> The strong case is privacy plus split views. One site holds cardiac features, another holds eye features, another holds skin features for the same people. No site shares raw columns. To score health from all views you must fuse models, not rows. Sensitive columns kept apart are another trigger, even when the table looks narrow at any one site.</p>
-</div>
-<div class="important-note">
-  <p><strong>Q:</strong> In your hospital story the split is already there. We are not choosing to partition, right? <strong>A:</strong> Right. The data arrive split. Different sites collected different views and will not pool them. The job is to learn across the natural split with model sharing and smart aggregation. Design effort goes into the join, not into re-cutting.</p>
-</div>
-<div class="important-note">
-  <p><strong>Q:</strong> Combining three weight files sounds simple. Is it simple or complex? <strong>A:</strong> It is complex when features differ. Each file learned a different view with different shapes. There is no clean one-to-one slot match. Weights gradients parameters can travel, but you must design a fusion rule that keeps useful signals and handles shape mismatch. That design is active research, from weighted means to robust and personalized mixes.</p>
-</div>
 <div class="important-note">
   <p><strong>Q:</strong> If hospitals have different patients, not the same IDs, how do we proceed? Your code kept the same IDs across column splits. <strong>A:</strong> Same IDs is the easy vertical case. With disjoint IDs plus disjoint columns, there is no link to learn and you have two separate tasks. With partial overlap, use the linked rows to learn cross-view links, then fill missing views for the rest by nearest-neighbor borrowing. Example: if patient P_n without cardiac data looks closest to linked patient P_3 on shared views, borrow P_3 style cardiac values as a fill, then train on the filled table. This needs enough overlap to be safe, on the order of 20 to 30 percent in the lecture's working guess.</p>
 </div>

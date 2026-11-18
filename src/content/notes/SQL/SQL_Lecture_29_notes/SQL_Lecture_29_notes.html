@@ -363,13 +363,6 @@ SELECT to_tsvector('english', 'I am walking across the sitting room')
   <p>Example 5 — mixed logic with fox, dog, tiger, and king. The English ask is fox AND dog OR tiger AND NOT king. The query form is <code>'fox & dog | tiger & !king'</code>. Parentheses make the aim sharp, as in <code>'(fox & dog) | (tiger & !king)'</code>. Against the quick brown fox vector the result is true via the left arm. The rule is to bracket mixed AND and OR asks so the run order stays clear, exactly as with arithmetic <code>AND</code>/<code>OR</code> in a WHERE clause. Sense-check: evaluate each bracket alone first — left is true, right is false — then OR the two, giving true.</p>
 </div>
 <p>Cross-engine readers should note the dialect change without a concept change. MySQL's boolean mode writes the same ideas differently: <code>+fox +dog</code> for AND-like required terms, <code>fox tiger</code> for OR-like, <code>-king</code> for NOT, and <code>"military defense"</code> in double quotes for the phrase. Snowflake and Spark SQL express the same logic with plain boolean SQL over <code>CONTAINS</code>/<code>RLIKE</code> predicates rather than a query type: <code>WHERE CONTAINS(text,'fox') AND NOT CONTAINS(text,'king')</code>. Learn the PostgreSQL spelling here; the thought transfers everywhere.</p>
-<h3 id="29.3.3-student-questions-and-answers">29.3.3 Student Questions and Answers</h3>
-<div class="important-note">
-  <p><strong>Q:</strong> Why does foxes match fox but fox trot does not, when both start with fox? <strong>A:</strong> The match runs on lexemes, not on letter prefixes. Fox and foxes share one animal sense base, so both normalize to <code>'fox'</code> and meet. Fox trot is a distinct dance sense with its own base path (<code>'fox' & 'trot'</code> as two lexemes, or a separate compound entry depending on configuration), so a single-term ask for <code>'fox'</code> against that fuller vector behaves differently from a prefix scan. LIKE would have matched the shared letters in both cases; the lexeme path keeps the senses apart. Several students asked variants of this — the confusion point is always prefix thinking versus lexeme thinking.</p>
-</div>
-<div class="important-note">
-  <p><strong>Q:</strong> Why does jumping match a stored jump? <strong>A:</strong> Both the stored wording and the request wording pass through the same base form step. Jump, jumped, jumping, and jumps all map to jump, on both the <code>to_tsvector</code> side and the <code>to_tsquery</code> side. The <code>@@</code> test then links equal bases. The match is sense to sense, not raw letters to raw letters.</p>
-</div>
 <h3 id="29.3.4-practical-tips">29.3.4 Practical Tips</h3>
 <p>Keep requests in lower case plain words and let the builder fold the forms. Bracket each mixed logic ask. Test each arm alone before mixing arms, so a false arm is easy to spot — run <code>'fox'</code>, then <code>'dog'</code>, then <code>'fox & dog'</code>. When a query string comes from a user or an app, prefer <code>plainto_tsquery('...')</code> (which inserts <code>&</code> between words automatically) or <code>phraseto_tsquery</code> for phrase input over hand-concatenating operators, to avoid the bare-space syntax fault.</p>
 <div class="warning-box">
@@ -409,13 +402,6 @@ WHERE doc_tsv @@ to_tsquery('jump');</code></pre>
 </div>
 <div class="example-box">
   <p>Example 3 — order matters. Swap the ask to <code>'quartz <2> sphinx'</code>. No row returns. Quartz sits at the higher slot and sphinx at the lower slot, so a low to high scan finds nothing: the distance form only runs forward from the first term's slot to the second term's slot. A backward ask with the higher slot first finds no forward path. By contrast, plain AND is order free, as shown above. Sense-check: if the sentence were reversed to <code>... quartz ... sphinx</code>, the swapped query would start passing — the failure is about direction, not vocabulary.</p>
-</div>
-<h3 id="29.4.3-student-questions-and-answers">29.4.3 Student Questions and Answers</h3>
-<div class="important-note">
-  <p><strong>Q:</strong> Why does the gap number read 2 when sphinx and quartz look one word apart? <strong>A:</strong> The number counts the span between start slots, not the words in between. With sphinx at slot 5 and quartz at slot 7, the span is 7 minus 5, which is 2. The one word between them (<code>of</code> at 6) plus one gives the span. The slot list inside the vector makes this math direct: subtract the two positions after the colons.</p>
-</div>
-<div class="important-note">
-  <p><strong>Q:</strong> Why does swapping the two terms break the distance ask but not the AND ask? <strong>A:</strong> The distance form scans forward from the first term slot to the second term slot. A backward ask with the higher slot first finds no forward path. AND scores each term alone, so term order plays no role. Several students hit this; the fix is to remember that <code><-></code> and <code>&lt;N&gt;</code> carry an arrow of direction while <code>&</code> and <code>|</code> do not.</p>
 </div>
 <h3 id="29.4.4-practical-tips">29.4.4 Practical Tips</h3>
 <p>Store raw wording and vector side by side, so the raw side stays readable and the vector side stays fast. Fill the vector column with one UPDATE after bulk loads. Name the vector column with a short clear name, such as doc_tsv, to keep later queries short. Build distance asks by first confirming each arm with <code>&</code>, then tightening to <code><-></code> or <code>&lt;N&gt;</code>, so a zero-row result unambiguously means "too strict" rather than "term missing".</p>
@@ -461,9 +447,6 @@ ON docs_president USING gin (speech_tsv);</code></pre>
 </div>
 <h3 id="29.5.3-student-questions-and-answers">29.5.3 Student Questions and Answers</h3>
 <div class="important-note">
-  <p><strong>Q:</strong> Why pass english to to_tsvector when the earlier demos skipped it? <strong>A:</strong> The language tag picks the lexeme and stop word rules. English folds plurals and tenses one way, while other tongues fold their own way — <code>spanish</code>, <code>german</code>, <code>french</code> each ship their own dictionaries. Naming it keeps the speech store steady when more tongues arrive later, instead of silently inheriting whatever the database default configuration happens to be.</p>
-</div>
-<div class="important-note">
   <p><strong>Q:</strong> Why not keep the default B-tree index for the vector column? <strong>A:</strong> A B-tree suits ordered scalar keys such as numbers and dates, where "less than" means something. A vector holds a bag of lexemes with slot lists, where ordering across whole vectors is meaningless. The GIN form links each lexeme to its rows, which fits that bag shape and speeds term asks; a B-tree over the whole vector value would almost never match a <code>@@</code> predicate.</p>
 </div>
 <div class="key-takeaway">
@@ -504,13 +487,6 @@ WHERE speech_tsv @@ to_tsquery('military &lt;-&gt; defense');</code></pre>
   <p>The same clip then shows the hits wrapped in angle marks instead of bold tags. The docs list more dials such as MinWords and MaxWords, which bound clip length, and MaxFragments, which caps how many clips per row return — for example <code>'StartSel = <, StopSel = >, MinWords=5, MaxWords=7, MaxFragments=1'</code> keeps one tight seven-word window per speech. Always use the same query in <code>ts_headline</code> as in the WHERE filter, or the highlighted words will drift from the matched rows. Sense-check: a clip that highlights neither term signals a query mismatch between the two calls — compare them first.</p>
 </div>
 <p>For reference across engines: MySQL shows context by returning the raw column and highlighting in the app, since <code>MATCH ... AGAINST</code> returns relevance but no clip function; Snowflake and Databricks likewise return raw text and format highlights outside SQL. PostgreSQL's <code>ts_headline</code> doing it inside the query is a genuine convenience — one reason news search and help search prototypes start here.</p>
-<h3 id="29.6.2-student-questions-and-answers">29.6.2 Student Questions and Answers</h3>
-<div class="important-note">
-  <p><strong>Q:</strong> Why does war peace with a space fail while war and peace logic works? <strong>A:</strong> The query builder needs an explicit link sign between terms. A bare space leaves the link unclear, so the parse fails. The form <code>'war & peace'</code> names the AND link, and the run then succeeds. When the input is raw human typing rather than your own logic, switch to <code>plainto_tsquery('war peace')</code>, which inserts the <code>&</code> links automatically.</p>
-</div>
-<div class="important-note">
-  <p><strong>Q:</strong> Does war and peace in one row mean the two words sit side by side? <strong>A:</strong> No. AND only asks that both bases sit somewhere in the row, pages apart if need be. The distance form with angle marks — <code>'war <-> peace'</code> for adjacent, <code>'war &lt;N&gt; peace'</code> for near — is the tool for side by side or near asks. Pick AND for "both themes raised", distance for "raised together".</p>
-</div>
 <h3 id="29.6.3-practical-tips">29.6.3 Practical Tips</h3>
 <p>Build one ask at a time and count rows before adding clips. Add ORDER BY speech_date for time stories. Use ts_headline only on the rows that pass — put the <code>@@</code> test in WHERE and the headline in SELECT — so the clip work stays small. When a theme count looks surprising, headline two or three rows before charting: a single odd sense of a word can inflate a whole series.</p>
 
@@ -538,9 +514,6 @@ WHERE speech_tsv @@ to_tsquery('military &lt;-&gt; defense');</code></pre>
 </div>
 <p>Cross-engine placement in one paragraph: MySQL's <code>MATCH ... AGAINST</code> returns its own relevance score with no normalization flag — length handling is baked into its natural-language formula, and boolean mode scores 0/1 style. Snowflake and Databricks rank with explicit SQL you write yourself, such as hit counts over token arrays or <code>ORDER BY</code> on computed frequencies, or delegate to Cortex/Vector Search similarity scores. PostgreSQL sits in the middle: a real scorer with a visible length dial you must learn to turn.</p>
 <h3 id="29.7.2-student-questions-and-answers">29.7.2 Student Questions and Answers</h3>
-<div class="important-note">
-  <p><strong>Q:</strong> Why does a very long speech sometimes outscore a short sharp one? <strong>A:</strong> Raw rank counts hits, and long wording holds more hit chances — twice the paragraphs means roughly twice the rolls of the dice. The length flag scales for size, dividing by length, so a short speech with dense hits can rise past a long speech with sparse hits. Reach for normalization whenever speeches differ a lot in length.</p>
-</div>
 <div class="important-note">
   <p><strong>Q:</strong> What inputs does ts_rank need at a minimum? <strong>A:</strong> It needs the vector column and the query: <code>ts_rank(speech_tsv, to_tsquery('...'))</code>. The alias score (<code>AS score</code>) names the output so <code>ORDER BY score DESC</code> can sort it. The third flag input is optional and only shapes length scaling; the WHERE clause with the same <code>@@</code> query is what filters, while rank only orders.</p>
 </div>

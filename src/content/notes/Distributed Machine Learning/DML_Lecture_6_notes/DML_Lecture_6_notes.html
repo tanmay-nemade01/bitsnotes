@@ -257,7 +257,6 @@
       <h3 id="6.1.2-what-must-be-stored-and-moved">6.1.2 What Must Be Stored and Moved</h3>
       <p>A modern network may have millions or billions of parameters. For each parameter you store a weight and you compute a gradient. Every GPU that shares work must exchange those gradients. After mini-batch one finishes on one GPU, the values go across the network to another GPU. That is where a <em>network bottleneck</em> appears: the interconnect is slower than on-device math, and the payload is huge.</p>
       <p>The same numbers also occupy GPU memory. A 7 billion parameter model, an 8 billion parameter model, or a 120 billion parameter model makes the problem worse. Pre-trained large language models (LLMs) move enormous tensors during training and during serving. If you work with those models, gradient and weight traffic dominate cost.</p>
-      <p>A motivating question frames the rest of the material: after slicing, what is the main computational and communication factor you still have to address?</p>
       <p>Imagine plotting two curves against model size. The horizontal axis is parameter count, from millions to hundreds of billions. The vertical axis is time per step. On-device multiply time grows, but interconnect time grows at least as fast, because the message is a full gradient tensor. The landmark is the crossing where wire time exceeds math time. Past that landmark, a faster GPU without a smaller message barely helps.</p>
       <h3 id="6.1.3-student-questions-and-answers">6.1.3 Student Questions and Answers</h3>
       <p>A natural first guess is that the hard part is still calculus: can we even form \(\partial L / \partial w\)? That guess is understandable, because back propagation is the engine. It is not the remaining bottleneck.</p>
@@ -295,7 +294,6 @@
       <p>A floating-point value is a <em>sign</em> bit, an <em>exponent</em> field, and a <em>mantissa</em> (fraction) field. The sign chooses positive versus negative. The exponent chooses the scale, a power of two. The mantissa chooses the extra fraction bits that sit after an implicit leading 1 in normal numbers.</p>
       <p>Think of the layout as a labeled strip of bits. One bit is rose-colored for the sign. Eight bits are green for the exponent in FP32. The remaining yellow bits are the mantissa. Change how many bits each field gets, and you change both the range and the precision.</p>
       <p>A postal address is a useful everyday map. The sign is the side of the street. The exponent is the city block (a power-of-two zoom). The mantissa is the house number on that block. The analogy breaks for subnormal numbers and infinities, which use reserved exponent patterns. For normal values the three-field picture is enough.</p>
-      <p>A first verbal slip in the walkthrough said that a sign bit of 0 means negative. The worked number \(-3.14\) then used sign \(= 1\). Standard IEEE-style encoding uses \(s = 1\) for negative and \(s = 0\) for positive. Keep the worked example. Treat the "0 means negative" line as a slip.</p>
       <h3 id="6.2.2-mathematical-formulation-of-fp32">6.2.2 Mathematical Formulation of FP32</h3>
       <p>Let \(s \in \{0,1\}\) be the sign bit, \(E \in \{0,1,\dots,255\}\) the 8-bit exponent field read as an unsigned integer, and \(M \in \{0,1,\dots,2^{23}-1\}\) the 23-bit mantissa field read as an unsigned integer. For a <em>normal</em> FP32 value the decoded number is</p>
       <div class="key-concept">
@@ -366,12 +364,6 @@
       <p>As you walk from 32 bits toward 1 bit, representation error grows. If the true value is \(-3.14\) and INT8 stores \(-3\), the gap is already \(0.14\). If that gap is tiny next to the task, you may accept it. If you are updating weights, even a small mantissa can matter, because convergence depends on precise increments.</p>
       <div class="warning-box">
         <p><strong>Pitfall:</strong> Reading the sign bit backwards (\(0\) as negative). IEEE uses \(s = 1\) for negative. <strong>Pitfall:</strong> Using \(2^{1}\) as the FP32 fraction divisor. The stored fraction has 23 bits, so divide by \(2^{23}\). <strong>Pitfall:</strong> Mixing BF16's 8-bit exponent with FP16's \(2^{10}\) fraction. Match divisor to fraction width. <strong>Pitfall:</strong> Treating integer 4-bit as "a bit less precise FP32." If the value is outside \([-7,7]\) in that toy signed picture, you overflow, you do not just round.</p>
-      </div>
-      <h3 id="6.2.6-student-questions-and-answers">6.2.6 Student Questions and Answers</h3>
-      <p>The \(2^{7}\) prompt is the exponent-field conversion used in the \(-3.14\) decode.</p>
-      <div class="important-note">
-        <p><strong>Q:</strong> What is \(2^{7}\), the decimal reading of an exponent field that has only its highest bits set?</p>
-        <p><strong>A:</strong> \(128\). That value is the decimal reading of the exponent field with only the highest of eight bits set, and it is the number that then enters \(2^{128-127}\) in the FP32 decode.</p>
       </div>
       <p>GPU and TPU vendors expose these layouts as native types. Tensor cores prefer FP16, BF16, or TF32 packets. A weight that looks like "3.14" in Python is already one of these bit strips in hardware.</p>
       <div class="key-takeaway">
@@ -456,17 +448,6 @@
         <p><strong>Pitfall:</strong> Believing dequantization restores the original float. It only returns a nearby grid point. <strong>Pitfall:</strong> Using the memory slogan "8 times" for INT8. INT8 versus FP32 is a \(4\times\) cut (7 GB versus 28 GB). <strong>Pitfall:</strong> Reading a Raspberry Pi "eight percent" saving as the bit-ratio. Treat that spoken percent as unreliable. <strong>Pitfall:</strong> Ignoring accumulation. A \(0.003543\) gap on one scalar is not the story of a 7 billion parameter step.</p>
       </div>
       <h3 id="6.3.5-student-questions-and-answers">6.3.5 Student Questions and Answers</h3>
-      <p>The first question is the decode step itself.</p>
-      <div class="important-note">
-        <p><strong>Q:</strong> How do you dequantize?</p>
-        <p><strong>A:</strong> Apply the reverse arithmetic. If you quantized by rounding \(x \cdot s\), recover \(\hat{x} = q / s\) with the same scale that you send along with the integer.</p>
-      </div>
-      <p>Lost bits are a separate confusion. Expanding an integer does not recreate a deleted fraction.</p>
-      <div class="important-note">
-        <p><strong>Q:</strong> Even if you dequantize, the precision lost during quantization is still lost, right? The original bits were not even transferred.</p>
-        <p><strong>A:</strong> Yes. You try to return toward a real value, but you cannot get the exact original. You generalize to some nearby grid point. You reduce error relative to living forever in a tiny integer, but you do not recreate deleted mantissa bits. For weight updates even a smaller value can matter, so you should not throw those bits away blindly.</p>
-      </div>
-      <p>A third instinct is to stay in integers inside the original network math.</p>
       <div class="important-note">
         <p><strong>Q:</strong> Can we convert weights to the 127-scale integers inside the original network calculation itself, and then do integer-only math instead of sending floats?</p>
         <p><strong>A:</strong> The weights start as floats. Learning still uses back propagation of a real-valued gradient. You may quantize that gradient, for example turning a value such as \(-6.89\) into an INT8 code, send the code, and dequantize on the far side, as in the \(0.65 \rightarrow 83\) story. Integer-only arithmetic is possible in that send-and-update path. The obstacle is error. The received value is already high by \(0.003543\) in the worked example. That error accumulates very quickly across billion weights. The example is one weight. A billion weights later, learning can drift. So yes, you can pass integers. You must still watch accumulation.</p>
@@ -522,11 +503,6 @@
       </div>
       <p>So the simple stack is: freeze a lot, train a little, maybe walk the trainable window deeper. For giant LLMs and VLMs you still need a more extreme cut: <em>parameter-efficient fine-tuning</em> (PEFT), including LoRA.</p>
       <h3 id="6.4.4-student-questions-and-answers">6.4.4 Student Questions and Answers</h3>
-      <div class="important-note">
-        <p><strong>Q:</strong> What is fine-tuning, and how is it different from quantization?</p>
-        <p><strong>A:</strong> In fine-tuning you update weights by training on your own data, turning a generic model into a task-specific model, without retraining just to change bit-width. In quantization you only reduce the precision of existing weights, without that retraining step.</p>
-      </div>
-      <p>A second instinct already points at PEFT.</p>
       <div class="important-note">
         <p><strong>Q:</strong> Could we first quantize to shrink the model, freeze some layers, and fine-tune only the rest, so we never touch the entire net?</p>
         <p><strong>A:</strong> Yes. That is the right instinct. Freeze a large body of weights that already hold general knowledge. Train only some layers, or, in the PEFT view, only a small extra adapter. You do not retrain the whole giant.</p>
@@ -699,12 +675,6 @@
       <h3 id="6.6.3-generic-answers-versus-a-domain-model">6.6.3 Generic Answers Versus a Domain Model</h3>
       <p>A generic model, asked whether a California employer may fire a worker for a social-media post made outside work hours, tends to hedge: employment law varies by state, exceptions apply, here is a vague pointer. A domain-tuned model can cite a labor code, name exceptions, and give a tighter reason. The same pattern is the MRF detector: general VLM versus tire expert.</p>
       <p>Picture two desks. On the left, a generalist reads a question and hedges. On the right, a specialist has already studied the code and answers with a citation. RAG can slide a statute onto the generalist's desk at ask-time. Fine-tuning is sending the specialist to school before the question arrives.</p>
-      <h3 id="6.6.4-student-questions-and-answers">6.6.4 Student Questions and Answers</h3>
-      <p>The mix-up is to treat LoRA as another name for RAG.</p>
-      <div class="important-note">
-        <p><strong>Q:</strong> Is LoRA the same technique that RAG uses?</p>
-        <p><strong>A:</strong> No. RAG is a storage mechanism and a retrieval process, external to the model. Fine-tuning imbibes knowledge into the weights. RAG helps when you can fetch text. It does not replace training for object detection with bounding boxes on company images.</p>
-      </div>
       <p>Jira and Confluence dumps are RAG workloads. Factory camera inspection is a fine-tuning workload. Mixing the two tools without that split is a design error.</p>
       <div class="key-takeaway">
         <p>RAG fetches. LoRA bakes. The last family, pruning, neither fetches nor adds adapters: it zeros redundant weights.</p>
@@ -735,17 +705,6 @@
         <p><strong>Pitfall:</strong> Deleting a CNN layer and calling it pruning. The stage of computation is then gone. <strong>Pitfall:</strong> Assuming 128 filters means 128 different detectors. Many can be duplicates. <strong>Pitfall:</strong> Mixing dropout's random training mask with a permanent zero. Dropout is related in spirit; it is not the same serving-time snip.</p>
       </div>
       <p>Sketch two \(3 \times 3\) grids that look almost equal: both light up on a vertical edge. The keep-test notices the tiny distance and drops one grid. The layer still exists. It just has 127 filters instead of 128.</p>
-      <h3 id="6.7.3-student-questions-and-answers">6.7.3 Student Questions and Answers</h3>
-      <p>The branch picture is the right spirit, if you zero weights rather than delete stages.</p>
-      <div class="important-note">
-        <p><strong>Q:</strong> What is a pruning technique? Is it removing branches?</p>
-        <p><strong>A:</strong> Yes, in spirit. You zero some weights or drop some filters so the live parameter count falls. Dropout is one related method. The full recipe is a later topic.</p>
-      </div>
-      <p>The dangerous shortcut is to remove a whole layer.</p>
-      <div class="important-note">
-        <p><strong>Q:</strong> In a CNN, can we prune by removing layers?</p>
-        <p><strong>A:</strong> No. You cannot remove the layer. Remove-layer means that stage of learning is gone. Filters are what learn. A layer with 34 filters of \(3 \times 3\) learns \(9 \times 34\) values. If two of 64 or 128 filters converge to the same feature, keep one. That is a pruning move.</p>
-      </div>
       <p>Over-wide CNNs with 128 filters often duplicate detectors. Collapsing those duplicates is a practical serving optimization, not only a diagram in a textbook.</p>
       <div class="key-takeaway">
         <p>Three levers, three objects: bits (quantization), extra matrices (LoRA), live filters (pruning). Practice the formulas from this lecture first. Leave the full pruning recipe for the next session.</p>

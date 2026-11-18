@@ -499,9 +499,6 @@ flowchart TD
 <h3 id="35.2.2-statement-level-triggers">35.2.2 Statement-level triggers</h3>
 <p>A <em>statement-level trigger</em> — a trigger declared with <code>FOR EACH STATEMENT</code> so it runs once per SQL statement no matter how many rows move — behaves the opposite way. The trigger function runs a single time for the whole statement even when hundreds of rows change. That single visit is the right home for batch work: validate a whole set of inserted rows together instead of row by row, keep statement-wide counts, or enforce a time-window rule without paying per-row cost. The count of visits and the moment of the visit are the whole difference between the two kinds: statement level runs once, row level runs per row.</p>
 <p>Think of it like a roll call versus a headcount. Row level calls every name. Statement level counts the room once. The roll-call picture maps exactly: roll call touches each person (row images available), headcount looks at the room once (no per-row images, only statement facts like timing, operation, and arguments).</p>
-<div class="key-concept">
-  <p><code>FOR EACH STATEMENT</code> means one function call per firing statement. Use it for batch checks, statement-wide counts, and time-window guards where per-row values do not matter.</p>
-</div>
 <p>A statement-level function has no per-row <code>NEW</code>/<code>OLD</code> to read — asking for them is a classic error. What it does have is the trigger-variable bundle covered later: operation, timing, schema, table, and any passed arguments. That is why the Friday-afternoon guard in this lecture uses statement level: the rule cares about "is it Friday afternoon right now," not about any single task row.</p>
 <div class="example-box">
   <p><code>UPDATE players SET name = UPPER(name)</code> touches <strong>200</strong> rows. With <code>FOR EACH ROW</code>, the function runs <strong>200 times</strong>. With <code>FOR EACH STATEMENT</code>, it runs <strong>once</strong>. For a rule like "block all writes on Friday afternoon," the statement form does one clock check instead of two hundred identical clock checks — same verdict, far less work. Sense-check: cost scales with statements, not rows.</p>
@@ -511,10 +508,6 @@ flowchart TD
 </div>
 <div class="key-takeaway">
   <p><strong>Recap:</strong> Statement level runs once per statement for batch and clock rules; row level runs per row for value rules. The cost and visibility trade is the bridge into the reference table of what is allowed where.</p>
-</div>
-<h3 id="35.2.3-student-questions-and-answers">35.2.3 Student Questions and Answers</h3>
-<div class="important-note">
-  <p><strong>Q:</strong> Updating twenty rows fires the trigger twenty times or just once? <strong>A:</strong> It depends on the declaration. With <code>FOR EACH ROW</code> the function runs twenty times, once per row. With <code>FOR EACH STATEMENT</code> it runs exactly once for the whole update statement, regardless of row count. Several students asked this in different words — the confusion point is always "does the trigger follow rows or statements," and the answer is always "read the <code>FOR EACH</code> clause."</p>
 </div>
 
 <h2 id="35.3-trigger-reference-table">35.3 Trigger Reference Table</h2>
@@ -527,7 +520,7 @@ flowchart TD
   <p>The headline pattern: <code>BEFORE</code> and <code>AFTER</code> on insert, update, and delete are flexible — row level on tables, statement level on tables and views. <code>TRUNCATE</code> is always narrow — statement level on tables only, never row level, never on views. <code>INSTEAD OF</code> belongs to views.</p>
 </div>
 <p>The headline pattern is simple. <code>BEFORE</code> triggers on insert, update, and delete work at row level on tables, and at statement level on tables and views. <code>BEFORE</code> on truncate works only at statement level on tables, never at row level. <code>AFTER</code> triggers on insert, update, and delete work at row level on tables, and at statement level on tables and views. <code>AFTER</code> on truncate works only at statement level on tables, never at row level and never on views. <code>TRUNCATE</code> is the narrow case throughout: statement level and tables only.</p>
-<p>Put another way, before and after triggers on insert, update, and delete are the flexible everyday tools on tables and views at both levels, while truncate triggers always stay at statement level on tables. Keeping this table close prevents wasted effort such as asking for a row-level truncate trigger, which PostgreSQL rejects with an explicit "row triggers on TRUNCATE are not supported" error — the exact failure the truncate-guard demo hits on its first attempt.</p>
+<p>Keeping this table close prevents wasted effort such as asking for a row-level truncate trigger, which PostgreSQL rejects with an explicit "row triggers on TRUNCATE are not supported" error — the exact failure the truncate-guard demo hits on its first attempt.</p>
 <div class="diagram-container my-6 text-center">
 <table class="mx-auto text-sm">
   <thead>
@@ -614,11 +607,7 @@ flowchart TD
 </div>
 <p>Real-world: warehousing teams cap trigger chains explicitly and prefer a notify-then-materialize pattern — a tiny trigger sends a notification payload while an outside worker does the heavy counter math — keeping the write path lean.</p>
 <div class="key-takeaway">
-  <p><strong>Recap:</strong> Hidden logic, added latency, over-logging, and hard-to-trace chains are the four prices. Naming, small bodies, guarded logging, and planned chains pay them down. That judgment frames the Q&A that follows.</p>
-</div>
-<h3 id="35.4.3-student-questions-and-answers">35.4.3 Student Questions and Answers</h3>
-<div class="important-note">
-  <p><strong>Q:</strong> If triggers always run, will an audit trigger capture one-off manual fixes too, not just planned procedure writes? <strong>A:</strong> Yes. That always-on behavior is the point and the price. Either accept the wider log, add branch logic that filters by path at some speed cost, or pick a narrower capture method when only one procedure should be audited. Several students circled this same worry — "can I audit just one path?" — and the answer is always a deliberate choice between full-trail (trigger) and narrow (procedure-level capture).</p>
+  <p><strong>Recap:</strong> Hidden logic, added latency, over-logging, and hard-to-trace chains are the four prices. Naming, small bodies, guarded logging, and planned chains pay them down.</p>
 </div>
 
 <h2 id="35.5-trigger-key-points">35.5 Trigger Key Points</h2>
@@ -639,9 +628,6 @@ flowchart TD
 </div>
 <h3 id="35.5.2-many-triggers-alphabetical-order-many-actions">35.5.2 Many triggers, alphabetical order, many actions</h3>
 <p>Many triggers may share one table, view, or foreign table, subject to the reference table. All <code>BEFORE</code> triggers run first in alphabetical order, then the row or statement action runs, then all <code>AFTER</code> triggers run in alphabetical order. User-defined functions are welcome inside trigger bodies: build the function first, then bind it with a <code>CREATE TRIGGER</code> statement that names it. One trigger may also serve many actions, so a single trigger can listen for insert, update, and delete together instead of needing three near-twin triggers.</p>
-<div class="key-concept">
-  <p>Three facts to carry: unlimited triggers per target within the reference-table limits, alphabetical firing inside each timing band with the action in the middle, and one trigger able to listen to several events at once (<code>AFTER INSERT OR UPDATE OR DELETE</code>).</p>
-</div>
 <p>Concretely, <code>CREATE TRIGGER trg_audit_trigger AFTER INSERT OR UPDATE OR DELETE ON audit FOR EACH ROW</code> is one trigger doing the work of three. Inside, the <code>TG_OP</code> variable tells the function which of the three woke it, so the same body can fill the old image only on update-or-delete and the new image only on insert-or-update. Naming stays load-bearing: when a repair trigger and a logging trigger share the event, the repair name must sort first.</p>
 <div class="warning-box">
   <p><strong>Pitfalls:</strong> Creating three near-identical triggers where one multi-event trigger would do — triple the maintenance. Naming the logger so it sorts before the repairer and then trusting the log. Calling a trigger where the function name belongs in <code>EXECUTE PROCEDURE</code>.</p>
@@ -689,10 +675,6 @@ EXECUTE PROCEDURE trigger_function_name();</code></pre>
 </div>
 <div class="key-takeaway">
   <p><strong>Recap:</strong> Worker first, wiring second, five answers in the binding. With the pattern memorized, the players audit is the first full build.</p>
-</div>
-<h3 id="35.6.3-student-questions-and-answers">35.6.3 Student Questions and Answers</h3>
-<div class="important-note">
-  <p><strong>Q:</strong> Which part of the statement picks row level versus statement level? <strong>A:</strong> The <code>FOR EACH ROW</code> clause picks row level and the <code>FOR EACH STATEMENT</code> clause picks statement level. Everything else in the statement stays the same shape. When in doubt, read just that clause — it alone decides whether the function runs per row or once per statement.</p>
 </div>
 
 <h2 id="35.7-data-auditing-with-a-players-trigger">35.7 Data Auditing with a Players Trigger</h2>
@@ -756,12 +738,11 @@ EXECUTE PROCEDURE fn_players_name_changes_log();</code></pre>
   <p>Live test four: run an update that writes Linda Three over Linda Three with no real change. The <code>IF</code> test finds the images equal, so no audit row is added — still <strong>2</strong> rows. Removing the <code>IF</code> test would log every touch even when nothing changed, which shows why the guard matters. Sense-check: history grows only on genuine renames.</p>
 </div>
 <div class="key-takeaway">
-  <p><strong>Recap:</strong> Update-only binding, per-row visits, guard-controlled logging. The Q&A below locks in the two facts students trip on.</p>
+  <p><strong>Recap:</strong> Update-only binding, per-row visits, guard-controlled logging.</p>
 </div>
 <h3 id="35.7.4-student-questions-and-answers">35.7.4 Student Questions and Answers</h3>
 <div class="important-note">
   <p><strong>Q:</strong> Will plain inserts into the players table fill the audit table? <strong>A:</strong> No. The trigger listens for update only, so inserts land in the master table with no audit side effect. To audit inserts too, bind <code>AFTER INSERT OR UPDATE</code> or add a second trigger.</p>
-  <p><strong>Q:</strong> Why does the audit row hold the old name instead of the new name? <strong>A:</strong> The audit copy answers what was replaced. Storing <code>OLD.name</code> preserves the prior value. A two-column form can store both <code>OLD.name</code> and <code>NEW.name</code> when the full rename must sit in one row.</p>
 </div>
 
 <h2 id="35.8-modify-data-at-insert-time">35.8 Modify Data at INSERT Time</h2>
@@ -807,7 +788,6 @@ EXECUTE PROCEDURE fn_players_name_changes_log();</code></pre>
 <div class="key-concept">
   <p>Insert and update triggers supply <code>NEW</code>; update and delete triggers supply <code>OLD</code>. Since this trigger watches inserts, the code reads and rewrites <code>NEW</code>, then returns it.</p>
 </div>
-<p>Insert and update triggers always supply a <code>NEW</code> image. Update and delete triggers supply an <code>OLD</code> image. Those images hold the row about to change. Since this trigger watches inserts, the code reads <code>NEW</code>.</p>
 <pre><code>CREATE OR REPLACE FUNCTION fn_temperature_value_check_at_insert()
 RETURNS trigger LANGUAGE plpgsql AS
 -- body block;
@@ -979,7 +959,6 @@ EXECUTE PROCEDURE generic_cancel_op();</code></pre>
 <div class="key-concept">
   <p><code>NEW</code> and <code>OLD</code> are empty in opposite corners: no <code>OLD</code> on insert, no <code>NEW</code> on delete. Two guarded blocks respect that split, filling a null-started JSON holder only when its image exists.</p>
 </div>
-<p><code>NEW</code> and <code>OLD</code> are empty in opposite corners: there is no <code>OLD</code> image on insert and no <code>NEW</code> image on delete. The function respects that split with two guarded blocks.</p>
 <pre><code>CREATE OR REPLACE FUNCTION fn_audit_trigger()
 RETURNS trigger LANGUAGE plpgsql AS
 -- declare old_row JSON set to null, new_row JSON set to null;
@@ -1178,12 +1157,7 @@ EXECUTE PROCEDURE generic_cancel_op();</code></pre>
   <p><code>CREATE TABLE t1 (id INT)</code> with a start watcher scoped to <code>CREATE TABLE</code>: the tag reads <code>CREATE TABLE</code>, the event reads <code>ddl_command_start</code>, the function logs both plus the user and the moment. An <code>ALTER TABLE</code> in the same session does not wake this watcher — wrong tag, no fire. That tag test is what keeps the audit log focused instead of noisy.</p>
 </div>
 <div class="key-takeaway">
-  <p><strong>Recap:</strong> Start, end, rewrite, drop; tag plus event name. The Q&A closes the two facts students misquote.</p>
-</div>
-<h3 id="35.16.5-student-questions-and-answers">35.16.5 Student Questions and Answers</h3>
-<div class="important-note">
-  <p><strong>Q:</strong> Can an event-trigger function use plain SQL as its language? <strong>A:</strong> No. It may use any language except SQL, with <code>plpgsql</code> used throughout these builds. Plain SQL cannot express the branching an event guard needs.</p>
-  <p><strong>Q:</strong> What happens when the data-definition command itself fails? <strong>A:</strong> Nothing further fires. A failed command skips its linked hooks, a failed start hook stops the command, and a failed end hook rolls the definition effect back. The database stays sound because hooks live inside the same transaction discipline as the command.</p>
+  <p><strong>Recap:</strong> Start, end, rewrite, drop; tag plus event name.</p>
 </div>
 
 <h2 id="35.17-audit-event-trigger-build">35.17 Audit Event Trigger Build</h2>

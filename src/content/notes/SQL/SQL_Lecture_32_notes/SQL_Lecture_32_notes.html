@@ -460,9 +460,6 @@ LANGUAGE SQL;</code></pre>
   <p>Build the adder, then run it twice. First create it with the statement from 32.1.1. Then call <code>SELECT fn_mysum(1, 2);</code> — the engine binds <code>$1 = 1</code> and <code>$2 = 2</code>, runs <code>SELECT 1 + 2</code>, and returns <strong>3</strong>. Call <code>SELECT fn_mysum(10, 20);</code> — now <code>$1 = 10</code> and <code>$2 = 20</code>, the body runs <code>SELECT 10 + 20</code>, and the answer is <strong>30</strong>. Sense-check: both answers equal ordinary addition, so the function adds two integers and returns their sum.</p>
 </div>
 <p>The call must supply arguments matching the declared types. Calling <code>fn_mysum</code> with no arguments fails with an error saying no function matches the given name and argument types, possibly suggesting an explicit type cast. That message looks alarming the first time, but the cause is plain: the engine cannot find a zero-argument version of a function that was declared with two integer parameters. PostgreSQL allows several functions to share one name with different signatures (overloading), so matching uses the name plus the argument types together, not the name alone.</p>
-<div class="important-note">
-  <p><strong>Q:</strong> Why does calling the new function without arguments fail, even though the function name is spelled right? <strong>A:</strong> PostgreSQL matches a call by name plus argument types. Since the function was declared with two integer parameters, a call with no arguments matches nothing, and the engine reports that no function matches the given name and argument types. Passing two integers fixes it at once.</p>
-</div>
 <h3 class="subsection-title" id="32.1.4-the-body-is-a-string">32.1.4 The Body Is a String</h3>
 <p>One design point deserves emphasis because it gives PostgreSQL functions much of their power. The code inside the body is passed to the engine as a string. That string layer turns the function into a black box for the execution machinery: anything the chosen language can express may travel inside that string, from trivial selects to long dynamic statements built up piece by piece. Other database engines attach function code directly to the statement instead of passing it as a string, so this flexibility is a genuine differentiator. Never underrate what can ride inside that string.</p>
 <p>A kitchen analogy helps: the <code>CREATE FUNCTION</code> line is the menu entry with the dish name and portion promise, while the string body is the sealed recipe envelope handed to the kitchen. The menu never changes, but the envelope can hold a one-line recipe or a banquet plan. The analogy breaks at one point: a kitchen reads intent, while the engine parses text strictly, so a typo inside the string fails at run time rather than being smoothed over.</p>
@@ -506,7 +503,6 @@ LANGUAGE SQL;</code></pre>
 <div class="warning-box">
   <p><strong>Scope:</strong> dollar quoting is the default habit for every function body from here on. <strong>Assumption:</strong> the tag is arbitrary text between dollars, so pick something readable (<code>$body$</code>, <code>$func$</code>) and keep it consistent. A mismatched pair (<code>$body$</code> opened, <code>$$</code> closed) is the classic failure — the engine waits for the true closing tag and reports an unterminated string.</p>
 </div>
-<p>From here on, dollar quoting is the default habit for every function body, with tagged variants kept in reserve for bodies that contain conflicting dollar sequences.</p>
 <div class="key-takeaway">
   <p><strong>Recap:</strong> single quotes break down as bodies gain quoted literals; <code>$$</code> fixes it and <code>$body$</code> fixes the leftover clash. <strong>Bridge:</strong> with quoting settled, the module can now move through the return-type ladder, starting with functions that return nothing at all.</p>
 </div>
@@ -573,9 +569,6 @@ $$
 $$
 LANGUAGE SQL;</code></pre>
   <p>It returns <strong>263.5</strong>, matching the top of the ascending browse. Sense-check: min sits below every other price and max sits above them, so both ends of the browse agree with the functions.</p>
-</div>
-<div class="important-note">
-  <p><strong>Q:</strong> The function was created without errors, so why does calling it complain about a type mismatch? <strong>A:</strong> Creation only checks syntax, not the type contract. The mismatch surfaces at call time, when the engine compares the declared return type against what the query truly yields. Aligning the declaration with the real column type (real here, not integer) resolves it.</p>
 </div>
 <h3 class="subsection-title" id="32.4.3-worked-example-biggest-and-smallest-order">32.4.3 Worked Example: Biggest and Smallest Order</h3>
 <p>The <code>order_details</code> table holds one row per line item with order id, product id, unit price, and quantity. Some orders span two rows (line items such as quantities 1, 2, 4, 8 appear twice for one order), so per-order totals need aggregation. The line-item amount is unit price times quantity, and the plan groups by order id, sums the amounts, and takes the maximum through a subquery:</p>
@@ -822,9 +815,6 @@ LANGUAGE SQL;</code></pre>
 <h3 class="subsection-title" id="32.10.2-three-ways-to-unpack-a-composite">32.10.2 Three Ways to Unpack a Composite</h3>
 <p>The raw composite is honest but awkward, so three access styles unpack it. First, expand the whole row into table form by wrapping the call in parentheses and adding <code>.*</code>:</p>
 <pre><code>SELECT (fn_api_latest_order()).*;</code></pre>
-<div class="example-box">
-  <p>All three styles agree on order 11077. The <code>.*</code> form lays the full row out as a readable table. Dot notation picks one field: <code>(fn_api_latest_order()).order_id</code> returns <strong>11077</strong> and <code>(fn_api_latest_order()).customer_id</code> returns that order's customer. Functional style puts the field first: <code>order_id(fn_api_latest_order())</code> and <code>customer_id(fn_api_latest_order())</code> return the same two values. The <strong>choice is readability at the call site</strong>, and the sense-check is that all three agree field for field.</p>
-</div>
 <p>Second, pick one field with dot notation: <code>(fn_api_latest_order()).order_id</code> or <code>(fn_api_latest_order()).customer_id</code>. Third, use functional style with the field name first: <code>order_id(fn_api_latest_order())</code>, <code>customer_id(fn_api_latest_order())</code>. All three agree; the choice is readability at the call site.</p>
 <div class="warning-box">
   <p>The parentheses around the call are load-bearing: <code>(fn_api_latest_order()).*</code> works, while <code>fn_api_latest_order().*</code> parses the <code>.*</code> against the wrong target. Forgetting the outer pair is the most common syntax slip in this section.</p>
@@ -952,7 +942,6 @@ FROM fn_employees_hire_by_year(1993);</code></pre>
 <div class="warning-box">
   <p>Even a well-meant cast at the wrong position is dangerous: it can line up a quantity column against a money column and silently produce nonsense shaped like success. The rule is mechanical and absolute: declare columns in exactly the order the query emits them. A mismatch error is good news — it means the engine caught the swap; a silent misalignment is the real danger, so eyeball the first rows after every new <code>RETURNS TABLE</code> function.</p>
 </div>
-<p>(The same material appears twice in the source material with identical wording; it is consolidated here rather than repeated.)</p>
 <div class="key-takeaway">
   <p><strong>Recap:</strong> positions decide, names do not — mirror the query exactly. <strong>Bridge:</strong> order is one of three <code>RETURNS TABLE</code> rules; the next section adds "declare every column" and puts all three to work.</p>
 </div>

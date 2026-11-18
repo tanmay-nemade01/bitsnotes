@@ -315,7 +315,6 @@
         <p><strong>Q:</strong> Does pipeline parallelization divide the dataset into batches or does it balance model layers across GPUs?</p>
         <p><strong>A:</strong> Pipeline parallelism performs both operations simultaneously. The model layers are split into sequential chunks assigned across GPUs, and the input dataset is partitioned into smaller micro-batches called frames. Each micro-batch flows through the GPU stages sequentially to achieve concurrent execution.</p>
       </div>
-      <p>A following question clarified how this batch partitioning applies to concrete sample counts:</p>
       <div class="important-note">
         <p><strong>Q:</strong> If we have a dataset of 1024 records and divide it into four frames, does each frame contain 256 records?</p>
         <p><strong>A:</strong> Yes. Dividing 1024 records into four frames yields 256 records per micro-batch. Each micro-batch is processed through the model independently, producing its own forward activations, loss value, and gradients.</p>
@@ -367,8 +366,8 @@
         <p>At the final pipeline stage \(j = p-1\), the output prediction \(a_k^{(p-1)}\) is compared against the corresponding ground truth label vector \(y_k\) to compute the scalar loss: \[ \mathcal{L}_k = \ell(a_k^{(p-1)}, y_k) \] where \(\ell\) denotes the task loss function (such as categorical cross-entropy).</p>
       </div>
       <p>During the backward phase, error adjoints (gradients of the loss with respect to intermediate activations) propagate in reverse order from stage \(p-1\) down to stage 0: \[ \delta_k^{(j)} = \frac{\partial \mathcal{L}_k}{\partial a_k^{(j)}} = \delta_k^{(j+1)} \frac{\partial f_{j+1}}{\partial a_k^{(j)}} \] where \(\delta_k^{(p-1)} = \frac{\partial \ell}{\partial a_k^{(p-1)}}\).</p>
-      <p>Using these backpropagated adjoints and the stored forward activations \(a_k^{(j-1)}\), each stage calculates the local parameter gradient for micro-batch \(k\) via the chain rule: \[ \nabla_{W_j} \mathcal{L}_k = \delta_k^{(j)} \frac{\partial f_j}{\partial W_j} \] The verbal description states: compute the gradients \(\frac{\partial \mathcal{L}}{\partial W}\) and pass them backward through each layer.</p>
-      <p>Once all micro-batch gradients are accumulated, weights are updated by subtracting the scaled gradient: \[ W_j \leftarrow W_j - \eta \sum_{k=1}^m \nabla_{W_j} \mathcal{L}_k \] where \(\eta \in \mathbb{R}^+\) is the learning rate. The verbal description emphasizes that backward propagation is an active weight adjustment process where parameters are updated layer by layer as gradients flow through each stage.</p>
+      <p>Using these backpropagated adjoints and the stored forward activations \(a_k^{(j-1)}\), each stage calculates the local parameter gradient for micro-batch \(k\) via the chain rule: \[ \nabla_{W_j} \mathcal{L}_k = \delta_k^{(j)} \frac{\partial f_j}{\partial W_j} \]</p>
+      <p>Once all micro-batch gradients are accumulated, weights are updated by subtracting the scaled gradient: \[ W_j \leftarrow W_j - \eta \sum_{k=1}^m \nabla_{W_j} \mathcal{L}_k \] where \(\eta \in \mathbb{R}^+\) is the learning rate.</p>
       <h3 id="4.2.3-worked-example-gpipe-step-by-step-execution-trace">4.2.3 Worked Example: GPipe Step-by-Step Execution Trace</h3>
       <div class="example-box">
         <p><strong>Worked Example 2 — GPipe Execution Trace on 4 GPUs:</strong> Consider \(p = 4\) GPUs and \(m = 4\) micro-batches executing over 11 discrete time steps under the GPipe schedule.</p>
@@ -586,12 +585,10 @@
         <p><strong>Q:</strong> How can gradients be computed if ground truth is only available after all frames are processed?</p>
         <p><strong>A:</strong> Each data frame has its own corresponding ground truth partition. When frame 1 finishes all layers at the final GPU, its output is immediately compared against its ground truth partition to compute loss and gradients without waiting for unrelated data.</p>
       </div>
-      <p>Another student questioned whether chain-rule backpropagation could be bypassed:</p>
       <div class="important-note">
         <p><strong>Q:</strong> Can we calculate the gradient for weight \(W_0\) on GPU 0 directly at the end without backpropagating through earlier stages?</p>
         <p><strong>A:</strong> No. Computing the gradient \(\frac{\partial \mathcal{L}}{\partial W_0}\) requires the mathematical chain rule across all downstream layers. Gradients must flow sequentially backward from GPU 3 to GPU 2, then GPU 1, and finally GPU 0.</p>
       </div>
-      <p>A third question asked about the exact moment parameter updates take place:</p>
       <div class="important-note">
         <p><strong>Q:</strong> Does the weight update happen all at once at the end or during the backward pass?</p>
         <p><strong>A:</strong> The backward pass is an active weight adjustment process. Weights are updated stage by stage as gradients flow backward through each layer according to \(W \leftarrow W - \eta \nabla_W \mathcal{L}\).</p>
@@ -623,7 +620,7 @@
       <p>In GPipe, activation tensors for all \(m\) micro-batches must be retained in GPU memory throughout the entire forward wave until backward passes begin: \[ M_{\text{activations}}^{\text{GPipe}} = m \times S_{\text{act}} \] where \(S_{\text{act}}\) is the memory in bytes required to store intermediate activations for one micro-batch on a single pipeline stage.</p>
       <div class="key-concept">
         <p><strong>1F1B Activation Memory Bound:</strong> In 1F1B, because backward pass \(B_k\) executes shortly after forward pass \(F_k\), intermediate activations are consumed and discarded rapidly. On any physical GPU, the maximum number of in-flight forward micro-batches awaiting backpropagation never exceeds the number of pipeline stages \(p\).</p>
-        <p>The peak activation memory consumption per GPU stage is bounded by: \[ M_{\text{activations}}^{\text{1F1B}} = p \times S_{\text{act}} \] The peak activation memory complexity is therefore: \[ M_{\text{peak}}^{\text{1F1B}} = \mathcal{O}(p) \] The verbal description states: we do not store all gradients; as and when a batch completes the model, it is ready for backward propagation.</p>
+        <p>The peak activation memory consumption per GPU stage is bounded by: \[ M_{\text{activations}}^{\text{1F1B}} = p \times S_{\text{act}} \] The peak activation memory complexity is therefore: \[ M_{\text{peak}}^{\text{1F1B}} = \mathcal{O}(p) \]</p>
         <p><em>Comparative Advantage:</em> When the micro-batch count \(m\) is much larger than the stage count \(p\) (\(m \gg p\)), 1F1B yields dramatic memory reductions: \[ \frac{M_{\text{peak}}^{\text{1F1B}}}{M_{\text{peak}}^{\text{GPipe}}} = \frac{p}{m} \] For example, with \(m = 32\) micro-batches and \(p = 4\) GPUs, 1F1B consumes only \(\frac{4}{32} = \frac{1}{8}\) (12.5%) of the activation memory required by GPipe.</p>
       </div>
       <h3 id="4.3.3-worked-example-1f1b-execution-trace-on-4-gpus">4.3.3 Worked Example: 1F1B Execution Trace on 4 GPUs</h3>
@@ -755,7 +752,7 @@
         <ul>
           <li>Compute the empirical bubble ratio:</li>
         </ul>
-        <p>\[ \text{Bubble Ratio}_{\text{1F1B}} = \frac{16}{44} \approx \mathbf{36.36\%} \] The verbal description states: sixteen divided by forty-four yields thirty-six point three six percent idle time.</p>
+        <p>\[ \text{Bubble Ratio}_{\text{1F1B}} = \frac{16}{44} \approx \mathbf{36.36\%} \]</p>
         <p><em>Sense-check:</em> 1F1B reduces idle slots from 18 down to 16 compared to GPipe under identical hardware constraints (\(p=4, m=4\)), while fundamentally slashing peak activation memory from \(\mathcal{O}(m)\) to \(\mathcal{O}(p)\).</p>
       </div>
       <div class="warning-box">
@@ -824,11 +821,6 @@
         </ul>
       </div>
       <h3 id="4.3.4-student-questions-and-answers">4.3.4 Student Questions and Answers</h3>
-      <div class="important-note">
-        <p><strong>Q:</strong> In the 1F1B diagram, where is micro-batch \(F_4\) processed on GPU 2? Is a cycle missing from the slide?</p>
-        <p><strong>A:</strong> The slot was omitted in the slide illustration. When accounting for the missing cycle, the slight shift in timestamps does not meaningfully alter the overall bubble ratio, which remains approximately \(16/44 \approx 36.36\%\).</p>
-      </div>
-      <p>A related student query addressed the latency implications of prioritizing backward computation:</p>
       <div class="important-note">
         <p><strong>Q:</strong> Does starting backward pass \(B_1\) early mean forward processing for frame 2 is slower than frame 1?</p>
         <p><strong>A:</strong> No. Forward execution speed is identical across frames. Early backward execution simply prioritizes clearing finished frames instead of leaving GPU 3 idle while downstream frames arrive.</p>
@@ -915,7 +907,6 @@
           <li>\(m\) is the number of micro-batches,</li>
           <li>\(v\) is the virtual stage factor (number of non-contiguous chunks per GPU).</li>
         </ul>
-        <p>The verbal description states: by increasing processing options across two model chunks, we reduce idle slots drastically.</p>
         <p><em>Scaling Implication:</em> When \(v = 2\), the duration of the initial warmup bubble drops by roughly half (a <strong>50% reduction</strong> in bubble time) compared to standard 1F1B. As the number of virtual chunks \(v\) increases, the bubble fraction shrinks further toward zero.</p>
       </div>
       <h3 id="4.4.3-worked-example-8-chunk-4-gpu-execution-trace">4.4.3 Worked Example: 8-Chunk 4-GPU Execution Trace</h3>
@@ -999,7 +990,6 @@
         <p><strong>Q:</strong> In the interleaved diagram, can we say that the model is interleaved by four?</p>
         <p><strong>A:</strong> The model is partitioned into multiple chunks where the first half is distributed across GPUs and the second half loops back. For an eight-layer network on four GPUs with virtual factor \(v = 2\), the first four chunks are distributed across GPUs 0 through 3, and chunks 5 through 8 loop back to GPUs 0 through 3.</p>
       </div>
-      <p>A subsequent question explored the architectural difficulties of partitioning real models:</p>
       <div class="important-note">
         <p><strong>Q:</strong> Does interleaved 1F1B create complexity when finding layers and matching them to GPUs?</p>
         <p><strong>A:</strong> Yes. Partitioning layers into balanced virtual chunks increases scheduling complexity. If a model does not have enough divisible layers, matching chunks to GPUs becomes difficult and causes load imbalance.</p>
@@ -1045,7 +1035,6 @@
           <li>\(F_{B, k'}\) is the forward pass for micro-batch \(k'\) on Stream B,</li>
           <li>\(B_{B, k'}\) is the backward pass for micro-batch \(k'\) on Stream B.</li>
         </ul>
-        <p>The verbal description states: both backward and forward directions happen simultaneously; Stream A backward starts at GPU 3 while Stream B backward starts at GPU 0.</p>
         <p><em>Asymptotic Bubble Minimization:</em> By overlapping the forward execution of one stream with the backward execution of the opposing stream, GPU compute cores remain continuously saturated throughout steady state. In the asymptotic limit as total micro-batch count \(m\) grows large, the theoretical bubble fraction approaches near zero: \[ \lim_{m \to \infty} F_{\text{bubble}}^{\text{DualPipe}} \approx 0 \]</p>
       </div>
       <h3 id="4.5.3-worked-example-bidirectional-trace-of-streams-a-and-b">4.5.3 Worked Example: Bidirectional Trace of Streams A and B</h3>
@@ -1134,12 +1123,6 @@
         <p><strong>Q:</strong> What is the exact bubble ratio for DualPipe?</p>
         <p><strong>A:</strong> Calculating the exact bubble ratio requires drawing the full bidirectional spacetime schedule on paper for the chosen number of GPUs and micro-batches. Because both ends launch simultaneously, the idle bubble is drastically smaller than 1F1B.</p>
       </div>
-      <p>A second question addressed whether DualPipe completely eliminates idle time:</p>
-      <div class="important-note">
-        <p><strong>Q:</strong> Does DualPipe achieve 100% GPU utilization, or are there still idle cycles?</p>
-        <p><strong>A:</strong> DualPipe does not reach 100% utilization. Small idle bubbles still occur during initial pipeline startup and final drain, but steady-state utilization is significantly higher than unidirectional schemes.</p>
-      </div>
-      <p>A third inquiry examined potential hardware and memory contention:</p>
       <div class="important-note">
         <p><strong>Q:</strong> Does moving bidirectional streams simultaneously cause cache misses or communication bottlenecks?</p>
         <p><strong>A:</strong> Bidirectional traffic can saturate interconnect bandwidth and cause contention if memory and communication are not carefully managed during implementation. It is an engineering tradeoff between code complexity and hardware throughput.</p>

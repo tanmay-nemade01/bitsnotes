@@ -185,8 +185,6 @@
   <p>where \(N_{\text{SBCS}}\) is the maximum number of unique characters representable in a single byte. The ISO 8859 series provides standard single-byte encodings for regional scripts. For example, ISO 8859-1 covers Western European languages, while other variants cover Greek, Cyrillic, and Arabic scripts. Single-byte character sets work well for individual Western alphabets. However, single-byte encodings cannot represent languages with thousands of unique ideograms.</p>
   <ol>
     <li><strong>Multi-Byte Character Sets (MBCS):</strong> Modern database architectures rely on multi-byte character sets. In a multi-byte encoding, a single character can occupy two, three, or four bytes. Extended Unix Code (EUC) provides regional multi-byte encodings. Examples include EUC-CN for Simplified Chinese, EUC-JP for Japanese, and EUC-KR for Korean text. Another historical multi-byte encoding is MULE internal code, originally created for multilingual Emacs processing.</li>
-  </ol>
-  <ol>
     <li><strong>Universal UTF-8 Standard:</strong> Today, the universal global standard is UTF-8. UTF-8 is a variable-width Unicode encoding where the byte length \(k\) for any character satisfies:</li>
   </ol>
   <p>\[ k \in \{1, 2, 3, 4\} \]</p>
@@ -196,9 +194,9 @@
 <p>To visualize how variable-width encodings store text on disk, consider the byte footprints of different scripts:</p>
 <ul>
   <li>ASCII letter <code>'A'</code>: <code>[01000001]</code> (1 byte)</li>
-  <li>Arabic letter <code>'م'</code>: <code>[11011000][10100101]</code> (2 bytes)</li>
+  <li>Arabic letter <code>'م'</code>: <code>[11011001][10000101]</code> (2 bytes)</li>
   <li>Georgian letter <code>'გ'</code>: <code>[11100001][10000011][10010010]</code> (3 bytes)</li>
-  <li>Emoji <code>'🌍'</code>: <code>[11110000][10011111][10001101][10001101]</code> (4 bytes)</li>
+  <li>Emoji <code>'🌍'</code>: <code>[11110000][10011111][10001100][10001101]</code> (4 bytes)</li>
 </ul>
 <p>Because UTF-8 preserves 7-bit ASCII directly in its 1-byte space, legacy ASCII text remains 100% valid UTF-8 without byte expansion.</p>
 <h3 id="38.1.2-cluster-level-encoding-with-initdb">38.1.2 Cluster-Level Encoding with initdb</h3>
@@ -286,7 +284,6 @@
     <li><em>Character classification</em> (<code>LC_CTYPE</code>) dictates how the database engine identifies the semantic nature of an individual byte sequence—such as converting lowercase characters to uppercase or detecting whitespace boundaries.</li>
   </ul>
 </div>
-<p>To see these parameters in action, walk through the creation of two databases within the same server cluster.</p>
 <h3 id="38.2.2-worked-walkthrough-creating-utf-8-and-euc-kr-databases">38.2.2 Worked Walkthrough: Creating UTF-8 and EUC-KR Databases</h3>
 <div class="example-box">
   <p><strong>Walkthrough: Creating Isolated Databases with Distinct UTF-8 and EUC-KR Encodings in a Single Cluster</strong></p>
@@ -384,11 +381,6 @@ WHERE datname IN ('database_utf8', 'database_euckr');</code></pre>
     <li><strong>Operating System glibc Upgrades:</strong> Collation definitions are defined by the host OS C library. If the operating system updates glibc, alphabetical sort orders can shift slightly. This can cause existing B-tree indexes to become silently corrupt, requiring a <code>REINDEX DATABASE</code> command.</li>
   </ol>
 </div>
-<h3 id="38.2.3-student-questions-and-answers">38.2.3 Student Questions and Answers</h3>
-<div class="important-note">
-  <p><strong>Q:</strong> What is the operational distinction between collation and character classification when creating a database?</p>
-  <p><strong>A:</strong> Collation determines string sorting and comparison order, while character classification determines character attributes such as case conversion and digit recognition. Both must align with the chosen database encoding.</p>
-</div>
 <p>Real-world: Enterprise architectures often isolate legacy regional feeds into dedicated databases using native encodings like EUC-KR, while directing global web traffic to a UTF-8 database. Multinational e-commerce systems use specific collations to satisfy statutory sorting requirements—for instance, using phonebook collation in German financial systems to ensure "Schröder" sorts identically to "Schroeder".</p>
 <div class="key-takeaway">
   <p><strong>Section Recap:</strong> The <code>CREATE DATABASE</code> command allows fine-grained specification of <code>OWNER</code>, <code>ENCODING</code>, <code>LC_COLLATE</code>, and <code>LC_CTYPE</code>. Isolating regional character sets into dedicated databases preserves backward compatibility with legacy client systems while maintaining independent collation rules.</p>
@@ -413,7 +405,6 @@ WHERE datname IN ('database_utf8', 'database_euckr');</code></pre>
     <li><strong>Transaction Abort:</strong> If an application submits an invalid byte sequence that does not exist in the declared character set, PostgreSQL aborts the entire transaction, ensuring that no corrupted bytes touch the storage engine.</li>
   </ol>
 </div>
-<p>Understanding how strict validation operates highlights why bypassing it creates severe integrity risks.</p>
 <h3 id="38.3.2-the-dangers-of-sql-ascii-validation-failure-and-migration-debt">38.3.2 The Dangers of SQL_ASCII: Validation Failure and Migration Debt</h3>
 <p>PostgreSQL permits superusers to create databases with a special encoding called <code>SQL_ASCII</code>:</p>
 <pre><code>CREATE DATABASE database_ascii
@@ -475,7 +466,6 @@ WHERE datname IN ('database_utf8', 'database_euckr');</code></pre>
 <div class="warning-box">
   <p><strong>Scope: Historical Context and Deprecation Boundaries</strong> The <code>SQL_ASCII</code> setting originated in early database environments where hardware terminals used pure 7-bit ASCII and CPU cycles spent on byte validation were costly. In modern software engineering, raw binary streams must be stored in <code>BYTEA</code> columns, and textual data must be stored in UTF-8. There is no legitimate architectural justification for creating new <code>SQL_ASCII</code> databases in production today.</p>
 </div>
-<p>Administrators dealing with legacy infrastructure must remain vigilant against subtle assumptions about ASCII storage.</p>
 <div class="warning-box">
   <p><strong>Common Pitfalls with SQL_ASCII</strong></p>
   <ol>
@@ -525,7 +515,6 @@ WHERE datname IN ('database_utf8', 'database_euckr');</code></pre>
   <pre><code>SET client_encoding TO 'UTF8';</code></pre>
   <p>In PostgreSQL, the keyword <code>UNICODE</code> serves as a direct alias for <code>UTF8</code>. When the client encoding differs from the server encoding, PostgreSQL automatically converts character strings between the two encodings on the fly.</p>
 </div>
-<p>To observe client-server encoding interactions in practice, walk through a concrete database test.</p>
 <h3 id="38.4.2-worked-walkthrough-multi-language-table-and-latin-1-mismatch-error">38.4.2 Worked Walkthrough: Multi-Language Table and Latin-1 Mismatch Error</h3>
 <div class="example-box">
   <p><strong>Walkthrough: Multi-Language Table and Latin-1 Mismatch Error</strong></p>
@@ -619,18 +608,12 @@ SHOW client_encoding;</code></pre>
 <div class="warning-box">
   <p><strong>Scope: Applicability of On-The-Fly Conversion</strong> PostgreSQL automatic character conversion operates transparently only when the target client encoding has a mathematical mapping for every character in the result set. When designing microservice APIs, web services, and analytics pipelines, setting client drivers explicitly to UTF-8 is required to prevent unpredictable query aborts during multilingual data retrieval.</p>
 </div>
-<p>Administrators and developers should keep in mind common connection pool and interface traps.</p>
 <div class="warning-box">
   <p><strong>Common Pitfalls in Client-Server Encoding</strong></p>
   <ol>
     <li><strong>Assuming UTF-8 Server Eliminates Client Incompatibilities:</strong> Assuming that configuring a UTF-8 database server allows legacy client applications configured for Latin-1 or ASCII to retrieve global text without error.</li>
     <li><strong>Terminal Emulator Mismatches:</strong> Setting <code>client_encoding TO 'UTF8'</code> in a database session while running inside a terminal emulator configured for Windows-1252. The query succeeds without error, but the terminal renders the UTF-8 bytes as garbled text (mojibake).</li>
   </ol>
-</div>
-<h3 id="38.4.3-student-questions-and-answers">38.4.3 Student Questions and Answers</h3>
-<div class="important-note">
-  <p><strong>Q:</strong> If the server encoding is UTF-8, why does querying Georgian text fail when the client encoding is set to Latin-1? Does a UTF-8 server encoding automatically support any client encoding without errors?</p>
-  <p><strong>A:</strong> No. Believing that UTF-8 server encoding automatically supports any client encoding is a common mistake. Latin-1 cannot represent Georgian multi-byte character sequences. When PostgreSQL converts UTF-8 data to Latin-1, it cannot find equivalent characters and raises a runtime conversion error. Incompatible client encodings like Latin-1 still fail when encountering non-representable multi-byte characters like Georgian.</p>
 </div>
 <p>Real-world: In enterprise microservice architectures, legacy billing services compiled with single-byte Latin-1 drivers connecting to modern UTF-8 customer databases must restrict queries to ASCII columns or upgrade drivers to UTF-8 to prevent fatal transaction rollbacks when processing international customer names.</p>
 <div class="key-takeaway">

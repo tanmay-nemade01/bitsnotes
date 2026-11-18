@@ -304,7 +304,6 @@
       <p><strong>Centralized aggregation.</strong> Workers send gradients to a server. The server aggregates. After aggregation, the server's weights are treated as equal to training on all of the data. In the parameter-server writing, each round is four stages: workers <em>pull</em> the current weights, workers <em>push</em> local gradients, the server <em>aggregates</em>, and the server <em>updates</em> the stored model. That is the master-worker design used in the synchronous and asynchronous sections below.</p>
       <p><strong>Peer exchange.</strong> There is no centralized server. Workers exchange gradients with neighbors. Model 3 talks to model 2. Model 2 talks to model 1. Model 1 and model 3 do not need a direct link. After several rounds of exchange, every model holds a copy of the mixed information. The models converge. A little extra loss compared with a perfect central average is acceptable. The requirement is still one global model.</p>
       <p>A ring All-Reduce is the textbook cousin of this peer picture: each worker both trains and talks to neighbors, so there is no dedicated master that only averages. Neighbor averaging in Section 8.6 is the same idea with a distance threshold instead of a fixed ring.</p>
-      <p>The rest of this session first rebuilds ordinary SGD on one weight. Then it rebuilds the same update in the distributed, asynchronous, and decentralized settings.</p>
       <div class="warning-box">
         <p><strong>Scope:</strong> Averaging worker gradients yields a global model when every shard is a fair draw from the same data distribution and every worker finishes the round. If one zone holds only one product category, the mean slope is biased toward that category. If one worker never reports, a strict barrier stalls the round (the straggler problem in Section 8.5). Peer mixing needs a connected neighbor graph; an isolated worker never receives the rest of the data.</p>
       </div>
@@ -323,24 +322,6 @@
         <p>Distributed SGD exists so that one global model can learn from data that does not fit on one machine. Collect the scattered gradients, average them, and apply one update. Next, rebuild that update on a single weight so the later multi-worker arithmetic is not a black box.</p>
       </div>
       <p>Retail platforms, payment switches, and warehouse-scale GPU clusters all hit this wall: the data is large and sharded, the model must still be one model. Federated learning later adds a privacy constraint (do not ship the records, only the slopes or weights), but the mixing step is the same average.</p>
-      <h3 class="subsection-title" id="8.1.2-student-questions-and-answers">8.1.2 Student Questions and Answers</h3>
-      <p>Several students asked how this session sits on the stack that already covered pipelines and cluster tools.</p>
-      <div class="important-note">
-        <p><strong>Q:</strong> Where did the last session stop, and what was already covered in the distributed stack?</p>
-        <p><strong>A:</strong> The prior work covered PySpark examples after the pipeline material, then Hadoop and Kubernetes. This session is the last distributed-gradient block. Federated learning starts next.</p>
-      </div>
-      <p>The next question is the distributed view of SGD itself, not the cluster tooling.</p>
-      <div class="important-note">
-        <p><strong>Q:</strong> In a distributed setting, what is SGD doing, and why is a distributed view needed?</p>
-        <p><strong>A:</strong> The gradient is scattered along the servers and different machines. Collect all the gradients. Average them. Compute one global gradient. Apply that global gradient to the models.</p>
-      </div>
-      <p>The aim of that collection step is easy to understate.</p>
-      <div class="important-note">
-        <p><strong>Q:</strong> What is the ultimate aim of this multi-machine setup?</p>
-        <p><strong>A:</strong> Get a global model that represents all the datasets. That means learning from the complete dataset, not from one shard.</p>
-      </div>
-      <h3 class="subsection-title" id="8.1.3-industry-applications">8.1.3 Industry Applications</h3>
-      <p>Real-world: multi-zone retail and payment traffic cannot train on one box. Each geographic zone holds a subset of Amazon-like transactions. Each zone trains locally and returns a gradient. The same pattern appears on multi-GPU machines: GPU 1 through GPU 4 each hold a shard and send a gradient to a server.</p>
 
       <h2 class="section-title" id="8.2-stochastic-gradient-descent-on-a-single-weight">8.2 Stochastic Gradient Descent on a Single Weight</h2>
       <div class="important-note">
@@ -476,17 +457,6 @@
         <p><strong>Assumption:</strong> This derivation uses a scalar weight, squared loss, and a learning rate small enough that one step stays on the same side of the minimum. <strong>Scope:</strong> Mini-batch noise, stale gradients, and neighbor mixing all reuse \(w - \eta g\), but they change which \(g\) arrives. If \(\eta\) is huge, \(w = 2\) with \(g = -12\) jumps far past \(3.33\) and the loss can rise. If you edit \(x\) instead of \(w\), you are no longer training; you are forging the data.</p>
       </div>
       <p>This one-weight walk is the same update a search engine uses when it nudges ranking weights from click logs, and the same update a warehouse GPU uses on a shard of images. The distributed sections only change who computes \(g\) and when \(w\) is allowed to move.</p>
-      <h3 class="subsection-title" id="8.2.7-student-questions-and-answers">8.2.7 Student Questions and Answers</h3>
-      <p>The sign of the slope is the most common first confusion.</p>
-      <div class="important-note">
-        <p><strong>Q:</strong> If the gradient is negative, should the weight increase or decrease?</p>
-        <p><strong>A:</strong> Increase the weight. A negative slope means a larger weight gives a smaller loss. The update is old weight minus eta times a negative number, so the weight grows on its own.</p>
-      </div>
-      <p>A second confusion is to treat the input as a knob.</p>
-      <div class="important-note">
-        <p><strong>Q:</strong> Can we change the input \(x\) to reduce the loss?</p>
-        <p><strong>A:</strong> No. The input is data. You do not edit data to make the model look good. Only the weight is a trainable parameter.</p>
-      </div>
 
       <h2 class="section-title" id="8.3-mini-batch-gradient-descent">8.3 Mini-Batch Gradient Descent</h2>
       <div class="important-note">
@@ -569,13 +539,6 @@
         <p>Sample-wise, mini-batch, and full batch all use the same slope. They differ in how often the weight moves and whether gradients are averaged. Mini-batch is the practical cadence for large models, and it is the inner step each distributed worker runs on its shard.</p>
       </div>
       <p>Multi-GPU training in a data center is mini-batch SGD with hardware shards. Each GPU holds part of the global batch. The server (or an All-Reduce) averages GPU gradients and applies one global update. Recommendation systems and speech models use the same cadence: group examples, freeze weights, average, step.</p>
-      <h3 class="subsection-title" id="8.3.3-student-questions-and-answers">8.3.3 Student Questions and Answers</h3>
-      <div class="important-note">
-        <p><strong>Q:</strong> What is mini-batch gradient descent, in plain language?</p>
-        <p><strong>A:</strong> Split the whole batch into multiple small batches and run gradient descent on those. Instead of sending the whole data together, update the weights by splitting into multiple small batches.</p>
-      </div>
-      <h3 class="subsection-title" id="8.3.4-industry-applications-and-exam-notes">8.3.4 Industry Applications and Exam Notes</h3>
-      <p>Real-world: Multi-GPU training is mini-batch SGD with hardware shards. Each GPU holds part of the batch. The server averages GPU gradients and applies one global update.</p>
 
       <h2 class="section-title" id="8.4-synchronous-distributed-sgd">8.4 Synchronous Distributed SGD</h2>
       <div class="important-note">
@@ -715,17 +678,6 @@
         <p><strong>Scope:</strong> Equal-weight averaging assumes equal shard sizes and a completed barrier. <strong>Assumption:</strong> every worker used the same \(w_{t}\). If one worker trained on an older \(w\), you are no longer in synchronous SGD; that is staleness (Section 8.5). If you average <em>models</em> that each took many local steps, you are closer to FedAvg than to one-step FedSGD. Both are valid, but they are not the same numerical object as \(\bar{g} = -6.25\) above.</p>
       </div>
       <p>Synchronous averaging is how a four-GPU image trainer stays on one ResNet, and how a payment-fraud model stays on one weight vector while card logs stay in regional warehouses. The next design removes the wait.</p>
-      <h3 class="subsection-title" id="8.4.5-student-questions-and-answers">8.4.5 Student Questions and Answers</h3>
-      <p>The highlighted gradient column still looks like a new object to some students.</p>
-      <div class="important-note">
-        <p><strong>Q:</strong> On the demo, what does the highlighted gradient term convey internally? Is it something other than a slope?</p>
-        <p><strong>A:</strong> Internally it is still \(y_{2} - y_{1}\) over \(x_{2} - x_{1}\). You are computing a derivative, and a derivative is a slope. Do not assume the formula \((wx - y)x\) is a different geometric object. Geometrically it represents the same change in loss when \(w\) changes.</p>
-      </div>
-      <p>The chain-rule target is the other high-frequency slip.</p>
-      <div class="important-note">
-        <p><strong>Q:</strong> When differentiating \(\frac{1}{2}(wx - y)^{2}\), is the derivative taken with respect to the input \(x\)?</p>
-        <p><strong>A:</strong> No. Take the derivative with respect to the weight \(w\), not with respect to \(x\). The input is not a trainable parameter. After the chain rule you still multiply by \(x\), because \(u = wx - y\) and \(du/dw = x\). Students who differentiate the loss with respect to the input get \((wx - y)w\) and the worker table no longer matches the finite-difference slope.</p>
-      </div>
 
       <h2 class="section-title" id="8.5-asynchronous-sgd-and-stale-gradients">8.5 Asynchronous SGD and Stale Gradients</h2>
       <div class="important-note">
@@ -837,27 +789,6 @@
         <p>A stale gradient is computed on old weights and applied to newer weights. Small \(\eta\) and quiet gradients can still converge. New weights are pulled at batch or epoch boundaries, not by interrupting a worker mid-gradient. Next, drop the server entirely and mix with neighbors.</p>
       </div>
       <p>Parameter-server clusters for huge embedding tables often run this way: many workers stream gradients, the server applies them as they land, and a slow crawler does not freeze the ads model. The cost is the stale apply you just traced from \(2.0\) onto \(2.80\).</p>
-      <h3 class="subsection-title" id="8.5.6-student-questions-and-answers">8.5.6 Student Questions and Answers</h3>
-      <p>Several questions clustered on one confusion: when the new \(w\) goes back, and whether anyone is forced to restart.</p>
-      <div class="important-note">
-        <p><strong>Q:</strong> When a worker sends a gradient, what does the server update, and when do new weights go back to the workers?</p>
-        <p><strong>A:</strong> The server updates its own weights with the formula \(w \leftarrow w - \eta g\) as soon as a gradient arrives. It does not wait for other processes. A worker gets a fresh copy when it asks for the next task or starts a new mini-batch, not by being interrupted mid-compute.</p>
-      </div>
-      <p>The restart hope is the same confusion asked the other way.</p>
-      <div class="important-note">
-        <p><strong>Q:</strong> After worker 1 updates the server to \(2.20\), does the server immediately send that new weight to the remaining workers and force a restart?</p>
-        <p><strong>A:</strong> No. In asynchronous SGD the server does not wait and does not force all remaining workers to restart with the newest model after every update. Worker 2 and worker 3 keep computing with their old copies.</p>
-      </div>
-      <p>Worker 1’s next batch is a third wording of the pull rule.</p>
-      <div class="important-note">
-        <p><strong>Q:</strong> If remaining workers are not forced to restart, when does worker 1 get the new weights? Must it wait, or can it start the next batch on its old weights?</p>
-        <p><strong>A:</strong> Worker 1 may pull the latest \(w\) and start the next mini-batch once its current batch is done. It is not forced to idle. It also does not interrupt the others. New weights are read at batch or epoch boundaries, not while a gradient is mid-flight.</p>
-      </div>
-      <p>A separate confusion is server load, not staleness.</p>
-      <div class="important-note">
-        <p><strong>Q:</strong> Synchronous updates average all workers, then do one heavy update. Does asynchronous SGD pile more backpropagation onto the server and make the server much busier?</p>
-        <p><strong>A:</strong> The worry is valid. From the server's view, vanilla synchronous SGD averages incoming gradients and updates once. Async SGD applies a new weight after each arrival. The number of server-side updates can be higher. The worker-side backward pass still happens on the workers. Check with code. It seems more operations run in the async design.</p>
-      </div>
 
       <h2 class="section-title" id="8.6-decentralized-sgd">8.6 Decentralized SGD</h2>
       <div class="important-note">
@@ -877,7 +808,6 @@
         <p>The verbal rule is: exchange parameters with neighbors and average. Models converge, perhaps with a little extra loss.</p>
         <p>A local SGD step still happens on each worker, \(w_{i} \leftarrow w_{i} - \eta g_{i}\), on that worker’s shard. Mixing and stepping can alternate: train locally, then average with whoever is currently inside the distance threshold.</p>
       </div>
-      <p>The student wrap-up sometimes labels this neighbor average as “asynchronous.” That label is wrong. Asynchronous SGD still has a server and stale gradients. Decentralized SGD is the neighbor-exchange design. Workers update locally. When workers come closer (distance at most the threshold), they exchange weights, often by averaging.</p>
       <p>A ring All-Reduce is the data-center cousin: every node is a worker, there is no dedicated parameter server, and the mix is a fixed ring instead of a distance threshold. Blockchain-style swarm mixing is a further cousin used in some federated settings; the lecture exam object is the threshold neighbor average.</p>
       <div class="example-box">
         <p><strong>Three workers on a path, distance threshold \(1\).</strong> Place models on a line at positions \(0\), \(1\), and \(2\). Neighbors are pairs whose distance is at most \(1\): \((1,2)\) and \((2,3)\). Model 1 and model 3 do not share a direct link.</p>
@@ -906,12 +836,6 @@
         <p>Decentralized SGD has no master. Each worker keeps a model and averages with neighbors whose distance is under the threshold. That is a different design from asynchronous SGD, which still has a server. Next, write the three data loops in code form and name overlap SGD and quantized SGD for the follow-up session.</p>
       </div>
       <p>Phone-to-phone model mixing in a weak-signal warehouse, and peer mixing among hospital sites that will not stand up a shared aggregator, are the same pattern: train locally, average with whoever is close enough, accept a little extra loss.</p>
-      <h3 class="subsection-title" id="8.6.3-student-questions-and-answers">8.6.3 Student Questions and Answers</h3>
-      <p>The label mix-up is the one confusion to keep.</p>
-      <div class="important-note">
-        <p><strong>Q:</strong> After covering synchronous and asynchronous SGD, is the third type the one where each worker updates its own weights and, when workers come closer, they exchange weights by taking an average? Is that still asynchronous SGD?</p>
-        <p><strong>A:</strong> The neighbor-exchange picture is <em>decentralized</em> SGD, not asynchronous SGD. Asynchronous SGD still has a server. The server applies each arriving gradient and workers pull new weights when they start a new batch. Decentralized SGD has no master. Each worker keeps a model and averages with neighbors whose distance is under the threshold.</p>
-      </div>
 
       <h2 class="section-title" id="8.7-batch-loops-overlap-sgd-and-quantized-sgd">8.7 Batch Loops, Overlap SGD, and Quantized SGD</h2>
       <div class="important-note">
@@ -949,16 +873,6 @@
         <p>Three distributed designs sit on the table: synchronous (wait, average, one update), asynchronous (update per finish, pull on the next batch), decentralized (no master, neighbor average). Overlap SGD hides communication behind compute. Quantized SGD lowers bit size. Federated learning comes next.</p>
       </div>
       <p>Shipping FP16 or INT8 gradients between GPU racks is why quantized SGD shows up in production trainers. Overlapping the reduce with backward is why a well-tuned data-parallel job is not twice as slow as a math-only profile would suggest.</p>
-      <h3 class="subsection-title" id="8.7.3-student-questions-and-answers">8.7.3 Student Questions and Answers</h3>
-      <div class="important-note">
-        <p><strong>Q:</strong> What does quantized mean in quantized SGD?</p>
-        <p><strong>A:</strong> Lower the bit size of the data. Send cheaper messages. The rest of the method waits for the next session.</p>
-      </div>
-      <p>The closing request is a recap of the three main distributed methods.</p>
-      <div class="important-note">
-        <p><strong>Q:</strong> Can someone summarize the distributed gradient methods in two or three points?</p>
-        <p><strong>A:</strong> Three types sit on the table. First, synchronous distributed SGD: every worker computes a gradient, the server waits for all of them, aggregates, updates the weights, and distributes the new weights to all workers. Second, asynchronous SGD: each time a worker finishes, the server updates the weights; workers take the new weights when they start a new batch; nobody waits for every worker. Third, decentralized SGD: workers update locally and, when they come close enough, exchange weights by averaging. The main async rule is that new weights are taken when you start passing a new batch.</p>
-      </div>
 
 
       <h2 class="section-title" id="key-industry-applications">Key Industry Applications</h2>
