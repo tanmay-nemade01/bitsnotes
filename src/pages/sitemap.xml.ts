@@ -9,6 +9,12 @@ import {
   computeHiddenFingerprint,
   SubjectVisibilityUnavailableError,
 } from '../lib/subjectVisibility';
+import {
+  getHiddenLectureKeys,
+  computeHiddenLectureFingerprint,
+  makeLectureKey,
+  LectureVisibilityUnavailableError,
+} from '../lib/lectureVisibility';
 
 export const prerender = false;
 
@@ -48,10 +54,29 @@ export const GET: APIRoute = async (context) => {
     }
   }
 
+  let hiddenLectures: Set<string>;
+  try {
+    hiddenLectures = await getHiddenLectureKeys(env?.DB);
+  } catch (err) {
+    if (err instanceof LectureVisibilityUnavailableError) {
+      if (isAdmin) {
+        hiddenLectures = new Set();
+      } else {
+        return new Response('Service Unavailable', {
+          status: 503,
+          headers: { 'Cache-Control': 'no-store' },
+        });
+      }
+    } else {
+      throw err;
+    }
+  }
+
   const hiddenFingerprint = await computeHiddenFingerprint(hiddenSubjects);
+  const hiddenLectureFingerprint = await computeHiddenLectureFingerprint(hiddenLectures);
 
   if (import.meta.env.DEV) {
-    if (devCachedXml && devCachedVersion === `${version}-${hiddenFingerprint}`) {
+    if (devCachedXml && devCachedVersion === `${version}-${hiddenFingerprint}-${hiddenLectureFingerprint}`) {
       return new Response(devCachedXml, {
         status: 200,
         headers: {
@@ -68,7 +93,7 @@ export const GET: APIRoute = async (context) => {
     ? ((caches as any).default as Cache)
     : ((globalThis as any)?.caches?.default as Cache | undefined);
   const cacheKey = new Request(
-    `https://bitsnotes.com/__cache/sitemap/${encodeURIComponent(version)}-${hiddenFingerprint}.xml`,
+    `https://bitsnotes.com/__cache/sitemap/${encodeURIComponent(version)}-${hiddenFingerprint}-${hiddenLectureFingerprint}.xml`,
   );
 
   if (cache) {
@@ -121,6 +146,12 @@ export const GET: APIRoute = async (context) => {
 
     const lectures = await listLectures(subject.name);
     for (const lecture of lectures) {
+      if (
+        !isAdmin &&
+        hiddenLectures.has(makeLectureKey(subject.name, lecture.folderName))
+      ) {
+        continue;
+      }
       const viewPath = `/view/${subjectParam}/${encodeURIComponent(lecture.slug)}`;
       pages.push({
         path: viewPath,
@@ -155,7 +186,7 @@ export const GET: APIRoute = async (context) => {
 
   if (import.meta.env.DEV) {
     devCachedXml = xml;
-    devCachedVersion = `${version}-${hiddenFingerprint}`;
+    devCachedVersion = `${version}-${hiddenFingerprint}-${hiddenLectureFingerprint}`;
   }
 
   const response = new Response(xml, {

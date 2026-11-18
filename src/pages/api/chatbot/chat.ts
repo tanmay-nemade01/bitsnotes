@@ -18,6 +18,11 @@
 import type { APIRoute } from 'astro';
 import { getEnv } from '../../../lib/getEnv';
 import { getHiddenSubjectNames, SubjectVisibilityUnavailableError } from '../../../lib/subjectVisibility';
+import {
+  getHiddenLectureKeys,
+  makeLectureKey,
+  LectureVisibilityUnavailableError,
+} from '../../../lib/lectureVisibility';
 import { validateOrigin, csrfForbidden } from '../../../lib/auth/csrf';
 import {
   buildBaseSystemPrompt,
@@ -208,6 +213,18 @@ export const POST: APIRoute = async ({ locals, request }) => {
     if (!excludeFolder) excludeFolder = parsed.lectureFolder;
   }
 
+  let hiddenLectures = new Set<string>();
+  if (!isAdmin) {
+    try {
+      hiddenLectures = await getHiddenLectureKeys(db);
+    } catch (err) {
+      if (err instanceof LectureVisibilityUnavailableError) {
+        return jsonResponse({ error: 'Lecture visibility unavailable' }, 503);
+      }
+      throw err;
+    }
+  }
+
   if (!isAdmin && subject) {
     try {
       const hiddenSubjects = await getHiddenSubjectNames(db);
@@ -221,6 +238,17 @@ export const POST: APIRoute = async ({ locals, request }) => {
           usageDay,
         });
         return jsonResponse({ error: 'Subject not found.' }, 404);
+      }
+      if (excludeFolder && hiddenLectures.has(makeLectureKey(subject, excludeFolder))) {
+        await logBlockedRequest(db, {
+          requestId,
+          userId: user.id,
+          conversationId,
+          errorCode: 'blocked_lecture',
+          httpStatus: 404,
+          usageDay,
+        });
+        return jsonResponse({ error: 'Lecture not found.' }, 404);
       }
     } catch (err) {
       if (err instanceof SubjectVisibilityUnavailableError) {
@@ -367,13 +395,19 @@ export const POST: APIRoute = async ({ locals, request }) => {
         : Promise.resolve([]),
     ]);
     if (lectureSnippets.length > 0) {
-      relatedBlock = buildRelatedBlock(lectureSnippets);
-      relatedSources = lectureSnippets.map((s) => ({
-        kind: 'lecture',
-        title: s.title,
-        folderName: s.folderName,
-        slug: s.slug,
-      }));
+      // Never let auxiliary retrieval surface content from hidden lectures.
+      const visibleSnippets = lectureSnippets.filter(
+        (s) => !hiddenLectures.has(makeLectureKey(s.subject, s.folderName)),
+      );
+      if (visibleSnippets.length > 0) {
+        relatedBlock = buildRelatedBlock(visibleSnippets);
+        relatedSources = visibleSnippets.map((s) => ({
+          kind: 'lecture',
+          title: s.title,
+          folderName: s.folderName,
+          slug: s.slug,
+        }));
+      }
     }
     if (companionSnippets.length > 0) {
       companionBlock = buildCompanionBlock(companionSnippets);

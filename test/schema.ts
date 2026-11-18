@@ -280,10 +280,20 @@ CREATE TABLE IF NOT EXISTS subject_tags (
 );
 
 CREATE TABLE IF NOT EXISTS subject_settings (
-  subject_name  TEXT PRIMARY KEY,
-  is_public     INTEGER NOT NULL DEFAULT 1,
-  updated_at    INTEGER NOT NULL,
-  updated_by    TEXT
+  subject_name        TEXT PRIMARY KEY,
+  is_public           INTEGER NOT NULL DEFAULT 1,
+  hide_new_lectures   INTEGER NOT NULL DEFAULT 0,
+  updated_at          INTEGER NOT NULL,
+  updated_by          TEXT
+);
+
+CREATE TABLE IF NOT EXISTS lecture_settings (
+  subject_name   TEXT NOT NULL,
+  lecture_folder TEXT NOT NULL,
+  is_public      INTEGER NOT NULL DEFAULT 1,
+  updated_at     INTEGER NOT NULL,
+  updated_by     TEXT,
+  PRIMARY KEY (subject_name, lecture_folder)
 );
 `;
 

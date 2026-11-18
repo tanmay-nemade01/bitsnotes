@@ -7,6 +7,11 @@ import type { APIRoute } from 'astro';
 import { getEnv, json, getUser } from '../../../lib/apiHelpers';
 import { listCollections, listBookmarks } from '../../../lib/bookmarks';
 import { getHiddenSubjectNames, SubjectVisibilityUnavailableError } from '../../../lib/subjectVisibility';
+import {
+  getHiddenLectureKeys,
+  makeLectureKey,
+  LectureVisibilityUnavailableError,
+} from '../../../lib/lectureVisibility';
 import { listCatalog } from '../../../utils/notesLoader';
 
 export const prerender = false;
@@ -37,8 +42,26 @@ export const GET: APIRoute = async (context) => {
     }
   }
 
-  const bookmarks = (!isAdmin && hiddenSubjects.size > 0)
-    ? rawBookmarks.filter((bm) => !hiddenSubjects.has(bm.subject))
+  let hiddenLectures: Set<string>;
+  try {
+    hiddenLectures = await getHiddenLectureKeys(env.DB);
+  } catch (err) {
+    if (err instanceof LectureVisibilityUnavailableError) {
+      if (isAdmin) {
+        hiddenLectures = new Set();
+      } else {
+        return json({ error: 'Lecture visibility unavailable' }, 503);
+      }
+    } else {
+      throw err;
+    }
+  }
+
+  const bookmarks = (!isAdmin && (hiddenSubjects.size > 0 || hiddenLectures.size > 0))
+    ? rawBookmarks.filter(
+        (bm) => !hiddenSubjects.has(bm.subject) &&
+                !hiddenLectures.has(makeLectureKey(bm.subject, bm.lecture)),
+      )
     : rawBookmarks;
 
   // Normalize bookmark titles to match the catalog (lecture-number prefixed).
