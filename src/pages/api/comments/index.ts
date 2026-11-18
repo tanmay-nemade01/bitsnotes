@@ -24,6 +24,11 @@ import { listLectures, listSubjects } from '../../../utils/notesLoader';
 import { getPublishedPosts } from '../../../utils/blogLoader';
 import { sha256Hex } from '../../../lib/auth/crypto';
 import { getHiddenSubjectNames, SubjectVisibilityUnavailableError } from '../../../lib/subjectVisibility';
+import {
+  getHiddenLectureKeys,
+  makeLectureKey,
+  LectureVisibilityUnavailableError,
+} from '../../../lib/lectureVisibility';
 
 
 export const prerender = false;
@@ -64,6 +69,19 @@ export const GET: APIRoute = async (context) => {
     }
     if (!isAdmin && hiddenSubjects.has(subject)) {
       return json({ comments: [], hasMore: false, nextCursor: null }, 200, { 'Cache-Control': 'no-store' });
+    }
+    if (!isAdmin && pageType === 'lecture' && lecture) {
+      try {
+        const hiddenLectures = await getHiddenLectureKeys(env.DB);
+        if (hiddenLectures.has(makeLectureKey(subject, lecture))) {
+          return json({ comments: [], hasMore: false, nextCursor: null }, 200, { 'Cache-Control': 'no-store' });
+        }
+      } catch (err) {
+        if (err instanceof LectureVisibilityUnavailableError) {
+          return json({ comments: [], hasMore: false, nextCursor: null }, 200, { 'Cache-Control': 'no-store' });
+        }
+        throw err;
+      }
     }
   }
 
@@ -176,6 +194,19 @@ export const POST: APIRoute = async (context) => {
     }
     if (!isAdmin && hiddenSubjects.has(v.subject)) {
       return badRequest('Unknown subject');
+    }
+    if (!isAdmin && v.pageType === 'lecture' && v.lecture) {
+      try {
+        const hiddenLectures = await getHiddenLectureKeys(env.DB);
+        if (hiddenLectures.has(makeLectureKey(v.subject, v.lecture))) {
+          return badRequest('Unknown lecture');
+        }
+      } catch (err) {
+        if (err instanceof LectureVisibilityUnavailableError) {
+          return json({ error: 'Lecture visibility unavailable' }, 503);
+        }
+        throw err;
+      }
     }
 
     const subjects = await listSubjects();

@@ -1,7 +1,12 @@
 import type { APIRoute } from 'astro';
 import { env } from 'cloudflare:workers';
-import { listSubjects } from '../../../utils/notesLoader';
+import { listSubjects, listLectures } from '../../../utils/notesLoader';
 import { getHiddenSubjectNames, SubjectVisibilityUnavailableError } from '../../../lib/subjectVisibility';
+import {
+  getHiddenLectureKeys,
+  makeLectureKey,
+  LectureVisibilityUnavailableError,
+} from '../../../lib/lectureVisibility';
 import { v1CorsHeaders, v1OptionsResponse, checkApiKey } from '../../../lib/cors';
 
 export const prerender = false;
@@ -19,16 +24,29 @@ export const GET: APIRoute = async ({ request }) => {
 
   try {
     const hiddenSubjects = await getHiddenSubjectNames((env as any).DB);
+    const hiddenLectures = await getHiddenLectureKeys((env as any).DB);
     const subjects = await listSubjects();
-    const result = subjects
-      .filter((s) => !hiddenSubjects.has(s.name))
-      .map(s => ({
+    const result = [];
+    for (const s of subjects) {
+      if (hiddenSubjects.has(s.name)) continue;
+      const lectures = await listLectures(s.name);
+      const visibleCount = lectures.filter(
+        (l) => !hiddenLectures.has(makeLectureKey(s.name, l.folderName)),
+      ).length;
+      result.push({
         name: s.name,
-        lectureCount: s.lectureCount,
+        lectureCount: visibleCount,
         slug: encodeURIComponent(s.name)
-      }));
+      });
+    }
     return new Response(JSON.stringify(result), { status: 200, headers: corsHeaders });
   } catch (err) {
+    if (err instanceof LectureVisibilityUnavailableError) {
+      return new Response(
+        JSON.stringify({ error: 'Lecture visibility unavailable' }),
+        { status: 503, headers: corsHeaders }
+      );
+    }
     if (err instanceof SubjectVisibilityUnavailableError) {
       return new Response(
         JSON.stringify({ error: 'Subject visibility unavailable' }),

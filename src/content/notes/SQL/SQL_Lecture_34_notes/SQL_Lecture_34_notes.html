@@ -227,7 +227,28 @@
 <div class="key-concept">
   <p><strong>Formalize — transaction control:</strong> a <em>transaction</em> (a group of writes that must all succeed or all roll back) can only live in a procedure in PostgreSQL-style systems. In a function, BEGIN means "group these lines". In a procedure, BEGIN means "start a protected unit" and COMMIT means "seal it for good". The same keywords change meaning with the routine type, so read them in context.</p>
 </div>
-<p>Picture the risk as a timeline. Without a transaction, session A subtracts 100 from Adam at time T1, session B reads the tables at time T2 and sees a world where 100 has vanished, then session A adds 100 to Linda at time T3. The horizontal axis is time, the vertical axis is total money seen by an outsider. Without a seal, the line dips down between T1 and T3. With BEGIN plus COMMIT, outsiders wait outside the locked room and only ever see the flat line at 200. The takeaway: the seal removes the dip.</p>
+<div class="diagram-container my-6 text-center">
+  <svg viewBox="0 0 480 250" class="diagram-svg" role="img" aria-label="Timeline plot of total money seen by an outsider across T1, T2 and T3: without a seal the line dips from 200 down to 100 between T1 and T3, while with BEGIN plus COMMIT it stays flat at 200.">
+    <line x1="60" y1="200" x2="445" y2="200" stroke="currentColor" stroke-width="1" opacity="0.5"></line>
+    <line x1="60" y1="200" x2="60" y2="40" stroke="currentColor" stroke-width="1" opacity="0.5"></line>
+    <text x="52" y="204" font-size="10" text-anchor="end" fill="currentColor">0</text>
+    <text x="52" y="124" font-size="10" text-anchor="end" fill="currentColor">100</text>
+    <text x="52" y="44" font-size="10" text-anchor="end" fill="currentColor">200</text>
+    <text x="-120" y="20" font-size="10" text-anchor="middle" transform="rotate(-90)" fill="currentColor">Total money seen by an outsider</text>
+    <line x1="130" y1="200" x2="130" y2="206" stroke="currentColor" stroke-width="1" opacity="0.5"></line>
+    <line x1="250" y1="200" x2="250" y2="206" stroke="currentColor" stroke-width="1" opacity="0.5"></line>
+    <line x1="370" y1="200" x2="370" y2="206" stroke="currentColor" stroke-width="1" opacity="0.5"></line>
+    <text x="130" y="218" font-size="10" text-anchor="middle" fill="currentColor">T1</text>
+    <text x="250" y="218" font-size="10" text-anchor="middle" fill="currentColor">T2</text>
+    <text x="370" y="218" font-size="10" text-anchor="middle" fill="currentColor">T3</text>
+    <text x="445" y="236" font-size="10" text-anchor="end" fill="currentColor">time</text>
+    <polyline points="100,40 430,40" fill="none" stroke="currentColor" stroke-width="2.5"></polyline>
+    <polyline points="100,40 125,40 150,120 360,120 385,40 430,40" fill="none" stroke="currentColor" stroke-width="1.5" stroke-dasharray="5 4" opacity="0.7"></polyline>
+    <text x="255" y="30" font-size="10" text-anchor="middle" fill="currentColor">with BEGIN + COMMIT — flat at 200</text>
+    <text x="255" y="142" font-size="10" text-anchor="middle" fill="currentColor">without a seal — dips to 100</text>
+  </svg>
+  <p class="text-xs text-slate-500 mt-2"><strong>Figure:</strong> Outsider's view of total money across T1–T3: the unsealed line dips to 100, the sealed line stays at 200.</p>
+</div>
 <div class="warning-box">
   <p><strong>Scope:</strong> use a procedure with an explicit transaction when two or more writes must stay in step under parallel use — transfers, stock moves, ledger postings. <strong>Assumption:</strong> the database runs with parallel sessions that can read while you write. If only one session ever touches the tables, bare updates look correct in a test but still teach the wrong habit for live use.</p>
 </div>
@@ -409,7 +430,6 @@ COMMIT;</code></pre>
 <h3 id="34.3.1-one-shared-copy-of-the-logic">34.3.1 One Shared Copy of the Logic</h3>
 <p>First, procedures keep data consistent by storing a series of steps once instead of rebuilding them in every script. When every database administrator, developer, and application calls the same procedure, the same code runs every time. No copy drifts. No one forgets a step. The rule for changing data lives in one place, and every caller inherits it.</p>
 <p>Second, procedures simplify complex work by packing it into a single easy unit. A five-step reconciliation becomes one CALL with a few arguments. Callers do not need to know the order of the steps or the names of the staging columns. They call the unit and trust the order inside.</p>
-<p>Think of it like a kitchen recipe card. Without the card, five cooks each guess the order of spices. With the card pinned to the wall, every plate tastes the same. The procedure is that card.</p>
 <p>A second everyday picture helps for the packing idea: a TV remote. Viewers press one power button instead of rewiring the set each time. The CALL is the button, the procedure body is the wiring hidden inside. Learners who hold both pictures — recipe card for sameness, remote for hidden steps — rarely mix up consistency with simplicity again.</p>
 <div class="example-box">
   <p><strong>Worked sharing case:</strong> three tools need the same month-end reconciliation — an admin script, a developer API, and a reporting job. Without a procedure, each tool pastes its own five-step SQL and one tool soon skips step 4. With <code>CALL pr_month_close(2024, 12);</code>, all three run the same five steps in the same order. Change the rule once inside the procedure and all three callers pick it up with no edits at their call sites. <strong>Sense-check:</strong> one edit point, many safe callers — that is the sharing win.</p>
@@ -475,18 +495,11 @@ LANGUAGE plpgsql;</code></pre>
 <div class="warning-box">
   <p><strong>Scope:</strong> INOUT fits single-value answers — counts, totals, status codes. <strong>Assumption:</strong> the inner SELECT yields one row. A bare aggregate such as COUNT always qualifies. A multi-row SELECT without an aggregate does not fit one integer and needs a set-returning shape available in other systems, not a plain INOUT integer here.</p>
 </div>
-<div class="important-note">
-  <p><strong>Q:</strong> If procedures can not return values, is there really no way to get an answer back, for example to confirm the run worked? <strong>A:</strong> There is exactly one supported way in this lecture form: add an INOUT parameter. Give it a name, a type, and a default such as zero. Inside the body, fill it with SELECT ... INTO instead of using RETURN. After CALL, read the parameter. The order-count case shows the full loop: INOUT total_count starts at 0, the count query pours 830 into it, and the caller reads 830 back. Snowflake extras use a declared RETURNS type with an explicit RETURN instead, but the lecture path stays INOUT-only.</p>
-</div>
 <div class="warning-box">
   <p><strong>Pitfalls:</strong> (1) writing <code>RETURN total_count;</code> — rejected in this form, use SELECT ... INTO; (2) trying <code>SELECT pr_orders_count();</code> — CALL must stand alone; (3) pointing SELECT ... INTO at a multi-row query — the single-row pour fails, so keep aggregates or single-row lookups for INOUT; (4) mismatching the integer type between the header and the count — restate INT and rebuild when the build complains.</p>
 </div>
 <div class="key-takeaway">
   <p><strong>Recap and bridge:</strong> a ticket marked 0 goes in, SELECT ... INTO writes 830 on it, CALL hands it back — and with answers covered, only safe removal is left, which is the DROP step next.</p>
-</div>
-<p>Hold that ticket picture for the exam: default in, single-row pour inside, read back after CALL, no RETURN keyword anywhere.</p>
-<div class="key-takeaway">
-  <p><strong>Exam note:</strong> be able to write the INOUT order-count procedure from memory, state why SELECT ... INTO fits a single-row COUNT, and show the CALL form with no SELECT wrapper.</p>
 </div>
 <p>Dashboards that show live order totals, nightly jobs that report rows merged, and health checks that return a status flag all reuse this ticket shape: default in, computed value out.</p>
 
@@ -506,7 +519,21 @@ LANGUAGE plpgsql;</code></pre>
 <p>Across databases the base stays put. PostgreSQL uses <code>DROP PROCEDURE name;</code> with IF EXISTS, signature, RESTRICT, and CASCADE exactly as above. Snowflake uses the same DROP shape for its procedures. MySQL uses <code>DROP PROCEDURE IF EXISTS name;</code> in the same spirit. Keep the lecture line as written and read IF EXISTS as the repeat-safe extra every system shares.</p>
 <h3 id="34.5.2-the-cascade-warning">34.5.2 The CASCADE Warning</h3>
 <p>CASCADE deserves a frank warning. It is quick, and it is dangerous. Dependent views, triggers, or routines vanish without a second prompt, and rebuilding them from memory after the fact is painful. The working rule stated here is firm: never CASCADE a drop and hope for the best. Walk to each child object, remove or repoint it by hand, confirm nothing important is lost, and only then drop the procedure itself. Anything starting with the word DROP gets slow, deliberate attention.</p>
-<p>Picture the blast radius as concentric rings. The center is the procedure name. The first ring holds direct dependents — a dashboard view, a trigger, a second routine that calls this one. The second ring holds dependents of those dependents. RESTRICT stops at the first ring and refuses the drop, which is safe. CASCADE burns through every ring in one sweep with no prompt, which is why production teams treat it as a last resort after manual cleanup.</p>
+<div class="diagram-container my-6 text-center">
+  <svg viewBox="0 0 480 330" class="diagram-svg" role="img" aria-label="Concentric dependency rings around a procedure: the center is the procedure name, ring 1 holds direct dependents such as a dashboard view, a trigger, and a routine that calls this procedure, ring 2 holds dependents of those dependents.">
+    <circle cx="240" cy="160" r="125" fill="none" stroke="currentColor" stroke-width="1" opacity="0.35" stroke-dasharray="5 4"></circle>
+    <circle cx="240" cy="160" r="85" fill="none" stroke="currentColor" stroke-width="1" opacity="0.6"></circle>
+    <circle cx="240" cy="160" r="34" fill="none" stroke="currentColor" stroke-width="1.5"></circle>
+    <text x="240" y="157" font-size="10" text-anchor="middle" fill="currentColor">pr_name</text>
+    <text x="240" y="170" font-size="9" text-anchor="middle" fill="currentColor">procedure</text>
+    <text x="240" y="58" font-size="9" text-anchor="middle" fill="currentColor">Ring 2 — dependents of dependents</text>
+    <text x="240" y="90" font-size="9" text-anchor="middle" fill="currentColor">Ring 1 — direct dependents</text>
+    <text x="240" y="102" font-size="9" text-anchor="middle" fill="currentColor">dashboard view · trigger</text>
+    <text x="240" y="114" font-size="9" text-anchor="middle" fill="currentColor">routine that calls this one</text>
+    <text x="240" y="312" font-size="9.5" text-anchor="middle" fill="currentColor">RESTRICT refuses at Ring 1 · CASCADE sweeps every ring</text>
+  </svg>
+  <p class="text-xs text-slate-500 mt-2"><strong>Figure:</strong> Dependency rings for a procedure: RESTRICT stops at Ring 1, CASCADE removes every ring.</p>
+</div>
 <div class="warning-box">
   <p><strong>Scope:</strong> RESTRICT is the default guard and the right choice when you are unsure what leans on the procedure. <strong>Assumption:</strong> dependency metadata is complete, so the block triggers when children exist. CASCADE fits only a throwaway sandbox where every dependent may fall, never a shared production schema.</p>
 </div>
@@ -524,16 +551,6 @@ LANGUAGE plpgsql;</code></pre>
   <p><strong>Recap and bridge:</strong> name the exact routine, prefer IF EXISTS for scripts and RESTRICT for safety, clear children by hand, and verify in the Procedures node — and with removal covered, the lecture closes with review lists for exams and production.</p>
 </div>
 <p>Safe DROP habits protect nightly jobs, dashboards, and payment paths that all lean on shared procedures: remove only what you named, keep the sibling routines running, and leave dependents standing.</p>
-
-<h2 id="exam-guidance-summary">Exam Guidance Summary</h2>
-<p>No mark distribution, question types, or topic weightings were stated. The points below are the ones stressed most strongly, and they are the natural review list.</p>
-<div class="key-takeaway">
-  <p><strong>Exam note:</strong> know the transaction divide cold — functions cannot start transactions while procedures seal grouped writes with BEGIN plus COMMIT. Know the return rule — no RETURN with a value in this form, bare RETURN only exits early, INOUT with SELECT ... INTO carries answers out. Know the call rule — CALL for procedures as standalone statements, never inside SELECT.</p>
-</div>
-<p>Be able to build the money-transfer procedure with its BEGIN-plus-COMMIT seal and explain why the seal matters under parallel use: two opposite-sign UPDATE writes, each pinned by a WHERE filter, wrapped so outsiders never see the middle state, with the joint total \(T = 200\) as the invariant check. Be able to build the INOUT order-count procedure and state why SELECT ... INTO fits a single-row COUNT that yields 830. Treat every DROP statement with deliberate care — prefer IF EXISTS and RESTRICT, name the overload signature when copies share a name, and never reach for CASCADE by habit.</p>
-<div class="key-takeaway">
-  <p><strong>Exam note:</strong> practice three builds from memory — the sealed transfer with invariant check, the INOUT count with CALL-only invocation, and the safe DROP with Procedures-node verification.</p>
-</div>
 
 <h2 id="key-industry-applications">Key Industry Applications</h2>
 <p>Bank-style money transfer between named accounts shows why grouped writes must commit as one unit, the same pattern behind payment and ledger systems. A reusable order-count procedure feeds dashboards and daily reports from one shared routine instead of pasted SQL in every tool. Shared procedures give every administrator, developer, and application the same code path, which is how teams keep production data consistent. Compiling once on the server keeps hot paths fast under heavy call volume. Precompiled bodies plus strict input checks shrink SQL injection risk in systems that accept outside input.</p>
@@ -554,63 +571,6 @@ LANGUAGE plpgsql;</code></pre>
       - .revision-check — one self-check question (no options)
       - .revision-connections — linked concepts within this lecture
     ============================================================ -->
-    <section class="exam-revision-section">
-      <h2>Exam Revision Notes</h2>
-      <p class="revision-intro">Below is the distilled, exam-ready core.
-      Every entry comes from the full explanation above. Use this section
-      for rapid review; return to the main notes when a point needs more context.</p>
-      <div class="exam-revision-entry">
-        <h3 class="revision-topic">Functions Compared With Stored Procedures</h3>
-        <p class="revision-mustknow"><strong>Must-know:</strong> Functions run inside SELECT and cannot seal transactions; procedures run as standalone CALL and can.</p>
-        <p class="revision-pitfall"><strong>⚠️ Top pitfall:</strong> Placing CALL inside SELECT or using RETURN with a value in a procedure.</p>
-        <p class="revision-check"><strong>Self-check:</strong> Why can money moves not live in a function?</p>
-        <p class="revision-connections"><strong>Connects to:</strong> 34.2, 34.4</p>
-      </div>
-      <div class="exam-revision-entry">
-        <h3 class="revision-topic">A Money-Transfer Procedure With a Transaction</h3>
-        <p class="revision-mustknow"><strong>Must-know:</strong> Two opposite-sign UPDATEs sealed by BEGIN plus COMMIT keep joint total at 200.</p>
-        <p class="revision-formula">\[balance_{sender,new} = balance_{sender,old} - amount\]</p>
-        <p class="revision-pitfall"><strong>⚠️ Top pitfall:</strong> Reusing minus on the receiver line or dropping the WHERE filter.</p>
-        <p class="revision-check"><strong>Self-check:</strong> What must sender plus receiver still add to after moving 100?</p>
-        <p class="revision-connections"><strong>Connects to:</strong> 34.1, 34.3</p>
-      </div>
-      <div class="exam-revision-entry">
-        <h3 class="revision-topic">Why Stored Procedures Are Used</h3>
-        <p class="revision-mustknow"><strong>Must-know:</strong> One shared compiled sealed procedure eases change, security, speed, and reuse with checked inputs.</p>
-        <p class="revision-pitfall"><strong>⚠️ Top pitfall:</strong> Trusting inputs as clean or gluing input text into SQL strings.</p>
-        <p class="revision-check"><strong>Self-check:</strong> Why does one shared procedure beat five pasted copies?</p>
-        <p class="revision-connections"><strong>Connects to:</strong> 34.2, 34.4</p>
-      </div>
-      <div class="exam-revision-entry">
-        <h3 class="revision-topic">Returning a Value Through an INOUT Parameter</h3>
-        <p class="revision-mustknow"><strong>Must-know:</strong> INOUT with SELECT INTO is the only lecture-supported way to hand a value back; count yields 830.</p>
-        <p class="revision-formula">\[total\_count = COUNT(*) \quad \text{over the } orders \text{ table}\]</p>
-        <p class="revision-pitfall"><strong>⚠️ Top pitfall:</strong> Writing RETURN with a value or calling the procedure inside SELECT.</p>
-        <p class="revision-check"><strong>Self-check:</strong> How does pr_orders_count hand back 830 with no RETURN?</p>
-        <p class="revision-connections"><strong>Connects to:</strong> 34.1, 34.5</p>
-      </div>
-      <div class="exam-revision-entry">
-        <h3 class="revision-topic">Dropping a Procedure Safely</h3>
-        <p class="revision-mustknow"><strong>Must-know:</strong> DROP with IF EXISTS, signature for overloads, RESTRICT by default, verify in Procedures node.</p>
-        <p class="revision-pitfall"><strong>⚠️ Top pitfall:</strong> Reaching for CASCADE by habit and losing dependents silently.</p>
-        <p class="revision-check"><strong>Self-check:</strong> What must you clear by hand before dropping a shared procedure?</p>
-        <p class="revision-connections"><strong>Connects to:</strong> 34.4</p>
-      </div>
-      <div class="exam-revision-entry">
-        <h3 class="revision-topic">Exam Guidance Summary</h3>
-        <p class="revision-mustknow"><strong>Must-know:</strong> Transaction divide, return and call rules, sealed transfer, INOUT count, careful DROP.</p>
-        <p class="revision-pitfall"><strong>⚠️ Top pitfall:</strong> Forgetting the CALL-only rule or the CASCADE caution.</p>
-        <p class="revision-check"><strong>Self-check:</strong> Which three builds must you write from memory?</p>
-        <p class="revision-connections"><strong>Connects to:</strong> 34.2, 34.4, 34.5</p>
-      </div>
-      <div class="exam-revision-entry">
-        <h3 class="revision-topic">Key Industry Applications</h3>
-        <p class="revision-mustknow"><strong>Must-know:</strong> Payments, dashboards, shared paths, hot paths, injection checks.</p>
-        <p class="revision-pitfall"><strong>⚠️ Top pitfall:</strong> N/A applications</p>
-        <p class="revision-check"><strong>Self-check:</strong> Where does the sealed-move shape appear in production?</p>
-        <p class="revision-connections"><strong>Connects to:</strong> 34.2, 34.3</p>
-      </div>
-    </section>
   </div>
 </body>
 </html>

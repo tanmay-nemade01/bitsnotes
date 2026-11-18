@@ -432,22 +432,23 @@ ALTER TABLE table_boolean ALTER COLUMN is_available SET DEFAULT '0';</code></pre
     </tr>
   </tbody>
 </table>
-<p>#### Visual Intuition: Three-Valued Logic Partitioning</p>
-<pre><code>+-----------------------------------------------------------------------+
-|                         Total Table Records                           |
-|                                                                       |
-|   +--------------------------+   +--------------------------------+   |
-|   |   is_available = TRUE    |   |     is_available = FALSE       |   |
-|   |   (Matched by WHERE col) |   |   (Matched by WHERE NOT col)   |   |
-|   +--------------------------+   +--------------------------------+   |
-|                                                                       |
-|               +-----------------------------------+                   |
-|               |        is_available = NULL        |                   |
-|               | (Filtered OUT by both col &amp; NOT)  |                   |
-|               |  (Matched ONLY by IS NOT TRUE or  |                   |
-|               |          IS NULL)                 |                   |
-|               +-----------------------------------+                   |
-+-----------------------------------------------------------------------+</code></pre>
+<div class="diagram-container my-6 text-center">
+  <svg viewBox="0 0 640 250" class="diagram-svg" role="img" aria-label="Total table records partitioned into is_available TRUE, FALSE, and NULL subsets, showing which WHERE predicate matches each subset">
+    <rect x="10" y="10" width="620" height="230" rx="8" fill="#f8fafc" stroke="#64748b" stroke-width="1.5"/>
+    <text x="320" y="34" text-anchor="middle" font-size="14" font-weight="600" fill="#0f172a">Total Table Records</text>
+    <rect x="30" y="52" width="270" height="72" rx="6" fill="#eff6ff" stroke="#3b82f6" stroke-width="1.5"/>
+    <text x="165" y="78" text-anchor="middle" font-size="13" font-weight="600" fill="#1e3a8a">is_available = TRUE</text>
+    <text x="165" y="100" text-anchor="middle" font-size="11" fill="#334155">matched by WHERE is_available</text>
+    <rect x="340" y="52" width="270" height="72" rx="6" fill="#eff6ff" stroke="#3b82f6" stroke-width="1.5"/>
+    <text x="475" y="78" text-anchor="middle" font-size="13" font-weight="600" fill="#1e3a8a">is_available = FALSE</text>
+    <text x="475" y="100" text-anchor="middle" font-size="11" fill="#334155">matched by WHERE NOT is_available</text>
+    <rect x="170" y="146" width="300" height="76" rx="6" fill="#fffbeb" stroke="#f59e0b" stroke-width="1.5"/>
+    <text x="320" y="170" text-anchor="middle" font-size="13" font-weight="600" fill="#92400e">is_available = NULL</text>
+    <text x="320" y="190" text-anchor="middle" font-size="11" fill="#334155">filtered out by both is_available and NOT is_available</text>
+    <text x="320" y="208" text-anchor="middle" font-size="11" fill="#334155">matched only by IS NOT TRUE or IS NULL</text>
+  </svg>
+  <p class="text-xs text-slate-500 mt-2"><strong>Figure:</strong> Three-valued logic partitioning of table rows by <code>is_available</code>.</p>
+</div>
 <p>A common beginner trap occurs when querying with <code>WHERE NOT is_available</code>: developers expect all rows that are not <code>true</code> to be returned. However, rows with <code>NULL</code> evaluate to <code>NOT NULL = NULL</code>, which the <code>WHERE</code> clause treats as falsy and discards. To retrieve both <code>false</code> and <code>NULL</code> rows, you must explicitly write <code>WHERE is_available IS NOT TRUE</code> or <code>WHERE is_available = false OR is_available IS NULL</code>.</p>
 <h3 id="6.1.7-worked-examples">6.1.7 Worked Examples</h3>
 <div class="example-box">
@@ -475,13 +476,6 @@ FROM table_boolean
 WHERE NOT is_available;</code></pre>
   <p><em>Execution Trace:</em> PostgreSQL evaluates <code>NOT is_available</code> on all rows. Rows 2 and 4 evaluate to <code>NOT FALSE = TRUE</code> and are returned. <em>Query Output:</em> | product_id | is_available | | :--- | :--- | | 2 | <code>f</code> | | 4 | <code>f</code> |</p>
   <p><strong>Sense-check:</strong> Every affirmative input (<code>'yes'</code>, <code>'1'</code>) normalizes to <code>t</code>, and every negative input (<code>'no'</code>, <code>'0'</code>) normalizes to <code>f</code>. The row counts match the two-and-two partition perfectly.</p>
-</div>
-<h3 id="6.1.8-student-questions-and-answers">6.1.8 Student Questions and Answers</h3>
-<div class="important-note">
-  <p><strong>Q:</strong> Why does the comparison <code>WHERE is_available = 1</code> cause a type error, and how do single quotes resolve it? <strong>A:</strong> PostgreSQL enforces strict type safety and does not define an equality operator between the <code>BOOLEAN</code> type and the <code>INTEGER</code> type (<code>boolean = integer</code>). When you write <code>is_available = 1</code>, the left operand is boolean and the right operand is integer. Placing single quotes around <code>'1'</code> changes the operand into an untyped string literal (<code>unknown</code> type). PostgreSQL's type resolver then checks the type of the other operand (<code>is_available</code>, which is <code>BOOLEAN</code>), finds a valid string-to-boolean coercion rule for <code>'1'</code>, and automatically converts it to <code>TRUE</code>.</p>
-</div>
-<div class="key-takeaway">
-  <p><strong>Exam note:</strong> Never compare a boolean column directly to an unquoted integer <code>1</code> or <code>0</code> in a PostgreSQL <code>WHERE</code> clause. Always use idiomatic boolean conditions (<code>WHERE is_available</code>), explicit boolean keywords (<code>WHERE is_available = true</code>), or wrap numeric literals in single quotes (<code>WHERE is_available = '1'</code>).</p>
 </div>
 <div class="key-takeaway">
   <p><strong>Recap & Bridge:</strong> PostgreSQL's boolean type provides compact 1-byte storage with flexible string ingestion and strict three-valued evaluation. While booleans manage single binary flags, storing arbitrary strings and alphanumeric identifiers requires the character family (<code>CHAR</code>, <code>VARCHAR</code>, and <code>TEXT</code>), explored in Section 6.2.</p>
@@ -633,16 +627,50 @@ VALUES ('ABC', 'ABC', 'ABC');</code></pre>
     </tr>
   </tbody>
 </table>
-<p>#### Visual Intuition: Memory and Disk Layout</p>
-<pre><code>CHAR(10) Storage Layout:
-+---+---+---+---+---+---+---+---+---+---+
-| 'J' | 'o' | 'h' | 'n' | ' ' | ' ' | ' ' | ' ' | ' ' | ' ' |  &lt;- Fixed 10 Bytes (6 spaces wasted)
-+---+---+---+---+---+---+---+---+---+---+
-
-VARCHAR(10) / TEXT Storage Layout:
-+----------+---+---+---+---+
-| 1B Header| 'J' | 'o' | 'h' | 'n' |                          &lt;- 5 Bytes Total (1B overhead + 4B data)
-+----------+---+---+---+---+</code></pre>
+<div class="diagram-container my-6 text-center">
+  <svg viewBox="0 0 700 250" class="diagram-svg" role="img" aria-label="CHAR(10) stores the four characters John in ten fixed byte cells with six trailing padding spaces, while VARCHAR(10) and TEXT store a one byte varlena header plus the four characters">
+    <defs>
+      <style>
+        .vi-cell-label { font-size: 14px; font-family: monospace; fill: #0f172a; }
+        .vi-cap { font-size: 11px; fill: #334155; }
+        .vi-waste { font-size: 11px; fill: #b91c1c; }
+      </style>
+    </defs>
+    <text x="10" y="66" font-size="13" font-weight="600" fill="#0f172a">CHAR(10)</text>
+    <rect x="120" y="40" width="44" height="44" fill="#dbeafe" stroke="#475569"/>
+    <rect x="164" y="40" width="44" height="44" fill="#dbeafe" stroke="#475569"/>
+    <rect x="208" y="40" width="44" height="44" fill="#dbeafe" stroke="#475569"/>
+    <rect x="252" y="40" width="44" height="44" fill="#dbeafe" stroke="#475569"/>
+    <rect x="296" y="40" width="44" height="44" fill="#fee2e2" stroke="#475569"/>
+    <rect x="340" y="40" width="44" height="44" fill="#fee2e2" stroke="#475569"/>
+    <rect x="384" y="40" width="44" height="44" fill="#fee2e2" stroke="#475569"/>
+    <rect x="428" y="40" width="44" height="44" fill="#fee2e2" stroke="#475569"/>
+    <rect x="472" y="40" width="44" height="44" fill="#fee2e2" stroke="#475569"/>
+    <rect x="516" y="40" width="44" height="44" fill="#fee2e2" stroke="#475569"/>
+    <text class="vi-cell-label" x="142" y="69" text-anchor="middle">J</text>
+    <text class="vi-cell-label" x="186" y="69" text-anchor="middle">o</text>
+    <text class="vi-cell-label" x="230" y="69" text-anchor="middle">h</text>
+    <text class="vi-cell-label" x="274" y="69" text-anchor="middle">n</text>
+    <text class="vi-cap" x="142" y="104" text-anchor="middle">4 characters</text>
+    <text class="vi-waste" x="428" y="104" text-anchor="middle">6 padding spaces</text>
+    <text class="vi-cap" x="428" y="120" text-anchor="middle">fixed 10 bytes</text>
+    <text x="10" y="182" font-size="13" font-weight="600" fill="#0f172a">VARCHAR(10) / TEXT</text>
+    <rect x="120" y="152" width="44" height="44" fill="#f1f5f9" stroke="#475569"/>
+    <rect x="164" y="152" width="44" height="44" fill="#dbeafe" stroke="#475569"/>
+    <rect x="208" y="152" width="44" height="44" fill="#dbeafe" stroke="#475569"/>
+    <rect x="252" y="152" width="44" height="44" fill="#dbeafe" stroke="#475569"/>
+    <rect x="296" y="152" width="44" height="44" fill="#dbeafe" stroke="#475569"/>
+    <text x="142" y="181" text-anchor="middle" font-size="11" font-family="monospace" fill="#0f172a">1B</text>
+    <text class="vi-cell-label" x="186" y="181" text-anchor="middle">J</text>
+    <text class="vi-cell-label" x="230" y="181" text-anchor="middle">o</text>
+    <text class="vi-cell-label" x="274" y="181" text-anchor="middle">h</text>
+    <text class="vi-cell-label" x="318" y="181" text-anchor="middle">n</text>
+    <text class="vi-cap" x="142" y="216" text-anchor="middle">header</text>
+    <text class="vi-cap" x="252" y="216" text-anchor="middle">4 data bytes</text>
+    <text class="vi-cap" x="252" y="234" text-anchor="middle">5 bytes total</text>
+  </svg>
+  <p class="text-xs text-slate-500 mt-2"><strong>Figure:</strong> On-disk layout of <code>CHAR(10)</code> versus <code>VARCHAR(10)</code> / <code>TEXT</code> for the value <code>'John'</code>.</p>
+</div>
 <h3 id="6.2.7-worked-examples">6.2.7 Worked Examples</h3>
 <div class="example-box">
   <p><strong>Worked Example 6.2.1: Comparing Fixed-Length Padding and Variable-Length Storage</strong></p>
@@ -670,13 +698,6 @@ VARCHAR(10) / TEXT Storage Layout:
     <li>For all other text, prefer <code>VARCHAR(n)</code> when business validation requires a hard maximum limit, or <code>TEXT</code> when no natural limit exists.</li>
     <li>Avoid arbitrary constraints like <code>VARCHAR(20)</code> for names or email addresses, as they frequently lead to production truncation errors during integration with third-party identity providers.</li>
   </ul>
-</div>
-<h3 id="6.2.8-student-questions-and-answers">6.2.8 Student Questions and Answers</h3>
-<div class="important-note">
-  <p><strong>Q:</strong> Under what specific conditions should a database designer select <code>CHAR</code> rather than <code>VARCHAR</code>? <strong>A:</strong> Use <code>CHAR</code> only when column values always have an invariant length, such as two-letter ISO country codes (<code>'US'</code>, <code>'JP'</code>), state abbreviations (<code>'NY'</code>, <code>'CA'</code>), or fixed-length MD5/SHA hashes. For variable-length text, <code>VARCHAR</code> avoids the disk space waste, memory page bloat, and subtle comparison bugs introduced by blank padding.</p>
-</div>
-<div class="key-takeaway">
-  <p><strong>Exam note:</strong> <code>CHAR</code> pads with spaces to a fixed length \(n\), while <code>VARCHAR</code> limits length without blank padding, and <code>TEXT</code> provides unlimited variable-length storage up to 1 GB. If <code>CHAR</code> is defined without a length parameter \(n\), PostgreSQL sets the default length to 1 (<code>CHAR(1)</code>).</p>
 </div>
 <div class="key-takeaway">
   <p><strong>Recap & Bridge:</strong> While character types manage arbitrary text, numeric data requires specialized representations to prevent rounding errors and optimize CPU arithmetic. Section 6.3 explores whole number types and auto-incrementing identity sequences.</p>
@@ -837,19 +858,25 @@ UPDATE table_serial SET product_id = 2 WHERE product_id = 3;</code></pre>
     </tr>
   </tbody>
 </table>
-<p>#### Visual Intuition: Concurrent Sequence Allocation</p>
-<pre><code>Client Transaction A                      Sequence Generator (nextval)                  Client Transaction B
-         |                                             |                                          |
-         | --- nextval() request --------------------&gt; |                                          |
-         |                                             | Increment counter: 1 -&gt; 2                |
-         | &lt;--- Returns ID 1 ------------------------- |                                          |
-         |                                             | &lt;--- nextval() request ----------------- |
-         |                                             | Increment counter: 2 -&gt; 3                |
-         |                                             | --- Returns ID 2 ----------------------&gt; |
-         | (Transaction A fails &amp; rolls back)          |                                          |
-         | [ID 1 permanently lost / gap created]       |                                          |
-         |                                             |                                          | (Transaction B commits)
-         |                                             |                                          | [ID 2 saved to disk]</code></pre>
+<div class="diagram-container my-6 text-center">
+  <pre class="mermaid">
+sequenceDiagram
+    participant A as Client Transaction A
+    participant S as Sequence Generator (nextval)
+    participant B as Client Transaction B
+    A->>S: nextval() request
+    S->>S: Increment counter: 1 -> 2
+    S-->>A: Returns ID 1
+    B->>S: nextval() request
+    S->>S: Increment counter: 2 -> 3
+    S-->>B: Returns ID 2
+    A->>A: Transaction A fails and rolls back
+    Note over A: ID 1 permanently lost / gap created
+    B->>B: Transaction B commits
+    Note over B: ID 2 saved to disk
+  </pre>
+  <p class="text-xs text-slate-500 mt-2"><strong>Figure:</strong> Non-transactional <code>nextval()</code> allocation across two concurrent client transactions.</p>
+</div>
 <h3 id="6.3.6-worked-examples">6.3.6 Worked Examples</h3>
 <div class="example-box">
   <p><strong>Worked Example 6.3.1: Sequence Progression and Gap Behavior</strong></p>
@@ -876,13 +903,6 @@ INSERT INTO table_serial (product_name) VALUES ('Eraser');
 SELECT product_id, product_name FROM table_serial;</code></pre>
   <p><em>Output:</em> | product_id | product_name | | :--- | :--- | | 1 | <code>'Pen'</code> | | 3 | <code>'Marker'</code> | | 5 | <code>'Eraser'</code> |</p>
   <p><strong>Sense-check:</strong> ID 2 was deleted, and ID 4 was burned during the aborted transaction. The sequence never retreated, resulting in IDs 1, 3, and 5. The sequence generator maintained strict monotonically increasing order without locking.</p>
-</div>
-<h3 id="6.3.7-student-questions-and-answers">6.3.7 Student Questions and Answers</h3>
-<div class="important-note">
-  <p><strong>Q:</strong> Why do numeric gaps appear in auto-incrementing <code>SERIAL</code> columns after rows are deleted or transactions fail? <strong>A:</strong> The underlying sequence generator operates completely outside the transaction isolation framework. When <code>nextval()</code> is called, the sequence counter is immediately incremented in memory and committed to prevent concurrent worker threads from waiting on each other. If the surrounding transaction fails, rolls back, or if a committed row is later deleted, PostgreSQL never rewinds the sequence counter. This design guarantees high concurrency and zero locking contention across thousands of simultaneous client connections.</p>
-</div>
-<div class="key-takeaway">
-  <p><strong>Exam note:</strong> Memorize the storage byte sizes: <code>SMALLINT</code> (2 bytes), <code>INTEGER</code> (4 bytes), and <code>BIGINT</code> (8 bytes). Remember that <code>SERIAL</code> is not a true standalone data type; it is syntactic sugar that creates an integer column linked to an independent sequence object.</p>
 </div>
 <div class="key-takeaway">
   <p><strong>Recap & Bridge:</strong> Integers provide exact storage for discrete countable entities. However, when handling fractional measurements, currencies, or scientific data, schemas require decimal representations. Section 6.4 examines fixed-point (<code>NUMERIC</code>) and floating-point (<code>REAL</code>, <code>DOUBLE PRECISION</code>) types.</p>
@@ -1020,14 +1040,62 @@ VALUES
     </tr>
   </tbody>
 </table>
-<p>#### Visual Intuition: Number Line Representation</p>
-<pre><code>Fixed-Point (NUMERIC): Uniform grid spacing across entire range
----|-------|-------|-------|-------|-------|-------|---&gt;
-  0.00    0.01    0.02    0.03    0.04    0.05    0.06   (Equal delta: 0.01)
-
-Floating-Point (REAL / DOUBLE): Dense grid near zero, exponentially sparser as magnitude increases
----|--|-|-|||||||||||||||||--|---|-------|-------------------&gt;
- -100   -10  -1   0   1   10  100   1,000       10,000      (Delta grows with magnitude)</code></pre>
+<div class="diagram-container my-6 text-center">
+  <svg viewBox="0 0 740 240" class="diagram-svg" role="img" aria-label="Number line comparison: NUMERIC uses a uniform grid with equal spacing of 0.01, while REAL and DOUBLE PRECISION use a grid that is dense near zero and becomes sparser as magnitude increases">
+    <defs>
+      <marker id="vi-arrow-numberline" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto">
+        <path d="M0,0 L6,3 L0,6 z" fill="#475569"/>
+      </marker>
+    </defs>
+    <text x="10" y="26" font-size="13" font-weight="600" fill="#0f172a">Fixed-Point (NUMERIC): uniform grid spacing across the entire range</text>
+    <line x1="100" y1="60" x2="720" y2="60" stroke="#475569" stroke-width="1.5" marker-end="url(#vi-arrow-numberline)"/>
+    <g stroke="#3b82f6" stroke-width="2">
+      <line x1="120" y1="50" x2="120" y2="70"/>
+      <line x1="200" y1="50" x2="200" y2="70"/>
+      <line x1="280" y1="50" x2="280" y2="70"/>
+      <line x1="360" y1="50" x2="360" y2="70"/>
+      <line x1="440" y1="50" x2="440" y2="70"/>
+      <line x1="520" y1="50" x2="520" y2="70"/>
+      <line x1="600" y1="50" x2="600" y2="70"/>
+    </g>
+    <g font-size="11" fill="#334155" text-anchor="middle">
+      <text x="120" y="88">0.00</text>
+      <text x="200" y="88">0.01</text>
+      <text x="280" y="88">0.02</text>
+      <text x="360" y="88">0.03</text>
+      <text x="440" y="88">0.04</text>
+      <text x="520" y="88">0.05</text>
+      <text x="600" y="88">0.06</text>
+    </g>
+    <text x="360" y="110" font-size="11" fill="#3b82f6" text-anchor="middle">Equal delta: 0.01</text>
+    <text x="10" y="150" font-size="13" font-weight="600" fill="#0f172a">Floating-Point (REAL / DOUBLE): dense near zero, exponentially sparser as magnitude increases</text>
+    <line x1="100" y1="180" x2="720" y2="180" stroke="#475569" stroke-width="1.5" marker-end="url(#vi-arrow-numberline)"/>
+    <g stroke="#f59e0b" stroke-width="2">
+      <line x1="120" y1="170" x2="120" y2="190"/>
+      <line x1="200" y1="170" x2="200" y2="190"/>
+      <line x1="260" y1="170" x2="260" y2="190"/>
+      <line x1="300" y1="170" x2="300" y2="190"/>
+      <line x1="340" y1="170" x2="340" y2="190"/>
+      <line x1="400" y1="170" x2="400" y2="190"/>
+      <line x1="480" y1="170" x2="480" y2="190"/>
+      <line x1="580" y1="170" x2="580" y2="190"/>
+      <line x1="700" y1="170" x2="700" y2="190"/>
+    </g>
+    <g font-size="11" fill="#334155" text-anchor="middle">
+      <text x="120" y="208">-100</text>
+      <text x="200" y="208">-10</text>
+      <text x="260" y="208">-1</text>
+      <text x="300" y="208">0</text>
+      <text x="340" y="208">1</text>
+      <text x="400" y="208">10</text>
+      <text x="480" y="208">100</text>
+      <text x="580" y="208">1,000</text>
+      <text x="700" y="208">10,000</text>
+    </g>
+    <text x="400" y="230" font-size="11" fill="#b45309" text-anchor="middle">Delta grows with magnitude</text>
+  </svg>
+  <p class="text-xs text-slate-500 mt-2"><strong>Figure:</strong> Fixed-point equidistant grid versus floating-point spacing that widens with magnitude.</p>
+</div>
 <h3 id="6.4.5-worked-examples">6.4.5 Worked Examples</h3>
 <div class="example-box">
   <p><strong>Worked Example 6.4.1: Decimal Insertion, Zero Padding, and Rounding Trace</strong></p>
@@ -1063,13 +1131,6 @@ FROM table_numbers;</code></pre>
     <li>Use <code>REAL</code> or <code>DOUBLE PRECISION</code> for scientific computations, sensor readings, geographic coordinates (latitude/longitude), or machine learning feature vectors where fractional rounding does not invalidate the business logic and hardware-accelerated CPU floating-point instructions provide 10x–50x speedups.</li>
     <li>Never write equality predicates on floating-point columns (e.g., <code>WHERE col_real = 0.9</code>), because binary approximation differences often prevent equality matches. Use range checks instead: <code>WHERE ABS(col_real - 0.9) < 0.0001</code>.</li>
   </ul>
-</div>
-<h3 id="6.4.6-student-questions-and-answers">6.4.6 Student Questions and Answers</h3>
-<div class="important-note">
-  <p><strong>Q:</strong> Why is <code>NUMERIC</code> preferred over <code>REAL</code> or <code>DOUBLE PRECISION</code> for financial calculations? <strong>A:</strong> <code>NUMERIC</code> performs exact arbitrary-precision base-10 arithmetic in software, guaranteeing that numbers like <code>0.10</code> and <code>0.05</code> are stored without binary representation errors. In contrast, <code>REAL</code> and <code>DOUBLE PRECISION</code> use base-2 binary floating point (IEEE 754). Because base-2 cannot represent decimal fractions like <code>0.1</code> exactly, repeated multiplications, additions, and divisions accumulate rounding errors. Over millions of banking transactions, these tiny discrepancies cause balance sheets to become unbalanced and fail financial audits.</p>
-</div>
-<div class="key-takeaway">
-  <p><strong>Exam note:</strong> <code>NUMERIC</code> and <code>DECIMAL</code> provide exact arbitrary-precision math for financial calculations, while <code>REAL</code> and <code>DOUBLE PRECISION</code> are inexact floating-point numbers. In PostgreSQL, <code>NUMERIC</code> and <code>DECIMAL</code> are functionally identical and fully interchangeable.</p>
 </div>
 <div class="key-takeaway">
   <p><strong>Recap & Bridge:</strong> Understanding the difference between exact integers, arbitrary-precision decimals, and inexact floating-point numbers allows database architects to formulate structured selection strategies. Section 6.5 synthesizes these concepts into a rigorous Decision Framework for Numeric Data Types.</p>
@@ -1165,18 +1226,51 @@ FROM table_numbers;</code></pre>
     </tr>
   </tbody>
 </table>
-<p>#### Visual Intuition: Cache Efficiency and Page Density</p>
-<pre><code>8 KB Disk Page with Lean Types (SMALLINT / INTEGER):
-+-------------------------------------------------------------------------------+
-| Page Header | Row 1 | Row 2 | Row 3 | Row 4 | ... | Row 120 | Row 121 | Free  |
-+-------------------------------------------------------------------------------+
--&gt; 120 rows fetched in a SINGLE disk read!
-
-8 KB Disk Page with Bloated Types (Oversized BIGINT across columns):
-+-------------------------------------------------------------------------------+
-| Page Header | Row 1 | Row 2 | Row 3 | ... | Row 35  | Row 36  | Free Space    |
-+-------------------------------------------------------------------------------+
--&gt; Only 36 rows fetched per disk read (Requires 3.3x more I/O operations!)</code></pre>
+<div class="diagram-container my-6 text-center">
+  <svg viewBox="0 0 700 262" class="diagram-svg" role="img" aria-label="Two eight kilobyte disk pages: lean SMALLINT and INTEGER rows fit 120 rows per page, while oversized BIGINT rows fit only 36 rows per page, requiring 3.3 times more I/O operations">
+    <text x="40" y="34" font-size="13" font-weight="600" fill="#0f172a">8 KB Disk Page with Lean Types (SMALLINT / INTEGER)</text>
+    <rect x="40" y="46" width="620" height="52" rx="4" fill="#eff6ff" stroke="#3b82f6" stroke-width="1.5"/>
+    <g stroke="#93c5fd">
+      <line x1="130" y1="46" x2="130" y2="98"/>
+      <line x1="190" y1="46" x2="190" y2="98"/>
+      <line x1="250" y1="46" x2="250" y2="98"/>
+      <line x1="310" y1="46" x2="310" y2="98"/>
+      <line x1="360" y1="46" x2="360" y2="98"/>
+      <line x1="450" y1="46" x2="450" y2="98"/>
+    </g>
+    <g font-size="11" fill="#1e3a8a" text-anchor="middle">
+      <text x="85" y="77">Page Header</text>
+      <text x="160" y="77">Row 1</text>
+      <text x="220" y="77">Row 2</text>
+      <text x="280" y="77">Row 3</text>
+      <text x="335" y="77">...</text>
+      <text x="405" y="77">Row 120</text>
+      <text x="555" y="77">Free Space</text>
+    </g>
+    <text x="40" y="122" font-size="11" fill="#15803d">120 rows fetched in a single disk read</text>
+    <text x="40" y="166" font-size="13" font-weight="600" fill="#0f172a">8 KB Disk Page with Bloated Types (Oversized BIGINT across columns)</text>
+    <rect x="40" y="178" width="620" height="52" rx="4" fill="#fef2f2" stroke="#ef4444" stroke-width="1.5"/>
+    <g stroke="#fca5a5">
+      <line x1="130" y1="178" x2="130" y2="230"/>
+      <line x1="230" y1="178" x2="230" y2="230"/>
+      <line x1="330" y1="178" x2="330" y2="230"/>
+      <line x1="430" y1="178" x2="430" y2="230"/>
+      <line x1="490" y1="178" x2="490" y2="230"/>
+      <line x1="590" y1="178" x2="590" y2="230"/>
+    </g>
+    <g font-size="11" fill="#7f1d1d" text-anchor="middle">
+      <text x="85" y="209">Page Header</text>
+      <text x="180" y="209">Row 1</text>
+      <text x="280" y="209">Row 2</text>
+      <text x="380" y="209">Row 3</text>
+      <text x="460" y="209">...</text>
+      <text x="540" y="209">Row 36</text>
+      <text x="625" y="209">Free</text>
+    </g>
+    <text x="40" y="250" font-size="11" fill="#b91c1c">Only 36 rows fetched per disk read (requires 3.3x more I/O operations)</text>
+  </svg>
+  <p class="text-xs text-slate-500 mt-2"><strong>Figure:</strong> Page density and rows fetched per 8 KB page for lean versus oversized column types.</p>
+</div>
 <h3 id="6.5.4-worked-examples">6.5.4 Worked Examples</h3>
 <div class="example-box">
   <p><strong>Worked Example 6.5.1: Storage Footprint and Bound Analysis for 10 Million Records</strong></p>
@@ -1198,13 +1292,6 @@ FROM table_numbers;</code></pre>
     <li><strong>Never undersize primary keys or cumulative counters:</strong> If an entity could plausibly exceed 2.14 billion rows over the next 5 to 10 years (e.g., financial transactions, telemetry logs, customer orders), always choose <code>BIGINT</code> or <code>BIGSERIAL</code> from day one.</li>
     <li>Migrating an active 2-billion-row production table from <code>INTEGER</code> to <code>BIGINT</code> requires an exclusive table lock, causing hours or days of system downtime unless performed via complex zero-downtime shadow table migrations.</li>
   </ul>
-</div>
-<h3 id="6.5.5-student-questions-and-answers">6.5.5 Student Questions and Answers</h3>
-<div class="important-note">
-  <p><strong>Q:</strong> How does bound analysis prevent excessive cloud hosting expenditure in database schema design? <strong>A:</strong> Cloud database hosting costs are heavily driven by RAM allocation (which determines the size of the database buffer pool) and provisioned IOPS. Bound analysis evaluates the minimum and maximum possible values of every attribute, preventing engineers from blindly choosing wide 8-byte types like <code>BIGINT</code> when 2-byte types like <code>SMALLINT</code> suffice. By keeping rows compact, significantly more rows fit into each 8 KB memory page. This maximizes cache hit rates, minimizes disk read requests, and allows the application to handle higher traffic volumes on smaller, cheaper cloud compute instances.</p>
-</div>
-<div class="key-takeaway">
-  <p><strong>Exam note:</strong> Always choose the smallest data type that safely accommodates the theoretical maximum value of the domain.</p>
 </div>
 <div class="key-takeaway">
   <p><strong>Recap & Bridge:</strong> Numeric data types capture quantitative dimensions and surrogate keys. To capture when events occur, relational databases provide a sophisticated family of temporal types. Section 6.6 explores <code>DATE</code>, <code>TIME</code>, and <code>INTERVAL</code>.</p>
@@ -1380,17 +1467,41 @@ SELECT CURRENT_DATE + INTERVAL '1 year 2 months 15 days' AS target_date;</code><
     </tr>
   </tbody>
 </table>
-<p>#### Visual Intuition: Temporal Hierarchy and Arithmetic</p>
-<pre><code>Points in Time (Instants):
-DATE:        [2026-03-15] -----------------------------------------------------&gt; Calendar Day
-TIME:        [08:30:00]   -----------------------------------------------------&gt; Time of Day
-
-Spanning Vectors (Durations):
-INTERVAL:    | &lt;---------------- 2 hours 30 minutes ----------------&gt; |
-
-Arithmetic:
-[08:30:00]   +   |&lt;--- 2 hours 30 mins ---&gt;|   =   [11:00:00]
-(Instant)    +           (Duration)            =   (New Instant)</code></pre>
+<div class="diagram-container my-6 text-center">
+  <svg viewBox="0 0 700 310" class="diagram-svg" role="img" aria-label="Temporal hierarchy: DATE 2026-03-15 and TIME 08:30:00 are instants, INTERVAL spans 2 hours 30 minutes as a duration, and adding that duration to 08:30:00 yields the new instant 11:00:00">
+    <defs>
+      <marker id="vi-arrow-temp" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto">
+        <path d="M0,0 L6,3 L0,6 z" fill="#475569"/>
+      </marker>
+    </defs>
+    <text x="10" y="24" font-size="13" font-weight="600" fill="#0f172a">Points in Time (Instants)</text>
+    <rect x="10" y="38" width="140" height="34" rx="4" fill="#eff6ff" stroke="#3b82f6"/>
+    <text x="80" y="60" font-size="12" fill="#1e3a8a" text-anchor="middle">DATE: 2026-03-15</text>
+    <line x1="160" y1="55" x2="660" y2="55" stroke="#475569" stroke-width="1.2" marker-end="url(#vi-arrow-temp)"/>
+    <text x="410" y="49" font-size="11" fill="#334155" text-anchor="middle">Calendar Day</text>
+    <rect x="10" y="84" width="140" height="34" rx="4" fill="#eff6ff" stroke="#3b82f6"/>
+    <text x="80" y="106" font-size="12" fill="#1e3a8a" text-anchor="middle">TIME: 08:30:00</text>
+    <line x1="160" y1="101" x2="660" y2="101" stroke="#475569" stroke-width="1.2" marker-end="url(#vi-arrow-temp)"/>
+    <text x="410" y="95" font-size="11" fill="#334155" text-anchor="middle">Time of Day</text>
+    <text x="10" y="152" font-size="13" font-weight="600" fill="#0f172a">Spanning Vectors (Durations)</text>
+    <text x="10" y="192" font-size="12" fill="#334155">INTERVAL</text>
+    <line x1="100" y1="188" x2="470" y2="188" stroke="#f59e0b" stroke-width="2" marker-start="url(#vi-arrow-temp)" marker-end="url(#vi-arrow-temp)"/>
+    <text x="285" y="178" font-size="11" fill="#b45309" text-anchor="middle">2 hours 30 minutes</text>
+    <text x="10" y="228" font-size="13" font-weight="600" fill="#0f172a">Arithmetic</text>
+    <rect x="10" y="242" width="120" height="34" rx="4" fill="#eff6ff" stroke="#3b82f6"/>
+    <text x="70" y="264" font-size="12" fill="#1e3a8a" text-anchor="middle">[08:30:00]</text>
+    <text x="70" y="292" font-size="10" fill="#64748b" text-anchor="middle">(Instant)</text>
+    <text x="150" y="266" font-size="16" fill="#334155" text-anchor="middle">+</text>
+    <line x1="175" y1="259" x2="395" y2="259" stroke="#f59e0b" stroke-width="2" marker-start="url(#vi-arrow-temp)" marker-end="url(#vi-arrow-temp)"/>
+    <text x="285" y="250" font-size="11" fill="#b45309" text-anchor="middle">2 hours 30 mins</text>
+    <text x="285" y="292" font-size="10" fill="#64748b" text-anchor="middle">(Duration)</text>
+    <text x="420" y="266" font-size="16" fill="#334155" text-anchor="middle">=</text>
+    <rect x="445" y="242" width="120" height="34" rx="4" fill="#ecfdf5" stroke="#10b981"/>
+    <text x="505" y="264" font-size="12" fill="#065f46" text-anchor="middle">[11:00:00]</text>
+    <text x="505" y="292" font-size="10" fill="#64748b" text-anchor="middle">(New Instant)</text>
+  </svg>
+  <p class="text-xs text-slate-500 mt-2"><strong>Figure:</strong> Instants versus durations and instant + duration temporal arithmetic.</p>
+</div>
 <h3 id="6.6.6-worked-examples">6.6.6 Worked Examples</h3>
 <div class="example-box">
   <p><strong>Worked Example 6.6.1: Time Difference Duration and Target Interval Arithmetic</strong></p>
@@ -1415,13 +1526,6 @@ Arithmetic:
     <li><code>TIME</code> represents a recurring time of day (e.g. store opening hours <code>09:00:00</code>).</li>
     <li><strong>Overnight Pitfall:</strong> <code>TIME</code> cannot properly model shifts that cross midnight. For example, if a night shift begins at <code>22:00:00</code> and ends at <code>06:00:00</code>, evaluating <code>TIME '06:00:00' - TIME '22:00:00'</code> produces <code>-16:00:00</code>, <strong>not</strong> <code>08:00:00</code>. For any event that spans midnight or multiple days, always use <code>TIMESTAMP</code> or store explicit <code>INTERVAL</code> durations.</li>
   </ul>
-</div>
-<h3 id="6.6.7-student-questions-and-answers">6.6.7 Student Questions and Answers</h3>
-<div class="important-note">
-  <p><strong>Q:</strong> What is the difference between <code>CURRENT_TIME</code> and <code>LOCALTIME</code> in PostgreSQL? <strong>A:</strong> <code>CURRENT_TIME</code> returns the current clock time along with the session's active time zone offset (<code>TIME WITH TIME ZONE</code>, e.g., <code>14:30:00+02</code>). In contrast, <code>LOCALTIME</code> returns only the current clock time without any time zone information (<code>TIME WITHOUT TIME ZONE</code>, e.g., <code>14:30:00</code>).</p>
-</div>
-<div class="key-takeaway">
-  <p><strong>Exam note:</strong> <code>DATE</code> uses 4 bytes, <code>TIME</code> uses 8 bytes, and <code>TIMESTAMPTZ</code> normalizes all inputs to UTC internally. By default, declaring a column as <code>TIME</code> creates a column without time zone (<code>TIME WITHOUT TIME ZONE</code>).</p>
 </div>
 <div class="key-takeaway">
   <p><strong>Recap & Bridge:</strong> <code>DATE</code> tracks calendar days and <code>TIME</code> tracks clock hours. However, real-world distributed systems require combining date and time into a unified instant that accommodates global time zones. Section 6.7 investigates Timestamps and Time Zone Handling (<code>TIMESTAMP</code> versus <code>TIMESTAMPTZ</code>).</p>
@@ -1574,21 +1678,20 @@ SELECT ts_without, ts_with FROM table_time_tz;</code></pre>
     </tr>
   </tbody>
 </table>
-<p>#### Visual Intuition: Global Time Synchronization</p>
-<pre><code>Input: '2020-02-22 10:10:10-07'
-              |
-              v (Input normalization: subtract -7 hours)
-      +------------------------------------------+
-      |       Stored on Disk (PostgreSQL):       |
-      |          2020-02-22 17:10:10 UTC         |
-      +------------------------------------------+
-              /                    |                    \
-             /                     |                     \
-  Session: America/New_York   Session: UTC       Session: America/Los_Angeles
-     (Offset: -05:00)       (Offset: +00:00)           (Offset: -08:00)
-            |                      |                          |
-            v                      v                          v
-  2020-02-22 12:10:10-05  2020-02-22 17:10:10+00     2020-02-22 09:10:10-08</code></pre>
+<div class="diagram-container my-6 text-center">
+  <pre class="mermaid">
+flowchart TD
+    I["Input: '2020-02-22 10:10:10-07'"] --> N["Input normalization: subtract -7 hours"]
+    N --> U["Stored on disk (PostgreSQL): 2020-02-22 17:10:10 UTC"]
+    U --> NY["Session: America/New_York (Offset: -05:00)"]
+    U --> UTC["Session: UTC (Offset: +00:00)"]
+    U --> LA["Session: America/Los_Angeles (Offset: -08:00)"]
+    NY --> NYO["2020-02-22 12:10:10-05"]
+    UTC --> UTCO["2020-02-22 17:10:10+00"]
+    LA --> LAO["2020-02-22 09:10:10-08"]
+  </pre>
+  <p class="text-xs text-slate-500 mt-2"><strong>Figure:</strong> <code>TIMESTAMPTZ</code> input normalization to UTC and per-session output localization.</p>
+</div>
 <h3 id="6.7.5-worked-examples">6.7.5 Worked Examples</h3>
 <div class="example-box">
   <p><strong>Worked Example 6.7.1: Multi-Session Time Zone Normalization Trace</strong></p>
@@ -1628,13 +1731,6 @@ SELECT ts_without, ts_with FROM table_time_tz;</code></pre>
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
       user_timezone VARCHAR(50) NOT NULL -- e.g., 'America/Chicago'
   );</code></pre>
-</div>
-<h3 id="6.7.6-student-questions-and-answers">6.7.6 Student Questions and Answers</h3>
-<div class="important-note">
-  <p><strong>Q:</strong> How does <code>TIMESTAMPTZ</code> maintain chronological consistency across distributed global client applications? <strong>A:</strong> <code>TIMESTAMPTZ</code> normalizes all incoming timestamps to UTC internally upon storage, regardless of the client's local time zone or the explicit offset in the input literal. When queries are executed, PostgreSQL converts the stored UTC value into the querying client's local session time zone. This eliminates ambiguity: events recorded in London, Tokyo, and San Francisco are all compared along a single, unified UTC timeline, ensuring correct chronological sorting in distributed systems.</p>
-</div>
-<div class="key-takeaway">
-  <p><strong>Exam note:</strong> <code>TIMESTAMPTZ</code> does not store a time zone literal alongside the timestamp; it stores the normalized UTC value. Both <code>TIMESTAMP</code> and <code>TIMESTAMPTZ</code> occupy 8 bytes of storage on disk.</p>
 </div>
 <div class="key-takeaway">
   <p><strong>Recap & Bridge:</strong> While auto-incrementing integers and timestamps establish temporal order within a single database, distributed architectures across multiple data centers require unique keys generated without coordination. Section 6.8 examines Universally Unique Identifiers (UUID).</p>
@@ -1734,18 +1830,43 @@ INSERT INTO table_uuid (product_name) VALUES ('Product C');</code></pre>
     </tr>
   </tbody>
 </table>
-<p>#### Visual Intuition: 128-Bit Layout Comparison</p>
-<pre><code>UUID Version 1 Layout (Time + Hardware Dependent):
-+-------------------------+-------------+-------------+---------+-------------------------+
-|  Time-Low (32 bits)     |Time-Mid(16b)|Ver+TimeHi(16)|Clock(16)| Node / MAC (48 bits)    |
-+-------------------------+-------------+-------------+---------+-------------------------+
-[&lt;---------------- Changes rapidly -------------&gt;]             [&lt;-- Leaks Hardware MAC --&gt;]
-
-UUID Version 4 Layout (Pure Cryptographic Randomness):
-+-------------------------+-------------+-------------+---------+-------------------------+
-|    Random (32 bits)     | Random (16b)|Ver(4)+Rnd(12)|Var(2)+R |    Random (48 bits)     |
-+-------------------------+-------------+-------------+---------+-------------------------+
-[&lt;------------------------- 122 Bits of Pure Entropy ------------------------------------&gt;]</code></pre>
+<div class="diagram-container my-6 text-center">
+  <svg viewBox="0 0 860 280" class="diagram-svg" role="img" aria-label="Bit layout comparison: version 1 UUID splits into time-low, time-mid, version plus time-high, clock sequence and 48-bit node MAC address, while version 4 UUID is 122 bits of pure random entropy">
+    <text x="10" y="24" font-size="13" font-weight="600" fill="#0f172a">UUID Version 1 Layout (Time + Hardware Dependent)</text>
+    <rect x="10" y="38" width="200" height="52" fill="#dbeafe" stroke="#3b82f6"/>
+    <rect x="210" y="38" width="100" height="52" fill="#dbeafe" stroke="#3b82f6"/>
+    <rect x="310" y="38" width="100" height="52" fill="#dbeafe" stroke="#3b82f6"/>
+    <rect x="410" y="38" width="100" height="52" fill="#dbeafe" stroke="#3b82f6"/>
+    <rect x="510" y="38" width="300" height="52" fill="#fee2e2" stroke="#ef4444"/>
+    <g font-size="11" fill="#1e3a8a" text-anchor="middle">
+      <text x="110" y="69">Time-Low (32 bits)</text>
+      <text x="260" y="69">Time-Mid (16b)</text>
+      <text x="360" y="69">Ver+TimeHi (16)</text>
+      <text x="460" y="69">Clock (16)</text>
+    </g>
+    <text x="660" y="69" font-size="11" fill="#7f1d1d" text-anchor="middle">Node / MAC (48 bits)</text>
+    <path d="M10,100 v10 H510 v-10" fill="none" stroke="#3b82f6" stroke-width="1.2"/>
+    <text x="260" y="128" font-size="11" fill="#1d4ed8" text-anchor="middle">Changes rapidly</text>
+    <path d="M510,100 v10 H810 v-10" fill="none" stroke="#ef4444" stroke-width="1.2"/>
+    <text x="660" y="128" font-size="11" fill="#b91c1c" text-anchor="middle">Leaks Hardware MAC</text>
+    <text x="10" y="166" font-size="13" font-weight="600" fill="#0f172a">UUID Version 4 Layout (Pure Cryptographic Randomness)</text>
+    <rect x="10" y="180" width="200" height="52" fill="#dcfce7" stroke="#10b981"/>
+    <rect x="210" y="180" width="100" height="52" fill="#dcfce7" stroke="#10b981"/>
+    <rect x="310" y="180" width="100" height="52" fill="#dcfce7" stroke="#10b981"/>
+    <rect x="410" y="180" width="100" height="52" fill="#dcfce7" stroke="#10b981"/>
+    <rect x="510" y="180" width="300" height="52" fill="#dcfce7" stroke="#10b981"/>
+    <g font-size="11" fill="#065f46" text-anchor="middle">
+      <text x="110" y="211">Random (32 bits)</text>
+      <text x="260" y="211">Random (16b)</text>
+      <text x="360" y="211">Ver(4)+Rnd(12)</text>
+      <text x="460" y="211">Var(2)+Rnd</text>
+      <text x="660" y="211">Random (48 bits)</text>
+    </g>
+    <path d="M10,242 v10 H810 v-10" fill="none" stroke="#10b981" stroke-width="1.2"/>
+    <text x="410" y="268" font-size="11" fill="#047857" text-anchor="middle">122 Bits of Pure Entropy</text>
+  </svg>
+  <p class="text-xs text-slate-500 mt-2"><strong>Figure:</strong> 128-bit field layouts of UUID version 1 and version 4.</p>
+</div>
 <h3 id="6.8.5-worked-examples">6.8.5 Worked Examples</h3>
 <div class="example-box">
   <p><strong>Worked Example 6.8.1: Generating and Migrating UUID Primary Keys</strong></p>
@@ -1782,13 +1903,6 @@ SELECT product_id, product_name FROM table_uuid;</code></pre>
     <li>Use <code>UUID</code> when generating keys across distributed systems, mobile offline clients, multi-tenant databases, or public-facing REST APIs.</li>
     <li><strong>B-tree Index Fragmentation Trap:</strong> Because UUID v4 values are uniformly random, consecutive inserts scatter across random leaf pages of a B-tree index. Once an index exceeds available RAM, every insert triggers a disk read and write, reducing insert throughput by up to \(90\%\). For write-heavy workloads, consider time-ordered sequential UUIDs (UUID v7) or 64-bit <code>BIGINT</code> identity keys.</li>
   </ul>
-</div>
-<h3 id="6.8.6-student-questions-and-answers">6.8.6 Student Questions and Answers</h3>
-<div class="important-note">
-  <p><strong>Q:</strong> Why is <code>uuid_generate_v4()</code> preferred over <code>uuid_generate_v1()</code> for public-facing primary keys? <strong>A:</strong> Version 1 incorporates the host computer's physical 48-bit MAC address and timestamp. Exposing version 1 UUIDs in public URLs or API responses leaks internal network hardware identifiers and the exact creation time of records, creating potential attack vectors. Version 4 uses 122 bits of pseudorandom data, ensuring privacy and eliminating hardware leakage.</p>
-</div>
-<div class="key-takeaway">
-  <p><strong>Exam note:</strong> To use <code>uuid_generate_v1()</code> or <code>uuid_generate_v4()</code>, the <code>uuid-ossp</code> extension must be installed in the database (<code>CREATE EXTENSION IF NOT EXISTS "uuid-ossp"</code>). In PostgreSQL 13+, <code>gen_random_uuid()</code> is available natively without any extension.</p>
 </div>
 <div class="key-takeaway">
   <p><strong>Recap & Bridge:</strong> UUIDs provide scalar distributed uniqueness. However, modern relational schemas often require storing collections of homogeneous items without creating separate join tables. Section 6.9 explores Array Data Types.</p>
@@ -1921,13 +2035,40 @@ SELECT name, UNNEST(phones) AS individual_phone FROM table_array;</code></pre>
 <blockquote>
   <p>[!IMPORTANT] PostgreSQL is the <strong>only</strong> major database engine that defaults to 1-based array indexing. Snowflake, Databricks / Spark SQL, and MySQL JSON arrays all follow the 0-based standard.</p>
 </blockquote>
-<p>#### Visual Intuition: 1-Based Memory Layout</p>
-<pre><code>PostgreSQL Array Indexing:
-Index:         [0]         [1]                 [2]               [3]
-Value:        (NULL)  '801-123-4567'      '819-555-2222'        (NULL)
-                         |                   |
-                         v                   v
-                     First Item          Second Item</code></pre>
+<div class="diagram-container my-6 text-center">
+  <svg viewBox="0 0 700 210" class="diagram-svg" role="img" aria-label="PostgreSQL array indexing: subscript 0 returns NULL, subscript 1 holds 801-123-4567 as the first item, subscript 2 holds 819-555-2222 as the second item, and subscript 3 returns NULL">
+    <defs>
+      <marker id="vi-arrow-array" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto">
+        <path d="M0,0 L6,3 L0,6 z" fill="#475569"/>
+      </marker>
+    </defs>
+    <text x="10" y="20" font-size="12" font-weight="600" fill="#0f172a">PostgreSQL Array Indexing</text>
+    <g font-size="12" fill="#334155" text-anchor="middle">
+      <text x="110" y="44">[0]</text>
+      <text x="270" y="44">[1]</text>
+      <text x="430" y="44">[2]</text>
+      <text x="590" y="44">[3]</text>
+    </g>
+    <rect x="30" y="54" width="160" height="50" fill="#f1f5f9" stroke="#94a3b8"/>
+    <rect x="190" y="54" width="160" height="50" fill="#dbeafe" stroke="#3b82f6" stroke-width="1.5"/>
+    <rect x="350" y="54" width="160" height="50" fill="#dbeafe" stroke="#3b82f6" stroke-width="1.5"/>
+    <rect x="510" y="54" width="160" height="50" fill="#f1f5f9" stroke="#94a3b8"/>
+    <g font-size="11" text-anchor="middle">
+      <text x="110" y="84" font-family="monospace" fill="#64748b">(NULL)</text>
+      <text x="270" y="84" font-family="monospace" fill="#1e3a8a">'801-123-4567'</text>
+      <text x="430" y="84" font-family="monospace" fill="#1e3a8a">'819-555-2222'</text>
+      <text x="590" y="84" font-family="monospace" fill="#64748b">(NULL)</text>
+    </g>
+    <line x1="270" y1="104" x2="270" y2="140" stroke="#475569" stroke-width="1.2" marker-end="url(#vi-arrow-array)"/>
+    <line x1="430" y1="104" x2="430" y2="140" stroke="#475569" stroke-width="1.2" marker-end="url(#vi-arrow-array)"/>
+    <text x="270" y="160" font-size="12" font-weight="600" fill="#15803d" text-anchor="middle">First Item</text>
+    <text x="430" y="160" font-size="12" font-weight="600" fill="#15803d" text-anchor="middle">Second Item</text>
+    <text x="110" y="160" font-size="11" fill="#b91c1c" text-anchor="middle">no element</text>
+    <text x="590" y="160" font-size="11" fill="#b91c1c" text-anchor="middle">no element</text>
+    <text x="350" y="190" font-size="11" fill="#334155" text-anchor="middle">Index domain: 1 to k (k = 2 for this row)</text>
+  </svg>
+  <p class="text-xs text-slate-500 mt-2"><strong>Figure:</strong> 1-based subscripts of a PostgreSQL array, with index <code>0</code> and index <code>3</code> evaluating to <code>NULL</code>.</p>
+</div>
 <h3 id="6.9.5-worked-examples">6.9.5 Worked Examples</h3>
 <div class="example-box">
   <p><strong>Worked Example 6.9.1: Array Insertion, Subscript Access, and Containment Filtering</strong></p>
@@ -1965,13 +2106,6 @@ WHERE phones[2] = '214-555-4444';</code></pre>
     <li>Use array columns when an entity possesses a bounded, ordered collection of homogeneous scalar values (e.g., telephone numbers, blog tags, sensor reading sequences) that are always read and written together with the parent record.</li>
     <li><strong>Relational Integrity Limits (1NF):</strong> Do not use array columns if individual elements must participate in foreign key relationships, require unique constraints across the entire database, or are frequently updated in isolation. In those cases, relational normalization (a separate child table) is required.</li>
   </ul>
-</div>
-<h3 id="6.9.6-student-questions-and-answers">6.9.6 Student Questions and Answers</h3>
-<div class="important-note">
-  <p><strong>Q:</strong> How does PostgreSQL array indexing differ from traditional programming languages like C or Python? <strong>A:</strong> In traditional programming languages (C, Python, Java, JavaScript), array indexing is 0-based, meaning the initial element is stored at index 0 (<code>arr[0]</code>). In PostgreSQL, array indexing is <strong>1-based</strong> by default, meaning the initial element is stored at index 1 (<code>arr[1]</code>). Accessing index 0 in PostgreSQL does not raise an error; it silently returns <code>NULL</code>, which is a frequent source of undetected logic bugs for developers new to PostgreSQL.</p>
-</div>
-<div class="key-takeaway">
-  <p><strong>Exam note:</strong> PostgreSQL array indices start at 1, not 0. Accessing index 0 evaluates to <code>NULL</code>.</p>
 </div>
 <div class="key-takeaway">
   <p><strong>Recap & Bridge:</strong> Arrays provide structured multi-element storage for homogeneous scalar types. When data structures require semi-structured key-value pairs or arbitrary nested schemas, databases use document types. Section 6.10 explores JSON and JSONB Document Storage.</p>
@@ -2144,16 +2278,63 @@ CREATE INDEX idx_table_json_docs ON table_json USING gin (docs jsonb_path_ops);<
     </tr>
   </tbody>
 </table>
-<p>#### Visual Intuition: JSON Text vs JSONB Binary Traversal</p>
-<pre><code>Plain JSON (Sequential Text Parsing):
-['{', '"', 'k', 'e', 'y', '"', ':', ' ', '"', 'v', 'a', 'l', 'u', 'e', '"', ... ]
- -&gt; Query must scan every character sequentially from byte 0 to find a key.
-
-JSONB (Binary Decomposed Header + Offset Jump Table):
-+-------------------+-----------------+-----------------+--------------------+
-| Header (32 bits)  | Key Offset (16b)| Val Offset (16b)| Key String Data    |
-+-------------------+-----------------+-----------------+--------------------+
- -&gt; Query reads jump offset and leaps DIRECTLY to the desired value in RAM!</code></pre>
+<div class="diagram-container my-6 text-center">
+  <svg viewBox="0 0 700 250" class="diagram-svg" role="img" aria-label="Plain JSON stores a sequential character array that must be scanned character by character, while JSONB stores a binary header with key and value offsets that jump directly to the wanted value">
+    <text x="10" y="20" font-size="13" font-weight="600" fill="#0f172a">Plain JSON (Sequential Text Parsing)</text>
+    <g>
+      <rect x="10" y="32" width="34" height="40" fill="#fee2e2" stroke="#94a3b8"/>
+      <rect x="44" y="32" width="34" height="40" fill="#fee2e2" stroke="#94a3b8"/>
+      <rect x="78" y="32" width="34" height="40" fill="#fee2e2" stroke="#94a3b8"/>
+      <rect x="112" y="32" width="34" height="40" fill="#fee2e2" stroke="#94a3b8"/>
+      <rect x="146" y="32" width="34" height="40" fill="#fee2e2" stroke="#94a3b8"/>
+      <rect x="180" y="32" width="34" height="40" fill="#fee2e2" stroke="#94a3b8"/>
+      <rect x="214" y="32" width="34" height="40" fill="#fee2e2" stroke="#94a3b8"/>
+      <rect x="248" y="32" width="34" height="40" fill="#e2e8f0" stroke="#94a3b8"/>
+      <rect x="282" y="32" width="34" height="40" fill="#fee2e2" stroke="#94a3b8"/>
+      <rect x="316" y="32" width="34" height="40" fill="#fee2e2" stroke="#94a3b8"/>
+      <rect x="350" y="32" width="34" height="40" fill="#fee2e2" stroke="#94a3b8"/>
+      <rect x="384" y="32" width="34" height="40" fill="#fee2e2" stroke="#94a3b8"/>
+      <rect x="418" y="32" width="34" height="40" fill="#fee2e2" stroke="#94a3b8"/>
+      <rect x="452" y="32" width="34" height="40" fill="#fee2e2" stroke="#94a3b8"/>
+      <rect x="486" y="32" width="34" height="40" fill="#fee2e2" stroke="#94a3b8"/>
+      <rect x="520" y="32" width="34" height="40" fill="#f1f5f9" stroke="#94a3b8"/>
+    </g>
+    <g font-family="monospace" font-size="13" fill="#7f1d1d" text-anchor="middle">
+      <text x="27" y="58">{</text>
+      <text x="61" y="58">"</text>
+      <text x="95" y="58">k</text>
+      <text x="129" y="58">e</text>
+      <text x="163" y="58">y</text>
+      <text x="197" y="58">"</text>
+      <text x="231" y="58">:</text>
+      <text x="299" y="58">"</text>
+      <text x="333" y="58">v</text>
+      <text x="367" y="58">a</text>
+      <text x="401" y="58">l</text>
+      <text x="435" y="58">u</text>
+      <text x="469" y="58">e</text>
+      <text x="503" y="58">"</text>
+      <text x="537" y="58">...</text>
+    </g>
+    <text x="10" y="94" font-size="11" fill="#b91c1c">Query must scan every character sequentially from byte 0 to find a key.</text>
+    <text x="10" y="134" font-size="13" font-weight="600" fill="#0f172a">JSONB (Binary Decomposed Header + Offset Jump Table)</text>
+    <rect x="10" y="146" width="160" height="46" fill="#f1f5f9" stroke="#475569"/>
+    <rect x="170" y="146" width="150" height="46" fill="#dcfce7" stroke="#10b981"/>
+    <rect x="320" y="146" width="150" height="46" fill="#dcfce7" stroke="#10b981"/>
+    <rect x="470" y="146" width="190" height="46" fill="#dbeafe" stroke="#3b82f6"/>
+    <g font-size="10" text-anchor="middle">
+      <text x="90" y="168" fill="#334155">Header</text>
+      <text x="90" y="182" fill="#334155">(32 bits)</text>
+      <text x="245" y="168" fill="#065f46">Key Offset</text>
+      <text x="245" y="182" fill="#065f46">(16b)</text>
+      <text x="395" y="168" fill="#065f46">Val Offset</text>
+      <text x="395" y="182" fill="#065f46">(16b)</text>
+      <text x="565" y="174" fill="#1e3a8a">Key String Data</text>
+    </g>
+    <text x="10" y="220" font-size="11" fill="#15803d">Query reads the jump offset and leaps directly to the desired value in RAM.</text>
+  </svg>
+  <p class="text-xs text-slate-500 mt-2"><strong>Figure:</strong> Sequential text scanning in <code>JSON</code> versus offset jumps in binary <code>JSONB</code>.</p>
+</div>
 <h3 id="6.10.7-worked-examples">6.10.7 Worked Examples</h3>
 <div class="example-box">
   <p><strong>Worked Example 6.10.1: Converting to JSONB and Accelerating with GIN Index</strong></p>
@@ -2187,13 +2368,6 @@ WHERE docs @&gt; '{"publisher": "top"}';</code></pre>
     <li><strong>Always choose <code>JSONB</code> over <code>JSON</code></strong> unless your application has a strict, documented requirement to preserve exact input whitespace, line breaks, or duplicate object keys (such as legal audit ingestion).</li>
     <li><strong>The "JSON Soup" Antipattern:</strong> Avoid replacing your entire relational schema with a single <code>data JSONB</code> column. Dumping all data into JSON destroys foreign key integrity, eliminates column-level <code>NOT NULL</code> guarantees, and forces complex query syntax for simple joins. Restrict <code>JSONB</code> to sparse, polymorphic, or rapidly evolving attributes.</li>
   </ul>
-</div>
-<h3 id="6.10.8-student-questions-and-answers">6.10.8 Student Questions and Answers</h3>
-<div class="important-note">
-  <p><strong>Q:</strong> Why does the containment operator <code>@></code> fail on columns defined with the <code>JSON</code> data type? <strong>A:</strong> The <code>JSON</code> data type stores an exact textual representation of the input string as raw text. It does not decompose the document into a searchable binary hierarchy. The containment operator <code>@></code> requires structured binary key-value navigation to evaluate subset relationships, which is only supported by <code>JSONB</code>. Converting the column from <code>JSON</code> to <code>JSONB</code> compiles the text into binary format, enabling <code>@></code> and GIN index lookups.</p>
-</div>
-<div class="key-takeaway">
-  <p><strong>Exam note:</strong> Always choose <code>JSONB</code> over <code>JSON</code> unless there is a strict requirement to preserve exact input whitespace or duplicate keys. Remember that <code>JSONB</code> strips whitespace, deduplicates keys, and supports GIN indexing with <code>jsonb_path_ops</code>.</p>
 </div>
 <div class="key-takeaway">
   <p><strong>Recap & Bridge:</strong> <code>JSONB</code> enables robust semi-structured document modeling. When applications manage cloud infrastructure, network routing, or cybersecurity logs, relational databases also provide specialized types for IP routing. Section 6.11 explores Network Address Types.</p>
@@ -2328,16 +2502,47 @@ FROM table_net_addresses;</code></pre>
     </tr>
   </tbody>
 </table>
-<p>#### Visual Intuition: 32-Bit Subnet Masking</p>
-<pre><code>IPv4 Address: 4.35.221.243 (Binary):
-00000100 . 00100011 . 11011101 . 11110011
-
-Subnet Mask (/27 = 27 ones, 5 zeros):
-11111111 . 11111111 . 11111111 . 11100000
-[&lt;------------- Network Prefix (27 bits) -------------&gt;] [&lt;-- Host (5b) --&gt;]
-
-Bitwise AND Result (CIDR Network Address: 4.35.221.224/27):
-00000100 . 00100011 . 11011101 . 11100000  -&gt; Host bits zeroed out!</code></pre>
+<div class="diagram-container my-6 text-center">
+  <svg viewBox="0 0 640 250" class="diagram-svg" role="img" aria-label="Bitwise AND of IPv4 address 4.35.221.243 with the slash 27 subnet mask 11111111.11111111.11111111.11100000 yields the CIDR network address 4.35.221.224/27 with host bits zeroed">
+    <defs>
+      <style>
+        .vi-octet { font-family: monospace; font-size: 14px; fill: #0f172a; }
+        .vi-dot { font-family: monospace; font-size: 14px; fill: #64748b; }
+      </style>
+    </defs>
+    <text x="20" y="20" font-size="12" font-weight="600" fill="#0f172a">IPv4 Address: 4.35.221.243 (Binary)</text>
+    <text class="vi-octet" x="20" y="46">00000100</text>
+    <text class="vi-dot" x="96" y="46">.</text>
+    <text class="vi-octet" x="120" y="46">00100011</text>
+    <text class="vi-dot" x="196" y="46">.</text>
+    <text class="vi-octet" x="220" y="46">11011101</text>
+    <text class="vi-dot" x="296" y="46">.</text>
+    <text class="vi-octet" x="320" y="46">11110011</text>
+    <text x="20" y="86" font-size="12" font-weight="600" fill="#0f172a">Subnet Mask (/27 = 27 ones, 5 zeros)</text>
+    <text class="vi-octet" x="20" y="112">11111111</text>
+    <text class="vi-dot" x="96" y="112">.</text>
+    <text class="vi-octet" x="120" y="112">11111111</text>
+    <text class="vi-dot" x="196" y="112">.</text>
+    <text class="vi-octet" x="220" y="112">11111111</text>
+    <text class="vi-dot" x="296" y="112">.</text>
+    <text class="vi-octet" x="320" y="112">11100000</text>
+    <path d="M20,124 v10 H345 v-10" fill="none" stroke="#3b82f6" stroke-width="1.2"/>
+    <path d="M345,124 v10 H388 v-10" fill="none" stroke="#f59e0b" stroke-width="1.2"/>
+    <text x="182" y="152" font-size="11" fill="#1d4ed8" text-anchor="middle">Network Prefix (27 bits)</text>
+    <text x="366" y="152" font-size="11" fill="#b45309" text-anchor="middle">Host (5b)</text>
+    <text x="20" y="186" font-size="12" font-weight="600" fill="#0f172a">Bitwise AND Result (CIDR Network Address: 4.35.221.224/27)</text>
+    <text class="vi-octet" x="20" y="212">00000100</text>
+    <text class="vi-dot" x="96" y="212">.</text>
+    <text class="vi-octet" x="120" y="212">00100011</text>
+    <text class="vi-dot" x="196" y="212">.</text>
+    <text class="vi-octet" x="220" y="212">11011101</text>
+    <text class="vi-dot" x="296" y="212">.</text>
+    <text class="vi-octet" x="320" y="212">11100000</text>
+    <text x="388" y="212" font-size="11" fill="#b91c1c">host bits zeroed out</text>
+    <text x="20" y="240" font-size="11" fill="#334155">Host capacity: 2^(32-27) = 32 addresses per subnet</text>
+  </svg>
+  <p class="text-xs text-slate-500 mt-2"><strong>Figure:</strong> Masking <code>4.35.221.243</code> with <code>/27</code> to obtain the CIDR network <code>4.35.221.224/27</code>.</p>
+</div>
 <h3 id="6.11.6-worked-examples">6.11.6 Worked Examples</h3>
 <div class="example-box">
   <p><strong>Worked Example 6.11.1: Converting IP Addresses to Subnet Boundaries</strong></p>
@@ -2387,32 +2592,11 @@ WHERE ip = '4.35.221.243';</code></pre>
   DETAIL: Value has non-zero host bits.</code></pre>
   <p>To convert a host IP into its corresponding CIDR network prefix, always invoke <code>set_masklen(ip, m)::cidr</code>.</p>
 </div>
-<h3 id="6.11.7-student-questions-and-answers">6.11.7 Student Questions and Answers</h3>
-<div class="important-note">
-  <p><strong>Q:</strong> What is the functional difference between the <code>INET</code> and <code>CIDR</code> data types in PostgreSQL? <strong>A:</strong> <code>INET</code> allows non-zero host bits alongside a subnet mask, making it suitable for representing individual client or server machines residing within a specific subnet (e.g., <code>192.168.1.100/24</code>). In contrast, <code>CIDR</code> represents only the network prefix and strictly enforces that all bits beyond the subnet prefix must be zero (e.g., <code>192.168.1.0/24</code>). Attempting to store an address with non-zero host bits in a <code>CIDR</code> column raises an error.</p>
-</div>
-<div class="key-takeaway">
-  <p><strong>Exam note:</strong> <code>INET</code> accepts host addresses with subnet masks, while <code>CIDR</code> rejects inputs containing non-zero host bits. When sorting <code>inet</code> or <code>cidr</code> columns, IPv4 addresses always sort before IPv6 addresses.</p>
-</div>
 <div class="key-takeaway">
   <p><strong>Recap & Bridge:</strong> From booleans and character strings to integers, decimals, timestamps, UUIDs, arrays, JSONB, and network addresses, selecting the exact right data type establishes data integrity, optimizes storage efficiency, and unlocks hardware-accelerated SQL indexing.</p>
 </div>
 <p><strong>Real-World & Domain Connection:</strong> Security information and event management (SIEM) systems (such as Splunk, Elastic, and Cloudflare) analyze billions of network firewall logs using <code>INET</code> and <code>CIDR</code>. When an automated threat intelligence feed flags a malicious <code>/24</code> subnet, security engineers issue a single SQL containment query (<code>WHERE client_ip << '203.0.113.0/24'::cidr</code>) to identify and isolate all compromised hosts across the infrastructure within milliseconds.</p>
 <p>---</p>
-
-<h2 id="exam-guidance-summary">Exam Guidance Summary</h2>
-<ul>
-  <li><strong>Boolean Type</strong>: Remember that PostgreSQL booleans support three logical states (<code>true</code>, <code>false</code>, <code>null</code>). Never compare a boolean column directly to an unquoted integer <code>1</code> or <code>0</code> in a <code>WHERE</code> clause without single quotes (e.g., write <code>WHERE is_available = '1'</code>, not <code>WHERE is_available = 1</code>).</li>
-  <li><strong>Character Types</strong>: <code>CHAR(n)</code> pads with spaces to fixed length \(n\) and defaults to <code>CHAR(1)</code> if \(n\) is omitted; <code>VARCHAR(n)</code> limits length to \(n\) without blank padding; <code>TEXT</code> provides unlimited variable length up to 1 GB. In PostgreSQL, <code>VARCHAR</code> and <code>TEXT</code> have identical performance.</li>
-  <li><strong>Integer Types</strong>: Memorize the storage byte sizes: <code>SMALLINT</code> (2 bytes, \(\pm 32,767\)), <code>INTEGER</code> (4 bytes, \(\pm 2.14\) billion), and <code>BIGINT</code> (8 bytes, \(\pm 9.22 \times 10^{18}\)).</li>
-  <li><strong>Serial Identity</strong>: <code>SERIAL</code> is syntactic sugar creating an integer column linked to an auto-incrementing sequence object. Deleting rows or rolling back transactions burns sequence numbers, creating irreversible gaps.</li>
-  <li><strong>Decimals</strong>: <code>NUMERIC(precision, scale)</code> and <code>DECIMAL</code> provide exact arbitrary-precision math for financial calculations without rounding error. <code>REAL</code> (4 bytes, ~6 digits) and <code>DOUBLE PRECISION</code> (8 bytes, ~15 digits) are inexact floating-point numbers conforming to IEEE 754.</li>
-  <li><strong>Temporal Types</strong>: <code>DATE</code> uses 4 bytes (<code>YYYY-MM-DD</code>). <code>TIME</code> uses 8 bytes (<code>HH:MI:SS</code>). <code>TIMESTAMPTZ</code> uses 8 bytes, normalizes all inputs to UTC internally, and converts to the client session time zone upon retrieval.</li>
-  <li><strong>UUID</strong>: 128-bit globally unique identifier. Requires the <code>uuid-ossp</code> extension in PostgreSQL (<code>gen_random_uuid()</code> is built-in in PG 13+). Version 1 uses host MAC address and timestamp; Version 4 is purely random.</li>
-  <li><strong>Arrays</strong>: PostgreSQL arrays use 1-based indexing by default, meaning the first element is accessed using subscript <code>[1]</code>. Accessing index <code>[0]</code> returns <code>NULL</code>.</li>
-  <li><strong>JSONB</strong>: <code>JSONB</code> stores decomposed binary documents, strips whitespace, deduplicates keys, and supports GIN indexing and containment searches (<code>@></code>), while plain <code>JSON</code> stores text and lacks containment operator support.</li>
-  <li><strong>Network Addresses</strong>: <code>INET</code> stores host addresses with subnet masks, whereas <code>CIDR</code> strictly requires all host bits to be zero. IPv4 addresses always sort before IPv6 addresses.</li>
-</ul>
 
 <h2 id="key-industry-applications">Key Industry Applications</h2>
 <ul>
@@ -2439,100 +2623,6 @@ WHERE ip = '4.35.221.243';</code></pre>
       - .revision-check — one self-check question (no options)
       - .revision-connections — linked concepts within this lecture
     ============================================================ -->
-    <section class="exam-revision-section">
-      <h2>Exam Revision Notes</h2>
-      <p class="revision-intro">Below is the distilled, exam-ready core.
-      Every entry comes from the full explanation above. Use this section
-      for rapid review; return to the main notes when a point needs more context.</p>
-<div class="exam-revision-entry">
-  <h3 class="revision-topic">Boolean Data Type</h3>
-  <p class="revision-mustknow"><strong>Must-know:</strong> Never compare a boolean column directly to an unquoted integer 1 or 0 in a WHERE clause without single quotes.</p>
-  <p class="revision-formula">\[ \mathcal{B} = \{\text{TRUE}, \text{FALSE}, \text{NULL}\}, \quad \neg \text{TRUE} = \text{FALSE}, \quad \neg \text{FALSE} = \text{TRUE}, \quad \neg \text{NULL} = \text{NULL} \]</p>
-  <p class="revision-pitfall"><strong>Top pitfall:</strong> Comparing boolean columns with unquoted integers (WHERE is_available = 1) throws an operator does not exist error.</p>
-  <p class="revision-check"><strong>Self-check:</strong> What error occurs if you query WHERE is_available = 1 in PostgreSQL, and how do you fix it?</p>
-  <p class="revision-connections"><strong>Connects to:</strong> 6.2</p>
-</div>
-<div class="exam-revision-entry">
-  <h3 class="revision-topic">Character Types: CHAR, VARCHAR, and TEXT</h3>
-  <p class="revision-mustknow"><strong>Must-know:</strong> CHAR pads with spaces to fixed length while VARCHAR limits length without blank padding and TEXT provides unlimited variable length up to 1 GB. Without length n, CHAR defaults to CHAR(1).</p>
-  <p class="revision-formula">\[ S_{\text{char}}(n) = n \times B_c, \quad S_{\text{var}}(L) = \left(\sum_{i=1}^{L} \text{len}(c_i)\right) + H \]</p>
-  <p class="revision-pitfall"><strong>Top pitfall:</strong> Using CHAR for variable text wastes disk space and causes LIKE queries to fail because trailing spaces are not ignored in pattern matching.</p>
-  <p class="revision-check"><strong>Self-check:</strong> Under what conditions should a database designer select CHAR rather than VARCHAR?</p>
-  <p class="revision-connections"><strong>Connects to:</strong> 6.1, 6.3</p>
-</div>
-<div class="exam-revision-entry">
-  <h3 class="revision-topic">Integer and Auto-Incrementing Types</h3>
-  <p class="revision-mustknow"><strong>Must-know:</strong> Memorize the storage byte sizes: SMALLINT (2 bytes), INTEGER (4 bytes), and BIGINT (8 bytes). SERIAL is syntactic sugar creating an integer column linked to an auto-incrementing sequence object.</p>
-  <p class="revision-formula">\[ R_{\text{signed}}(b) = \left[-2^{b-1}, \, 2^{b-1} - 1\right] \]</p>
-  <p class="revision-pitfall"><strong>Top pitfall:</strong> Attempting to manually update primary keys to fill sequence gaps, which breaks foreign keys and replication.</p>
-  <p class="revision-check"><strong>Self-check:</strong> Why do numeric gaps appear in auto-incrementing SERIAL columns after rows are deleted?</p>
-  <p class="revision-connections"><strong>Connects to:</strong> 6.2, 6.4, 6.5</p>
-</div>
-<div class="exam-revision-entry">
-  <h3 class="revision-topic">Fixed-Point and Floating-Point Decimals</h3>
-  <p class="revision-mustknow"><strong>Must-know:</strong> NUMERIC and DECIMAL provide exact arbitrary-precision math for financial calculations while REAL and DOUBLE PRECISION are inexact. In PostgreSQL, NUMERIC and DECIMAL are functionally identical.</p>
-  <p class="revision-formula">\[ \text{Total Digits} \le p, \quad \text{Fractional Digits} = s, \quad \epsilon_{\text{real}} \approx 10^{-6}, \quad \epsilon_{\text{double}} \approx 10^{-15} \]</p>
-  <p class="revision-pitfall"><strong>Top pitfall:</strong> Using REAL or DOUBLE PRECISION for financial calculations leading to accumulated binary rounding errors.</p>
-  <p class="revision-check"><strong>Self-check:</strong> Why does col_numeric pad zeros while col_real and col_double do not?</p>
-  <p class="revision-connections"><strong>Connects to:</strong> 6.3, 6.5</p>
-</div>
-<div class="exam-revision-entry">
-  <h3 class="revision-topic">Decision Framework for Numeric Data Types</h3>
-  <p class="revision-mustknow"><strong>Must-know:</strong> Always choose the smallest data type that safely accommodates the theoretical maximum value of the domain.</p>
-  <p class="revision-formula">\[ C_{\text{storage}} = N \times S_{\text{type}} \text{ bytes}, \quad P_{\text{total}} = \left\lceil \frac{N}{R_{\text{page}}} \right\rceil \]</p>
-  <p class="revision-pitfall"><strong>Top pitfall:</strong> Defaulting all integer columns to BIGINT or storing currency as floating-point to save space.</p>
-  <p class="revision-check"><strong>Self-check:</strong> How does bound analysis prevent excessive cloud hosting expenditure?</p>
-  <p class="revision-connections"><strong>Connects to:</strong> 6.3, 6.4, 6.6</p>
-</div>
-<div class="exam-revision-entry">
-  <h3 class="revision-topic">Temporal Data Types: DATE, TIME, and INTERVAL</h3>
-  <p class="revision-mustknow"><strong>Must-know:</strong> DATE uses 4 bytes, TIME uses 8 bytes, and TIMESTAMPTZ normalizes all inputs to UTC internally. By default, TIME creates a column without time zone.</p>
-  <p class="revision-formula">\[ \Delta t = t_{\text{end}} - t_{\text{start}}, \quad t_{\text{target}} = t_{\text{source}} \pm \Delta t \]</p>
-  <p class="revision-pitfall"><strong>Top pitfall:</strong> Subtracting times across midnight (e.g. 06:00:00 - 22:00:00 produces -16:00:00 instead of 08:00:00).</p>
-  <p class="revision-check"><strong>Self-check:</strong> What is the difference between CURRENT_TIME and LOCALTIME in PostgreSQL?</p>
-  <p class="revision-connections"><strong>Connects to:</strong> 6.5, 6.7</p>
-</div>
-<div class="exam-revision-entry">
-  <h3 class="revision-topic">Timestamps and Time Zone Handling</h3>
-  <p class="revision-mustknow"><strong>Must-know:</strong> TIMESTAMPTZ does not store a time zone literal alongside the timestamp; it stores the normalized UTC value.</p>
-  <p class="revision-formula">\[ t_{\text{UTC}} = t_{\text{input}} - O_{\text{input}}, \quad t_{\text{display}} = t_{\text{UTC}} + O_{\text{session}} \]</p>
-  <p class="revision-pitfall"><strong>Top pitfall:</strong> Assuming TIMESTAMPTZ stores the original client timezone string, which is actually discarded upon conversion to UTC.</p>
-  <p class="revision-check"><strong>Self-check:</strong> How does TIMESTAMPTZ maintain chronological consistency across distributed global client applications?</p>
-  <p class="revision-connections"><strong>Connects to:</strong> 6.6, 6.8</p>
-</div>
-<div class="exam-revision-entry">
-  <h3 class="revision-topic">Universally Unique Identifiers (UUID)</h3>
-  <p class="revision-mustknow"><strong>Must-know:</strong> To use uuid_generate_v1 or uuid_generate_v4, the uuid-ossp extension must be installed in the database. In PostgreSQL 13+, gen_random_uuid() is built-in.</p>
-  <p class="revision-formula">\[ N_{\text{UUID}} = 2^{128} \approx 3.4028 \times 10^{38}, \quad N_{\text{v4}} = 2^{122} \approx 5.3169 \times 10^{36} \]</p>
-  <p class="revision-pitfall"><strong>Top pitfall:</strong> Using UUID v1 in public URLs which leaks server MAC address and creation timestamps.</p>
-  <p class="revision-check"><strong>Self-check:</strong> Why is uuid_generate_v4 preferred over uuid_generate_v1 for public-facing primary keys?</p>
-  <p class="revision-connections"><strong>Connects to:</strong> 6.3, 6.7, 6.9</p>
-</div>
-<div class="exam-revision-entry">
-  <h3 class="revision-topic">Array Data Types</h3>
-  <p class="revision-mustknow"><strong>Must-know:</strong> PostgreSQL array indices start at 1, not 0. Accessing index 0 returns NULL without an error.</p>
-  <p class="revision-formula">\[ A = [a_1, \dots, a_k], \quad \text{Domain}(i) = \{1, \dots, k\}, \quad A @> B \iff \forall b \in B, b \in A \]</p>
-  <p class="revision-pitfall"><strong>Top pitfall:</strong> Writing phones[0] expecting the first element, which silently evaluates to NULL.</p>
-  <p class="revision-check"><strong>Self-check:</strong> How does PostgreSQL array indexing differ from traditional programming languages like C or Python?</p>
-  <p class="revision-connections"><strong>Connects to:</strong> 6.8, 6.10</p>
-</div>
-<div class="exam-revision-entry">
-  <h3 class="revision-topic">JSON and JSONB Document Storage</h3>
-  <p class="revision-mustknow"><strong>Must-know:</strong> Always choose JSONB over JSON unless there is a strict requirement to preserve exact input whitespace or duplicate keys.</p>
-  <p class="revision-formula">\[ A \supseteq B \iff \forall (k, v) \in B, (k, v) \in A, \quad A \text{ @>} B \]</p>
-  <p class="revision-pitfall"><strong>Top pitfall:</strong> Attempting to use the containment operator @> on a column typed as plain JSON, which raises an operator does not exist error.</p>
-  <p class="revision-check"><strong>Self-check:</strong> Why does the containment operator @> fail on columns defined with the JSON data type?</p>
-  <p class="revision-connections"><strong>Connects to:</strong> 6.9, 6.11</p>
-</div>
-<div class="exam-revision-entry">
-  <h3 class="revision-topic">Network Address Types</h3>
-  <p class="revision-mustknow"><strong>Must-know:</strong> INET accepts host addresses with subnet masks, while CIDR rejects inputs containing non-zero host bits.</p>
-  <p class="revision-formula">\[ \text{Host Bits} = 32 - m, \quad \text{Total Addresses} = 2^{32 - m}, \quad I_{\text{network}} = I \ \&\ M_m \]</p>
-  <p class="revision-pitfall"><strong>Top pitfall:</strong> Attempting to insert an IP with non-zero host bits directly into a CIDR column without using set_masklen() or zeroing host bits.</p>
-  <p class="revision-check"><strong>Self-check:</strong> What is the functional difference between the INET and CIDR data types in PostgreSQL?</p>
-  <p class="revision-connections"><strong>Connects to:</strong> 6.10</p>
-</div>
-    </section>
   </div>
 </body>
 </html>

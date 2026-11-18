@@ -230,9 +230,6 @@
   <li>the result is an index in the range \(0, 1, \dots, N-1\), meaning one of the \(N\) bucket files on HDFS.</li>
 </ul>
 <p>For an integer column, the hash of the value is the value itself, so for an <code>INT</code> column the formula effectively becomes \(\text{bucket\_id} = \text{column\_value} \pmod{N}\). That is the clean case. The trouble starts when the bucketing column is a floating-point type.</p>
-<div class="key-concept">
-  <p><strong>Bucketing = hashing + modulo.</strong> The bucket file that stores a row is chosen by computing \(\text{bucket\_id} = \text{hash}(\text{column\_value}) \pmod{N}\). For an <code>INT</code> column this reduces to \(\text{value} \pmod{N}\), which is exact. For a <code>FLOAT</code> or <code>DOUBLE</code> column the same formula runs on a binary floating-point value, and that is where rows start landing in unexpected files.</p>
-</div>
 <p>A significant edge-case anomaly occurs when floating-point data types (<code>FLOAT</code> or <code>DOUBLE</code>) are selected as bucketing keys. In a previous session, a table named <code>clustered_metals</code> was created with a <code>weight</code> column specified as a <code>FLOAT</code> data type and partitioned into \(N = 3\) buckets.</p>
 <p>When floating-point values undergo modulo arithmetic, IEEE 754 floating-point representations introduce internal binary rounding artifacts. For instance, an integer weight of \(3\) stored as a float may be represented internally as \(2.9999999\dots\). Evaluating \(2.9999999 \pmod 3\) produces a remainder near \(2.999\dots\), placing the record into bucket index 2 instead of bucket index 0.</p>
 <div class="important-note">
@@ -313,9 +310,6 @@ FROM metals_temp;</code></pre>
     <li><strong>Bucket File 2 (<code>weight mod 3 == 2</code>):</strong> rows with weights \(2, 5, 8\).</li>
   </ul>
   <p>Sense-check: every weight lands in exactly one file, each file holds weights with the same remainder, and all three remainders \(\{0, 1, 2\}\) appear. Before the fix, weight 6 had been drifting into bucket file 2 because of the float precision artifact, and weight 3 as well (since \(2.9999999 \pmod 3 \approx 2.999\)). After the <code>INT</code> fix, \(6 \pmod 3 = 0\) and \(3 \pmod 3 = 0\), so both return to bucket file 0 where they belong.</p>
-</div>
-<div class="important-note">
-  <p><strong>Q:</strong> Why did weights 2 and 6 end up in the same bucket file during floating-point bucketing? <strong>A:</strong> When <code>weight</code> was defined as a <code>FLOAT</code>, internal floating-point representation errors (such as storing 3 as \(2.9999999\)) altered the output of the modulo operation \(\text{weight} \pmod 3\). This caused precision-adjusted remainders to map to unexpected bucket indices. Switching the column type from <code>FLOAT</code> to <code>INT</code> ensures exact integer division and places weights 2 (\(2 \pmod 3 = 2\)) and 6 (\(6 \pmod 3 = 0\)) into their correct respective bucket files.</p>
 </div>
 <div class="warning-box">
   <p><strong>Assumptions & scope:</strong> Bucketing by a column behaves cleanly only when the bucketing key is an exact type. <code>INT</code>, <code>BIGINT</code>, and <code>STRING</code> produce stable, predictable hashes. <code>FLOAT</code> and <code>DOUBLE</code> produce the artifacts described here because the hash runs on the binary bit pattern. If a value is truly fractional (for example a weight of 2.5 grams), converting to <code>INT</code> is not the right fix — the bucket key should be a naturally integer-valued attribute such as an ID or a count, or the value should be scaled into an integer (for example grams to milligrams) before bucketing.</p>
@@ -687,7 +681,6 @@ GROUP BY shop_name;</code></pre>
 <div class="important-note">
   <p><strong>A note on the standard names:</strong> The ZooKeeper API spells these modes <code>PERSISTENT</code>, <code>EPHEMERAL</code>, <code>PERSISTENT_SEQUENTIAL</code>, <code>EPHEMERAL_SEQUENTIAL</code>, plus <code>CONTAINER</code>. The professor's four-way classification (Ephemeral, Persistent, Container, Sequential) maps onto these; "sequential" and "ephemeral" are flags that can combine — an ephemeral sequential ZNode exists for the client's lifetime and carries an increasing sequence number.</p>
 </div>
-<p>These ZNode types are only half the story. The other half is how clients learn that a ZNode has changed.</p>
 <div class="important-note">
   <p><strong>Q:</strong> How do ZooKeeper Watches eliminate polling in distributed systems? <strong>A:</strong> Clients register an asynchronous <strong>Watch</strong> on a specific ZNode path (such as <code>/hadoop/master</code>). When the target ZNode is modified, deleted, or created, ZooKeeper fires a one-time notification callback directly to the registered client. This push-based subscription model eliminates the need for clients to continuously poll ZooKeeper for state changes — the client sits idle and gets told the moment something changes.</p>
 </div>

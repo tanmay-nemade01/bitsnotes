@@ -380,7 +380,6 @@ spark = SparkSession.builder \
   <li><strong>The counts shown are the running totals across all batches so far.</strong></li>
 </ul>
 <p>This behavior is called <strong>update mode</strong>, and the name captures exactly what is happening: the update happens per the current batch, but the information from previous batches is updated too. We will come back to output modes formally in the next section.</p>
-<p><strong>Exam note:</strong> this update-mode demonstration is not just a demo detail — the session made a point of calling the output modes very important from an examination standpoint. Watch the tables here until the behavior makes sense before moving on.</p>
 <h3 id="11.2.2-worked-example-four-micro-batches-of-streaming-word-count">11.2.2 Worked Example: Four Micro-Batches of Streaming Word Count</h3>
 <p>The demo continued through four micro-batches, and each one is worth reconstructing in full because the counts show the state behavior of the stream.</p>
 <div class="example-box">
@@ -461,19 +460,6 @@ spark = SparkSession.builder \
 </div>
 <div class="warning-box">
   <p><strong>Pitfall — the whitespace-tokenization gotcha.</strong> This is the classic whitespace-tokenization gotcha: what looks like one word to a human can be two tokens to the counter if any punctuation is attached. In a real streaming system this is exactly why preprocessing pipelines normalize tokens — lowercasing, stripping punctuation — before counting. A message stream "Hello!" and "Hello" should describe the same word; the counter will not know that unless the pipeline cleans the tokens first.</p>
-</div>
-<h3 id="11.2.3-student-questions-and-answers">11.2.3 Student Questions and Answers</h3>
-<div class="important-note">
-  <p><strong>Q:</strong> Why did Java show a count of one instead of two? I expected the Java from the second batch to be counted again.</p>
-  <p><strong>A:</strong> Because the second batch was typed as "Java," with a comma attached. The splitter breaks on whitespace, so the comma-attached "Java," is a different token from plain Java. Only the plain word Java, typed without punctuation, is what the counter saw this time — so its count starts from one. Remove the comma and it becomes two.</p>
-</div>
-<div class="important-note">
-  <p><strong>Q:</strong> In the second batch, why do we not see programming and language anymore, and yet Spark shows a higher count?</p>
-  <p><strong>A:</strong> Because update mode only displays the words from the current micro-batch. Words from earlier batches are not redisplayed. Their stored counts, however, keep accumulating — whenever the same word appears again, its count is incremented. That is why Spark, which is in the first batch as well as the second, shows two, while programming and language, which are not in the second batch, are simply absent from the output.</p>
-</div>
-<div class="important-note">
-  <p><strong>Q:</strong> So the displayed table always belongs to the current batch only?</p>
-  <p><strong>A:</strong> Yes — the words are from the current batch, displayed with respect to the current micro-batch. The counts themselves are the running totals, because wherever a word appeared in a previous batch, that count is also updated.</p>
 </div>
 <div class="key-takeaway">
   <p><strong>Recap + bridge.</strong> A micro-batch is one typed line, and update mode shows the current batch's words with running totals — which is why Spark climbs to 2 while programming and language vanish, and why "Java," from batch 2 did not become Java in batch 4. Handoff: section 11.3 formalizes the output modes — the three ways the engine writes its result after every batch.</p>
@@ -601,7 +587,6 @@ spark = SparkSession.builder \
   <p><strong>A:</strong> The required condition is the watermark, not a save point. A save point would store progress and let the run resume; a watermark is a time boundary the engine uses to decide when old data can be considered finished, so rows are only appended once. Append mode cannot run with streaming aggregations unless a watermark is set — the engine needs it to know when old data can be considered finished so rows are only appended once. The details of how the watermark works arrive with the window concept.</p>
 </div>
 <div class="key-takeaway">
-  <p><strong>Exam note:</strong> the output modes were flagged as very important from an examination standpoint. Be able to reproduce the word-count tables for update mode (current batch's words shown, running totals incremented) and complete mode (full result set overwritten every micro-batch), and state the append-mode rule: streaming aggregations require a watermark.</p>
   <p><strong>Recap + bridge.</strong> Complete mode rewrites the full history each batch; update mode writes only new or changed rows; append mode writes only new rows and needs a watermark for aggregations — which is why the water bucket is thrown over to the next sections. Handoff: section 11.4 introduces the two timelines — event time and stream time — that make the watermark's job understandable.</p>
 </div>
 
@@ -656,14 +641,8 @@ spark = SparkSession.builder \
   <p><strong>Q:</strong> Is this like the automatic traffic charging systems we see today, where a broken signal is captured by a camera?</p>
   <p><strong>A:</strong> Exactly — the broken signal is the event generated over there. The event time is the moment the signal was broken; everything afterward — snapping the photo, computing the fine, sending the alert — is the processing that follows.</p>
 </div>
-<p>Two consequences follow, and both are worth writing down.</p>
 <p><strong>First, stream time will always lag a little behind event time.</strong> The actual timestamp of an event is earlier than the moment the event reaches the system, because there is a data flow layer the messages must pass through. You cannot expect an event to reach the processing platform at the same instant it occurs, and you do not directly ingest messages straight into the streaming engine — the messages travel through the data flow layer first.</p>
 <p><strong>Second, this lag is exactly why the two timestamps must be distinguished.</strong> If you process by the arrival time instead of the occurrence time, your windowed results will be shifted. A window keyed to arrival time groups events by when they were <em>seen</em>, not when they <em>happened</em> — and for an out-of-order world, those two groupings disagree.</p>
-<div class="important-note">
-  <p><strong>Q:</strong> Streaming time will always be a little behind, right? The event happened, but the system sees it later because of the data flow layer.</p>
-  <p><strong>A:</strong> Yes — the gap exists because events pass through a data flow layer before they reach the platform. You cannot ingest a message directly into the engine at the same instant the event occurs; the arrival is always after the fact, so stream time lags event time.</p>
-</div>
-<p><strong>Exam note:</strong> note down the event time / stream time distinction — the session flagged it explicitly as quiz material. A quiz is planned for the coming weekend covering everything up to this point, so treat both definitions and the gap between them as testable.</p>
 <h3 id="11.4.2-time-skew">11.4.2 Time Skew</h3>
 <p>Because stream time always lags event time, the two timelines do not line up. If you plot the two against each other — event time on one axis, stream time on the other — the ideal situation would be a straight line through the origin: the stream sees every event at the moment it occurs. In practice the observed curve sits below that ideal line: the stream sees each event a little later, and the lag widens as events flow through the data flow layer.</p>
 <p>The gap between the ideal time and the observed time — the difference between event time and stream time — is called the <strong>time skew</strong>:</p>
@@ -677,7 +656,24 @@ spark = SparkSession.builder \
     <li>\(t_{\text{skew}} = t_{\text{stream}} - t_{\text{event}}\) — the lag between the two, a duration in the same units.</li>
   </ul>
   <p>Because the message cannot arrive before it happens, \(t_{\text{stream}} \geq t_{\text{event}}\) always holds, and in practice the inequality is strict: \(t_{\text{skew}} > 0\). The skew is not a fixed constant — it depends on how long the message spends in the data flow layer, so it varies event by event.</p>
-  <p><strong>Visual intuition.</strong> Draw a chart with <strong>event time on the horizontal axis</strong> and <strong>stream time on the vertical axis</strong>, both in clock time. The ideal situation is the straight line \(y = x\) through the origin: stream time equal to event time at every point, the stream seeing each event at the instant it occurs. The observed line hangs below it — for every event, the observed stream time is greater than the event time, so the observed curve is always below the diagonal. The vertical gap between the diagonal and the curve at any moment is exactly the time skew: the lag between when an event occurred and when the stream saw it. The takeaway: the diagonal is the "same instant" dream, the gap under it is the reality of the data flow layer, and the width of the gap decides how careful windowing must be.</p>
+  <div class="diagram-container my-6 text-center">
+    <svg viewBox="0 0 460 320" class="diagram-svg" role="img" aria-label="Skew graph with event time on the horizontal axis and stream time on the vertical axis: the ideal diagonal where stream time equals event time, the observed line below it, and a vertical gap at one point labelled t_skew.">
+      <line x1="70" y1="270" x2="432" y2="270" stroke="currentColor" stroke-width="1.5" />
+      <line x1="70" y1="270" x2="70" y2="38" stroke="currentColor" stroke-width="1.5" />
+      <polygon points="432,270 422,266 422,274" fill="currentColor" />
+      <polygon points="70,38 66,48 74,48" fill="currentColor" />
+      <text x="250" y="298" text-anchor="middle" font-size="12" fill="currentColor">Event time</text>
+      <text x="24" y="155" text-anchor="middle" font-size="12" fill="currentColor" transform="rotate(-90 24 155)">Stream time</text>
+      <line x1="70" y1="270" x2="420" y2="50" stroke="currentColor" stroke-width="1.5" stroke-dasharray="6 4" />
+      <path d="M70,268 C160,250 280,210 420,150" fill="none" stroke="currentColor" stroke-width="2" />
+      <line x1="300" y1="128" x2="300" y2="199" stroke="currentColor" stroke-width="1.2" stroke-dasharray="4 3" />
+      <text x="308" y="170" font-size="11" fill="currentColor">t_skew</text>
+      <text x="330" y="70" text-anchor="end" font-size="11" fill="currentColor">ideal: stream time = event time</text>
+      <text x="410" y="140" text-anchor="end" font-size="11" fill="currentColor">observed</text>
+      <text x="62" y="286" text-anchor="end" font-size="11" fill="currentColor">0</text>
+    </svg>
+    <p class="text-xs text-slate-500 mt-2"><strong>Figure:</strong> Event time (horizontal axis) against stream time (vertical axis) — the ideal \(y = x\) diagonal, the observed line below it, and the vertical gap \(t_{\text{skew}} = t_{\text{stream}} - t_{\text{event}} > 0\).</p>
+  </div>
 </div>
 <div class="example-box">
   <p><strong>Worked example — measuring the skew with real numbers.</strong></p>
@@ -889,7 +885,42 @@ spark = SparkSession.builder \
   </ul>
   <p>The names matter less than the pattern: the events are grouped in consecutive, non-overlapping slices of the timeline, and each slice is processed as a unit. <em>Sense-check:</em> each event appears in exactly one row of the table — \(e_4\) lands only in Window 2, never in Window 1 or Window 3 — and the windows cover the timeline with no gaps, because \(T_{\text{batch}} = T_{\text{window}}\).</p>
 </div>
-<p><strong>Visual intuition.</strong> Draw a horizontal time axis from 12:00 to 12:15. Mark five-minute blocks — 12:00–12:05, 12:05–12:10, 12:10–12:15 — like tiles laid edge to edge. Scatter the events \(e_1\) through \(e_7\) at their times: each dot falls inside exactly one tile, never on a boundary twice. The takeaway: tumbling windows partition the timeline — tiles that share edges but never overlap, and every event lands in exactly one tile.</p>
+<div class="diagram-container my-6 text-center">
+  <svg viewBox="0 0 480 240" class="diagram-svg" role="img" aria-label="Tumbling windows on a time axis from 12:00 to 12:15: three edge-to-edge five-minute tiles, with events e1 e2 e3 in 12:00 to 12:05, e4 e5 e6 in 12:05 to 12:10, and e7 in 12:10 to 12:15.">
+    <line x1="55" y1="95" x2="437" y2="95" stroke="currentColor" stroke-width="1.5" />
+    <polygon points="437,95 427,91 427,99" fill="currentColor" />
+    <line x1="60" y1="90" x2="60" y2="100" stroke="currentColor" stroke-width="1.5" />
+    <line x1="170" y1="90" x2="170" y2="100" stroke="currentColor" stroke-width="1.5" />
+    <line x1="280" y1="90" x2="280" y2="100" stroke="currentColor" stroke-width="1.5" />
+    <line x1="390" y1="90" x2="390" y2="100" stroke="currentColor" stroke-width="1.5" />
+    <text x="60" y="82" text-anchor="middle" font-size="11" fill="currentColor">12:00</text>
+    <text x="170" y="82" text-anchor="middle" font-size="11" fill="currentColor">12:05</text>
+    <text x="280" y="82" text-anchor="middle" font-size="11" fill="currentColor">12:10</text>
+    <text x="390" y="82" text-anchor="middle" font-size="11" fill="currentColor">12:15</text>
+    <rect x="60" y="110" width="110" height="80" fill="currentColor" fill-opacity="0.06" stroke="currentColor" stroke-width="1.2" />
+    <rect x="170" y="110" width="110" height="80" fill="currentColor" fill-opacity="0.06" stroke="currentColor" stroke-width="1.2" />
+    <rect x="280" y="110" width="110" height="80" fill="currentColor" fill-opacity="0.06" stroke="currentColor" stroke-width="1.2" />
+    <circle cx="85" cy="148" r="3.5" fill="currentColor" />
+    <circle cx="115" cy="148" r="3.5" fill="currentColor" />
+    <circle cx="145" cy="148" r="3.5" fill="currentColor" />
+    <circle cx="195" cy="148" r="3.5" fill="currentColor" />
+    <circle cx="225" cy="148" r="3.5" fill="currentColor" />
+    <circle cx="255" cy="148" r="3.5" fill="currentColor" />
+    <circle cx="310" cy="148" r="3.5" fill="currentColor" />
+    <text x="85" y="136" text-anchor="middle" font-size="10" fill="currentColor">e1</text>
+    <text x="115" y="136" text-anchor="middle" font-size="10" fill="currentColor">e2</text>
+    <text x="145" y="136" text-anchor="middle" font-size="10" fill="currentColor">e3</text>
+    <text x="195" y="136" text-anchor="middle" font-size="10" fill="currentColor">e4</text>
+    <text x="225" y="136" text-anchor="middle" font-size="10" fill="currentColor">e5</text>
+    <text x="255" y="136" text-anchor="middle" font-size="10" fill="currentColor">e6</text>
+    <text x="310" y="136" text-anchor="middle" font-size="10" fill="currentColor">e7</text>
+    <text x="350" y="152" text-anchor="middle" font-size="12" fill="currentColor">…</text>
+    <text x="115" y="178" text-anchor="middle" font-size="10" fill="currentColor">5 min</text>
+    <text x="225" y="178" text-anchor="middle" font-size="10" fill="currentColor">5 min</text>
+    <text x="335" y="178" text-anchor="middle" font-size="10" fill="currentColor">5 min</text>
+  </svg>
+  <p class="text-xs text-slate-500 mt-2"><strong>Figure:</strong> Tumbling windows of \(T_{\text{window}} = 5\) minutes from 12:00 to 12:15 — edge-to-edge, non-overlapping tiles, with \(e_1, e_2, e_3\) in 12:00–12:05, \(e_4, e_5, e_6\) in 12:05–12:10, and \(e_7\) in 12:10–12:15.</p>
+</div>
 <h3 id="11.6.3-key-properties">11.6.3 Key Properties</h3>
 <p>The tumbling window has one headline property: <strong>any event belongs to only one window</strong>. There is no overlap of events across the windows — each event lands in exactly one slice of the timeline. If an event sits between 12:00 and 12:05, it is processed in the first window and never again.</p>
 <div class="key-concept">
@@ -898,15 +929,6 @@ spark = SparkSession.builder \
 <h3 id="11.6.4-use-cases-for-tumbling-windows">11.6.4 Use Cases for Tumbling Windows</h3>
 <p>When do you reach for a tumbling window? Whenever your question is about a fixed slice of time — for example: <strong>how many new orders were received in the last five minutes?</strong> That kind of question maps directly onto a tumbling window, because each window cleanly reports on its own slice without double-counting. A moving average, by contrast, is not a tumbling-window job — sliding windows handle that case, and they are the next topic.</p>
 <p>Real-world: dashboards that answer "orders in the last five minutes", "errors in the last hour", or "transactions per minute" are tumbling-window reports in production systems.</p>
-<h3 id="11.6.5-student-questions-and-answers">11.6.5 Student Questions and Answers</h3>
-<div class="important-note">
-  <p><strong>Q:</strong> Are the windows always continuous? If I process e3 and then the next window begins, could e4 be missed?</p>
-  <p><strong>A:</strong> No — nothing is missed. The tumbling window collects the events between 12:00 and 12:05, then the events between 12:05 and 12:10, and so on. Every event falls into its own five-minute slice; the next window simply starts where the previous one ended.</p>
-</div>
-<div class="important-note">
-  <p><strong>Q:</strong> So any event belongs to only one window, and there is no overlap of events across the windows?</p>
-  <p><strong>A:</strong> Fantastic — exactly that: one event, one window, no overlap. If you see that, you have understood the tumbling window.</p>
-</div>
 <div class="warning-box">
   <p><strong>Pitfalls.</strong></p>
   <ul>
@@ -1016,7 +1038,32 @@ spark = SparkSession.builder \
   <p>In the numbers of the demo, ten minutes is a multiple of five — double the slide interval — which makes the overlap tidy and easy to follow. The multiples are a convenience for understanding, not a requirement.</p>
   <p><em>Sense-check:</em> consecutive windows overlap by \(T_{\text{window}} - T_{\text{slide}} = 10 - 5 = 5\) minutes, and the table shows exactly that — each new window shares its last five minutes with the previous window. An event at 11:57 appears in the 12:00 run and the 12:05 run, twice in total — overlap by design, not double-counting by accident.</p>
 </div>
-<p><strong>Visual intuition.</strong> Draw the time axis with two horizontal bars. The first bar is the window at 12:00, running from 11:50 to 12:00. The second bar sits five minutes to the right, from 11:55 to 12:05. The two bars overlap between 11:55 and 12:00 — shade that shared stretch. Each new bar is a copy of the old one shifted right by the slide, always longer than the shift, so the shaded overlap is always \(T_{\text{window}} - T_{\text{slide}}\) wide. The takeaway: the window is longer than its step, and that extra length is exactly the overlap.</p>
+<div class="diagram-container my-6 text-center">
+  <svg viewBox="0 0 520 260" class="diagram-svg" role="img" aria-label="Sliding windows with a five-minute slide and a ten-minute window: a bar for the 12:00 run covering 11:50 to 12:00, a bar for the 12:05 run covering 11:55 to 12:05, and the shaded overlap between 11:55 and 12:00.">
+    <line x1="60" y1="210" x2="482" y2="210" stroke="currentColor" stroke-width="1.5" />
+    <polygon points="482,210 472,206 472,214" fill="currentColor" />
+    <line x1="80" y1="204" x2="80" y2="216" stroke="currentColor" stroke-width="1.5" />
+    <line x1="160" y1="204" x2="160" y2="216" stroke="currentColor" stroke-width="1.5" />
+    <line x1="240" y1="204" x2="240" y2="216" stroke="currentColor" stroke-width="1.5" />
+    <line x1="320" y1="204" x2="320" y2="216" stroke="currentColor" stroke-width="1.5" />
+    <line x1="400" y1="204" x2="400" y2="216" stroke="currentColor" stroke-width="1.5" />
+    <text x="80" y="234" text-anchor="middle" font-size="11" fill="currentColor">11:50</text>
+    <text x="160" y="234" text-anchor="middle" font-size="11" fill="currentColor">11:55</text>
+    <text x="240" y="234" text-anchor="middle" font-size="11" fill="currentColor">12:00</text>
+    <text x="320" y="234" text-anchor="middle" font-size="11" fill="currentColor">12:05</text>
+    <text x="400" y="234" text-anchor="middle" font-size="11" fill="currentColor">12:10</text>
+    <rect x="80" y="105" width="160" height="30" fill="none" stroke="currentColor" stroke-width="1.5" />
+    <rect x="160" y="150" width="160" height="30" fill="none" stroke="currentColor" stroke-width="1.5" />
+    <rect x="160" y="105" width="80" height="30" fill="currentColor" fill-opacity="0.22" />
+    <rect x="160" y="150" width="80" height="30" fill="currentColor" fill-opacity="0.22" />
+    <line x1="160" y1="98" x2="160" y2="188" stroke="currentColor" stroke-width="1" stroke-dasharray="4 3" />
+    <line x1="240" y1="98" x2="240" y2="188" stroke="currentColor" stroke-width="1" stroke-dasharray="4 3" />
+    <text x="200" y="90" text-anchor="middle" font-size="10" fill="currentColor">overlap = T_window − T_slide = 5 min</text>
+    <text x="250" y="124" font-size="11" fill="currentColor">12:00 run · 11:50–12:00</text>
+    <text x="330" y="169" font-size="11" fill="currentColor">12:05 run · 11:55–12:05</text>
+  </svg>
+  <p class="text-xs text-slate-500 mt-2"><strong>Figure:</strong> Slide 5 minutes over a 10-minute window — the 12:00 run covers 11:50–12:00, the 12:05 run covers 11:55–12:05, and the shaded overlap 11:55–12:00 is \(T_{\text{window}} - T_{\text{slide}} = 5\) minutes wide.</p>
+</div>
 <h3 id="11.7.4-student-questions-and-answers">11.7.4 Student Questions and Answers</h3>
 <div class="important-note">
   <p><strong>Q:</strong> Must the window interval always be a multiple of the slide interval? Could the slide be five minutes and the window seven minutes, for example?</p>
@@ -1046,15 +1093,6 @@ spark = SparkSession.builder \
   <p><strong>Recap + bridge.</strong> A sliding window is defined by \(T_{\text{window}} > T_{\text{slide}}\): the trigger fires every slide, each run processes the last window-interval's worth of history, and the difference between the two intervals is the deliberate overlap that moving averages need. Handoff: next session brings the watermark — the clock that decides when a window is old enough to finalize — and then stream joins.</p>
 </div>
 
-<h2 id="exam-guidance-summary">Exam Guidance Summary</h2>
-<ul>
-  <li><strong>Output modes are exam-critical.</strong> The session stated in so many words that complete, update, and append modes are very important from an examination standpoint. Be able to reproduce the word-count tables for update mode (current batch's words shown, running totals incremented) and complete mode (full result set overwritten every micro-batch), and state the append-mode rule: streaming aggregations require a watermark.</li>
-  <li><strong>Event time vs stream time is quiz material.</strong> Both definitions were flagged to be noted down because a quiz is coming. You should be able to define event time (when the event occurs), stream time (when the event's information reaches the platform), time skew (their difference, \(t_{\text{skew}} = t_{\text{stream}} - t_{\text{event}} > 0\)), and why stream time always lags — including the data-flow-layer reason.</li>
-  <li><strong>Quiz logistics.</strong> A quiz is planned for next week, covering everything covered up to this point. The window for taking it is four days, including Saturday and Sunday of the coming weekend (28th–29th). The session said the 29th (Monday) would not be needed. An announcement will be posted on the course platform (Canvas) once the quiz is uploaded, so the posting itself gives the official start time.</li>
-  <li><strong>Assignment.</strong> The assignment was reported as nearly finished; the deadline gives time till next weekend (the 28th). Both the quiz and the assignment round out the evaluation components, which the session plans to finish next week.</li>
-  <li><strong>Window concepts to review for the quiz:</strong> the window as a lens over an infinite stream, trigger policy (when processing runs), eviction policy (cleaning the window), tumbling windows (batch size equals window size, no overlap, one event in one window), and sliding windows (slide interval vs window interval, overlap, moving averages). Expect questions connecting these definitions to small timeline examples like the 12:00–12:10 five-minute case, and be ready to state which of the two window types a given question calls for.</li>
-  <li><strong>Practical tip for rerunning streaming apps:</strong> remove the checkpoint directory (or use a fresh one) before each rerun; otherwise the application resumes old streaming state and the demo output will not restart cleanly.</li>
-</ul>
 
 <h2 id="key-industry-applications">Key Industry Applications</h2>
 <ul>
@@ -1082,86 +1120,6 @@ spark = SparkSession.builder \
       - .revision-check — one self-check question (no options)
       - .revision-connections — linked concepts within this lecture
     ============================================================ -->
-    <section class="exam-revision-section">
-      <h2>Exam Revision Notes</h2>
-      <p class="revision-intro">Below is the distilled, exam-ready core.
-      Every entry comes from the full explanation above. Use this section
-      for rapid review; return to the main notes when a point needs more context.</p>
-<div class="exam-revision-entry">
-  <h3 class="revision-topic">Spark Structured Streaming and the Streaming Word Count</h3>
-  <p class="revision-mustknow"><strong>Must-know:</strong> The streaming word count pipeline: ncat -lk 9999 listens on port 9999, Spark reads the socket (format socket, host localhost, port 9999), and each Enter press becomes one micro-batch; the SparkSession is a singleton per use case; a socket source is for development, not production.</p>
-  <p class="revision-pitfall"><strong>⚠️ Top pitfall:</strong> Forgetting the listener must run before the application; using a raw socket feed in production; mixing up -l (listen) and -k (keep connection open).</p>
-  <p class="revision-check"><strong>Self-check:</strong> What does -k do in the ncat -lk 9999 command?</p>
-  <p class="revision-connections"><strong>Connects to:</strong> 11.2</p>
-</div>
-
-<div class="exam-revision-entry">
-  <h3 class="revision-topic">The Streaming Word Count Demo, Batch by Batch</h3>
-  <p class="revision-mustknow"><strong>Must-know:</strong> Update mode rule: the words shown are always the current batch's words, and the counts shown are running totals across all batches so far; a word seen before but not in the current batch is absent from the output.</p>
-  <p class="revision-pitfall"><strong>⚠️ Top pitfall:</strong> Whitespace-tokenization gotcha: 'Java,' with a comma attached is a different token from Java, so the count stays 1 until the plain word is typed; preprocessing normalizes tokens (lowercase, strip punctuation).</p>
-  <p class="revision-check"><strong>Self-check:</strong> In update mode, why does Spark show count 2 in the second micro-batch while programming and language disappear from the output?</p>
-  <p class="revision-connections"><strong>Connects to:</strong> 11.1, 11.3</p>
-</div>
-
-<div class="exam-revision-entry">
-  <h3 class="revision-topic">Output Modes: Complete, Update, and Append</h3>
-  <p class="revision-mustknow"><strong>Must-know:</strong> Output modes are exam-critical: complete mode rewrites the full history (8 rows after two batches: 5 + 5 - 2 overlaps), update mode writes only the current batch's words with running totals, and append mode requires a watermark whenever the stream performs aggregations.</p>
-  <p class="revision-pitfall"><strong>⚠️ Top pitfall:</strong> Rerunning a streaming query without removing the checkpoint directory resumes old state; the watermark is a time boundary for finalized windows, not a save point.</p>
-  <p class="revision-check"><strong>Self-check:</strong> Why did the append-mode run fail with 'Append output is not supported when there are streaming aggregations on streaming data without watermark'?</p>
-  <p class="revision-connections"><strong>Connects to:</strong> 11.2, 11.4</p>
-</div>
-
-<div class="exam-revision-entry">
-  <h3 class="revision-topic">Event Time, Stream Time, and Time Skew</h3>
-  <p class="revision-mustknow"><strong>Must-know:</strong> Event time is when the event occurs; stream time is when its information reaches the platform; t_skew = t_stream - t_event &gt; 0 because messages pass through a data flow layer; on the skew graph, event time is on the x-axis, stream time on the y-axis, the ideal is the y = x line, and the observed line hangs below it by the skew.</p>
-  <p class="revision-formula">\[t_{\text{skew}} = t_{\text{stream}} - t_{\text{event}} > 0\]</p>
-  <p class="revision-pitfall"><strong>⚠️ Top pitfall:</strong> Processing by stream time when the question is about event time — windowed results shift by a non-constant amount; treating the skew as fixed; assuming arrival order equals event order.</p>
-  <p class="revision-check"><strong>Self-check:</strong> If an event happens at 12:00:04 and reaches the platform at 12:00:09, what is the time skew, and can another event that happened at 12:00:05 arrive before it?</p>
-  <p class="revision-connections"><strong>Connects to:</strong> 11.5</p>
-</div>
-
-<div class="exam-revision-entry">
-  <h3 class="revision-topic">Windows: Why Streams Need Them</h3>
-  <p class="revision-mustknow"><strong>Must-know:</strong> Windows are finite slices of an unbounded stream: the window length defines how much data each slice holds; the trigger policy decides when processing runs; the eviction policy decides when processed data is thrown away; and because only windowed samples are ever processed, streaming algorithms are non-deterministic while batch algorithms always see the full data set.</p>
-  <p class="revision-pitfall"><strong>⚠️ Top pitfall:</strong> Confusing trigger (when processing runs) with eviction (when data is thrown away); expecting exact answers from a windowed algorithm; thinking the window waits for the stream to end.</p>
-  <p class="revision-check"><strong>Self-check:</strong> With the river-water mug, what do the mug, the water, the analysis, and throwing the water away each stand for?</p>
-  <p class="revision-connections"><strong>Connects to:</strong> 11.4, 11.6</p>
-</div>
-
-<div class="exam-revision-entry">
-  <h3 class="revision-topic">Tumbling Windows</h3>
-  <p class="revision-mustknow"><strong>Must-know:</strong> Tumbling window: T_batch = T_window; consecutive non-overlapping slices (12:00-12:05 gets e1,e2,e3; 12:05-12:10 gets e4,e5,e6); headline property: any event belongs to exactly one window; natural question is 'how many new orders in the last five minutes?'</p>
-  <p class="revision-formula">\[T_{\text{batch}} = T_{\text{window}}\]</p>
-  <p class="revision-pitfall"><strong>⚠️ Top pitfall:</strong> Counting a boundary event in two windows; using a tumbling window to compute a moving average (needs overlap); forgetting that the engine only runs at the trigger, so events arriving after a window closes wait for the next one.</p>
-  <p class="revision-check"><strong>Self-check:</strong> With five-minute tumbling windows starting at 12:00, which window does an event at 12:07 belong to?</p>
-  <p class="revision-connections"><strong>Connects to:</strong> 11.5, 11.7</p>
-</div>
-
-<div class="exam-revision-entry">
-  <h3 class="revision-topic">Sliding Windows</h3>
-  <p class="revision-mustknow"><strong>Must-know:</strong> Sliding window: T_window &gt; T_slide; with a 5-minute slide and a 10-minute window, triggers fire at 12:00 (11:50-12:00), 12:05 (11:55-12:05), 12:10 (12:00-12:10), and each run's history overlaps the previous by T_window - T_slide; the event's own timestamp (event time) decides its window; the clean timeline assumes unit processing time.</p>
-  <p class="revision-formula">\[T_{\text{window}} > T_{\text{slide}}\]</p>
-  <p class="revision-pitfall"><strong>⚠️ Top pitfall:</strong> Sliding when the question is tumbling (new-orders counting gets complicated); assuming the slide must divide the window (5-minute slide with 7-minute window is fine); keying windows to stream time; ignoring that non-unit processing time shifts results by a non-constant delta.</p>
-  <p class="revision-check"><strong>Self-check:</strong> With a 5-minute slide and a 7-minute window, by how much do consecutive windows overlap?</p>
-  <p class="revision-connections"><strong>Connects to:</strong> 11.6, 11.4</p>
-</div>
-
-<div class="exam-revision-entry">
-  <h3 class="revision-topic">Exam Guidance Summary</h3>
-  <p class="revision-mustknow"><strong>Must-know:</strong> Quiz logistics: quiz next week covering everything so far, four-day window including the weekend (28th-29th), announcement on Canvas gives the official start; review output modes, the two timelines, trigger/eviction policies, and tumbling vs sliding windows with small timeline examples; remove the checkpoint directory before rerunning a streaming app.</p>
-  <p class="revision-pitfall"><strong>⚠️ Top pitfall:</strong> Rerunning a streaming application without removing the old checkpoint directory — it resumes old state and the demo output does not restart cleanly.</p>
-  <p class="revision-check"><strong>Self-check:</strong> What must you do before rerunning a streaming query so that it starts fresh instead of resuming old state?</p>
-  <p class="revision-connections"><strong>Connects to:</strong> 11.3, 11.4, 11.6, 11.7</p>
-</div>
-
-<div class="exam-revision-entry">
-  <h3 class="revision-topic">Key Industry Applications</h3>
-  <p class="revision-mustknow"><strong>Must-know:</strong> Named anchors: netcat socket word count (interview starter); traffic charging (event time vs stream time); moving averages in stock prices and top-10 transactions over recent hours (sliding); new orders in the last five minutes (tumbling); water pollution sampling (window capacity and eviction); socket sources are development-only, not production.</p>
-  <p class="revision-pitfall"><strong>⚠️ Top pitfall:</strong> Relying on raw socket feeds in production — they offer no durability, replay, or ordering guarantees.</p>
-  <p class="revision-check"><strong>Self-check:</strong> Which industry use case is the canonical sliding-window application mentioned in the session?</p>
-  <p class="revision-connections"><strong>Connects to:</strong> 11.1, 11.4, 11.6, 11.7</p>
-</div>
-    </section>
   </div>
 </body>
 </html>

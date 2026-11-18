@@ -345,7 +345,7 @@
   <li><em>Program counter</em> (PC) — not a data region but a register that always holds the address of the <em>next instruction to be executed</em>. It is listed alongside the memory parts because it is one of the pieces every running program carries. If you freeze a process at any instant, the PC tells you exactly which instruction comes next.</li>
 </ul>
 <p>Two growth rules matter here, and they are worth picturing: the heap and the stack grow toward each other. The heap grows <em>up</em> — as memory is allocated at runtime, the allocated region keeps increasing, so the heap edge moves upward. The stack grows <em>down</em>. This block-diagram picture of a process in memory is the standard one, and the visual of "heap goes up, stack goes down" is the easiest way to remember which is which.</p>
-<p>A concrete trace makes the two regions feel different. Suppose a program declares a global counter <code>g</code> and then calls a function that declares a local variable <code>n</code> and allocates a block of memory at runtime. The global <code>g</code> sits in the static data section, <code>n</code> is pushed onto the stack when the function starts and popped when the function returns, and the runtime block is carved out of the heap — the heap edge moves up a little, while the stack pointer moves down. Both regions are bounded; if a program pushes too much onto the stack (unbounded recursion), the stack collides downward, and if it allocates without freeing, the heap climbs until memory is exhausted.</p>
+<p>Suppose a program declares a global counter <code>g</code> and then calls a function that declares a local variable <code>n</code> and allocates a block of memory at runtime. The global <code>g</code> sits in the static data section, <code>n</code> is pushed onto the stack when the function starts and popped when the function returns, and the runtime block is carved out of the heap — the heap edge moves up a little, while the stack pointer moves down. Both regions are bounded; if a program pushes too much onto the stack (unbounded recursion), the stack collides downward, and if it allocates without freeing, the heap climbs until memory is exhausted.</p>
 <div class="warning-box">
   <p><strong>Pitfalls:</strong></p>
   <ul>
@@ -398,7 +398,18 @@
     <li>Believing a process can go straight from new to running. Every new process must pass through ready first.</li>
   </ul>
 </div>
-<p>Visually, the state diagram is a set of five circles (or boxes) arranged left to right: new on the left, then ready, then running in the middle, waiting below running, and terminated on the right. The arrows between the circles carry the transition names above: admit enters from the left, dispatch points from ready to running, event wait points from running down to waiting, event occurs points from waiting back up to ready, interrupt points from running back to ready, and release exits to terminated. If you can redraw that picture from memory, you own the entire process-state model.</p>
+<div class="diagram-container my-6 text-center">
+  <pre class="mermaid">
+flowchart LR
+    New(["New"]) -->|"admit"| Ready(["Ready"])
+    Ready -->|"dispatch"| Running(["Running"])
+    Running -->|"interrupt / time-out"| Ready
+    Running -->|"event wait (I/O request)"| Waiting(["Waiting"])
+    Waiting -->|"event occurs (I/O completion)"| Ready
+    Running -->|"release"| Terminated(["Terminated"])
+  </pre>
+  <p class="text-xs text-slate-500 mt-2"><strong>Figure:</strong> The five process states — new, ready, running, waiting, terminated — linked by the six named transitions: admit, dispatch, interrupt / time-out, event wait, event occurs, release.</p>
+</div>
 <div class="key-takeaway">
   <p><strong>Recap:</strong> Five states (new, ready, running, waiting, terminated) connected by six named transitions, driven by scheduling, interrupts, and I/O. <strong>Bridge:</strong> everything the operating system knows about a process at any moment is packed into one record — the process control block, the next topic.</p>
 </div>
@@ -548,7 +559,7 @@
 <p>When a process is in the ready queue, it can be brought to the CPU for execution — but not all processes fit in the CPU, and only one process is taken into the CPU at a time. Once running, several events can move the process out:</p>
 <ul>
   <li>If it needs an input or output device, it is taken away from the CPU and placed in the I/O (device) queue; whenever an I/O request is made, that happens.</li>
-  <li>If it is a time-sharing process and its <em>time slice</em> expires, it must leave the CPU. The professor gives the slice as on the order of a few seconds — "two seconds... to 20 seconds" as heard in the recording. Modern systems use a far smaller quantum: the standard textbook figure for a time quantum is 10 to 100 milliseconds, and the exact value is a policy choice of each operating system. Either way, the rule is the same: after the slice, whether the process completed or not, it is relinquished from the CPU and returns to the ready queue to wait for its turn again.</li>
+  <li>If it is a time-sharing process and its <em>time slice</em> expires, it must leave the CPU. Modern systems use a far smaller quantum: the standard textbook figure for a time quantum is 10 to 100 milliseconds, and the exact value is a policy choice of each operating system. Either way, the rule is the same: after the slice, whether the process completed or not, it is relinquished from the CPU and returns to the ready queue to wait for its turn again.</li>
   <li>If the running process <em>forks</em> — creates a child — the child has its own separate address space and gets executed separately. <em>Forking</em> means creating a child process. After the child completes, it may go back to a queue for its next execution.</li>
   <li>If an interrupt occurs, the process waits for the interrupt; once the interrupt routine completes, the process returns to the ready queue if necessary — otherwise it is terminated.</li>
 </ul>
@@ -757,7 +768,6 @@ int main()
     <li>Once the child completes, both processes close the handle that was opened, and the program comes out.</li>
   </ol>
   <p>Sense-check: the parent does nothing while Paint is open; the moment Paint exits, <code>WaitForSingleObject</code> returns, the handles are closed, and the program ends. The wait is the same idea as <code>wait()</code> in Unix, implemented with a handle instead of a process ID.</p>
-  <p>Windows programming of this kind is somewhat difficult compared to Unix, which is why Windows programming courses are less common.</p>
 </div>
 <h3 id="3.9.4-terminating-a-process">3.9.4 Terminating a Process</h3>
 <p>Once a process has been created, it has to be terminated at some point. A process can terminate itself with the <em>exit</em> system call, or the parent can wait for the child to complete, at which point the resources that were allocated to the process are deallocated.</p>
@@ -768,7 +778,6 @@ int main()
   <li>the task that was allocated to the child is no longer required,</li>
   <li>or the parent is exiting, so the child should not continue.</li>
 </ul>
-<p>These are the same three reasons the reference lists: the child has exceeded its allocated resources, the task assigned to the child is no longer required, and the parent is exiting while the operating system does not allow a child to continue.</p>
 <p>If the parent terminates, the child must stop too. This is <em>cascading termination</em>: all children, grandchildren, and whatever was created thereafter must be terminated. The termination always has to be initiated by the operating system, and each parent process has to wait for the termination of its child using the <em>wait</em> system call.</p>
 <div class="warning-box">
   <p><strong>Pitfalls:</strong></p>
@@ -944,7 +953,6 @@ int main()
 <p>Message passing can be <em>blocking</em> or <em>non-blocking</em>.</p>
 <p><em>Blocking</em> means synchronous: in a <em>blocking send</em>, as soon as the sender has sent a message, it waits for the receiver — the sender stays blocked until the receiver receives the message, and only then comes out of the blocking. In a <em>blocking receive</em>, the receiver is blocked until a message is available to it. Both together are synchronous.</p>
 <p><em>Non-blocking</em> means asynchronous: in a <em>non-blocking send</em>, the sender sends the message and continues with some other job right away. In a <em>non-blocking receive</em>, the receiver accepts the message and does other work, or checks for the message later. The message can be a valid message or a null message — anything is possible.</p>
-<p>The standard names for the four combinations: blocking send (sender waits until the message is received), non-blocking send (sender sends and resumes), blocking receive (receiver blocks until a message is available), and non-blocking receive (receiver retrieves either a valid message or a null).</p>
 <p>The key warning: if both the sender and the receiver are blocking, we reach the situation where each is stuck waiting for the other. That should not be there. Either we block the sender or we block the receiver — not both. The producer-consumer case is the same lesson: the producer produces an item and the consumer consumes it, and the two should not run in parallel unsynchronized. The rate of the consumer consuming items should not increase compared to the producer. If the consumer tries to consume before the producer has produced, there is nothing to consume, so the consumer must wait — and it falls into starvation. Both sides must be synchronized; that is very important.</p>
 <div class="warning-box">
   <p><strong>Pitfalls:</strong></p>
@@ -1092,25 +1100,6 @@ int main()
   <p><strong>Recap:</strong> Real IPC systems map the two models onto practice — POSIX shared memory (<code>shmget</code>/<code>shmat</code>/<code>shmdt</code>/<code>shmctl</code>, permissions 6 = 4 + 2 read + write for owner/group/others); Mach message passing with ports and flexible send/receive options; Windows ALPC with connection ports, handles, and section objects; sockets (IP + port, well-known ports below 1024, loopback 127.0.0.1, TCP vs UDP) in Java; RPC with stub, skeleton, marshalling, unmarshalling, XDR, and MIDL; and pipes — ordinary (parent-child, unidirectional, <code>fd[0]</code> reads, <code>fd[1]</code> writes) versus named (bidirectional, no parent needed, several processes).</p>
 </div>
 
-<h2 id="exam-guidance-summary">Exam Guidance Summary</h2>
-<ul>
-  <li><strong>Mid-semester coverage:</strong> the mid-semester exam covers everything up to and including <em>process synchronization</em>. Scheduling problems are part of the material; synchronization itself is not a problem area, but it is a very important topic.</li>
-  <li><strong>Test week:</strong> the test is to be conducted in the second week of February — February 12th to 18th. The schedule will be announced on the portal as and when it is fixed.</li>
-  <li><strong>Textbook:</strong> the prescribed textbook is <em>Abraham Silberschatz</em> — any version can be referred to. <em>William Stallings</em> is another reference; anything else needed is available online. Three sets of notes have been shared so far; more references can be requested.</li>
-  <li><strong>Recorded sessions:</strong> the recorded sessions cover the whole syllabus for both the mid exam and the final exam. The model is a <em>flipped</em> one: problem-type topics are solved in the live contact sessions, while the recorded sessions carry the core material — go through the recorded sessions, then come back to the contact session. If you cannot attend a session, the recorded version is available to catch up.</li>
-</ul>
-<div class="important-note">
-  <p><strong>Q:</strong> Are the recorded sessions available on the portal, and do they cover the syllabus?</p>
-  <p><strong>A:</strong> Yes — the recorded sessions cover the whole syllabus for both the mid exam and the final exam. Problem-type topics are solved in the live contact sessions. The model is flipped: work through the recorded sessions first, then come back to the contact session. If you cannot attend, the recorded version lets you catch up.</p>
-</div>
-<ul>
-  <li><strong>Upcoming topics:</strong> the next session covers threads in detail, followed by some of the processor scheduling topics.</li>
-  <li><strong>How to study:</strong> keeping CPU utilization at its maximum is stressed repeatedly, and the queue/state mechanics and the IPC distinctions (shared memory vs message passing, direct vs indirect, blocking vs non-blocking, zero/bounded/unbounded buffering) are the concepts to hold onto — several of these points were emphasized with "remember this" signals during the session.</li>
-</ul>
-<div class="key-takeaway">
-  <p><strong>Exam note:</strong> the mid-semester exam reaches up to and including process synchronization, and scheduling problems are examinable material. The four IPC contrast pairs are the concepts to hold onto — shared memory vs message passing, direct vs indirect communication, blocking vs non-blocking, and zero/bounded/unbounded buffering — together with the queue/state mechanics that were stressed with "remember this" signals.</p>
-</div>
-
 <h2 id="key-industry-applications">Key Industry Applications</h2>
 <ul>
   <li><strong>Windows taskbar</strong> shows live CPU utilization percentages — the accounting side of process management made visible (3.3).</li>
@@ -1144,132 +1133,6 @@ int main()
       - .revision-check — one self-check question (no options)
       - .revision-connections — linked concepts within this lecture
     ============================================================ -->
-    <section class="exam-revision-section">
-      <h2>Exam Revision Notes</h2>
-      <p class="revision-intro">Below is the distilled, exam-ready core.
-      Every entry comes from the full explanation above. Use this section
-      for rapid review; return to the main notes when a point needs more context.</p>
-  <div class="exam-revision-entry">
-    <h3 class="revision-topic">The Concept of a Process</h3>
-    <p class="revision-mustknow"><strong>Must-know:</strong> A program is passive (instructions sitting on disk); a process is active (instructions in execution, one is always running). The process memory picture: text, data, stack, heap, and program counter.</p>
-    <p class="revision-pitfall"><strong>&#x26A0;&#xFE0F; Top pitfall:</strong> Treating the program counter as a memory region — it is a register holding the address of the next instruction.</p>
-    <p class="revision-check"><strong>Self-check:</strong> Which two growth directions do the heap and the stack follow?</p>
-    <p class="revision-connections"><strong>Connects to:</strong> 3.2, 3.3</p>
-  </div>
-
-  <div class="exam-revision-entry">
-    <h3 class="revision-topic">Process States</h3>
-    <p class="revision-mustknow"><strong>Must-know:</strong> Five states: new, ready, running, waiting (blocked), terminated. Only one process can be running at a time; interrupts move running back to ready; I/O waits move running to waiting, and waiting returns to ready when the event occurs.</p>
-    <p class="revision-pitfall"><strong>&#x26A0;&#xFE0F; Top pitfall:</strong> Confusing waiting with ready: a waiting process lacks an event, not just the CPU.</p>
-    <p class="revision-check"><strong>Self-check:</strong> What transition name takes a process from waiting back to ready?</p>
-    <p class="revision-connections"><strong>Connects to:</strong> 3.3, 3.7</p>
-  </div>
-
-  <div class="exam-revision-entry">
-    <h3 class="revision-topic">The Process Control Block (PCB)</h3>
-    <p class="revision-mustknow"><strong>Must-know:</strong> PCB contents: state, process number, program counter, registers, memory information, accounting information, I/O status. Registers are limited, so saved state lives in main memory; processes move from secondary storage to main memory to the CPU.</p>
-    <p class="revision-pitfall"><strong>&#x26A0;&#xFE0F; Top pitfall:</strong> Forgetting that the PCB holds the saved register values — without them the process could not resume exactly where it stopped.</p>
-    <p class="revision-check"><strong>Self-check:</strong> Name the seven kinds of information a PCB records.</p>
-    <p class="revision-connections"><strong>Connects to:</strong> 3.2, 3.6</p>
-  </div>
-
-  <div class="exam-revision-entry">
-    <h3 class="revision-topic">Processes versus Threads</h3>
-    <p class="revision-mustknow"><strong>Must-know:</strong> A thread is lightweight and shares the address space of its creating process; a process is heavyweight, and a child process gets a separate address space with duplicated code and data.</p>
-    <p class="revision-pitfall"><strong>&#x26A0;&#xFE0F; Top pitfall:</strong> Claiming threads have their own address space — they share the process's space; only processes are separate.</p>
-    <p class="revision-check"><strong>Self-check:</strong> Why is creating a thread cheaper than creating a process?</p>
-    <p class="revision-connections"><strong>Connects to:</strong> 3.5, 3.9</p>
-  </div>
-
-  <div class="exam-revision-entry">
-    <h3 class="revision-topic">Process Representation in Linux</h3>
-    <p class="revision-mustknow"><strong>Must-know:</strong> PID is stored in a variable of the predefined type pid_t; Linux uses structures per kind of process information; PID 1 is the first process and is never given to user processes; the process list is a tree.</p>
-    <p class="revision-pitfall"><strong>&#x26A0;&#xFE0F; Top pitfall:</strong> Writing the type name without its underscore: it is pid_t, not pidt.</p>
-    <p class="revision-check"><strong>Self-check:</strong> Which process has PID 1 on a Linux system, and why is that ID never reused?</p>
-    <p class="revision-connections"><strong>Connects to:</strong> 3.3, 3.9</p>
-  </div>
-
-  <div class="exam-revision-entry">
-    <h3 class="revision-topic">Process Queues</h3>
-    <p class="revision-mustknow"><strong>Must-know:</strong> Job queue = all processes; ready queue = processes in main memory ready to run; device queue = processes waiting on a particular I/O device. Queues are pointer-linked lists of PCBs with a head and a tail; time-slice expiry sends a process back to the ready queue.</p>
-    <p class="revision-pitfall"><strong>&#x26A0;&#xFE0F; Top pitfall:</strong> Treating the ready queue as the full process list — it holds only the in-memory, runnable processes.</p>
-    <p class="revision-check"><strong>Self-check:</strong> If a system has five devices, how many device queues does it have?</p>
-    <p class="revision-connections"><strong>Connects to:</strong> 3.3, 3.7</p>
-  </div>
-
-  <div class="exam-revision-entry">
-    <h3 class="revision-topic">CPU Scheduling and Context Switching</h3>
-    <p class="revision-mustknow"><strong>Must-know:</strong> A context switch saves the running process's state into its PCB (save into PCB 0, load from PCB 1, and back) and is pure overhead; context-switch time depends on hardware, and multiple register sets reduce it. Multiprocessing with many cores completes work fast; the main drawback is the expense.</p>
-    <p class="revision-pitfall"><strong>&#x26A0;&#xFE0F; Top pitfall:</strong> Assuming context switching is free or that interrupts destroy the running process — the process is saved in its PCB and resumes later.</p>
-    <p class="revision-check"><strong>Self-check:</strong> What exactly is saved into PCB 0 during a context switch?</p>
-    <p class="revision-connections"><strong>Connects to:</strong> 3.2, 3.8</p>
-  </div>
-
-  <div class="exam-revision-entry">
-    <h3 class="revision-topic">Schedulers</h3>
-    <p class="revision-mustknow"><strong>Must-know:</strong> Long-term (job) scheduler: admits processes, controls the degree of multiprogramming, slow and infrequent. Short-term (CPU) scheduler: picks a ready process, few milliseconds, very frequent. Medium-term scheduler: swap out partially executed processes to secondary storage and bring them back. CPU utilization should always stay maximum; CPU-bound processes cause starvation; I/O-bound processes leave the CPU idle.</p>
-    <p class="revision-pitfall"><strong>&#x26A0;&#xFE0F; Top pitfall:</strong> Conflating the schedulers: the long-term scheduler admits into the ready queue, the short-term dispatches to the CPU, the medium-term swaps.</p>
-    <p class="revision-check"><strong>Self-check:</strong> Which scheduler controls the degree of multiprogramming, and which must run at least every 100 ms?</p>
-    <p class="revision-connections"><strong>Connects to:</strong> 3.6, 3.7</p>
-  </div>
-
-  <div class="exam-revision-entry">
-    <h3 class="revision-topic">Operations on Processes</h3>
-    <p class="revision-mustknow"><strong>Must-know:</strong> fork() returns 0 to the child, the child's PID to the parent, and a negative value (−1) on error. The parent can wait() for the child. exit() terminates normally; abort() abnormally (resource overuse, obsolete task, parent exiting). Cascading termination kills children and grandchildren when the parent dies. Zombie = exited child with no parent waiting; orphan = child whose parent terminated without waiting.</p>
-    <p class="revision-pitfall"><strong>&#x26A0;&#xFE0F; Top pitfall:</strong> Getting fork's return convention wrong: the child sees 0, the parent sees the child's PID, −1 means the child was not created.</p>
-    <p class="revision-check"><strong>Self-check:</strong> What does fork() return to the parent, and what does it return to the child?</p>
-    <p class="revision-connections"><strong>Connects to:</strong> 3.3, 3.5</p>
-  </div>
-
-  <div class="exam-revision-entry">
-    <h3 class="revision-topic">Independent and Cooperating Processes</h3>
-    <p class="revision-mustknow"><strong>Must-know:</strong> Cooperating processes affect (or are affected by) other processes through shared data. Four benefits: information sharing, computation speedup, modularity, convenience. Two IPC models: message passing (messages M0..MN picked from a queue) and shared memory (a dedicated shared region).</p>
-    <p class="revision-pitfall"><strong>&#x26A0;&#xFE0F; Top pitfall:</strong> Treating any two running processes as cooperating — cooperation requires shared data.</p>
-    <p class="revision-check"><strong>Self-check:</strong> Name the four benefits of cooperating processes.</p>
-    <p class="revision-connections"><strong>Connects to:</strong> 3.11, 3.12</p>
-  </div>
-
-  <div class="exam-revision-entry">
-    <h3 class="revision-topic">Shared Memory and the Bounded Buffer Problem</h3>
-    <p class="revision-mustknow"><strong>Must-know:</strong> in points to the next slot to fill; out points to the next slot to take. Buffer full when in == buffer size; buffer empty when in == out. Communication is controlled by the user processes, not the OS, so the producer and consumer must synchronize; consuming before producing leaves nothing to consume and causes starvation.</p>
-    <p class="revision-formula">\[((in + 1) \bmod n) == out \rightarrow \text{buffer full (standard circular version, } n-1 \text{ items)}\]</p>
-    <p class="revision-pitfall"><strong>&#x26A0;&#xFE0F; Top pitfall:</strong> Saying the buffer is empty because it was never filled — the correction: it is empty because items have been taken out (in equals out).</p>
-    <p class="revision-check"><strong>Self-check:</strong> With a 10-slot buffer, what value of in means the buffer is full?</p>
-    <p class="revision-connections"><strong>Connects to:</strong> 3.10, 3.12</p>
-  </div>
-
-  <div class="exam-revision-entry">
-    <h3 class="revision-topic">Message Passing</h3>
-    <p class="revision-mustknow"><strong>Must-know:</strong> send and receive are the two operations; direct communication names the peer, indirect uses a mailbox (port) with an ID. Blocking = synchronous (sender waits until received, receiver blocks until available); non-blocking = asynchronous. Never block both sender and receiver — each would wait forever. Buffering: zero (no queue), bounded (n messages), unbounded (infinite).</p>
-    <p class="revision-pitfall"><strong>&#x26A0;&#xFE0F; Top pitfall:</strong> Blocking both sender and receiver at the same time — each waits forever for the other; only one side should ever wait.</p>
-    <p class="revision-check"><strong>Self-check:</strong> In indirect communication, what two parameters do send and receive take?</p>
-    <p class="revision-connections"><strong>Connects to:</strong> 3.10, 3.13</p>
-  </div>
-
-  <div class="exam-revision-entry">
-    <h3 class="revision-topic">IPC Systems in Practice</h3>
-    <p class="revision-mustknow"><strong>Must-know:</strong> POSIX shared memory: shmget creates the segment, permission 6 = 4 + 2 (read + write) granted to owner, group, and others. Mach: msg_send/msg_receive/msg_rpc over ports. ALPC: same-system only, handles returned to both sides, section object for messages. Sockets: address = IP + port; ports below 1024 are well-defined (FTP, SNMP, SMTP, HTTP); users get ports above 1024 up to 65535; 127.0.0.1 is loopback. RPC: stub marshals, skeleton unmarshals, XDR is the portable form, MIDL on Windows. Ordinary pipe: parent-child only, fd[0] reads, fd[1] writes; named pipe: bidirectional, no parent needed.</p>
-    <p class="revision-formula">\[6 = 4 + 2 \quad (4 = \text{read}, 2 = \text{write})\]</p>
-    <p class="revision-pitfall"><strong>&#x26A0;&#xFE0F; Top pitfall:</strong> Confusing which pipe descriptor does what: fd[0] is the read end, fd[1] is the write end.</p>
-    <p class="revision-check"><strong>Self-check:</strong> Why can't a user program use port 80?</p>
-    <p class="revision-connections"><strong>Connects to:</strong> 3.10, 3.11, 3.12</p>
-  </div>
-
-  <div class="exam-revision-entry">
-    <h3 class="revision-topic">Exam Guidance Summary</h3>
-    <p class="revision-mustknow"><strong>Must-know:</strong> Mid-semester exam covers everything up to and including process synchronization; scheduling problems are examinable. Test week February 12-18, schedule announced on the portal. Textbook: Silberschatz (any version), reference: Stallings. Recorded sessions cover the whole syllabus for mid and final exams in flipped mode.</p>
-    <p class="revision-pitfall"><strong>&#x26A0;&#xFE0F; Top pitfall:</strong> Assuming the recorded sessions skip problem-type topics — those are solved in the live contact sessions; the recordings carry the core material.</p>
-    <p class="revision-check"><strong>Self-check:</strong> Up to which topic does the mid-semester exam cover?</p>
-    <p class="revision-connections"><strong>Connects to:</strong> 3.7, 3.8, 3.12</p>
-  </div>
-
-  <div class="exam-revision-entry">
-    <h3 class="revision-topic">Key Industry Applications</h3>
-    <p class="revision-mustknow"><strong>Must-know:</strong> Named real-world anchors: taskbar CPU utilization (accounting), Linux PID 1/pid_t tree, Chrome one-process-per-tab isolation, POSIX permission 6 = 4 + 2, ports below 1024 reserved (FTP, SNMP, SMTP, HTTP), 127.0.0.1 loopback, named pipes more powerful than ordinary pipes.</p>
-    <p class="revision-check"><strong>Self-check:</strong> Which real product demonstrates the isolation benefit of multiprocessing?</p>
-    <p class="revision-connections"><strong>Connects to:</strong> 3.3, 3.5, 3.8, 3.9, 3.13</p>
-  </div>
-    </section>
   </div>
 </body>
 </html>

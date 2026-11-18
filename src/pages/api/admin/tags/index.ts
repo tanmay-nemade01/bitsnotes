@@ -12,7 +12,11 @@ import { getEnv, getUser, json, unauthorized, forbidden, badRequest, serverError
 import { isAdmin } from '../../../../lib/comments';
 import { validateOrigin, csrfForbidden } from '../../../../lib/auth/csrf';
 import { listTags, createTag, listSubjectTagsMap } from '../../../../lib/tags';
-import { listSubjectVisibilityMap } from '../../../../lib/subjectVisibility';
+import { listSubjectVisibilityMap, listSubjectAutoHideMap } from '../../../../lib/subjectVisibility';
+import {
+  listLectureVisibilityMap,
+  isLecturePublicBySettings,
+} from '../../../../lib/lectureVisibility';
 import { listCatalog } from '../../../../utils/notesLoader';
 
 export const prerender = false;
@@ -28,6 +32,13 @@ export const GET: APIRoute = async (context) => {
     const subjectTagsMap = await listSubjectTagsMap(env.DB);
     const catalog = await listCatalog();
     const visibilityMap = await listSubjectVisibilityMap(env.DB);
+    const autoHideMap = await listSubjectAutoHideMap(env.DB);
+    const autoHideSubjects = new Set(
+      [...autoHideMap.entries()]
+        .filter(([, enabled]) => enabled)
+        .map(([name]) => name.trim().toLowerCase()),
+    );
+    const lectureVisibilityMap = await listLectureVisibilityMap(env.DB);
 
     const allSubjects = catalog.map((c) => ({
       name: c.subject,
@@ -36,6 +47,14 @@ export const GET: APIRoute = async (context) => {
       semester: c.semester,
       order: c.order,
       isPublic: visibilityMap.has(c.subject) ? visibilityMap.get(c.subject)! : true,
+      autoHideNewLectures: autoHideMap.get(c.subject) === true,
+      lectures: c.lectures.map((l) => ({
+        folderName: l.folderName,
+        displayTitle: l.displayTitle || l.name,
+        lectureNumber: l.lectureNumber ?? null,
+        resourceKind: l.resourceKind,
+        isPublic: isLecturePublicBySettings(c.subject, l.folderName, lectureVisibilityMap, autoHideSubjects),
+      })),
       tags: (subjectTagsMap.get(c.subject) || []).map((t) => ({
         id: t.id,
         name: t.name,
@@ -47,6 +66,11 @@ export const GET: APIRoute = async (context) => {
 
     const untaggedSubjects = allSubjects.filter((s) => s.tags.length === 0);
     const hiddenSubjects = allSubjects.filter((s) => !s.isPublic);
+    const hiddenLectureCount = allSubjects.reduce(
+      (sum, s) => sum + s.lectures.filter((l) => !l.isPublic).length,
+      0,
+    );
+    const autoHideCount = allSubjects.filter((s) => s.autoHideNewLectures).length;
 
     // Convert map to plain object for JSON response
     const subjectTagsObj: Record<string, string[]> = {};
@@ -61,6 +85,8 @@ export const GET: APIRoute = async (context) => {
         allSubjects,
         untaggedCount: untaggedSubjects.length,
         hiddenCount: hiddenSubjects.length,
+        hiddenLectureCount,
+        autoHideCount,
       },
       200,
       { 'Cache-Control': 'no-store' }

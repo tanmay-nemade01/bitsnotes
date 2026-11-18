@@ -329,28 +329,19 @@
 </table>
 <h3 id="8.1.5-visual-intuition-of-query-filter-execution">8.1.5 Visual Intuition of Query Filter Execution</h3>
 <p>When a SQL engine compiles a query containing a <code>WHERE</code> filter, it passes the expression through a type validation pipeline:</p>
-<pre><code>[ Incoming Filter Expression: Column = Literal ]
-                     │
-                     ▼
-       [ Inspect Column Type (T_col) ]
-       [ Inspect Literal Type (T_lit) ]
-                     │
-                     ▼
-          Is T_col == T_lit?
-             /          \
-          YES            NO
-           │              │
-           ▼              ▼
-[ Execute Direct ]   [ Consult Coercion Catalog (pg_cast) ]
-[ Index Search   ]        │
-                          ▼
-                 Is Coercion Path Allowed?
-                    /                 \
-                 YES                   NO
-                  │                     │
-                  ▼                     ▼
-        [ Coerce Literal to T_col ]   [ Raise Type Mismatch Error ]
-        [ Execute Filter          ]   [ Query Aborted             ]</code></pre>
+<div class="diagram-container my-6 text-center">
+<pre class="mermaid">
+flowchart TD
+    A["Incoming Filter Expression: Column = Literal"] --> B["Inspect Column Type (T_col)<br/>Inspect Literal Type (T_lit)"]
+    B --> C{"Is T_col == T_lit?"}
+    C -->|YES| D["Execute Direct<br/>Index Search"]
+    C -->|NO| E["Consult Coercion Catalog (pg_cast)"]
+    E --> F{"Is Coercion Path Allowed?"}
+    F -->|YES| G["Coerce Literal to T_col<br/>Execute Filter"]
+    F -->|NO| H["Raise Type Mismatch Error<br/>Query Aborted"]
+</pre>
+<p class="text-xs text-slate-500 mt-2"><strong>Figure:</strong> Query filter type validation pipeline: matching operand types execute a direct index search, while mismatched types consult <code>pg_cast</code> and either coerce the literal or abort the query.</p>
+</div>
 <p>This pipeline visualizes why matching types directly is always the fastest and safest path: it bypasses the coercion lookup entirely and guarantees that index scans operate without hindrance.</p>
 <h3 id="8.1.6-pitfalls-and-common-traps">8.1.6 Pitfalls and Common Traps</h3>
 <div class="warning-box">
@@ -361,22 +352,8 @@
     <li><strong>Hidden Performance Degradation:</strong> In join conditions (e.g., <code>FROM orders o JOIN customers c ON o.customer_id = c.customer_id</code>), if one column is <code>integer</code> and the other is <code>bigint</code> or <code>varchar</code>, the engine may implicitly cast the smaller type for every join pair, preventing merge joins or index nested loop joins.</li>
   </ol>
 </div>
-<h3 id="8.1.7-student-questions-and-answers">8.1.7 Student Questions and Answers</h3>
-<div class="important-note">
-  <p><strong>Q:</strong> How does PostgreSQL decide whether to apply an implicit conversion when comparing different data types in a <code>WHERE</code> clause?</p>
-  <p><strong>A:</strong> When the left-hand side and right-hand side of a comparison operator have different types, the PostgreSQL query engine checks its type coercion rules. If an automatic conversion path exists, such as parsing a string literal into an integer to match an integer column, PostgreSQL performs an implicit conversion automatically. If no valid coercion rule exists, the query fails with a type mismatch error.</p>
-</div>
 <h3 id="8.1.8-industry-applications-and-real-world-context">8.1.8 Industry Applications and Real-World Context</h3>
 <p>In enterprise production databases, database administrators and software engineers actively avoid relying on implicit type conversions in filters and join predicates. In high-throughput microservices, data sent across REST or gRPC APIs is serialized as JSON strings. When microservices query relational databases using raw string parameters without explicit type binding, the query planner may fail to use existing indexes or may produce suboptimal execution plans. By enforcing explicit casts (e.g., <code>CAST(\$1 AS integer)</code>), database engineers guarantee predictable query execution plans and protect production systems from full table scans.</p>
-<h3 id="8.1.9-exam-notes-and-key-takeaways">8.1.9 Exam Notes and Key Takeaways</h3>
-<div class="key-takeaway">
-  <p><strong>Exam note:</strong> Tests frequently test the distinction between implicit and explicit conversions in <code>WHERE</code> clauses:</p>
-  <ul>
-    <li><code>WHERE movie_id = '1'</code> uses an <strong>implicit conversion</strong> where PostgreSQL automatically coerces the text literal into an integer.</li>
-    <li><code>WHERE movie_id = integer '1'</code> and <code>WHERE movie_id = CAST('1' AS integer)</code> are <strong>explicit conversions</strong> where the developer directly dictates the target type.</li>
-    <li>Remember that implicit conversions succeed only when the string strictly satisfies the target type's syntax; any invalid character causes PostgreSQL to throw an <code>invalid input syntax</code> error.</li>
-  </ul>
-</div>
 
 <h2 id="8.2-using-cast-for-data-conversions">8.2 Using CAST for Data Conversions</h2>
 <h3 id="8.2.1-cast-operator-syntax-and-target-data-types">8.2.1 CAST Operator Syntax and Target Data Types</h3>
@@ -591,18 +568,40 @@
 </table>
 <h3 id="8.2.5-visual-intuition-of-type-casting-memory-representation">8.2.5 Visual Intuition of Type Casting & Memory Representation</h3>
 <p>When a string literal is converted to an integer, the database engine transforms variable-length character bytes into a fixed-width binary integer:</p>
-<pre><code>Source Data: String Literal '10'
-  Memory:   [ 0x31 ] [ 0x30 ]         (ASCII '1' = 0x31, ASCII '0' = 0x30)
-  Storage:  2 bytes of text data
-
-                       │
-             CAST(... AS integer)
-                       │
-                       ▼
-
-Target Data: 32-bit Signed Integer 10
-  Memory:   [ 0x00 ] [ 0x00 ] [ 0x00 ] [ 0x0A ]   (Two's complement binary)
-  Storage:  4 bytes fixed width</code></pre>
+<div class="diagram-container my-6 text-center">
+<svg viewBox="0 0 660 300" class="diagram-svg" role="img" aria-label="The string literal '10' stored as 2 bytes 0x31 and 0x30, converted by CAST to the 32-bit signed integer 10 stored as 4 bytes 0x00 0x00 0x00 0x0A" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <marker id="castArrow" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto">
+      <path d="M0,0 L6,3 L0,6 Z" fill="currentColor"/>
+    </marker>
+  </defs>
+  <text x="20" y="24" font-size="14" font-weight="600" fill="currentColor">Source Data: String Literal '10'</text>
+  <rect x="20" y="40" width="110" height="56" rx="4" fill="none" stroke="currentColor" stroke-width="1.5"/>
+  <text x="75" y="64" text-anchor="middle" font-size="14" fill="currentColor">0x31</text>
+  <text x="75" y="84" text-anchor="middle" font-size="11" fill="currentColor">ASCII '1'</text>
+  <rect x="140" y="40" width="110" height="56" rx="4" fill="none" stroke="currentColor" stroke-width="1.5"/>
+  <text x="195" y="64" text-anchor="middle" font-size="14" fill="currentColor">0x30</text>
+  <text x="195" y="84" text-anchor="middle" font-size="11" fill="currentColor">ASCII '0'</text>
+  <text x="270" y="72" font-size="12" fill="currentColor">2 bytes of text data</text>
+  <line x1="135" y1="100" x2="135" y2="166" stroke="currentColor" stroke-width="1.5" marker-end="url(#castArrow)"/>
+  <text x="150" y="138" font-size="12" fill="currentColor">CAST(... AS integer)</text>
+  <text x="20" y="196" font-size="14" font-weight="600" fill="currentColor">Target Data: 32-bit Signed Integer 10</text>
+  <rect x="20" y="212" width="110" height="56" rx="4" fill="none" stroke="currentColor" stroke-width="1.5"/>
+  <text x="75" y="236" text-anchor="middle" font-size="14" fill="currentColor">0x00</text>
+  <text x="75" y="256" text-anchor="middle" font-size="11" fill="currentColor">byte 1</text>
+  <rect x="140" y="212" width="110" height="56" rx="4" fill="none" stroke="currentColor" stroke-width="1.5"/>
+  <text x="195" y="236" text-anchor="middle" font-size="14" fill="currentColor">0x00</text>
+  <text x="195" y="256" text-anchor="middle" font-size="11" fill="currentColor">byte 2</text>
+  <rect x="260" y="212" width="110" height="56" rx="4" fill="none" stroke="currentColor" stroke-width="1.5"/>
+  <text x="315" y="236" text-anchor="middle" font-size="14" fill="currentColor">0x00</text>
+  <text x="315" y="256" text-anchor="middle" font-size="11" fill="currentColor">byte 3</text>
+  <rect x="380" y="212" width="110" height="56" rx="4" fill="none" stroke="currentColor" stroke-width="1.5"/>
+  <text x="435" y="236" text-anchor="middle" font-size="14" fill="currentColor">0x0A</text>
+  <text x="435" y="256" text-anchor="middle" font-size="11" fill="currentColor">byte 4</text>
+  <text x="510" y="244" font-size="12" fill="currentColor">4 bytes fixed width</text>
+</svg>
+<p class="text-xs text-slate-500 mt-2"><strong>Figure:</strong> <code>CAST('10' AS integer)</code> converts the 2 ASCII bytes <code>0x31</code> <code>0x30</code> of the text literal into the 4-byte two's complement integer <code>0x0000000A</code>.</p>
+</div>
 <p>When <code>'10a'</code> is supplied, the engine encounters <code>0x61</code> (ASCII <code>'a'</code>) at byte 3, detects that it cannot be encoded into the two's complement integer register, and immediately raises a fatal parser error.</p>
 <h3 id="8.2.6-pitfalls-and-common-traps">8.2.6 Pitfalls and Common Traps</h3>
 <div class="warning-box">
@@ -613,27 +612,8 @@ Target Data: 32-bit Signed Integer 10
     <li><strong>Syntax Errors in MySQL:</strong> Developers transitioning from PostgreSQL to MySQL often write <code>CAST(val AS integer)</code> or <code>val::integer</code>. Both fail in MySQL; you must write <code>CAST(val AS SIGNED)</code>.</li>
   </ol>
 </div>
-<h3 id="8.2.7-student-questions-and-answers">8.2.7 Student Questions and Answers</h3>
-<div class="important-note">
-  <p><strong>Q:</strong> What happens if a string expression contains non-numeric characters when casting to an integer, such as casting the string '10a'?</p>
-  <p><strong>A:</strong> The query engine rejects the conversion and throws an invalid input syntax error for type integer. To avoid errors, the input expression must strictly conform to the expected syntax of the receiving target data type.</p>
-</div>
-<div class="important-note">
-  <p><strong>Q:</strong> How can boolean values be represented when converting from strings or numbers, and how does PostgreSQL evaluate them?</p>
-  <p><strong>A:</strong> PostgreSQL accepts several string representations for booleans: <code>'true'</code>, <code>'false'</code>, <code>'t'</code>, and <code>'f'</code>. In addition, numeric strings or integers can be cast: <code>'0'</code> evaluates to <code>false</code>, and <code>'1'</code> (or non-zero values) evaluates to <code>true</code>.</p>
-</div>
 <h3 id="8.2.8-industry-applications-and-real-world-context">8.2.8 Industry Applications and Real-World Context</h3>
 <p>In enterprise data engineering and ETL (Extract, Transform, Load) pipelines, ingestion engines load raw CSV and JSON files into staging tables where every attribute is initially stored as raw text (<code>VARCHAR</code>). Data engineers write transformation pipelines using <code>CAST</code> and <code>::</code> to normalize these strings into strict data warehouse schemas. For example, log timestamps from worldwide microservices are parsed with <code>::timestamptz</code> to convert diverse local server times into normalized UTC timestamps. In modern cloud data warehouses like Snowflake and Databricks, engineers frequently use <code>TRY_CAST</code> to gracefully quarantine malformed records without halting multi-hour data ingestion pipelines.</p>
-<h3 id="8.2.9-exam-notes-and-key-takeaways">8.2.9 Exam Notes and Key Takeaways</h3>
-<div class="key-takeaway">
-  <p><strong>Exam note:</strong> Be ready to write and analyze queries using both standard <code>CAST(expression AS target_data_type)</code> and PostgreSQL's shorthand <code>expression::target_data_type</code>:</p>
-  <ul>
-    <li>Remember that casting non-numeric strings like <code>'10a'</code> triggers an <code>invalid input syntax for type integer</code> error.</li>
-    <li>Memorize boolean casting rules: <code>'true'</code>, <code>'t'</code>, and <code>'1'</code> evaluate to <code>true</code>; <code>'false'</code>, <code>'f'</code>, and <code>'0'</code> evaluate to <code>false</code>.</li>
-    <li>Pay special attention to date parsing: PostgreSQL seamlessly parses both ISO dates (<code>'2020-01-01'</code>) and alphanumeric dates (<code>'01-May-2020'</code>).</li>
-    <li>Remember the interval conversion rule: weeks scale to days by multiplying by 7 (e.g., <code>'2 weeks'::interval</code> produces <code>14 days</code>).</li>
-  </ul>
-</div>
 
 <h2 id="8.3-implicit-to-explicit-conversions">8.3 Implicit to Explicit Conversions</h2>
 <h3 id="8.3.1-motivation-and-function-signature-alignment">8.3.1 Motivation and Function Signature Alignment</h3>
@@ -769,7 +749,7 @@ SELECT substr(CAST('123456' AS text), 4);</code></pre>
       <td>Built-in <code>factorial(bigint)</code></td>
       <td>Custom function needed</td>
       <td><code>factorial(n)</code></td>
-      <td><code>factorial(n)</code> (throws on \(n > 20\))</td>
+      <td><code>factorial(n)</code> (returns NULL for \(n > 20\))</td>
     </tr>
     <tr>
       <td><strong>Substring Function Name</strong></td>
@@ -789,29 +769,42 @@ SELECT substr(CAST('123456' AS text), 4);</code></pre>
 </table>
 <h3 id="8.3.5-visual-intuition-of-overload-resolution-integer-overflow">8.3.5 Visual Intuition of Overload Resolution & Integer Overflow</h3>
 <p>The diagram below illustrates how explicit casting guides PostgreSQL's function overload resolution and prevents register overflow:</p>
-<pre><code>Function Invocation: round(10, 4)
-                  │
-                  ▼
-      [ Check Available Signatures in pg_proc ]
-      ├── round(double precision)          --&gt; 1 argument (Mismatch)
-      └── round(numeric, integer)          --&gt; 2 arguments
-                  │
-                  ▼
-         Is '10' of type numeric?
-            /                \
-         NO                  YES (via CAST(10 AS numeric))
-          │                   │
-          ▼                   ▼
-[ Ambiguous Resolution ]  [ Direct Match: round(numeric, integer) ]
-[ Possible Type Coercion]  [ Execute Exact Decimal Rounding        ]</code></pre>
+<div class="diagram-container my-6 text-center">
+<pre class="mermaid">
+flowchart TD
+    A["Function Invocation: round(10, 4)"] --> B["Check Available Signatures in pg_proc"]
+    B --> C["round(double precision)<br/>1 argument (Mismatch)"]
+    B --> D["round(numeric, integer)<br/>2 arguments"]
+    D --> E{"Is '10' of type numeric?"}
+    E -->|NO| F["Ambiguous Resolution<br/>Possible Type Coercion"]
+    E -->|YES via CAST(10 AS numeric)| G["Direct Match: round(numeric, integer)<br/>Execute Exact Decimal Rounding"]
+</pre>
+<p class="text-xs text-slate-500 mt-2"><strong>Figure:</strong> Overload resolution for <code>round(10, 4)</code>: only an explicit cast to <code>numeric</code> binds the two-argument <code>round(numeric, integer)</code> signature.</p>
+</div>
 <p>Similarly, the register capacity comparison demonstrates why \(20!\) requires <code>bigint</code>:</p>
-<pre><code>32-bit Integer Register Ceiling: ~2.14 x 10^9
-  12! = 4.79 x 10^8   [████████░░░░░░░░░░] (Fits in 32-bit)
-  13! = 6.22 x 10^9   [████████████████████] OVERFLOW! (Exceeds 32-bit limit)
-
-64-bit Bigint Register Ceiling: ~9.22 x 10^18
-  20! = 2.43 x 10^18  [█████░░░░░░░░░░░░░] (Fits safely in 64-bit bigint)
-  21! = 5.11 x 10^19  [████████████████████] OVERFLOW! (Requires numeric)</code></pre>
+<div class="diagram-container my-6 text-center">
+<svg viewBox="0 0 660 210" class="diagram-svg" role="img" aria-label="Bar comparison of factorial magnitudes against register ceilings: 12! fits in a 32-bit integer, 13! overflows it, 20! fits in a 64-bit bigint, 21! overflows bigint" xmlns="http://www.w3.org/2000/svg">
+  <text x="20" y="22" font-size="14" font-weight="600" fill="currentColor">32-bit Integer Register Ceiling: ~2.14 × 10^9</text>
+  <text x="20" y="58" font-size="12" fill="currentColor">12! = 4.79 × 10^8</text>
+  <rect x="230" y="44" width="280" height="18" rx="3" fill="none" stroke="currentColor" stroke-width="1.5"/>
+  <rect x="230" y="44" width="62" height="18" rx="3" fill="currentColor" opacity="0.35"/>
+  <text x="520" y="58" font-size="12" fill="currentColor">Fits in 32-bit</text>
+  <text x="20" y="84" font-size="12" fill="currentColor">13! = 6.22 × 10^9</text>
+  <rect x="230" y="70" width="280" height="18" rx="3" fill="none" stroke="currentColor" stroke-width="1.5"/>
+  <rect x="230" y="70" width="280" height="18" rx="3" fill="currentColor" opacity="0.35"/>
+  <text x="520" y="84" font-size="12" font-weight="600" fill="currentColor">OVERFLOW!</text>
+  <text x="20" y="132" font-size="14" font-weight="600" fill="currentColor">64-bit Bigint Register Ceiling: ~9.22 × 10^18</text>
+  <text x="20" y="168" font-size="12" fill="currentColor">20! = 2.43 × 10^18</text>
+  <rect x="230" y="154" width="280" height="18" rx="3" fill="none" stroke="currentColor" stroke-width="1.5"/>
+  <rect x="230" y="154" width="74" height="18" rx="3" fill="currentColor" opacity="0.35"/>
+  <text x="520" y="168" font-size="12" fill="currentColor">Fits in bigint</text>
+  <text x="20" y="194" font-size="12" fill="currentColor">21! = 5.11 × 10^19</text>
+  <rect x="230" y="180" width="280" height="18" rx="3" fill="none" stroke="currentColor" stroke-width="1.5"/>
+  <rect x="230" y="180" width="280" height="18" rx="3" fill="currentColor" opacity="0.35"/>
+  <text x="520" y="194" font-size="12" font-weight="600" fill="currentColor">Requires numeric</text>
+</svg>
+<p class="text-xs text-slate-500 mt-2"><strong>Figure:</strong> Factorial magnitudes against register capacity: 13! overflows 32-bit <code>integer</code>, and 21! overflows 64-bit <code>bigint</code>.</p>
+</div>
 <h3 id="8.3.6-pitfalls-and-common-traps">8.3.6 Pitfalls and Common Traps</h3>
 <div class="warning-box">
   <p><strong>Common Pitfalls in Function Typing:</strong></p>
@@ -821,22 +814,8 @@ SELECT substr(CAST('123456' AS text), 4);</code></pre>
     <li><strong>Overlooking the \(n=20\) Factorial Limit:</strong> Assuming that casting to <code>bigint</code> solves all factorial calculations is a common trap. Computing <code>factorial(21::bigint)</code> fails with <code>ERROR: bigint out of range</code>.</li>
   </ol>
 </div>
-<h3 id="8.3.7-student-questions-and-answers">8.3.7 Student Questions and Answers</h3>
-<div class="important-note">
-  <p><strong>Q:</strong> Why should we explicitly cast an integer to bigint when computing factorials if PostgreSQL can already run the function implicitly?</p>
-  <p><strong>A:</strong> Factorial values grow rapidly as the input increases. While an implicit integer might suffice for small values, large factorials like \(20!\) produce numbers with nineteen digits that exceed the 32-bit integer limit of approximately \(2.14 \times 10^9\). Explicitly casting the input to <code>bigint</code> guarantees that the 64-bit function overload is executed safely without overflow.</p>
-</div>
 <h3 id="8.3.8-industry-applications-and-real-world-context">8.3.8 Industry Applications and Real-World Context</h3>
 <p>In algorithmic trading and fintech banking systems, data integrity and mathematical precision are strictly regulated. Financial calculations involving loan amortization, compound interest, and foreign exchange rates are legally required to avoid binary floating-point errors. Software engineers in financial institutions enforce explicit casts to <code>numeric</code> or <code>decimal</code> across all SQL operations to ensure that intermediate calculations adhere to exact decimal rounding laws rather than hardware approximations. Furthermore, high-volume event stream processors explicitly cast counters to <code>bigint</code> to prevent counter wrap-around and system outages.</p>
-<h3 id="8.3.9-exam-notes-and-key-takeaways">8.3.9 Exam Notes and Key Takeaways</h3>
-<div class="key-takeaway">
-  <p><strong>Exam note:</strong> Be prepared to explain why explicit casts are preferred over implicit conversions in advanced SQL queries:</p>
-  <ul>
-    <li><strong>Function Signature Alignment:</strong> Functions like <code>round(val, scale)</code> require <code>val</code> to be explicitly cast to <code>numeric</code>.</li>
-    <li><strong>Overflow Prevention:</strong> Factorial operations expand super-exponentially; \(13!\) overflows a 32-bit <code>integer</code> (\(2.14 \times 10^9\)), requiring an explicit cast to <code>bigint</code> to safely compute factorials up to \(20!\) (\(2.43 \times 10^{18}\)).</li>
-    <li><strong>Integer Division Trap:</strong> Remember that in PostgreSQL, <code>integer / integer</code> truncates to an integer (<code>1 / 2 = 0</code>). You must cast to <code>numeric</code> to obtain decimal fractions.</li>
-  </ul>
-</div>
 
 <h2 id="8.4-table-data-conversion">8.4 Table Data Conversion</h2>
 <h3 id="8.4.1-mixed-type-column-migration-strategy">8.4.1 Mixed-Type Column Migration Strategy</h3>
@@ -1023,24 +1002,17 @@ FROM rating;</code></pre>
 </table>
 <h3 id="8.4.5-visual-intuition-of-conditional-stream-filtering">8.4.5 Visual Intuition of Conditional Stream Filtering</h3>
 <p>The diagram below illustrates how conditional pattern matching separates dirty data into safe casting paths and fallback routes:</p>
-<pre><code>Incoming Record Stream: ['A', 'B', 'C', 'D', '1', '2', '3', '4']
-                               │
-                               ▼
-               [ Evaluator: rating ~ '^\d+\$' ]
-                               │
-            ┌──────────────────┴──────────────────┐
-            │                                     │
-         FALSE (Legacy Letters)                TRUE (Numeric Strings)
-         ['A', 'B', 'C', 'D']                  ['1', '2', '3', '4']
-            │                                     │
-            ▼                                     ▼
-      [ ELSE Branch ]                   [ CAST(... AS integer) ]
-      [ Emit Value: 0 ]                 [ Emit Values: 1, 2, 3, 4 ]
-            │                                     │
-            └──────────────────┬──────────────────┘
-                               │
-                               ▼
-         Normalized Output Stream: [0, 0, 0, 0, 1, 2, 3, 4]</code></pre>
+<div class="diagram-container my-6 text-center">
+<pre class="mermaid">
+flowchart TD
+    A["Incoming Record Stream: 'A', 'B', 'C', 'D', '1', '2', '3', '4'"] --> B["Evaluator: rating ~ '^\d+$'"]
+    B -->|FALSE (Legacy Letters)| C["ELSE Branch<br/>Emit Value: 0"]
+    B -->|TRUE (Numeric Strings)| D["CAST(... AS integer)<br/>Emit Values: 1, 2, 3, 4"]
+    C --> E["Normalized Output Stream: 0, 0, 0, 0, 1, 2, 3, 4"]
+    D --> E
+</pre>
+<p class="text-xs text-slate-500 mt-2"><strong>Figure:</strong> Conditional pattern matching splits the incoming records into a fallback <code>ELSE 0</code> route for legacy letters and a safe <code>CAST</code> route for numeric strings.</p>
+</div>
 <p>By filtering out non-digit values before the casting operator is invoked, the query execution engine never encounters an invalid lexical token, guaranteeing 100% pipeline reliability.</p>
 <h3 id="8.4.6-pitfalls-and-common-traps">8.4.6 Pitfalls and Common Traps</h3>
 <div class="warning-box">
@@ -1054,60 +1026,9 @@ FROM rating;</code></pre>
    ALTER COLUMN rating TYPE integer 
    USING (CASE WHEN rating ~ '^\d+\$' THEN CAST(rating AS integer) ELSE 0 END);</code></pre>
 </div>
-<h3 id="8.4.7-student-questions-and-answers">8.4.7 Student Questions and Answers</h3>
-<div class="important-note">
-  <p><strong>Q:</strong> Why can we not simply run CAST(rating AS integer) directly on the entire table when standardizing the rating column?</p>
-  <p><strong>A:</strong> The table contains legacy character ratings such as 'A', 'B', 'C', and 'D' alongside numeric ratings '1', '2', '3', and '4'. Attempting to cast the column directly causes PostgreSQL to encounter 'A' and immediately terminate execution with an invalid input syntax error. A conditional CASE statement with a regular expression pattern is required to isolate numeric strings before casting and safely assign a default value like 0 to legacy letters.</p>
-</div>
 <h3 id="8.4.8-industry-applications-and-real-world-context">8.4.8 Industry Applications and Real-World Context</h3>
 <p>In enterprise ETL pipelines and legacy system migrations, data engineers frequently encounter "polymorphic" text columns where business rules shifted over time without schema updates. For example, product inventory tables may store quantities as numbers for warehouse items but store <code>'OUT_OF_STOCK'</code> or <code>'DISCONTINUED'</code> for retired SKUs. Before creating analytical cubes or training machine learning models, engineers run conditional <code>CASE</code> transformations with regex guards to cleanly separate operational status flags from quantitative measures, ensuring downstream stability.</p>
-<h3 id="8.4.9-exam-notes-and-key-takeaways">8.4.9 Exam Notes and Key Takeaways</h3>
-<div class="key-takeaway">
-  <p><strong>Exam note:</strong> Be prepared for exam scenarios involving data cleaning and column migrations:</p>
-  <ul>
-    <li><strong>Direct Casting Trap:</strong> Directly applying <code>CAST</code> to a column with mixed alphanumeric data fails on the very first non-numeric character with <code>invalid input syntax for type integer</code>.</li>
-    <li><strong>The Canonical Cleaning Pattern:</strong> Always pair <code>CAST</code> with a conditional <code>CASE</code> statement and a regular expression guard:</li>
-  </ul>
-  <pre><code>  CASE
-      WHEN column ~ '^\d+\$' THEN CAST(column AS integer)
-      ELSE default_value
-  END</code></pre>
-  <ul>
-    <li><strong>Regex Syntax:</strong> Remember that <code>~</code> is PostgreSQL's POSIX regular expression match operator, <code>^</code> asserts the start of the string, <code>\d+</code> matches one or more digits, and <code>\$</code> asserts the end of the string.</li>
-  </ul>
-</div>
 
-<h2 id="exam-guidance-summary">Exam Guidance Summary</h2>
-<p>This section consolidates critical examination takeaways, common question patterns, and essential syntax rules across data type conversions:</p>
-<div class="key-takeaway">
-  <p><strong>Key Takeaways for Examination Preparation:</strong></p>
-  <ul>
-    <li><strong>Implicit vs. Explicit Conversions:</strong></li>
-    <li>Understand how PostgreSQL resolves implicit coercion in <code>WHERE</code> clauses (e.g., <code>WHERE movie_id = '1'</code>).</li>
-    <li>Recognize that <code>WHERE movie_id = integer '1'</code> and <code>WHERE movie_id = CAST('1' AS integer)</code> are explicit conversions.</li>
-    <li>Remember that casting the column itself (e.g., <code>WHERE movie_id::text = '1'</code>) invalidates B-tree indexes and forces full table scans.</li>
-    <li><strong>CAST Syntax & Shorthand:</strong></li>
-    <li>Standard ANSI syntax: <code>CAST(expression AS target_data_type)</code>.</li>
-    <li>PostgreSQL & Snowflake shorthand: <code>expression::target_data_type</code>.</li>
-    <li>In MySQL, <code>CAST</code> requires <code>SIGNED</code> or <code>UNSIGNED</code> instead of <code>integer</code>.</li>
-    <li><strong>Parsing Rules for Core Types:</strong></li>
-    <li><strong>Boolean:</strong> Accepts <code>'true'</code>, <code>'false'</code>, <code>'t'</code>, <code>'f'</code>, <code>'1'</code>, <code>'0'</code>, <code>'yes'</code>, <code>'no'</code>. Non-zero numbers evaluate to <code>true</code>, <code>0</code> evaluates to <code>false</code>.</li>
-    <li><strong>Date:</strong> Parses both ISO 8601 (<code>'YYYY-MM-DD'</code>) and alphanumeric formats (<code>'DD-Mon-YYYY'</code>).</li>
-    <li><strong>Timestamptz:</strong> Normalizes timestamps to UTC while recording session offsets (e.g., <code>-05</code>).</li>
-    <li><strong>Interval:</strong> Multiplies weeks by 7 to yield elapsed days (e.g., <code>'2 weeks'::interval</code> \(\to\) <code>14 days</code>).</li>
-    <li><strong>Function Overloading & Arithmetic Safety:</strong></li>
-    <li>The two-argument <code>round()</code> function requires an explicit cast to <code>numeric</code>: <code>round(CAST(val AS numeric), scale)</code>.</li>
-    <li>Rapidly growing calculations like factorials require casting to <code>bigint</code> to avoid 32-bit integer overflow (\(2.14 \times 10^9\)). Note that \(20!\) evaluates to \(2,432,902,008,176,640,000\), which safely fits in <code>bigint</code>.</li>
-    <li>In PostgreSQL, integer division (<code>1 / 2</code>) truncates to <code>0</code>. Use <code>1::numeric / 2</code> to obtain <code>0.5</code>.</li>
-    <li><strong>Dirty Column Data Cleaning:</strong></li>
-    <li>Directly running <code>CAST(column AS integer)</code> on columns containing mixed letters and numbers fails immediately on the first letter.</li>
-    <li>Always guard with a <code>CASE</code> expression and an anchored regular expression:</li>
-  </ul>
-  <pre><code>    CASE
-        WHEN column ~ '^\d+\$' THEN CAST(column AS integer)
-        ELSE default_value
-    END</code></pre>
-</div>
 
 <h2 id="key-industry-applications">Key Industry Applications</h2>
 <p>This section summarizes real-world production engineering use cases where data type conversion plays a decisive role:</p>
@@ -1137,58 +1058,6 @@ FROM rating;</code></pre>
       - .revision-check — one self-check question (no options)
       - .revision-connections — linked concepts within this lecture
     ============================================================ -->
-    <section class="exam-revision-section">
-      <h2>Exam Revision Notes</h2>
-      <p class="revision-intro">Below is the distilled, exam-ready core.
-      Every entry comes from the full explanation above. Use this section
-      for rapid review; return to the main notes when a point needs more context.</p>
-<div class="exam-revision-entry">
-  <h3 class="revision-topic">What is Data Type Conversion</h3>
-  <p class="revision-mustknow"><strong>Must-know:</strong> Implicit conversions occur automatically via engine coercion rules while explicit conversions (e.g. integer '1' or CAST) give developer control and preserve index usage.</p>
-  <p class="revision-formula">\[ f: T_{\text{source}} \to T_{\text{target}} \]</p>
-  <p class="revision-pitfall"><strong>Top pitfall:</strong> Casting the column in a WHERE filter (e.g. WHERE char movie_id = '1') instead of the literal invalidates B-tree indexes, forcing a full table scan.</p>
-  <p class="revision-check"><strong>Self-check:</strong> What error does PostgreSQL raise if an implicit conversion encounters non-numeric characters?</p>
-  <p class="revision-connections"><strong>Connects to:</strong> 8.2</p>
-</div>
-<div class="exam-revision-entry">
-  <h3 class="revision-topic">Using CAST for Data Conversions</h3>
-  <p class="revision-mustknow"><strong>Must-know:</strong> CAST(expr AS type) and expr::type perform explicit conversions; non-numeric characters like '10a' throw an invalid input syntax error; boolean accepts 't'/'f', 'true'/'false', '1'/'0'; interval weeks multiply by 7 into days.</p>
-  <p class="revision-formula">\[ d_{\text{total}} = w \times 7 \]</p>
-  <p class="revision-pitfall"><strong>Top pitfall:</strong> Attempting CAST on strings with non-numeric characters aborts the query; in MySQL CAST requires SIGNED instead of integer; expr::type is non-portable outside PostgreSQL and Snowflake.</p>
-  <p class="revision-check"><strong>Self-check:</strong> What is the result of casting '0' and '1' to boolean in PostgreSQL?</p>
-  <p class="revision-connections"><strong>Connects to:</strong> 8.1, 8.3</p>
-</div>
-<div class="exam-revision-entry">
-  <h3 class="revision-topic">Implicit to Explicit Conversions</h3>
-  <p class="revision-mustknow"><strong>Must-know:</strong> Explicit casts are required to align function overloads (such as round(numeric, integer)) and prevent integer overflow when computing large factorials like 20! which exceed 32-bit limits.</p>
-  <p class="revision-formula">\[ n! = \prod_{i=1}^{n} i = 1 \times 2 \times 3 \times \dots \times n \]</p>
-  <p class="revision-pitfall"><strong>Top pitfall:</strong> Integer division in PostgreSQL truncates to integer (1 / 2 = 0); calling round(val, scale) on double precision fails without casting to numeric.</p>
-  <p class="revision-check"><strong>Self-check:</strong> At what value of n does n! overflow a standard 32-bit signed integer in PostgreSQL?</p>
-  <p class="revision-connections"><strong>Connects to:</strong> 8.2, 8.4</p>
-</div>
-<div class="exam-revision-entry">
-  <h3 class="revision-topic">Table Data Conversion</h3>
-  <p class="revision-mustknow"><strong>Must-know:</strong> Directly applying CAST to columns with mixed text fails on the first letter; always pair CAST with CASE and a regex guard (~ '^\d+$').</p>
-  <p class="revision-formula">\[ P(s) = \begin{cases} 1 & \text{if } s \in \mathcal{L}(\texttt{^\textbackslash d+\$}) \\ 0 & \text{otherwise} \end{cases} \]</p>
-  <p class="revision-pitfall"><strong>Top pitfall:</strong> Omitting boundary anchors (^ and $) in the regex pattern allows strings like 'A1' to match and crash CAST.</p>
-  <p class="revision-check"><strong>Self-check:</strong> What error occurs if you run SELECT CAST(rating AS integer) on a column containing 'A'?</p>
-  <p class="revision-connections"><strong>Connects to:</strong> 8.2, 8.3</p>
-</div>
-<div class="exam-revision-entry">
-  <h3 class="revision-topic">Exam Guidance Summary</h3>
-  <p class="revision-mustknow"><strong>Must-know:</strong> Tests focus on implicit vs explicit WHERE filtering, CAST vs :: syntax, boolean parsing, and guarding CAST with CASE/regex on dirty data.</p>
-  <p class="revision-pitfall"><strong>Top pitfall:</strong> Casting the filtered column instead of the literal; omitting anchors in regex patterns; forgetting integer division truncation in PostgreSQL.</p>
-  <p class="revision-check"><strong>Self-check:</strong> Which keyword syntax is used in PostgreSQL for explicit type prefix conversion?</p>
-  <p class="revision-connections"><strong>Connects to:</strong> 8.1, 8.2, 8.3, 8.4</p>
-</div>
-<div class="exam-revision-entry">
-  <h3 class="revision-topic">Key Industry Applications</h3>
-  <p class="revision-mustknow"><strong>Must-know:</strong> Real-world systems enforce explicit casts to guarantee B-tree index usage, prevent batch ingestion pipeline failures, and eliminate floating-point currency rounding errors.</p>
-  <p class="revision-pitfall"><strong>Top pitfall:</strong> Relying on implicit coercion in high-throughput API endpoints causing database query planners to abandon index scans.</p>
-  <p class="revision-check"><strong>Self-check:</strong> Why do fintech systems mandate the numeric type over floating-point types for monetary values?</p>
-  <p class="revision-connections"><strong>Connects to:</strong> 8.1, 8.2, 8.3, 8.4</p>
-</div>
-    </section>
   </div>
 </body>
 </html>

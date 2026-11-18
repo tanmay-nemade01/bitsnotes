@@ -4,7 +4,17 @@ import { listLectures, getSubjectByNameOrSlug, getSubjectDetails } from '../../u
 import CommentsSection from '../../components/CommentsSection.astro';
 import { slugify } from '../../utils/lectureDisplay';
 import { getEnv } from '../../lib/apiHelpers';
-import { getHiddenSubjectNames, SubjectVisibilityUnavailableError } from '../../lib/subjectVisibility';
+import {
+  getHiddenSubjectNames,
+  listSubjectAutoHideMap,
+  SubjectVisibilityUnavailableError,
+} from '../../lib/subjectVisibility';
+import {
+  getHiddenLectureKeys,
+  filterVisibleLectures,
+  makeLectureKey,
+  LectureVisibilityUnavailableError,
+} from '../../lib/lectureVisibility';
 
 export const prerender = false;
 
@@ -38,6 +48,23 @@ if (isHidden && !isAdmin) {
   return Astro.redirect('/');
 }
 
+// Individual lectures can be hidden inside an otherwise public subject.
+// Admins keep the full list so they can preview (and toggle) hidden lectures.
+let hiddenLectures: Set<string>;
+try {
+  hiddenLectures = await getHiddenLectureKeys(env?.DB);
+} catch (err) {
+  if (err instanceof LectureVisibilityUnavailableError) {
+    if (isAdmin) {
+      hiddenLectures = new Set();
+    } else {
+      return new Response('Temporarily unavailable', { status: 503, headers: { 'Cache-Control': 'no-store' } });
+    }
+  } else {
+    throw err;
+  }
+}
+
 // Redirect to canonical slug if raw subject name or unslugified path was used
 const canonicalSubjectSlug = slugify(matchedSubject.name);
 if (decodedSubject !== canonicalSubjectSlug) {
@@ -45,7 +72,10 @@ if (decodedSubject !== canonicalSubjectSlug) {
 }
 
 const decodedSubjectName = matchedSubject.name;
-const lectures = await listLectures(decodedSubjectName);
+const autoHideNewLectures = (await listSubjectAutoHideMap(env?.DB)).get(decodedSubjectName) === true;
+const allLectures = await listLectures(decodedSubjectName);
+const lectures = filterVisibleLectures(allLectures, decodedSubjectName, hiddenLectures, isAdmin);
+const hiddenLectureCount = allLectures.length - lectures.length;
 const subjectInfo = await getSubjectDetails(decodedSubjectName);
 
 const collectionPageSchema = {
@@ -65,7 +95,7 @@ const collectionPageSchema = {
 
 const collectionPageJson = JSON.stringify(collectionPageSchema);
 const seoKeywords = `${decodedSubjectName}, lecture notes, study guides, college courses, study materials, academic resources, BitsNotes`;
-const robotsDirective = isHidden ? 'noindex, nofollow' : 'index, follow';
+const robotsDirective = (isHidden || lectures.length === 0) ? 'noindex, nofollow' : 'index, follow';
 ---
 
 <BaseLayout
@@ -142,6 +172,26 @@ const robotsDirective = isHidden ? 'noindex, nofollow' : 'index, follow';
       </div>
     )}
 
+    {isAdmin && !isHidden && hiddenLectureCount > 0 && (
+      <aside class="mb-6 rounded-[var(--r-md)] border border-amber-500/30 bg-amber-500/10 p-3.5 text-xs text-amber-700 dark:text-amber-300 flex items-center justify-between gap-3 flex-wrap">
+        <div class="flex items-center gap-2">
+          <svg class="w-4 h-4 text-amber-600 dark:text-amber-400 shrink-0" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253"/></svg>
+          <span><strong>{hiddenLectureCount} {hiddenLectureCount === 1 ? 'lecture is' : 'lectures are'}</strong> hidden from non-admin users. Only the other {lectures.length} are shown publicly.</span>
+        </div>
+        <a href="/backstage/tags" class="underline font-semibold hover:opacity-80 shrink-0">Manage in admin dashboard →</a>
+      </aside>
+    )}
+
+    {isAdmin && autoHideNewLectures && !isHidden && (
+      <aside class="mb-6 rounded-[var(--r-md)] border border-blue-500/30 bg-blue-500/10 p-3.5 text-xs text-blue-700 dark:text-blue-300 flex items-center justify-between gap-3 flex-wrap">
+        <div class="flex items-center gap-2">
+          <svg class="w-4 h-4 text-blue-600 dark:text-blue-400 shrink-0" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M12 2v20M2 12h20"/></svg>
+          <span><strong>Auto-hide is on:</strong> newly added lectures start hidden from non-admins. Lectures that were already public stay public.</span>
+        </div>
+        <a href="/backstage/tags" class="underline font-semibold hover:opacity-80 shrink-0">Manage in admin dashboard →</a>
+      </aside>
+    )}
+
     {isAdmin && (
       <script is:inline>
         document.getElementById('subject-publish-toggle-btn')?.addEventListener('click', async function () {
@@ -169,6 +219,40 @@ const robotsDirective = isHidden ? 'noindex, nofollow' : 'index, follow';
             btn.disabled = false;
             btn.textContent = origText;
           }
+        });
+
+        document.querySelectorAll('.bn-lecture-vis-btn').forEach(function (lecBtn) {
+          lecBtn.addEventListener('click', async function () {
+            var btn = this;
+            var subjectName = btn.getAttribute('data-subject');
+            var lectureFolder = btn.getAttribute('data-lecture');
+            var targetPublic = btn.getAttribute('data-target-public') === 'true';
+            btn.disabled = true;
+            var origText = btn.textContent;
+            btn.textContent = '…';
+            try {
+              var res = await fetch('/api/admin/subjects/lectures/visibility', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                  subjectName: subjectName,
+                  lectureFolder: lectureFolder,
+                  isPublic: targetPublic,
+                }),
+              });
+              if (res.ok) {
+                window.location.reload();
+              } else {
+                alert('Failed to update lecture visibility.');
+                btn.disabled = false;
+                btn.textContent = origText;
+              }
+            } catch (e) {
+              alert('Network error.');
+              btn.disabled = false;
+              btn.textContent = origText;
+            }
+          });
         });
       </script>
     )}
@@ -215,6 +299,7 @@ const robotsDirective = isHidden ? 'noindex, nofollow' : 'index, follow';
         {lectures.map((lec) => {
           const viewPath = `/view/${encodeURIComponent(canonicalSubjectSlug)}/${encodeURIComponent(lec.slug)}`;
           const lectureName = lec.displayTitle || lec.name;
+          const isLectureHidden = hiddenLectures.has(makeLectureKey(decodedSubjectName, lec.folderName));
           const numLabel = lec.lectureNumber != null
             ? (lec.lectureNumberEnd != null
                 ? `${lec.lectureNumber.toString().padStart(2, '0')}–${lec.lectureNumberEnd.toString().padStart(2, '0')}`
@@ -251,6 +336,23 @@ const robotsDirective = isHidden ? 'noindex, nofollow' : 'index, follow';
                 <svg class="w-3.5 h-3.5 text-[var(--text-faint)] group-hover/bm:text-[var(--accent)] bm-outline transition-colors" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/></svg>
                 <svg class="w-3.5 h-3.5 text-[var(--accent)] hidden bm-filled transition-colors" fill="currentColor" viewBox="0 0 24 24"><path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/></svg>
               </button>
+              {isLectureHidden && (
+                <span class="shrink-0 px-1.5 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider bg-amber-500/10 text-amber-600 dark:text-amber-400 border border-amber-500/30">
+                  Hidden
+                </span>
+              )}
+              {isAdmin && (
+                <button
+                  type="button"
+                  class="bn-lecture-vis-btn shrink-0 px-2 py-0.5 text-[10px] font-semibold rounded-[var(--r-sm)] border border-[var(--border)] bg-[var(--bg-interactive)] text-[var(--text-muted)] hover:text-[var(--accent)] hover:border-[var(--accent)] cursor-pointer transition-colors"
+                  data-subject={decodedSubjectName}
+                  data-lecture={lec.folderName}
+                  data-target-public={isLectureHidden ? 'true' : 'false'}
+                  title={isLectureHidden ? 'Make this lecture public' : 'Hide this lecture from non-admin users'}
+                >
+                  {isLectureHidden ? 'Show' : 'Hide'}
+                </button>
+              )}
               <svg class="w-4 h-4 text-[var(--text-faint)] shrink-0 group-hover:text-[var(--accent)] transition-colors" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
                 <path stroke-linecap="round" stroke-linejoin="round" d="M9 5l7 7-7 7"/>
               </svg>

@@ -1,6 +1,11 @@
 import type { APIRoute } from 'astro';
 import { env } from 'cloudflare:workers';
 import { listLectures } from '../../../../../utils/notesLoader';
+import {
+  getHiddenLectureKeys,
+  makeLectureKey,
+  LectureVisibilityUnavailableError,
+} from '../../../../../lib/lectureVisibility';
 import { v1CorsHeaders, v1OptionsResponse, checkApiKey } from '../../../../../lib/cors';
 
 export const prerender = false;
@@ -22,14 +27,23 @@ export const GET: APIRoute = async ({ params, request }) => {
   }
 
   try {
-    const lectures = await listLectures(subjectName);
+    const hiddenLectures = await getHiddenLectureKeys((env as any).DB);
+    const lectures = (await listLectures(subjectName)).filter(
+      (l) => !hiddenLectures.has(makeLectureKey(subjectName, l.folderName)),
+    );
     const result = lectures.map((l: any) => ({
       name: l.name,
       folderName: l.folderName,
       slug: l.slug
     }));
     return new Response(JSON.stringify(result), { status: 200, headers: corsHeaders });
-  } catch {
+  } catch (err) {
+    if (err instanceof LectureVisibilityUnavailableError) {
+      return new Response(
+        JSON.stringify({ error: 'Lecture visibility unavailable' }),
+        { status: 503, headers: corsHeaders }
+      );
+    }
     return new Response(
       JSON.stringify({ error: 'Failed to retrieve lectures' }),
       { status: 500, headers: corsHeaders }

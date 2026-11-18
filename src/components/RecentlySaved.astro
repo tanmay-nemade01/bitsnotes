@@ -7,6 +7,11 @@ import { listRecentBookmarks } from '../lib/bookmarks';
 import type { Bookmark } from '../lib/bookmarks';
 import { getEnv } from '../lib/getEnv';
 import { getHiddenSubjectNames, SubjectVisibilityUnavailableError } from '../lib/subjectVisibility';
+import {
+  getHiddenLectureKeys,
+  makeLectureKey,
+  LectureVisibilityUnavailableError,
+} from '../lib/lectureVisibility';
 import { listCatalog } from '../utils/notesLoader';
 import { slugify } from '../utils/lectureDisplay';
 
@@ -19,11 +24,25 @@ if (user) {
   const isAdmin = Boolean((Astro.locals as any).isAdmin);
   try {
     const hiddenSubjects = await getHiddenSubjectNames(env.DB);
-    bookmarks = (!isAdmin && hiddenSubjects.size > 0)
-      ? raw.filter((bm) => !hiddenSubjects.has(bm.subject))
+    let hiddenLectures: Set<string>;
+    try {
+      hiddenLectures = await getHiddenLectureKeys(env.DB);
+    } catch (lecErr) {
+      if (lecErr instanceof LectureVisibilityUnavailableError) {
+        if (!isAdmin) throw lecErr;
+        hiddenLectures = new Set();
+      } else {
+        throw lecErr;
+      }
+    }
+    bookmarks = (!isAdmin && (hiddenSubjects.size > 0 || hiddenLectures.size > 0))
+      ? raw.filter(
+          (bm) => !hiddenSubjects.has(bm.subject) &&
+                  !hiddenLectures.has(makeLectureKey(bm.subject, bm.lecture)),
+        )
       : raw;
   } catch (err) {
-    if (err instanceof SubjectVisibilityUnavailableError) {
+    if (err instanceof SubjectVisibilityUnavailableError || err instanceof LectureVisibilityUnavailableError) {
       bookmarks = isAdmin ? raw : [];
     } else {
       throw err;

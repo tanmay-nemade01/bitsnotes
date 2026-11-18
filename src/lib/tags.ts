@@ -17,6 +17,11 @@ import { uuidv7 } from './auth/crypto';
 import type { AuthDb } from './auth/db';
 import { slugify } from '../utils/lectureDisplay';
 import { getHiddenSubjectNames } from './subjectVisibility';
+import {
+  getHiddenLectureKeys,
+  makeLectureKey,
+  LectureVisibilityUnavailableError,
+} from './lectureVisibility';
 
 // ─── Constants & Types ────────────────────────────────────────────────────────
 
@@ -431,13 +436,20 @@ export async function getSectionsWithSubjects(
   options?: { isAdmin?: boolean }
 ): Promise<{ sections: TagSectionViewModel[]; usingTags: boolean }> {
   const hiddenSubjectNames = await getHiddenSubjectNames(db);
+  const hiddenLectures = await getHiddenLectureKeys(db, catalog as any);
   const isAdmin = options?.isAdmin ?? false;
 
-  // Build a fast lookup map for subject details from catalog
+  // Build a fast lookup map for subject details from catalog. Lecture counts
+  // reflect only public lectures for non-admin viewers.
   const catalogMap = new Map(
     catalog.map((s) => {
-      const lectures = s.lectures.filter((l) => l.scope === 'lecture');
-      const additional = s.lectures.filter((l) => l.scope !== 'lecture');
+      const lecturesForViewer: any[] = isAdmin
+        ? s.lectures
+        : s.lectures.filter(
+            (l: any) => !hiddenLectures.has(makeLectureKey(s.subject, l.folderName)),
+          );
+      const lectures = lecturesForViewer.filter((l) => l.scope === 'lecture');
+      const additional = lecturesForViewer.filter((l) => l.scope !== 'lecture');
       return [
         s.subject,
         {

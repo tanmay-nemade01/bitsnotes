@@ -402,13 +402,35 @@ VALUES
 -- Hidden subjects (is_public = 0) are completely invisible to non-admins
 -- and only viewable by admins for previewing.
 CREATE TABLE IF NOT EXISTS subject_settings (
-  subject_name  TEXT PRIMARY KEY,                  -- Canonical subject folder name
-  is_public     INTEGER NOT NULL DEFAULT 1,        -- 1 = public to everyone, 0 = hidden (admin preview only)
-  updated_at    INTEGER NOT NULL,
-  updated_by    TEXT                               -- Admin user_id who modified it
+  subject_name        TEXT PRIMARY KEY,            -- Canonical subject folder name
+  is_public           INTEGER NOT NULL DEFAULT 1,  -- 1 = public to everyone, 0 = hidden (admin preview only)
+  hide_new_lectures   INTEGER NOT NULL DEFAULT 0,  -- 1 = lectures without an explicit lecture_settings row are hidden
+  updated_at          INTEGER NOT NULL,
+  updated_by          TEXT                         -- Admin user_id who modified it
 );
 
 CREATE INDEX IF NOT EXISTS idx_subject_settings_public
   ON subject_settings (is_public);
+
+-- ─── Lecture Visibility (Hidden / Draft Lectures) ────────────────────────────
+-- Managed by admins from /backstage/tags.
+-- Allows hiding individual lectures within an otherwise public subject.
+-- Hidden lectures are completely invisible to non-admins (listings, search,
+-- sitemap, bookmarks and direct URLs) but remain previewable by admins.
+-- Mirrors `src/db/migrations/017_lecture_visibility.sql`.
+CREATE TABLE IF NOT EXISTS lecture_settings (
+  subject_name   TEXT NOT NULL,                    -- Canonical subject folder name
+  lecture_folder TEXT NOT NULL,                    -- Canonical lecture folder name (stable identifier)
+  is_public      INTEGER NOT NULL DEFAULT 1,       -- 1 = public to everyone, 0 = hidden (admin preview only)
+  updated_at     INTEGER NOT NULL,
+  updated_by     TEXT,                             -- Admin user_id who modified it
+  PRIMARY KEY (subject_name, lecture_folder)
+);
+
+CREATE INDEX IF NOT EXISTS idx_lecture_settings_public
+  ON lecture_settings (is_public);
+
+CREATE INDEX IF NOT EXISTS idx_lecture_settings_subject
+  ON lecture_settings (subject_name);
 
 

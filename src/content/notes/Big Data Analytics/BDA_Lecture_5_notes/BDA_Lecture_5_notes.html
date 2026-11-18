@@ -231,17 +231,9 @@
   <p>Each component in the pipeline corresponds to a physical step the students performed:</p>
   <ol>
     <li><strong>RecordReader</strong> converts raw input splits (such as physical bags of coins or raw HDFS file blocks) into structured key-value pairs \((k_1, v_1)\), where the key represents a record offset and the value contains raw coin properties. In the classroom, this is the act of picking up a coin and looking at it.</li>
-  </ol>
-  <ol>
     <li><strong>Mapper</strong> processes individual key-value pairs to emit intermediate key-value pairs \((k_2, v_2)\). In the coin example, each mapper inspects a coin and emits <code>(coin_type, 1)</code> — for instance, <code>(Aluminum, 1)</code>, <code>(Copper, 1)</code>, or <code>(Gold, 1)</code>. The mapper applies a function to each record independently, with no knowledge of other records.</li>
-  </ol>
-  <ol>
     <li><strong>Combiner</strong> (Mini-Reducer) performs localized pre-aggregation directly on the mapper node prior to network transfer. A mapper holding five aluminum coins collapses five <code>(Aluminum, 1)</code> pairs into a single intermediate summary <code>(Aluminum, 5)</code>, drastically reducing inter-node network traffic. The combiner is an optional optimization — it runs the same logic as the reducer but only on the local mapper's output.</li>
-  </ol>
-  <ol>
     <li><strong>Shuffle and Sort Phase</strong> collects intermediate output from all mappers, partitions records by key, routes identical keys to the same target reducer node, and sorts keys in ascending order. This is the most network-intensive phase of a MapReduce job. In the classroom analogy, imagine all students walking to the front of the room and sorting their aluminum coins into one pile, copper into another, and so on.</li>
-  </ol>
-  <ol>
     <li><strong>Reducer</strong> aggregates intermediate values associated with each unique key to produce final output summaries \((k_3, v_3)\). Each reducer receives all values for a given key and produces the final answer — e.g., <code>(Aluminum, 47)</code>, <code>(Copper, 23)</code>, etc.</li>
   </ol>
 </div>
@@ -537,7 +529,7 @@ ORDER BY total_sales DESC;</code></pre>
     </tr>
     <tr>
       <td>Resource Tracker Port</td>
-      <td><code>8030</code></td>
+      <td><code>8031</code></td>
       <td>Internal IPC port used by slave Node Managers to send heartbeats and resource availability reports to the Resource Manager. Every NM heartbeat arrives on this port.</td>
     </tr>
     <tr>
@@ -564,11 +556,7 @@ java.net.ConnectException: Connection refused</code></pre>
   <p><strong>Root Cause Analysis and Step-by-Step Resolution:</strong></p>
   <ol>
     <li><strong>Diagnosis:</strong> The client application started successfully and initialized local execution. However, when it attempted to submit the underlying MapReduce job to the YARN Resource Manager IPC interface at <code>localhost:8032</code>, the connection was refused. The <code>Connection refused</code> error (as opposed to a timeout) means no process is listening on that port at all — the RM daemon is not running.</li>
-  </ol>
-  <ol>
     <li><strong>Checking System Daemons:</strong> Inspecting HDFS via <code>jps</code> shows <code>NameNode</code> and <code>DataNode</code> processes are active, meaning file storage is online. However, <code>ResourceManager</code> and <code>NodeManager</code> daemons are missing because YARN was not started. This is a classic operator error: starting only the storage layer without the compute layer.</li>
-  </ol>
-  <ol>
     <li><strong>Remediation Command:</strong> Execute the YARN startup script from the Hadoop <code>sbin</code> directory:</li>
   </ol>
   <pre><code>   start-yarn.sh</code></pre>
@@ -576,7 +564,6 @@ java.net.ConnectException: Connection refused</code></pre>
   <ol>
     <li><strong>Verification:</strong> Running <code>jps</code> now confirms <code>ResourceManager</code> is listening on port <code>8032</code> and port <code>8088</code>, and <code>NodeManager</code> is active on worker nodes. Re-running the client tool completes the job submission successfully.</li>
   </ol>
-  <p><strong>Key insight:</strong> HDFS and YARN are <em>independent</em> daemons that must be started separately. The <code>start-all.sh</code> convenience script starts both, but <code>start-dfs.sh</code> and <code>start-yarn.sh</code> are separate scripts that must each be invoked if you are starting services manually.</p>
 </div>
 <div class="warning-box">
   <p><strong>Pitfall — HDFS running ≠ YARN running.</strong></p>
@@ -608,10 +595,6 @@ java.net.ConnectException: Connection refused</code></pre>
   <p><strong>Q:</strong> Why does the client talk directly to the Application Master instead of routing all progress queries through the Resource Manager?</p>
   <p><strong>A:</strong> Routing all status queries through the Resource Manager would create a severe bottleneck on large clusters with thousands of running tasks. Consider a cluster running 1,000 applications, each with 100 tasks, each reporting progress once per second — that is 100,000 progress queries per second hitting a single daemon. By delegating client status polling directly to the per-application AppMaster, the Resource Manager stays lightweight and focused solely on resource allocation. Each AM handles only its own tasks' status queries, distributing the monitoring load across the cluster's worker nodes.</p>
   <p><strong>Scalability math:</strong> With \(N\) applications, each averaging \(T\) tasks, and each task reporting once per second, the centralized model would generate \(N \times T\) queries per second at the RM. In the decentralized model, each AM handles only \(T\) queries, and the RM handles only \(N\) registration heartbeats — a reduction factor of \(T\) (often 100–1,000x).</p>
-</div>
-<div class="important-note">
-  <p><strong>Q:</strong> If HDFS is running normally, why does a Sqoop import fail with a <code>Connection refused</code> error on port <code>8032</code>?</p>
-  <p><strong>A:</strong> HDFS handles file storage daemons (<code>NameNode</code> and <code>DataNode</code>), but Sqoop executes its import by launching a MapReduce job on YARN. Port <code>8032</code> is the Resource Manager IPC port used for job submission. If YARN daemons were not started via <code>start-yarn.sh</code>, the Resource Manager process is offline and no process is listening on port <code>8032</code>, causing the client's TCP connection attempt to be refused by the operating system. HDFS and YARN are independent daemon groups that must be started separately — running one does not imply the other is running.</p>
 </div>
 
 <h2 id="5.4-yarn-scheduling-algorithms-multi-tenancy-quotas-and-resource-allocation">5.4 YARN Scheduling Algorithms, Multi-Tenancy Quotas, and Resource Allocation</h2>
@@ -1049,10 +1032,6 @@ java.net.ConnectException: Connection refused</code></pre>
 
 <h3 id="5.4.9-student-questions-and-answers">5.4.9 Student Questions and Answers</h3>
 <div class="important-note">
-  <p><strong>Q:</strong> If a queue is configured with <code>weight = 0.0</code>, does that mean jobs submitted to it will never run?</p>
-  <p><strong>A:</strong> No. A weight of <code>0.0</code> means the queue has zero <em>guaranteed</em> resource allocation when other queues are busy. However, whenever higher-priority queues become idle, the Fair Scheduler allocates unutilized cluster capacity to the <code>weight = 0.0</code> queue. In the CSS Flexbox analogy, this is like an element with <code>flex-grow: 0</code> — it won't expand when competing with other flex items, but if it's the only element in the container, it receives all available space.</p>
-</div>
-<div class="important-note">
   <p><strong>Q:</strong> What is the difference between <code>minResources</code> and <code>maxResources</code> in YARN queue configuration?</p>
   <p><strong>A:</strong> <code>minResources</code> specifies the minimum guaranteed resource baseline that YARN will reserve for a queue under heavy cluster load — this is the queue's <strong>floor</strong>. <code>maxResources</code> sets a strict upper ceiling capping how much total cluster capacity that queue can borrow, even when all other queues are completely idle — this is the queue's <strong>ceiling</strong>. Together, they create a bounded range <code>[minResources, maxResources]</code> within which the queue operates.</p>
 </div>
@@ -1332,7 +1311,6 @@ for table &lt;table_name&gt;. Please specify one with --split-by or use
 <h3 id="5.5.6-live-demo-walkthrough-220-000-record-mysql-import">5.5.6 Live Demo Walkthrough: 220,000 Record MySQL Import</h3>
 <div class="example-box">
   <p><strong>End-to-End Demonstration: Importing 220,000 Records from MySQL to HDFS</strong></p>
-  <p>The following walkthrough demonstrates Sqoop's complete import lifecycle—from command invocation to YARN job execution to HDFS output verification.</p>
   <p><strong>Step 1 — Command Execution:</strong></p>
   <pre><code>sqoop import \
   --connect jdbc:mysql://localhost:3306/profile_db \
@@ -1430,10 +1408,6 @@ INFO mapreduce.ImportJobBase: Retrieved 220000 records.</code></pre>
 <div class="important-note">
   <p><strong>Q:</strong> Why does Sqoop use Map-only jobs instead of launching Reducers?</p>
   <p><strong>A:</strong> Sqoop's purpose is to extract data from an RDBMS and write it directly to HDFS blocks. Reducers are required for data aggregation, sorting, or joining—none of which are needed during a raw data transfer. Launching Reducer tasks would introduce unnecessary network shuffle overhead (all mapper output would need to be transferred across the network to reducer nodes). Map-only jobs allow each mapper to write directly to local HDFS blocks in parallel, maximizing I/O throughput.</p>
-</div>
-<div class="important-note">
-  <p><strong>Q:</strong> What happens if I attempt to run a multi-mapper Sqoop import on a database table that does not have a primary key?</p>
-  <p><strong>A:</strong> Sqoop will throw an import exception and terminate immediately. Without a primary key to serve as the default splitting column, Sqoop cannot compute <code>MIN</code> and <code>MAX</code> split bounds, so it cannot divide the table into parallel slices. Resolution: either (1) specify <code>--split-by &lt;numeric_column_name&gt;</code> to designate an alternative splitting column, or (2) set <code>--num-mappers 1</code> to force a sequential import that bypasses the splitting algorithm entirely.</p>
 </div>
 
 <h2 id="5.6-flume-unstructured-streaming-log-ingestion-framework">5.6 Flume: Unstructured Streaming Log Ingestion Framework</h2>
@@ -1826,10 +1800,6 @@ edge.sources.source1.selector.default = channelC</code></pre>
   <p><strong>At-Least-Once, Not Exactly-Once.</strong> Even in End-to-End Reliability Mode, Flume guarantees <strong>at-least-once</strong> semantics, not exactly-once. Duplicates are possible because: (1) after an agent restart, the Spooling Directory Source will re-read events from an uncompleted file even if some events were already committed to the channel; (2) after a Sink restart, events that were written to the destination but whose channel transaction was not yet committed will be re-sent. Exactly-once semantics would require a two-phase commit protocol, which is prohibitively expensive for high-volume event ingestion. In practice, downstream deduplication (using MapReduce, Hive, or Spark jobs with the UUID interceptor) is the standard approach to handling duplicates.</p>
 </div>
 <h3 id="5.6.6-student-questions-and-answers">5.6.6 Student Questions and Answers</h3>
-<div class="important-note">
-  <p><strong>Q:</strong> Why would an enterprise choose a File Channel over a Memory Channel in Flume if Memory Channels offer much higher throughput?</p>
-  <p><strong>A:</strong> A Memory Channel buffers events in volatile RAM within the agent JVM process. If the host machine experiences a power failure, the Flume agent crashes due to an OutOfMemoryError, or the machine reboots, <strong>all</strong> buffered log data in the Memory Channel is permanently and irrecoverably lost. A File Channel persists events to local disk using a transactional write-ahead log with fsync, guaranteeing that buffered events survive agent crashes and system reboots. For mission-critical ingestion (financial logs, security audit trails, compliance data), the File Channel's zero-data-loss guarantee far outweighs its lower throughput. Additionally, the File Channel's default capacity of 1,000,000 events (versus the Memory Channel's 100 events) provides a much larger buffer to absorb temporary downstream outages.</p>
-</div>
 <div class="important-note">
   <p><strong>Q:</strong> How do Flume agents support multi-hop logging across multiple physical servers?</p>
   <p><strong>A:</strong> Flume supports multi-hop topologies by chaining agents using Avro Sink and Avro Source pairs. An edge agent (Tier 1) on a web server collects local log events into its File Channel and uses an Avro Sink to transmit events over the network via Avro RPC to an Avro Source running on a central aggregator agent (Tier 2). The Avro RPC connection is transactional — the Tier 1 agent's Avro Sink will not commit its channel transaction until it receives confirmation that the Tier 2 agent's Avro Source has committed events to its own channel. This guarantees at-least-once delivery across the network hop. The Tier 2 aggregator then writes the accumulated events to HDFS using an HDFS Sink. This architecture produces fewer, larger HDFS files (improving MapReduce efficiency) and allows centralized management of the final storage destination.</p>

@@ -9,6 +9,12 @@ import {
   computeHiddenFingerprint,
   SubjectVisibilityUnavailableError,
 } from '../lib/subjectVisibility';
+import {
+  getHiddenLectureKeys,
+  computeHiddenLectureFingerprint,
+  makeLectureKey,
+  LectureVisibilityUnavailableError,
+} from '../lib/lectureVisibility';
 import { toPublicSearchItem } from '../utils/searchEngine';
 
 export const prerender = false;
@@ -86,11 +92,44 @@ export const GET: APIRoute = async (context) => {
     }
   }
 
+  let hiddenLectures: Set<string>;
+  try {
+    hiddenLectures = await getHiddenLectureKeys(envBinding?.DB);
+  } catch (err) {
+    if (err instanceof LectureVisibilityUnavailableError) {
+      if (isAdmin) {
+        hiddenLectures = new Set();
+      } else {
+        return new Response(JSON.stringify({ error: 'Lecture visibility unavailable' }), {
+          status: 503,
+          headers: {
+            'Content-Type': 'application/json',
+            'Cache-Control': 'no-store',
+          },
+        });
+      }
+    } else {
+      throw err;
+    }
+  }
+
   const hiddenFingerprint = await computeHiddenFingerprint(hiddenSubjects);
+  const hiddenLectureFingerprint = await computeHiddenLectureFingerprint(hiddenLectures);
 
   function filterForViewer(items: any[]) {
-    if (isAdmin || hiddenSubjects.size === 0) return items;
-    return items.filter((item) => !item.subject || !hiddenSubjects.has(item.subject));
+    if (isAdmin || (hiddenSubjects.size === 0 && hiddenLectures.size === 0)) return items;
+    return items.filter((item) => {
+      if (item.subject && hiddenSubjects.has(item.subject)) return false;
+      if (
+        item.type === 'note' &&
+        item.subject &&
+        item.folderName &&
+        hiddenLectures.has(makeLectureKey(item.subject, item.folderName))
+      ) {
+        return false;
+      }
+      return true;
+    });
   }
 
   // In development, build the search index dynamically so local edits reflect immediately
@@ -103,7 +142,7 @@ export const GET: APIRoute = async (context) => {
         headers: {
           'Content-Type': 'application/json',
           'Cache-Control': 'public, max-age=300',
-          'ETag': `"${manifest.version}-${isAdmin ? 'admin' : 'public'}-${hiddenFingerprint}"`,
+          'ETag': `"${manifest.version}-${isAdmin ? 'admin' : 'public'}-${hiddenFingerprint}-${hiddenLectureFingerprint}"`,
           'X-Robots-Tag': 'noindex, nofollow',
         },
       });
@@ -186,7 +225,7 @@ export const GET: APIRoute = async (context) => {
       headers: {
         'Content-Type': 'application/json',
         'Cache-Control': 'public, max-age=300',
-        'ETag': `"${manifest.version}-${isAdmin ? 'admin' : 'public'}-${hiddenFingerprint}"`,
+        'ETag': `"${manifest.version}-${isAdmin ? 'admin' : 'public'}-${hiddenFingerprint}-${hiddenLectureFingerprint}"`,
         'X-Robots-Tag': 'noindex, nofollow',
       },
     });
@@ -209,7 +248,7 @@ export const GET: APIRoute = async (context) => {
       ? ((caches as any).default as Cache)
       : ((globalThis as any)?.caches?.default as Cache | undefined);
     const cacheKey = new Request(
-      `https://bitsnotes.com/__cache/search-index/${encodeURIComponent(manifest.version)}-${isAdmin ? 'admin' : 'public'}-${hiddenFingerprint}.json`,
+      `https://bitsnotes.com/__cache/search-index/${encodeURIComponent(manifest.version)}-${isAdmin ? 'admin' : 'public'}-${hiddenFingerprint}-${hiddenLectureFingerprint}.json`,
     );
     if (cache) {
       try {
@@ -235,7 +274,7 @@ export const GET: APIRoute = async (context) => {
       headers: {
         'Content-Type': 'application/json',
         'Cache-Control': 'public, max-age=3600',
-        'ETag': `"${manifest.version}-${isAdmin ? 'admin' : 'public'}-${hiddenFingerprint}"`,
+        'ETag': `"${manifest.version}-${isAdmin ? 'admin' : 'public'}-${hiddenFingerprint}-${hiddenLectureFingerprint}"`,
         'X-Robots-Tag': 'noindex, nofollow',
       },
     });

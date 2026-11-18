@@ -589,7 +589,6 @@ flowchart TD
 <p>Now take any of these rules, say one with several conditions in the LHS. If we are building the rule into hardware or running it on a system, all these comparisons actually get executed. That execution is not free — there is a cost associated with doing all these operations. So we ask: can we simplify the rules? Simplification means reducing the number of conditions such that the quality of the rule is not compromised — we do the same prediction, but with one less check.</p>
 <div class="important-note">
   <p><strong>Intuition.</strong> Every conjunct in the LHS is a computation the system must run at prediction time: a chip evaluates <code>refund = no</code>, then <code>marital status = married</code>, then reads the class. In embedded hardware or a high-frequency system, each dropped condition saves real work per prediction, multiplied by millions of tuples. Simplification cuts that work while keeping the rule's behavior identical — fewer conditions, same decisions, cheaper rules.</p>
-  <p><strong>Professor's rule of thumb:</strong> fewer conditions on the left-hand side means a more efficient rule — the same prediction with less computation.</p>
 </div>
 <h3 id="8.6.2-worked-example-dropping-a-redundant-condition">8.6.2 Worked Example: Dropping a Redundant Condition</h3>
 <p>Take the rule extracted from a tree: <code>if refund = no and marital status = married then class = no</code>. Look carefully at what this rule covers. The condition <code>marital status = married</code> is the discriminating one — this rule is actually getting triggered for four tuples out of a 10-tuple dataset. So:</p>
@@ -597,23 +596,6 @@ flowchart TD
 <p>and every one of those four tuples has actual class label <code>no</code>, matching the rule's prediction, so:</p>
 <p>\[ \text{accuracy} = \frac{n_{correct}}{n_{cover}} = \frac{4}{4} = 100\% \]</p>
 <p>Coverage is 40% and accuracy is 100%. The only problem: we are doing two condition checks — two computations on the LHS. Can we reduce it? If we consider only one attribute, <code>marital status = married</code>, we get the same result: the rule has the same coverage and the same accuracy. So why not drop the other condition? The rule becomes more efficient — less computation on the left-hand side — while the quality stays identical. This is called <em>rule simplification</em>: reducing the LHS conditions of the rules while keeping accuracy and coverage the same, because we want the rule to be more efficient.</p>
-<div class="example-box">
-  <p><strong>Worked example, step by step.</strong> Original rule: <code>if refund = no and marital status = married then class = no</code>, dataset of 10 tuples.</p>
-  <ol>
-    <li><strong>Count the coverage.</strong> The rule triggers for the 4 married tuples whose refund is <code>no</code>: \(n_{cover} = 4\), \(|D| = 10\):</li>
-  </ol>
-  <p>\[ \text{coverage} = \frac{n_{cover}}{|D|} = \frac{4}{10} = 40\% \]</p>
-  <ol>
-    <li><strong>Count the accuracy.</strong> All 4 covered tuples really have class <code>no</code>, so \(n_{correct} = 4\):</li>
-  </ol>
-  <p>\[ \text{accuracy} = \frac{n_{correct}}{n_{cover}} = \frac{4}{4} = 100\% \]</p>
-  <ol>
-    <li><strong>Ask which conjunct discriminates.</strong> Inside this tree path, <code>refund = no</code> adds no filtering power: the married tuples in this region are exactly the refund-no married tuples, so dropping <code>refund = no</code> changes nothing about which tuples fire the rule.</li>
-    <li><strong>Drop it.</strong> Simplified rule: <code>if marital status = married then class = no</code>. Re-check: still triggered for the same 4 tuples, still 4 correct — coverage 40%, accuracy 100% unchanged.</li>
-    <li><strong>Final answer: the simplified rule has identical quality (coverage 40%, accuracy 100%) at half the LHS cost.</strong></li>
-  </ol>
-  <p>Sense-check: one check instead of two, same four predictions, same four correct answers — the removal was free because the dropped conjunct never excluded any tuple.</p>
-</div>
 <h3 id="8.6.3-what-simplification-breaks">8.6.3 What Simplification Breaks</h3>
 <p>Once we simplify rules, we have to go back and re-check the properties we assumed earlier. The rules after simplifying might not be mutually exclusive — two rules might now get triggered for a single tuple. Then how do you resolve the conflict? That is the first question. Second, simplification might break exhaustiveness: there might now be tuples for which no rule gets triggered at all. So if we do rule simplification, we must check both properties, and when they no longer hold we need mechanisms — conflict resolution strategies for the first problem, and a default strategy for the second.</p>
 <div class="warning-box">
@@ -697,18 +679,6 @@ flowchart TD
 <pre><code>Tuple: name = turtle, blood type = cold, give birth = no,
        can apply for student = yes, live in water = sometimes</code></pre>
 <p>Step through the five rules and see which ones trigger. <code>name = turtle</code> appears in no rule — no trigger there. <code>blood type = cold</code> — still no rule triggered. <code>give birth = no</code> — this matches several rules; three rules might be triggered by this condition. <code>can apply for student = yes</code> — this kills rule R1 (R1 needs a different value), and also disqualifies two others. <code>live in water = sometimes</code> — this triggers one more. When the dust settles, exactly two rules are triggered for this tuple: R4 and R5. Now look at the final class labels of those two rules: they are different. One rule says <code>reptile</code>, the other says <code>amphibian</code>. So which one should the classification system take? We need a conflict resolution strategy: arrange the rules in a particular order — by accuracy (highest accurate rule on top), or by size ordering (toughest rule on top), or by coverage — and the first rule that gets triggered is used for the final prediction. In this example R4 is the first of the two to be checked, so the final prediction is <code>reptile</code>.</p>
-<div class="example-box">
-  <p><strong>Worked example, step by step.</strong> Five rules R1–R5; the test tuple is the turtle given above.</p>
-  <ol>
-    <li>Test R1 against the tuple — fails on <code>can apply for student</code> (R1 needs a different value): not triggered.</li>
-    <li>R2 and R3 — both fail on the same condition: not triggered.</li>
-    <li>R4 — <code>give birth = no</code> and <code>live in water = sometimes</code> both hold for the tuple: <strong>triggered</strong>, predicts <code>reptile</code>.</li>
-    <li>R5 — the same two conditions hold: <strong>triggered</strong>, predicts <code>amphibian</code>.</li>
-    <li>Two rules, two different classes. Under any ordered strategy (accuracy order, size order, coverage order — whichever ranks R4 above R5), R4 is checked first and decides the answer.</li>
-  </ol>
-  <p><strong>Final answer: the final prediction is <code>reptile</code> — R4 is first in the ordering and it fires.</strong></p>
-  <p>Sense-check: both rules legitimately fire — this tuple is genuinely ambiguous for the rule set — and the ordering is what breaks the tie. Every ordered strategy gives exactly one deterministic answer; only a different order could change it.</p>
-</div>
 <div class="warning-box">
   <p><strong>Pitfalls.</strong></p>
   <ul>

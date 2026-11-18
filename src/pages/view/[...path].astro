@@ -16,6 +16,12 @@ import ChatbotPanel from '../../components/ChatbotPanel.astro';
 import { getUser, getEnv } from '../../lib/apiHelpers';
 import { isVerifiedSearchBot } from '../../lib/searchBots';
 import { getHiddenSubjectNames, SubjectVisibilityUnavailableError } from '../../lib/subjectVisibility';
+import {
+  getHiddenLectureKeys,
+  filterVisibleLectures,
+  makeLectureKey,
+  LectureVisibilityUnavailableError,
+} from '../../lib/lectureVisibility';
 import { formatAccessDate } from '../../lib/auth/access';
 
 export const prerender = false;
@@ -67,10 +73,28 @@ if (isHidden && !isAdmin) {
   return Astro.redirect('/');
 }
 
+// Individual lectures may be hidden inside an otherwise public subject.
+// Admins keep the full list for previewing; everyone else only sees public ones.
+let hiddenLectures: Set<string>;
+try {
+  hiddenLectures = await getHiddenLectureKeys(env?.DB);
+} catch (err) {
+  if (err instanceof LectureVisibilityUnavailableError) {
+    if (isAdmin) {
+      hiddenLectures = new Set();
+    } else {
+      return new Response('Temporarily unavailable', { status: 503, headers: { 'Cache-Control': 'no-store' } });
+    }
+  } else {
+    throw err;
+  }
+}
+
 const subjectName = matchedSubject.name;
 
-const lectures = await listLectures(subjectName);
-const matchedLecture = lectures.find(
+const allLectures = await listLectures(subjectName);
+const lectures = filterVisibleLectures(allLectures, subjectName, hiddenLectures, isAdmin);
+const matchedLecture = allLectures.find(
   (l) => l.slug === lectureSlugOrFolderName ||
          l.folderName === lectureSlugOrFolderName ||
          slugify(l.folderName) === lectureSlugOrFolderName ||
@@ -80,6 +104,14 @@ const matchedLecture = lectures.find(
 
 if (!matchedLecture) {
   return Astro.redirect('/');
+}
+
+// Hidden lectures are completely invisible to non-admins — bounce them back
+// to the subject page instead of serving the notes.
+const isLectureHidden = hiddenLectures.has(makeLectureKey(subjectName, matchedLecture.folderName));
+
+if (isLectureHidden && !isAdmin) {
+  return Astro.redirect(`/subject/${encodeURIComponent(slugify(subjectName))}`);
 }
 
 // Redirect to canonical slug if raw/unslugified names or folderNames were used in URL
@@ -206,7 +238,7 @@ if (currentLectureIndex !== -1 && currentSubjectIndex !== -1) {
   } else {
     const prevSubjectIdx = (currentSubjectIndex - 1 + subjects.length) % subjects.length;
     const prevSubject = subjects[prevSubjectIdx];
-    const prevLectures = await listLectures(prevSubject.name);
+    const prevLectures = filterVisibleLectures(await listLectures(prevSubject.name), prevSubject.name, hiddenLectures, isAdmin);
     if (prevLectures.length > 0) {
       const last = prevLectures[prevLectures.length - 1];
       prevUrl = `/view/${encodeURIComponent(slugify(prevSubject.name))}/${encodeURIComponent(last.slug)}`;
@@ -221,7 +253,7 @@ if (currentLectureIndex !== -1 && currentSubjectIndex !== -1) {
   } else {
     const nextSubjectIdx = (currentSubjectIndex + 1) % subjects.length;
     const nextSubject = subjects[nextSubjectIdx];
-    const nextLectures = await listLectures(nextSubject.name);
+    const nextLectures = filterVisibleLectures(await listLectures(nextSubject.name), nextSubject.name, hiddenLectures, isAdmin);
     if (nextLectures.length > 0) {
       const first = nextLectures[0];
       nextUrl = `/view/${encodeURIComponent(slugify(nextSubject.name))}/${encodeURIComponent(first.slug)}`;
@@ -287,7 +319,7 @@ const quizJson = quizSchema && !gated ? JSON.stringify(quizSchema) : null;
   description={seoDescription}
   keywords={seoKeywords}
   ogType="article"
-  robots={isHidden ? 'noindex, nofollow' : 'index, follow'}
+  robots={(isHidden || isLectureHidden) ? 'noindex, nofollow' : 'index, follow'}
 >
   <Fragment slot="head">
 
@@ -314,6 +346,55 @@ const quizJson = quizSchema && !gated ? JSON.stringify(quizSchema) : null;
             Manage Subject Visibility →
           </a>
         </aside>
+      </div>
+    )}
+
+    {isAdmin && isLectureHidden && !isHidden && (
+      <div class="max-w-[1560px] mx-auto w-full px-4 sm:px-6 lg:px-8 pt-3 pb-1">
+        <aside class="rounded-[var(--r-md)] border border-amber-500/30 bg-amber-500/10 px-4 py-2.5 text-xs text-amber-700 dark:text-amber-300 flex items-center justify-between gap-3 flex-wrap">
+          <div class="flex items-center gap-2">
+            <svg class="w-4 h-4 text-amber-600 dark:text-amber-400 shrink-0" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253"/></svg>
+            <span><strong>Admin Preview:</strong> this lecture is hidden from non-admin users.</span>
+          </div>
+          <button
+            type="button"
+            id="lecture-publish-toggle-btn"
+            data-subject={subjectName}
+            data-lecture={matchedLecture.folderName}
+            class="shrink-0 px-3 py-1 text-xs font-semibold rounded-[var(--r-sm)] bg-amber-600 text-white hover:bg-amber-700 transition-colors cursor-pointer"
+          >
+            Make Public
+          </button>
+        </aside>
+        <script is:inline>
+          document.getElementById('lecture-publish-toggle-btn')?.addEventListener('click', async function () {
+            var btn = this;
+            btn.disabled = true;
+            var origText = btn.textContent;
+            btn.textContent = 'Updating…';
+            try {
+              var res = await fetch('/api/admin/subjects/lectures/visibility', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                  subjectName: btn.getAttribute('data-subject'),
+                  lectureFolder: btn.getAttribute('data-lecture'),
+                  isPublic: true,
+                }),
+              });
+              if (res.ok) window.location.reload();
+              else {
+                alert('Failed to update lecture visibility.');
+                btn.disabled = false;
+                btn.textContent = origText;
+              }
+            } catch (e) {
+              alert('Network error.');
+              btn.disabled = false;
+              btn.textContent = origText;
+            }
+          });
+        </script>
       </div>
     )}
 

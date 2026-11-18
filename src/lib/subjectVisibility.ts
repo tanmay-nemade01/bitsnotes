@@ -19,6 +19,7 @@ export class SubjectVisibilityUnavailableError extends Error {}
 export interface SubjectSettingRow {
   subject_name: string;
   is_public: number;
+  hide_new_lectures: number;
   updated_at: number;
   updated_by: string | null;
 }
@@ -26,6 +27,7 @@ export interface SubjectSettingRow {
 export interface SubjectSetting {
   subjectName: string;
   isPublic: boolean;
+  hideNewLectures: boolean;
   updatedAt: number;
   updatedBy: string | null;
 }
@@ -38,13 +40,15 @@ export function normalizeSubjectName(name: string): string {
 }
 
 let cachedHiddenSubjectNames: { data: Set<string>; expiresAt: number } | null = null;
+let cachedAutoHideLectureSubjects: { data: Set<string>; expiresAt: number } | null = null;
 const CACHE_TTL_MS = 60_000; // 60 seconds memory cache per isolate
 
 /**
- * Manually invalidates the subject visibility cache (e.g. after admin updates).
+ * Manually invalidates the subject visibility caches (e.g. after admin updates).
  */
 export function invalidateSubjectVisibilityCache(): void {
   cachedHiddenSubjectNames = null;
+  cachedAutoHideLectureSubjects = null;
 }
 
 /**
@@ -177,4 +181,96 @@ export async function setSubjectVisibility(
   invalidateSubjectVisibilityCache();
 
   return { subjectName: canonical, isPublic };
+}
+
+/**
+ * Returns the set of subjects where lectures without an explicit visibility
+ * row should be hidden by default. Fails closed like hidden-subject lookups.
+ */
+export async function getAutoHideLectureSubjectNames(db?: AuthDb | null): Promise<Set<string>> {
+  if (!db) {
+    if (import.meta.env.DEV || (import.meta.env as any).MODE === 'test') {
+      return new Set();
+    }
+    throw new SubjectVisibilityUnavailableError('Database connection unavailable for auto-hide lecture check');
+  }
+
+  const now = Date.now();
+  if (cachedAutoHideLectureSubjects && now < cachedAutoHideLectureSubjects.expiresAt) {
+    return cachedAutoHideLectureSubjects.data;
+  }
+
+  try {
+    const rows = await db
+      .prepare('SELECT subject_name FROM subject_settings WHERE hide_new_lectures = 1')
+      .all<{ subject_name: string }>();
+
+    const set = new Set<string>();
+    for (const row of rows.results ?? []) {
+      if (row.subject_name) set.add(normalizeSubjectName(row.subject_name).toLowerCase());
+    }
+    cachedAutoHideLectureSubjects = { data: set, expiresAt: now + CACHE_TTL_MS };
+    return set;
+  } catch (err: any) {
+    if (cachedAutoHideLectureSubjects) {
+      return cachedAutoHideLectureSubjects.data;
+    }
+    throw new SubjectVisibilityUnavailableError(`Auto-hide lecture setting unavailable: ${err?.message || 'query failed'}`);
+  }
+}
+
+/** Returns a map of subjectName -> autoHideNewLectures boolean for all configured subjects. */
+export async function listSubjectAutoHideMap(db?: AuthDb | null): Promise<Map<string, boolean>> {
+  const map = new Map<string, boolean>();
+  if (!db) return map;
+
+  try {
+    const rows = await db
+      .prepare('SELECT subject_name, hide_new_lectures FROM subject_settings')
+      .all<SubjectSettingRow>();
+
+    for (const row of rows.results ?? []) {
+      if (row.subject_name) {
+        map.set(normalizeSubjectName(row.subject_name), Number(row.hide_new_lectures) === 1);
+      }
+    }
+  } catch {
+    // Graceful fallback
+  }
+
+  return map;
+}
+
+/**
+ * Enables/disables the "hide new lectures by default" setting for a subject.
+ * Does not change subject visibility. Requires admin authentication at the API layer.
+ */
+export async function setSubjectAutoHide(
+  db: AuthDb,
+  subjectName: string,
+  enabled: boolean,
+  adminUserId?: string,
+): Promise<{ subjectName: string; hideNewLectures: boolean }> {
+  const canonical = normalizeSubjectName(subjectName);
+  if (!canonical) throw new Error('Subject name cannot be empty.');
+
+  const flag = enabled ? 1 : 0;
+  const now = Date.now();
+  const userId = adminUserId || null;
+
+  await db
+    .prepare(
+      `INSERT INTO subject_settings (subject_name, is_public, hide_new_lectures, updated_at, updated_by)
+       VALUES (?, 1, ?, ?, ?)
+       ON CONFLICT(subject_name) DO UPDATE SET
+         hide_new_lectures = excluded.hide_new_lectures,
+         updated_at = excluded.updated_at,
+         updated_by = excluded.updated_by`,
+    )
+    .bind(canonical, flag, now, userId)
+    .run();
+
+  invalidateSubjectVisibilityCache();
+
+  return { subjectName: canonical, hideNewLectures: enabled };
 }
