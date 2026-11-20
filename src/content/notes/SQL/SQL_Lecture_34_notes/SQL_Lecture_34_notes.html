@@ -469,6 +469,29 @@ COMMIT;</code></pre>
   <p><strong>Formalize — INOUT round trip:</strong> an <em>INOUT parameter</em> (a header variable that carries a value in and carries the answer out) follows three steps. First, the header sets a start value such as <code>INOUT total_count INT DEFAULT 0</code>. Second, the body fills it with <code>SELECT COUNT(*) INTO total_count FROM orders;</code>. Third, CALL returns and the caller reads <code>total_count</code>. No RETURN keyword appears at any step.</p>
 </div>
 <p>The shape only fits single-row answers. A bare COUNT always yields exactly one row, so SELECT ... INTO has exactly one place to pour. A query that yields many rows needs a different shape — a result-set return in systems that allow it — and cannot pour into one integer. That fit is why the order-count case works with no extra DECLARE block.</p>
+
+<div class="example-box">
+  <p><strong>Worked extension — returning many rows instead of one:</strong> the INOUT ticket carries exactly one value, so a query that yields many rows needs a different shape. Snowflake supplies one with a <em>result-set return</em>: name the columns in the header with <code>RETURNS TABLE(key NUMBER, name VARCHAR)</code>, fill a <code>RESULTSET</code> variable from a query, and hand it back with <code>RETURN TABLE(v_results)</code>.</p>
+  <pre><code>CREATE OR REPLACE PROCEDURE get_country_names(p_regionkey NUMBER)
+RETURNS TABLE(key NUMBER, name VARCHAR)
+LANGUAGE SQL
+AS
+DECLARE
+  v_results RESULTSET;
+BEGIN
+  v_results := (SELECT n_nationkey, n_name
+                FROM nation
+                WHERE n_regionkey = :p_regionkey);
+  RETURN TABLE(v_results);
+END;</code></pre>
+  <p>Calling <code>CALL get_country_names(3);</code> prints a two-column table for region 3 (Europe), with <code>key</code> and <code>name</code> exactly as the RETURNS clause names them — a multi-row answer, not a single integer. The CALL-only rule from 34.1.3 still applies, so the returned table cannot be filtered inline inside a SELECT. The supported workaround is to read the just-finished CALL through <code>RESULT_SCAN</code> over <code>LAST_QUERY_ID()</code>:</p>
+  <pre><code>CALL get_country_names(3);
+SELECT key, name
+FROM TABLE(RESULT_SCAN(LAST_QUERY_ID()))
+WHERE name LIKE 'F%'
+ORDER BY key;</code></pre>
+  <p>A second path avoids the two-step scan: a procedure with a fixed, named RETURNS TABLE schema and no DDL or DML can be placed directly in a FROM clause as <code>SELECT * FROM TABLE(get_country_names(3));</code>. <strong>Sense-check:</strong> INOUT answers "how many?" with one number; a result-set return answers "which rows?" with a filterable table. Scanned results last 24 hours, are scoped to the user who ran the query, and carry no table metadata, so repeated or large downstream work favors the direct table form.</p>
+</div>
 <p>Across databases, keep the lecture INOUT as the base and note the extras. MySQL spells the same idea as IN, OUT, or INOUT before each header name, and callers read OUT values through session variables. Snowflake instead declares a RETURNS type and ends with an explicit RETURN — a number, a string such as success text, an OBJECT document with row counts, or a TABLE result set built from a RESULTSET variable and handed back with <code>RETURN TABLE(v_results);</code>. Snowflake scripts also capture a CALL answer with <code>CALL proc(...) INTO :var;</code>. The lecture needs none of that extra machinery; one integer INOUT covers counts, flags, and totals.</p>
 <h3 id="34.4.2-building-the-order-count-procedure">34.4.2 Building the Order-Count Procedure</h3>
 <p>The goal is plain: total number of orders in the orders table. Order counts feed dashboards, capacity plans, and end-of-day reports, so a one-call count that any tool can reuse earns its keep fast.</p>

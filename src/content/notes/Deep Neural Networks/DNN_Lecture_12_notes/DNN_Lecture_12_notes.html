@@ -513,6 +513,33 @@
 <p>Embeddings solve the vocabulary explosion problem. They map thousands of words into a compact vector space (typically 100–300 dimensions). Instead of a 50,000-dimensional sparse one-hot vector, each word becomes a dense 300-dimensional vector. The embedding matrix \(E \in \mathbb{R}^{|V| \times d}\) maps each word index to its \(d\)-dimensional vector.</p>
 </div>
 <p>However, a simple embedding lookup still does not capture word order — each word is processed independently. The sentence "dog bites man" and "man bites dog" produce the same set of embeddings, just in a different order. Without a mechanism to process the sequence, the meaning is still lost.</p>
+
+<div class="key-concept">
+<p><strong>How the embedding matrix is actually learned — the word2vec objectives.</strong> The embedding matrix \(E\) was introduced above, but not the training signal that gives its rows meaning. The word2vec family learns embeddings <em>self-supervised</em>: no human labels are needed; the corpus supplies its own supervision by asking a word to predict its neighbours, or vice versa. Each word index \(i\) owns two vectors, \(\mathbf{v}_i, \mathbf{u}_i \in \mathbb{R}^d\), used for the center-word and context-word roles respectively. For a center word \(w_c\) and a context word \(w_o\):</p>
+<p>\[</p>
+<p>P(w_o \mid w_c) = \frac{\exp(\mathbf{u}_o^\top \mathbf{v}_c)}{\sum_{i \in V} \exp(\mathbf{u}_i^\top \mathbf{v}_c)}</p>
+<p>\]</p>
+<p><strong>Skip-gram</strong> maximizes the probability of each surrounding context word given the center; <strong>CBOW</strong> (continuous bag-of-words) reverses the direction and predicts the center word from the <em>average</em> of its context vectors \(\bar{\mathbf{v}}_o = \frac{1}{2m}\sum_{j=1}^{2m}\mathbf{v}_{o_j}\):</p>
+<p>\[</p>
+<p>\mathcal{L}_{\text{skip-gram}} = -\sum_{t=1}^{T}\sum_{-m \le j \le m,\; j \ne 0} \log P(w^{(t+j)} \mid w^{(t)})</p>
+<p>\]</p>
+<p>\[</p>
+<p>P(w_c \mid \mathcal{W}_o) = \frac{\exp(\mathbf{u}_c^\top \bar{\mathbf{v}}_o)}{\sum_{i \in V} \exp(\mathbf{u}_i^\top \bar{\mathbf{v}}_o)}</p>
+<p>\]</p>
+<table>
+  <thead>
+    <tr><th>Aspect</th><th>Skip-gram</th><th>CBOW</th></tr>
+  </thead>
+  <tbody>
+    <tr><td>Prediction direction</td><td>Center word → surrounding context words</td><td>Surrounding context words → center word</td></tr>
+    <tr><td>Input representation</td><td>Single center vector \(\mathbf{v}_c\)</td><td>Mean \(\bar{\mathbf{v}}_o\) of \(2m\) context vectors</td></tr>
+    <tr><td>Roles of \(v\) and \(u\)</td><td>\(v\) = center, \(u\) = context</td><td>\(v\) = context, \(u\) = center</td></tr>
+    <tr><td>Predictions per window</td><td>\(2m\) context words</td><td>1 center word</td></tr>
+    <tr><td>Representation used downstream</td><td>Center vectors \(\mathbf{v}_i\)</td><td>Context vectors \(\mathbf{v}_i\)</td></tr>
+  </tbody>
+</table>
+<p>Both are the same softmax cross-entropy objective used in Section 12.6.1, applied over a local window instead of the entire preceding sequence. Maximizing these likelihoods is what turns the initially arbitrary embedding numbers into a geometry where semantically similar words end up close together — and why the famous analogy relation (king − male + female ≈ queen) falls out of the learned vectors.</p>
+</div>
 <div class="warning-box">
 <p><strong>Pitfalls:</strong></p>
 <p>1. <strong>Embeddings need large corpora to be good.</strong> Word2Vec trained on a small dataset (e.g., 100K sentences) will not capture nuanced semantic relationships. Pre-trained embeddings (trained on billions of words) are usually better than training from scratch.</p>
@@ -566,6 +593,19 @@
 <p>1. <strong>Data sparsity.</strong> For a vocabulary of 50K words, a trigram has \(50{,}000^3 = 1.25 \times 10^{14}\) possible combinations. Even a billion-word corpus covers a tiny fraction of these. Most trigrams get a probability of zero, which is unrealistic.</p>
 <p>2. <strong>Fixed window is inherently limited.</strong> Consider: "The cat, which was black and white and very fluffy, sat on the mat". The word "sat" depends on "cat" — which is 10 words back. No trigram can capture this.</p>
 <p>3. <strong>Smoothing is mandatory but arbitrary.</strong> To handle unseen n-grams, you need smoothing (add-1, Kneser-Ney, etc.). The choice of smoothing method changes your results but has no principled justification.</p>
+</div>
+
+<div class="example-box">
+<p><strong>Worked calculation — add-one (Laplace) smoothing of a bigram probability.</strong> The pitfall above says smoothing is mandatory; the add-\(\alpha\) rule makes that choice explicit. With vocabulary size \(m\), a small mass \(\alpha\) is redistributed over all \(m\) possible continuations so that no bigram ever receives probability zero:</p>
+<p>\[</p>
+<p>\hat{P}(x' \mid x) = \frac{n(x, x') + \alpha\,\hat{P}(x')}{n(x) + \alpha}, \qquad \hat{P}(x') = \frac{n(x')}{n}</p>
+<p>\]</p>
+<p>Use \(\alpha = 1\). Suppose a corpus has \(n = 1000\) tokens and \(m = 50\) distinct words; "cat" occurs \(n(\text{cat}) = 20\) times, "sat" occurs \(n(\text{sat}) = 10\) times, and the bigram ("cat", "sat") occurs once. The unsmoothed estimate is \(1/20 = 0.05\). The smoothed estimate is:</p>
+<p>\[</p>
+<p>\hat{P}(\text{sat} \mid \text{cat}) = \frac{1 + 1 \times (10/1000)}{20 + 1} = \frac{1.01}{21} \approx 0.0481</p>
+<p>\]</p>
+<p>For an <em>unseen</em> bigram with \(n(\text{cat}, \text{?}) = 0\), the same formula gives \((0 + 0.01)/21 \approx 4.8 \times 10^{-4}\) — small, but strictly positive, so a whole sequence never collapses to probability zero.</p>
+<p><strong>Trade-off:</strong> as \(\alpha \to 0\) the estimate approaches the raw count ratio; as \(\alpha \to \infty\) it approaches the unigram prior (uniform \(1/m\) when all words are equally frequent). Add-1 is the simplest member of a family that also includes Kneser–Ney: more sophisticated schemes reduce the bias that add-1 introduces by over-smoothing frequent bigrams while still covering unseen ones.</p>
 </div>
 <div class="key-takeaway">
 <p>N-gram models make sequence prediction tractable by limiting the context window. They work well enough for keyboard autocomplete and baseline benchmarks. But their fixed window is a hard ceiling. A vocabulary of \(V\) words and an \(N\)-gram window means \(V^N\) possible patterns — most unseen. Section 12.4 introduces the latent variable model, which escapes the fixed window entirely.</p>
@@ -858,6 +898,26 @@ Time step 3:    x₃ → [Hidden] → y₃</code></pre>
 <p>At \(t=3\), input "sat", target "mat". \(\mathcal{L}_3 = -\log P(\text{"mat"} \mid h_3)\).</p>
 <p>Total loss: \(\mathcal{L}_{\text{total}} = \mathcal{L}_1 + \mathcal{L}_2 + \mathcal{L}_3\). Average: \(\bar{\mathcal{L}} = (\mathcal{L}_1 + \mathcal{L}_2 + \mathcal{L}_3) / 3\).</p>
 <p><strong>Sense-check:</strong> If the model assigns probability 0.5 to the correct word each time, \(\mathcal{L}_t = -\log(0.5) \approx 0.693\) and \(\bar{\mathcal{L}} \approx 0.693\). Better predictions give lower loss.</p>
+</div>
+
+<div class="key-concept">
+<p><strong>Standard metric — perplexity of a language model.</strong> A raw average loss is hard to compare across corpora of different lengths. Language modeling therefore reports the exponential of the per-token cross-entropy from this section:</p>
+<p>\[</p>
+<p>\mathrm{PPL}(d) = \exp\!\left(\frac{1}{|d|}\sum_{t=1}^{|d|} \mathcal{L}_t\right) = \exp\!\left(-\frac{1}{|d|}\sum_{t=1}^{|d|}\log P(x_t \mid x_{1:t-1})\right)</p>
+<p>\]</p>
+<p>Its intuitive reading: perplexity is the effective number of equally likely choices the model is picking between at each step — on average, predicting the next word is as hard as guessing the outcome of a fair die with that many faces. Lower is better, and the number is interpretable in a way a value in "nats" is not.</p>
+<table>
+  <thead>
+    <tr><th>Scenario</th><th>Per-token loss \(\mathcal{L}_t\)</th><th>Perplexity</th></tr>
+  </thead>
+  <tbody>
+    <tr><td>Perfect prediction, \(P = 1\)</td><td>0</td><td>1 (best possible)</td></tr>
+    <tr><td>Confident but wrong, \(P \to 0\)</td><td>\(\to \infty\)</td><td>\(\to \infty\)</td></tr>
+    <tr><td>Uniform over \(V\) words</td><td>\(\log V\)</td><td>\(V\) (untrained baseline)</td></tr>
+    <tr><td>Correct word given \(P = 0.5\)</td><td>\(\approx 0.693\)</td><td>\(e^{0.693} \approx 2\)</td></tr>
+  </tbody>
+</table>
+<p><strong>Worked sanity check.</strong> The example above had \(\bar{\mathcal{L}} \approx 0.693\), which gives \(\mathrm{PPL} = e^{0.693} \approx 2\). At the other extreme, a model with vocabulary \(V = 10{,}000\) whose logits are all initially equal assigns every word probability \(10^{-4}\), so \(\mathcal{L}_t = \log(10^4)\) and \(\mathrm{PPL} = e^{\log 10^4} = 10{,}000\) — exactly the vocabulary size. Training is the process of pushing this number down, and any useful model must beat the uniform baseline.</p>
 </div>
 <div class="warning-box">
 <p><strong>Pitfall: Confusing average loss with final-step loss.</strong> The reported training loss is almost always the average across all time steps, not just the last step. If you only compute loss at the final time step, the model ignores intermediate predictions. That may be fine for some tasks like sentiment classification at the end. But it fails for tasks like language modeling where every next-word prediction matters.</p>

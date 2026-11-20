@@ -812,6 +812,39 @@ SET tag = EXCLUDED.tag,
 </div>
 <p>Tag feeds, click streams, counters, last-seen stamps, and retry-safe loaders all live on this statement: replay the same file without twin rows, refresh times on each repeat, and let the guard — not application code — arbitrate the race.</p>
 
+<h3 id="3.9.4-cross-engine-upsert-with-merge" class="subsection-title">3.9.4 Cross-Engine Upsert with MERGE</h3>
+<p>The two <code>ON CONFLICT</code> tails solve insert-or-refresh on a primary or unique key, but a feed sometimes also needs to <em>remove</em> rows the source marks as retired. Warehouse engines answer with a single <code>MERGE</code>: join a source table to the target on a match key, then route each joined row through ordered <code>WHEN</code> arms that insert, update, or delete it.</p>
+<div class="key-concept">
+  <p><strong>Four-part anatomy.</strong> A <code>MERGE</code> names a target (<code>MERGE INTO person AS p</code>), a source (<code>USING person_refresh AS pr</code>), a join condition (<code>ON p.first_name = pr.fname AND p.last_name = pr.lname</code>), and one or more arms. Each candidate row is classified once as matched or not matched, and arms are tested top to bottom — the first true arm wins and no later arm runs for that row.</p>
+  <pre><code>MERGE INTO person AS p
+USING person_refresh AS pr
+  ON p.first_name = pr.fname
+ AND p.last_name  = pr.lname
+WHEN MATCHED AND pr.remove = 'yes' THEN DELETE
+WHEN MATCHED THEN UPDATE SET p.birth_date = pr.dob,
+                            p.eye_color  = pr.eyes,
+                            p.occupation = pr.profession
+WHEN NOT MATCHED THEN INSERT
+  (first_name, last_name, birth_date, eye_color, occupation)
+  VALUES (pr.fname, pr.lname, pr.dob, pr.eyes, pr.profession);</code></pre>
+</div>
+<table>
+  <thead>
+    <tr><th>Arm</th><th>When it fires</th><th>Action</th><th>Closest 3.9 spelling</th></tr>
+  </thead>
+  <tbody>
+    <tr><td><code>WHEN MATCHED AND pr.remove = 'yes'</code></td><td>Matches and is flagged for removal</td><td><code>DELETE</code> the target row</td><td><code>DELETE ... WHERE</code> (3.8.1)</td></tr>
+    <tr><td><code>WHEN MATCHED</code></td><td>Matches, no earlier arm claimed it</td><td><code>UPDATE SET</code> three columns</td><td><code>ON CONFLICT DO UPDATE</code> (3.9.3)</td></tr>
+    <tr><td><code>WHEN NOT MATCHED</code></td><td>No target row joins the source row</td><td><code>INSERT</code> the new row</td><td><code>ON CONFLICT DO NOTHING</code> (3.9.2) when fresh</td></tr>
+  </tbody>
+</table>
+<div class="example-box">
+  <p><strong>Worked reconcile.</strong> Target <code>person</code> holds five rows; source <code>person_refresh</code> holds six, flagging Sharon Carpenter and Kathy Little with <code>remove = 'yes'</code>, carrying fresh eye color and occupation for Bob Smith, Gina Peters, and Tim Carpenter, and adding Carl Langford as a new row. The join finds five matches plus one unmatched source row. Top-to-bottom evaluation fires <strong>2 DELETE</strong> arms first, then <strong>3 UPDATE</strong> arms, then <strong>1 INSERT</strong> arm, so the engine reports <code>1 row inserted / 3 rows updated / 2 rows deleted</code>. Sense-check: 5 target rows − 2 deleted + 1 inserted = 4 rows left in <code>person</code>, and the two flagged names are gone rather than merely relabelled — proof the delete arm ran before the catch-all update arm.</p>
+</div>
+<div class="warning-box">
+  <p><strong>Pitfall — arm order and duplicate source rows.</strong> Placing an unqualified <code>WHEN MATCHED THEN UPDATE</code> above the conditional <code>DELETE</code> swallows the flagged rows, so the delete never runs; put specific arms before catch-all arms. If several source rows join to one target row, the update or delete outcome is nondeterministic (or raises an error) unless the source is first collapsed with <code>GROUP BY</code>. <code>EXCLUDED</code> from 3.9.3 is the PostgreSQL name for the attempted row; inside <code>MERGE</code> the same values are read through the source alias (<code>pr.dob</code>, <code>pr.eyes</code>), so the two spellings are not interchangeable.</p>
+</div>
+
 
 <h2 id="key-industry-applications">Key Industry Applications</h2>
 <div class="key-concept">

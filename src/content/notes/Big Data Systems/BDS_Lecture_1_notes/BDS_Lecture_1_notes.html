@@ -137,6 +137,38 @@
 </div>
 <p>Processing is where the classic single-processor bottleneck appears: if you give a huge job to one processor, including all its I/O, that processor becomes a bottleneck at some point. The <em>MapReduce</em> framework that Hadoop provides works around this: you divide your data into multiple chunks, give each chunk to a <em>map task</em> to run on, and finally gather the results from each processing node and produce the final result with a <em>reduce task</em>. So both problems — storage and processing — are efficiently solved by Hadoop.</p>
 <p>A concrete sense of the speedup: reading one full disk takes hours; reading the same data spread across many disks, all read in parallel, takes minutes. The entire design of Hadoop — replicate for safety, spread for speed — rests on that simple observation.</p>
+
+<div class="important-note">
+  <p><strong>System detail — where the three replicas actually go.</strong> Saying "replication factor three" hides a real design decision: the NameNode does not place the three copies at random. It is <em>rack-aware</em>, using the rack id each data node reports, because a rack is a single failure domain — a whole rack can lose power or its top-of-rack switch can fail. The default policy for a factor of three is:</p>
+  <table>
+    <thead>
+      <tr>
+        <th>Replica</th>
+        <th>Placement</th>
+        <th>Why</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>1st</td>
+        <td>On the local node if the writer is itself a data node; otherwise a random node in the writer's rack</td>
+        <td>Local write — no network hop for the first copy</td>
+      </tr>
+      <tr>
+        <td>2nd</td>
+        <td>A random node on a <em>different</em> (remote) rack</td>
+        <td>Survives loss of the entire local rack</td>
+      </tr>
+      <tr>
+        <td>3rd</td>
+        <td>A different node on the <em>same</em> remote rack as the second</td>
+        <td>Redundancy without a second inter-rack write</td>
+      </tr>
+    </tbody>
+  </table>
+  <p>Two copies live on one rack and one on another: the cluster survives a whole-rack failure, but a write crosses only one rack boundary, so write bandwidth is preserved and reads can come from either rack. For a factor greater than three, further replicas go to random nodes with a cap of about \((replicas - 1)/racks + 2\) per rack.</p>
+  <p><strong>The write pipeline.</strong> The client does not send the three copies itself. The NameNode returns a list of three data nodes; the client streams packets to the first, which writes each packet to its local disk and forwards it to the second, which does the same for the third — a pipeline of \(DN_1 \rightarrow DN_2 \rightarrow DN_3\), with acknowledgements flowing back. The write succeeds once a minimum number of replicas (default one) are stored, after which the NameNode arranges background replication until the target factor of three is reached. If a node fails mid-write, it is dropped from the pipeline, the surviving nodes get a new block identity so the partial copy is discarded, and the NameNode schedules the missing replica elsewhere.</p>
+</div>
 <h3 id="1.1.3-hadoop-versus-distributed-relational-databases-the-data-model">1.1.3 Hadoop versus Distributed Relational Databases: The Data Model</h3>
 <p>A distributed database built from RDBMS technology stores data in a <em>relational model</em>: data lives in tables (called <em>relations</em> in relational-model terminology), and tables are linked by <em>primary keys</em> and <em>foreign keys</em>, creating related data across tables. Distributed databases also support partitioning — fragmenting a table. There are two kinds:</p>
 <ul>
@@ -148,6 +180,12 @@
 <div class="key-concept">
   <p><strong>Schema-on-read versus schema-on-write.</strong> The relational model is <em>schema-on-write</em>: you define the structure before data is stored, and every record must fit it. Hadoop is <em>schema-free</em>: there are no tables and no notion of a predefined schema. The input is flat files, and you divide your data into multiple partitions, which are termed <em>file blocks</em> or <em>HDFS blocks</em>, and give a portion of the data to each node for computation. The whole file can be very large — Hadoop exists to deal with large data sets.</p>
   <p>Because there is no predefined schema, a <em>flexible schema</em> has to work: a rigid schema where every record must follow the same set of attributes will not work here, because each record may have a different set of attributes. That is what makes Hadoop comfortable with semi-structured and unstructured data. You can decide what the structure means only when you read the data — so it is called "schema-on-read."</p>
+</div>
+<div class="example-box">
+  <p><strong>Worked calculation — why an HDFS block is ~128 MB, not a few KB.</strong> An ordinary filesystem block is only a few kilobytes (its disk block is 512 bytes). HDFS deliberately uses a far larger unit: a typical block is <strong>128 MB</strong> in current Hadoop (earlier releases used 64 MB). A file smaller than one block occupies only its own bytes, not the whole block — a 1 MB file stored with a 128 MB block uses 1 MB of disk.</p>
+  <p>The reason is to amortize the cost of a disk seek. With a seek time of about \(10 \text{ ms}\) and a transfer rate of \(100 \text{ MB/s}\), making the seek just \(1\%\) of the transfer time requires a transfer lasting:</p>
+  \[ t_{transfer} = \frac{10 \text{ ms}}{0.01} = 1 \text{ s}, \qquad B = 100 \text{ MB/s} \times 1 \text{ s} = 100 \text{ MB} \]
+  <p><strong>Final result:</strong> that is why the default lands near 100 MB and is set to 128 MB — large enough that a long read runs at the disk's <em>transfer</em> rate rather than its <em>seek</em> rate. The trade-off is that a map task normally processes one block at a time, so blocks that are too large leave too few tasks to fill the cluster.</p>
 </div>
 <p>A side-by-side comparison on the dimensions that differ:</p>
 <table>
@@ -241,6 +279,38 @@ flowchart TD
     NR -.->|"which node holds which blocks"| D2
   </pre>
   <p class="text-xs text-slate-500 mt-2"><strong>Figure:</strong> High-level Hadoop cluster — a master with a job tracker (compute) and a name node (storage), and slave nodes each holding a task tracker, a data node, and its own local disk.</p>
+</div>
+<div class="important-note">
+  <p><strong>System detail — how the name node keeps its metadata.</strong> The name node does not store the file-to-block-to-node mapping on disk; it holds the namespace in memory and reconstructs block locations from reports that the data nodes send at startup. What it <em>does</em> persist are two local files: the <code>FsImage</code> (a snapshot of the whole namespace — files, properties, and the file-to-block mapping) and the <code>EditLog</code> (a transaction log recording every metadata change, such as creating a file or changing its replication factor).</p>
+  <p>Appending each change to the log is cheap, but rewriting the image for every edit is not. So periodically a <em>metadata checkpoint</em> merges the log into a fresh image, after which the old log can be truncated; in current Hadoop a checkpoint is triggered by a time interval or a transaction-count threshold. The textbook's <em>secondary name node</em> is the older machine dedicated to this merge — despite its name it is not a standby name node, and its image lags the primary, so it is not a substitute for name-node high availability.</p>
+  <p><strong>Why it matters here:</strong> the name node is a single point of failure for metadata — if its image and log are lost, the files cannot be reconstructed from the data nodes' blocks. This is the concrete reason block replication alone is not enough, and it motivates the failover and recovery configurations studied later in this unit.</p>
+</div>
+
+<div class="important-note">
+  <p><strong>System detail — what "name-node high availability" actually means.</strong> The checkpointing just described protects the <em>metadata</em> from being lost, but it does not keep the filesystem available: the name node remains a single point of failure. A cold restart means reloading the <code>FsImage</code>, replaying the <code>EditLog</code>, and waiting for enough data-node block reports to leave safe mode — on a large cluster this can take 30 minutes or more. Hadoop 2 added <em>HDFS High Availability (HA)</em>: an active/standby pair of name nodes. The standby keeps its in-memory state current by replaying edits from shared storage and by receiving block reports directly from the data nodes, so it can take over in tens of seconds rather than after a cold restart.</p>
+  <table>
+    <thead>
+      <tr>
+        <th>Shared edit-log option</th>
+        <th>Mechanism</th>
+        <th>Trade-off</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>NFS filer</td>
+        <td>Both name nodes share an edit log on a network file server</td>
+        <td>Simpler, but needs strong external fencing to prevent split-brain writes</td>
+      </tr>
+      <tr>
+        <td>Quorum Journal Manager (QJM)</td>
+        <td>A group of journal nodes; each edit is written to a majority (typically three nodes, tolerating one loss)</td>
+        <td>Recommended default; only one name node may write to the log at a time</td>
+      </tr>
+    </tbody>
+  </table>
+  <p>With HA the standby also performs the periodic checkpoints, so running a separate secondary name node is unnecessary — in fact it is an error to run one alongside HA. A failover controller on each name node watches its process with heartbeats and triggers the switch; because a slow network or partition can leave the old active believing it is still active, the system must <em>fence</em> it before promoting the standby. The QJM already restricts log writes to a single name node, while an <code>sshfence</code> command or, as a last resort, STONITH (powering the old host down) cuts the stale node off. ZooKeeper is used to elect the active name node and to make client failover transparent through a logical nameservice URI.</p>
+  <p><strong>Link back:</strong> this is the concrete mechanism that the secondary name node is <em>not</em> — a distinction worth keeping in mind when comparing it with the generic hot/warm/cold standby choices of Section 1.5.</p>
 </div>
 <h3 id="1.1.7-worked-example-word-count-with-mapreduce">1.1.7 Worked Example: Word Count with MapReduce</h3>
 <p>The classic <em>word count</em> problem shows how a MapReduce program runs. First, state the objective: given input data of sentences, count the occurrence of each unique word.</p>

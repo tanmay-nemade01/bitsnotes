@@ -953,6 +953,51 @@
       <p>Encoder-decoder translation runs asynchronously: a bidirectional RNN encodes the source into hidden states, and at every output step an attention-weighted sum \(c_t = \sum_i \alpha_{t,i} h_i\) tells the decoder which source words matter now. This same machinery becomes the bridge to contextual embeddings next.</p>
     </div>
 
+    <h3 id="15.12.3-decoding-strategies-from-teacher-forcing-to-beam-search" class="subsection-title">15.12.3 Decoding Strategies: From Teacher Forcing to Beam Search and Nucleus Sampling</h3>
+    <div class="important-note">
+      <p><strong>The missing step after attention.</strong> The previous subsections show how the encoder builds \(c_t\) and how the decoder scores source positions, but stop short of stating how the target sentence is actually emitted. At each step the decoder produces a probability distribution over the vocabulary; <em>decoding</em> is the rule that turns that distribution into a concrete token sequence. Two regimes must be distinguished. During training, the decoder is fed the true previous target token — <em>teacher forcing</em> — so every prediction is conditioned on ground truth. At inference the true token is unavailable and the model must condition on its own previous output; this train/test mismatch is <em>exposure bias</em>, and it is why a naive per-step choice is often not good enough.</p>
+      <table>
+        <thead>
+          <tr>
+            <th>Strategy</th>
+            <th>Selection rule</th>
+            <th>Strength</th>
+            <th>Failure mode</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>Greedy</td>
+            <td>\(w_t = \arg\max_w P(w \mid w_{1:t-1})\)</td>
+            <td>One forward pass per token; the default in most libraries.</td>
+            <td>Commits to a locally likely word, can miss a higher-probability whole sequence, and repeats on long outputs.</td>
+          </tr>
+          <tr>
+            <td>Beam search, width \(B\)</td>
+            <td>Keep the \(B\) best partial paths, scored by \(\log P(w_{1:t}) = \sum_{k=1}^{t} \log P(w_k \mid w_{1:k-1})\).</td>
+            <td>Looks ahead: recovers sequences whose first token is unlikely but whose total probability is higher.</td>
+            <td>Beams collapse to near-identical continuations and favor short, generic text in open-ended generation.</td>
+          </tr>
+          <tr>
+            <td>Top-\(K\) sampling</td>
+            <td>Renormalize over only the \(K\) most probable next tokens, then sample.</td>
+            <td>Cuts the long tail of implausible words while retaining diversity.</td>
+            <td>A fixed \(K\) fits neither very peaked nor very flat distributions well.</td>
+          </tr>
+          <tr>
+            <td>Nucleus (top-\(p\)) sampling</td>
+            <td>Sample from the smallest token set whose cumulative probability exceeds \(p\), then renormalize.</td>
+            <td>Adaptive support: shrinks when the next word is predictable, expands when it is not.</td>
+            <td>Still stochastic; repetition and careful choice of \(p\) remain live issues.</td>
+          </tr>
+        </tbody>
+      </table>
+      <p>These are not rival theories of language; they are different search policies over the same autoregressive factorization \(P(w_{1:T}) = \prod_{t} P(w_t \mid w_{1:t-1})\). Input-grounded tasks such as translation favor beam search, while open-ended generation favors nucleus sampling.</p>
+    </div>
+    <div class="example-box">
+      <p><strong>Worked beam-search trace (\(B = 2\)).</strong> Suppose the first-step distribution is \(P(\text{nice}) = 0.5\), \(P(\text{dog}) = 0.3\), \(P(\text{cat}) = 0.2\). Greedy keeps only "nice", with score \(\log 0.5 \approx -0.69\). Beam search also keeps "dog" (\(\log 0.3 \approx -1.20\)). At step two let \(P(\text{woman} \mid \text{nice}) = 0.4\) and \(P(\text{has} \mid \text{dog}) = 0.9\). The two joint scores are \(0.5 \times 0.4 = 0.20\) for "nice woman" and \(0.3 \times 0.9 = 0.27\) for "dog has", so beam search returns "dog has" — a sequence greedy search never saw, because "dog" was not the top first token. <strong>Sense check:</strong> the winning path has the higher joint probability even though its first token was less likely, which is exactly the look-ahead the beam buys.</p>
+    </div>
+
     <h2 id="15.13-the-word-sense-disambiguation-problem">15.13 The Word Sense Disambiguation Problem</h2>
     <h3 id="15.13.1-one-embedding-per-word-is-not-enough">15.13.1 One Embedding per Word Is Not Enough</h3>
     <div class="important-note">
@@ -1084,6 +1129,38 @@
     </div>
     <p>GPT uses the standard transformer structure not once but 12 blocks stacked one after the other. Each block performs <em>masked multi-head self-attention</em>, followed by layer normalization, then a feed-forward network, and that composition repeats 12 times.</p>
     <p>The mask is the load-bearing piece. In self-attention every position would normally see every other position; masking sets the scores for future positions to negative infinity before the softmax, so they receive zero weight after normalization. Concretely, when predicting token \(t\), positions \(t+1, t+2, \ldots\) are invisible. GPT strictly refuses to use any information from the future — everything is captured from the past alone, making the model <em>autoregressive</em>, generating left to right: predict the next token from all previous ones, append it, repeat.</p>
+
+    <div class="important-note">
+      <p><strong>Architectural detail — the KV cache.</strong> Because masked self-attention only lets token \(j\) depend on tokens up to \(j\), the key and value vectors computed for a prefix token never change once that token has been processed. A naïve decoder would nevertheless recompute all prefix keys and values at every step, spending \(O(t)\) work to emit token \(t+1\). The standard fix caches them: after an initial prefill of the prompt, each step computes the new token's query, key and value, appends the key/value pair, and attends over the stored states. Per-step attention work drops from \(O(t)\) to \(O(1)\) over cached vectors; the price is memory that grows linearly with context length.</p>
+      <table>
+        <thead>
+          <tr>
+            <th>Operation</th>
+            <th>Without cache</th>
+            <th>With KV cache</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>Keys/values recomputed at step \(t\)</td>
+            <td>All positions \(1 \ldots t\)</td>
+            <td>Only the new position \(t\)</td>
+          </tr>
+          <tr>
+            <td>Attention work per step</td>
+            <td>\(O(t)\)</td>
+            <td>\(O(1)\) over stored states</td>
+          </tr>
+          <tr>
+            <td>Extra memory</td>
+            <td>Constant</td>
+            <td>\(O(T)\) in context length \(T\)</td>
+          </tr>
+        </tbody>
+      </table>
+      <p><strong>Worked memory check.</strong> For \(L = 12\) layers, \(d_{\text{model}} = 768\) and \(T = 2{,}048\) tokens, the cache holds \(2 L T d_{\text{model}} = 2 \times 12 \times 2048 \times 768 \approx 3.8 \times 10^{7}\) scalars — about 150 MB at 32-bit precision; scaling \(L\), \(d_{\text{model}}\) or \(T\) multiplies that figure directly, which is why long-context serving is memory-bound in practice. The cache removes redundant recomputation; it does not remove the sequential dependency itself.</p>
+    </div>
+
     <h3 id="15.16.3-one-architecture-many-tasks">15.16.3 One Architecture, Many Tasks</h3>
     <p>A second pillar of GPT: everything rests on unsupervised learning. The full model is pretrained on large volumes of raw corpus; only for fine-tuning is a small amount of supervised, labeled data used. Contrast this with the CoVe pipeline, where frozen contextual features feed separately built task-specific models — GPT does not do that. It fine-tunes <em>one</em> architecture on whatever downstream data arrives, updating the same weights rather than bolting on new heads over frozen features.</p>
     <p>The representation proves remarkably versatile across problem formats:</p>

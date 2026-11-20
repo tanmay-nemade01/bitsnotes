@@ -203,6 +203,9 @@ flowchart LR
 <div class="important-note">
   <p><strong>Why "continuous"?</strong> The idea is that the processing never stops. In a batch system, a job runs, produces a result, and ends. In the continuous operator model, operators are long-running processes that stay alive for weeks or months, consuming records from their input and emitting records to their output, forever. The program is not "run once over the data"; the program is the pipeline.</p>
 </div>
+<div class="key-concept">
+  <p><strong>Formal Definition:</strong> A data stream is a potentially unbounded (possibly infinite) sequence of data elements that become available over time — it is <em>partial</em> data, never fully present at any single instant, so the standard batch operations that require the complete dataset do not apply. In the formal data-stream-management model, a stream \(S\) is a bag of timestamped elements \(\langle s, \tau\rangle\), where \(s\) is a tuple conforming to the stream's schema and \(\tau\) is that element's timestamp; the timestamp is not itself part of the schema, and more than one element may carry the same timestamp. Streams arriving from external sources are <em>base</em> streams, while streams produced by operators that consume other streams are <em>derived</em> streams — the distinction that underlies the source operator and the operator pipeline described below.</p>
+</div>
 <p>In the traditional streaming processing diagram, there is a <em>source operator</em> which receives the streaming data from the data sources — live logs, telemetry data, IoT devices. You can use some Kafka-style data injection to bring the data in — Kafka sits in front and feeds the stream in. Data is then processed in parallel across the cluster:</p>
 <ol>
   <li>The <strong>source operator</strong> sprays the records over the cluster — it distributes each incoming record to one of the worker nodes.</li>
@@ -607,6 +610,26 @@ flowchart LR
     <li><strong>Recomputing whole windows wastefully.</strong> For sliding windows with large overlaps, the incremental reduceByKeyAndWindow form (with the inverse function) avoids re-aggregating batches that were already in the previous window — the naive form recomputes nearly everything on every slide.</li>
   </ul>
 </div>
+<div class="example-box">
+  <p><strong>Related stream-mining result — counting in a window with bounded memory:</strong> The window operations above are exact because they retain every RDD in the window. A classic stream-mining problem considers a window of \(N\) bits so large that storing them all is impossible: answer "how many 1s are in the last \(k\) bits?" for any \(k \le N\). Exact answering for all \(k\) provably requires \(\Omega(N)\) storage, so the Datar–Gionis–Indyk–Motwani (DGIM) algorithm trades exactness for a guarantee: it divides the window into <em>buckets</em>, each holding the timestamp of its most recent end and a count of 1s that is a power of two, with one or two buckets of each size and sizes non-decreasing toward the older end.</p>
+  <p><strong>Worked bound:</strong> with \(O(\log N)\) buckets of \(O(\log N)\) bits each, the whole window is summarized in \(O(\log^2 N)\) bits rather than \(N\). To answer a query, sum the sizes of all buckets more recent than the oldest partially-included bucket \(b\) of size \(2^j\), plus half of \(b\)'s size. The uncertainty is at most \(2^{j-1}\) while the true count is at least \(2^j\), so the estimate is never off by more than <strong>50%</strong>; allowing \(r\) buckets per size instead of two reduces the error to \(1/(r-1)\). A new bit is absorbed in \(O(\log N)\) time by merging equal-sized buckets — the ripple-carry pattern of a binary increment.</p>
+</div>
+<h3 id="9.9.3-event-time-processing-time-and-watermarks" class="subsection-title">9.9.3 Event Time, Processing Time, and Watermarks</h3>
+<p>The windows of Sections 9.9.1–9.9.2 were indexed by batch number \(R_t, R_{t+1}, \ldots\): a window covered "the last three batches". That model quietly assumes a particular clock. A stream processor can base its windows on two different notions of time, and the choice changes the answer it produces.</p>
+<div class="key-concept">
+  <p><strong>Formal Definition — Two clocks for windows:</strong> <em>Processing time</em> is the wall-clock time of the machine running the operator: a processing-time window groups records by when the engine saw them, so time advances with the local clock. <em>Event time</em> is the timestamp carried by each record, generated when the event actually occurred at the source: an event-time window groups records by when they happened, and time advances with the data itself instead of any wall clock. When events arrive in order and with negligible delay the two coincide. With network lag, broker contention, a consumer restart, or replay of a backlog after a failure they diverge — and a processing-time window then groups records that happened at different times into one result, while an event-time window stays faithful to the source timeline.</p>
+</div>
+<div class="example-box">
+  <p><strong>Worked trace — a delayed record in a one-minute window.</strong> Requests are counted in one-minute windows. Two requests occur in minute 37: \(a\) at 10:37:12 and \(b\) at 10:37:50. A network stall delays \(b\), so the engine sees \(a\) at 10:37:20 and — after a restart — sees \(b\) at 10:38:05, together with a burst of replayed backlog.</p>
+  <ul>
+    <li><strong>Processing-time windowing:</strong> \(a\) lands in the 10:37–10:38 window, \(b\) in the 10:38–10:39 window. A request-rate metric shows a spurious spike in minute 38 purely because the backlog was processed there, even though the true rate was steady.</li>
+    <li><strong>Event-time windowing:</strong> both records carry their source timestamps, so both fall into the 10:37–10:38 window regardless of arrival order or processing delay. The computation is deterministic: replaying the same records reproduces the same count.</li>
+  </ul>
+  <p><strong>Why the event-time window cannot be finalised at once:</strong> once the clock is in minute 39 the engine still cannot know that no further record stamped 10:37 will arrive — it may be buffered on another machine behind a network interruption. Such a <em>straggler</em> must either be ignored (while tracking and alerting on the dropped count) or handled by retracting and re-publishing the corrected window value.</p>
+</div>
+<div class="important-note">
+  <p><strong>Mechanism — watermarks:</strong> a <em>low watermark</em> is a statement of the form "from now on there will be no more records with a timestamp earlier than \(t\)"; it is how the engine declares an event-time window ready to be emitted. A watermark \(W(t)\) asserts that event time has reached \(t\), so any window whose end lies before \(t\) can be closed. Because timestamps may be generated by clients with imperfect clocks, records that violate the watermark are still possible, so practical engines allow a bounded lateness and recompute a window for records arriving inside that grace period. This is the time semantics behind the window operations above and the SQL-over-stream queries of Section 9.10: processing-time windows are simple and low-latency but non-deterministic under lag, whereas event-time windows with watermarks are deterministic and correct for out-of-order and replayed data at the cost of waiting for the watermark.</p>
+</div>
 <div class="key-takeaway">
   <p><strong>Recap + bridge:</strong> Window operations aggregate over several consecutive batches: a window \(W_t\) covers the last three RDDs, sliding by two moves to \(W_{t+2}\), and windowLength plus slideInterval are fully configurable — the basis for moving-average-style metrics. Window-level transformations (countByWindow, reduceByWindow, reduceByKeyAndWindow, countByValueAndWindow) apply the familiar aggregations at the window level. In Section 9.10 we move from DStreams to the DataFrame-based view of streaming: Structured Streaming and the unbounded table.</p>
 </div>
@@ -623,6 +646,21 @@ flowchart LR
 <p>Once you have given it a structure, it becomes an <em>unbounded table</em>: the stream will come, and you will keep on appending the records to it — you can see the new rows are coming and being added in structured format. So this becomes a kind of an unbounded table — a table that has no fixed end, because new rows keep arriving.</p>
 <div class="important-note">
   <p><strong>The professor's intuition — a table that never ends:</strong> A normal table has a fixed number of rows when you query it. An unbounded table is a table where the rows keep appearing while you are looking at it: query the table now and you see the rows that have arrived so far; query it again a second later and more rows have been appended. The stream does not need to be partitioned into manual batches for this to work — the stream is continuously coming and rows are appended in structured format automatically. That automatic append is what makes it "unbounded": the only limit is how long you keep listening, not any fixed end in the data itself.</p>
+</div>
+<div class="key-concept">
+  <p><strong>Formal Distinction — DBMS vs. Data Stream Management System (DSMS):</strong> A traditional DBMS stores persistent, bounded relations and answers <em>one-time</em> queries over data it can access randomly. A DSMS models data as a transient, unbounded stream and answers <em>continuous</em> queries that are registered once and re-evaluated as records arrive. The unbounded table of Structured Streaming is precisely the DSMS-side abstraction: a dynamic relation whose rows keep being appended, queried by a query that never terminates.</p>
+  <table>
+    <thead>
+      <tr><th>Aspect</th><th>DBMS</th><th>DSMS</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>Data model</td><td>Persistent, bounded relations</td><td>Transient, unbounded stream</td></tr>
+      <tr><td>Query type</td><td>One-time (transient)</td><td>Continuous (persistent, registered)</td></tr>
+      <tr><td>Access pattern</td><td>Random access</td><td>Sequential, in arrival order</td></tr>
+      <tr><td>Timing</td><td>No real-time requirement</td><td>Real-time / near-real-time results</td></tr>
+      <tr><td>Arrival rate</td><td>Relatively low update rate</td><td>High, possibly spiking arrival rate</td></tr>
+    </tbody>
+  </table>
 </div>
 <div class="diagram-container my-6 text-center">
 <svg viewBox="0 0 720 230" class="diagram-svg" role="img" aria-label="Unbounded table with columns timestamp, device, metric and value; placeholder rows keep being appended at the bottom and there is no last row">
@@ -666,6 +704,10 @@ flowchart LR
 <h3 id="9.10.2-sql-on-streaming-data">9.10.2 SQL on Streaming Data</h3>
 <p>Now what is possible: you can use SQL and query on the streaming table. The streaming data can be queried because you converted a stream to a DataFrame — a DataFrame is a kind of structured data — you did not have to do batching, it has become an unbounded table, and you query it using SQL to find out certain analytics. That is running SQL on the streaming data.</p>
 <p>So a query like "what is the average metric value per device in the last hour?" can be written in plain SQL and executed against a live stream — the engine re-runs it incrementally as new rows arrive, without the developer writing any streaming code. Whether it is SQL or PySpark or something else, the same structured abstraction serves them all — the common abstraction promised in Section 9.3.4.</p>
+<div class="key-concept">
+  <p><strong>Formal Definition — Continuous Query:</strong> Unlike the one-time (transient) queries of a batch DBMS, a <em>continuous</em> (or persistent) query is registered once against a stream and re-evaluated as new records arrive; it never terminates, and its answer is itself a changing result — in Structured Streaming, an incrementally updated table. Continuous queries are usually <em>predefined</em> (registered with the engine), whereas an <em>ad hoc</em> query is issued online against data that may already have streamed past, which is why ad hoc queries are hard for a stream processor to optimize or answer completely.</p>
+  <p><strong>Why it matters here:</strong> the SQL query over the unbounded table in this section is a continuous query — the engine re-runs it incrementally and keeps the result current rather than executing once and returning a fixed answer. Its result can be delivered either as an updated stored relation (the usual form for aggregations) or as a derived stream (the usual form for joins).</p>
+</div>
 <div class="important-note">
   <p><strong>Q:</strong> Is there any upper bound on the unbounded table?</p>
   <p><strong>A:</strong> It depends on how much is the size of the main memory, because you are keeping the data in the memory. The table can only be as big as what the memory can hold. Once the memory fills, older rows must be evicted or summarized — which is exactly the kind of decision the window operations of Section 9.9 and the cache eviction policies of Section 9.12 manage.</p>

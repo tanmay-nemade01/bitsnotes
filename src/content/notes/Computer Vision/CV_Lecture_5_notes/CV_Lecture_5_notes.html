@@ -335,6 +335,23 @@
   <li><strong>Consensus Intersection:</strong> When multiple edge points lie along the same line in image space, their respective lines in parameter space intersect at the exact cell \((m^*, c^*)\) corresponding to that line.</li>
   <li><strong>Peak Detection:</strong> The cell \((m^*, c^*)\) accumulates a high tally of votes. A peak-detection algorithm identifies local maxima in the accumulator array where the vote count exceeds a preset significance threshold \(T_{\text{vote}}\). Each verified peak confirms the presence of a valid line segment in the image.</li>
 </ol>
+<div class="key-concept">
+  <p><strong>Generalized Voting Rule — Gradient-Weighted Accumulation:</strong> The unit increment \(A[m,c] \leftarrow A[m,c] + 1\) treats a strong high-contrast edge and a faint noise response as equally credible voters. Because the Canny stage already computes a gradient magnitude \(G_i\) at every edgel, the unit vote can be replaced by a confidence weight:</p>
+  <p>\[ A[m,c] \leftarrow A[m,c] + w_i, \qquad w_i = G_i \ \text{or}\ w_i = G_i^2, \qquad G_i = \sqrt{G_{x,i}^2 + G_{y,i}^2} \]</p>
+  <p>The same substitution applies to the polar accumulator \(A[\rho,\theta]\) of Section 5.3 and to the \(n\)-dimensional curve accumulator \(A(\mathbf{a})\). The peak selector then ranks bins by accumulated weight, \((m^*,c^*) = \arg\max_{m,c} A[m,c]\), rather than by raw edgel count.</p>
+  <p><strong>Worked comparison:</strong> Suppose a true line attracts three edgels with \(G = 200, 180, 220\), while a spurious texture cluster attracts five edgels with \(G = 30, 25, 40, 35, 20\).</p>
+  <table>
+    <thead>
+      <tr><th>Vote rule</th><th>True-line bin</th><th>Texture bin</th><th>Winning peak</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>Unit (\(+1\))</td><td>\(3\)</td><td>\(5\)</td><td>Texture — false peak</td></tr>
+      <tr><td>\(w_i = G_i\)</td><td>\(200+180+220 = 600\)</td><td>\(30+25+40+35+20 = 150\)</td><td>True line — correct</td></tr>
+      <tr><td>\(w_i = G_i^2\)</td><td>\(200^2+180^2+220^2 = 120{,}800\)</td><td>\(30^2+25^2+40^2+35^2+20^2 = 4{,}750\)</td><td>True line — margin \(\approx 25\times\)</td></tr>
+    </tbody>
+  </table>
+  <p><strong>Scope:</strong> The weight exponent and normalization are implementation choices; like accumulator bin widths, they are best validated empirically on sample imagery rather than assumed universal.</p>
+</div>
 <div class="diagram-container my-6 text-center">
   <svg viewBox="0 0 640 320" class="diagram-svg" role="img" aria-label="Image space with collinear points P1(1,2), P2(2,3), P3(3,4) on the line y = x + 1, and parameter space where the lines c = -m + 2, c = -2m + 3 and c = -3m + 4 intersect at m = 1, c = 1.">
     <g fill="none" stroke="currentColor" stroke-width="1">
@@ -481,6 +498,10 @@
 <div class="warning-box">
   <p><strong>Pitfall — Spurious Peaks from Noise Crossings:</strong> In dense texture regions (such as foliage or gravel), hundreds of randomly oriented edge pixels generate a dense web of overlapping sinusoids. Random intersections can produce false peaks with moderate vote counts. Vision pipelines must apply local non-maximum suppression (NMS) across accumulator bins and enforce a strict minimum vote threshold to suppress phantom lines.</p>
 </div>
+<div class="important-note">
+  <p><strong>Refinement — Oriented Hough Voting:</strong> The full-voting formulation makes every edgel cast votes along its entire sinusoidal curve \( \rho(\theta) = x_i\cos\theta + y_i\sin\theta \). Edge detectors such as Canny also return a local gradient orientation \( \alpha_i \), which is perpendicular to the underlying line. Aligning the line normal \( \hat{\mathbf{n}}_i \) with that gradient direction lets the edgel vote for a single accumulator cell \( (\rho_i, \theta_i) \), with \( \rho_i = x_i\cos\theta_i + y_i\sin\theta_i \), instead of sweeping a whole curve.</p>
+  <p><strong>Vote-budget reduction:</strong> When edge directions are quantized into eight possible values, only about one-eighth of the candidate parameter locus needs to be incremented; allowing a direction error of \( \pm\Delta\theta \) raises this to roughly three-eighths. The trade-off is sensitivity to inaccurate gradient estimates, so practical systems often vote over a small window of orientations around \( \alpha_i \) rather than a single bin.</p>
+</div>
 <h3 id="5.3.3-edge-imputation-clutter-rejection-and-medical-imaging-applications">5.3.3 Edge Imputation, Clutter Rejection, and Medical Imaging Applications</h3>
 <p>The polar Hough transform provides strong noise immunity and structural interpolation:</p>
 <ul>
@@ -489,6 +510,36 @@
   <li><strong>Medical Imaging:</strong> In magnetic resonance imaging (MRI) and computed tomography (CT), older diagnostic machines produce scans with missing boundary data and noise artifacts. The Hough transform extracts structural contours, extrapolates missing organ boundaries, and simplifies spatial filtering pipelines.</li>
 </ul>
 <p>Real-world: Older magnetic resonance imaging systems apply the Hough transform to extrapolate missing anatomical contours and trace structural tissue boundaries corrupted by acquisition noise. In clinical neuroimaging, the algorithm detects the central brain fissure line across hundreds of consecutive 2D MRI slices, segmenting the left and right hemispheres even when local soft-tissue contrast degrades.</p>
+<h3 id="5.3.4-beyond-straight-lines-circle-detection-and-accumulator-dimensionality" class="subsection-title">5.3.4 Beyond Straight Lines: Circle Detection and Accumulator Dimensionality</h3>
+<div class="key-concept">
+  <p><strong>General Curve Voting:</strong> The voting principle is not limited to lines. Any curve with a known analytic form \( f(\mathbf{x}, \mathbf{a}) = 0 \), where \( \mathbf{a} \) is an \(n\)-dimensional parameter vector, can be detected by quantizing \( \mathbf{a} \) into an \(n\)-dimensional accumulator \( A(\mathbf{a}) \) and incrementing every cell whose parameters are consistent with an edge pixel.</p>
+</div>
+<div class="example-box">
+  <p><strong>Circle Detection:</strong> For a circle with center \( (a, b) \) and radius \( r \), the constraint is \( (x_1 - a)^2 + (x_2 - b)^2 = r^2 \), so the accumulator becomes three-dimensional \( A(a, b, r) \). Each edge pixel votes for all \( (a, b, r) \) triples satisfying the equation; a peak at \( (a^*, b^*, r^*) \) recovers the circle. When the radius is known in advance, the search collapses to a two-dimensional center accumulator \( A(a, b) \).</p>
+  <p><strong>Cost and generalization:</strong> Accumulator size grows exponentially with the number of curve parameters, which is why classical Hough transforms are practical mainly for few-parameter shapes. When no analytic equation exists, the <em>generalized Hough transform</em> builds an R-table of displacements from a reference point to boundary points indexed by edge direction, allowing arbitrary learned shapes to be detected.</p>
+</div>
+<div class="important-note">
+  <p><strong>Algorithmic Extension — Randomized Hough Transform:</strong> Conventional voting registers every parameter bin consistent with every edgel, so an \(n\)-parameter curve costs \(O\!\left(\prod_{j=1}^{n} N_j\right)\) accumulator cells. The <em>randomized Hough transform</em> (RHT) reverses this order: it draws a minimal random sample of edgels, solves directly for the curve parameters, and increments only <strong>one</strong> cell per trial.</p>
+  <ol>
+    <li><strong>Sample:</strong> draw \(n\) edge pixels at random from the thresholded edge map — two edgels determine a line, three determine a circle \((a,b,r)\).</li>
+    <li><strong>Solve:</strong> compute the parameter vector algebraically from that sample, e.g. for a line \(\theta = \operatorname{atan2}(y_2-y_1,\,x_2-x_1)\) and \(\rho = x_1\cos\theta + y_1\sin\theta\).</li>
+    <li><strong>Vote once:</strong> increment \(A(\rho,\theta)\) by 1, then accept the hypothesis only after a support check against the remaining edgels.</li>
+  </ol>
+  <table>
+    <thead>
+      <tr><th>Property</th><th>Conventional voting</th><th>Randomized voting</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>Votes per trial</td><td>All bins on the parameter locus</td><td>Exactly one bin</td></tr>
+      <tr><td>Storage</td><td>Dense \(n\)-dimensional accumulator</td><td>Sparse / no dense array required</td></tr>
+      <tr><td>Output</td><td>Infinite line \(x\cos\theta+y\sin\theta=\rho\)</td><td>Finite segments after the support check</td></tr>
+      <tr><td>Detection character</td><td>Deterministic</td><td>Probabilistic; depends on trial count</td></tr>
+    </tbody>
+  </table>
+  <p><strong>Worked trial count:</strong> If a true line attracts a fraction \(w\) of the \(N\) edgels, a random pair lies on it with probability \(w^2\); after \(K\) independent trials the miss probability is \((1-w^2)^K\). Detection with confidence \(1-\delta\) therefore requires:</p>
+  <p>\[ K \ge \frac{\ln \delta}{\ln(1-w^2)} = \frac{\ln 0.01}{\ln 0.99} \approx 458.2 \Rightarrow K = 459 \quad (w = 0.1,\ \delta = 0.01) \]</p>
+  <p><strong>Trade-off:</strong> RHT exchanges deterministic coverage for a large memory saving and is most effective when a few strong, long structures dominate the edge map; dense texture keeps \(w\) small and forces many trials.</p>
+</div>
 <div class="key-takeaway">
   <p><strong>Recap & Bridge:</strong> By parameterizing lines with perpendicular distance \(\rho\) and normal angle \(\theta\), the Hough transform maps image points to sinusoidal curves in a strictly bounded parameter space. This eliminates the vertical slope singularity while providing robust gap imputation and clutter rejection. Next, we trace a step-by-step numerical worked example to see the accumulator voting mechanism in action.</p>
 </div>
@@ -893,6 +944,13 @@ hsv_image = cv2.cvtColor(rgb_image, cv2.COLOR_RGB2HSV)
 
 # Convert RGB image to YCrCb digital video space
 ycrcb_image = cv2.cvtColor(rgb_image, cv2.COLOR_RGB2YCrCb)</code></pre>
+<h3 id="5.6.5-cie-xyz-chromaticity-and-perceptually-uniform-cielab" class="subsection-title">5.6.5 CIE XYZ, Chromaticity, and Perceptually Uniform CIELAB</h3>
+<div class="key-concept">
+  <p><strong>CIE XYZ and Chromaticity:</strong> To overcome the negative-light problem of RGB color matching, the CIE standardized XYZ space, whose positive octant contains all pure spectral colors and whose \(Y\) axis encodes luminance. Dividing by the total \(X+Y+Z\) gives chromaticity coordinates \( x = \frac{X}{X+Y+Z} \), \( y = \frac{Y}{X+Y+Z} \), \( z = \frac{Z}{X+Y+Z} \), which discard absolute intensity and leave only pure color. The \( (x, y) \) pair traces the familiar horseshoe chromaticity diagram, whose straight lower edge is called the purple line.</p>
+</div>
+<div class="important-note">
+  <p><strong>Perceptual Uniformity:</strong> XYZ separates luminance from chrominance but does not match human difference perception. Because vision responds roughly logarithmically (relative luminance differences of about 1% are discernible), the CIE defined the non-linear CIELAB \( L^*a^*b^* \) space, where equal coordinate steps correspond more nearly to equal perceived differences. \( L^* \) is lightness on a 0–100 scale, while \( a^* \) and \( b^* \) are the opponent green–red and blue–yellow axes. This is why Lab, rather than RGB or XYZ, is the standard space for quantifying small color differences.</p>
+</div>
 <div class="key-takeaway">
   <p><strong>Recap & Bridge:</strong> Perceptual spaces (HSV/HSI) and broadcast spaces (YIQ/YCbCr) solve the core flaw of RGB by decoupling chromatic identity from illumination. This decoupling powers shadow-invariant tracking in computer vision and enables high-efficiency video transmission for battlefield drone systems.</p>
 </div>

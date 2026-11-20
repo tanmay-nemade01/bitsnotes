@@ -438,6 +438,47 @@
   </ul>
   <p>Sense-check: \(2^{8}=256\) is exactly the byte range size \(127 - (-128) + 1 = 256\); the formula counts exactly.</p>
 </div>
+<div class="example-box">
+  <p><strong>Worked edge case — the range is asymmetric, so negation can overflow</strong></p>
+  <p>The derived interval \(\left[-2^{n-1},\,2^{n-1}-1\right]\) is not symmetric: it holds one more negative value than positive. For \(n=8\), <code>byte</code> spans \([-128,127]\), so the mathematical negation of \(-128\), namely \(+128\), has no representable <code>byte</code> pattern.</p>
+  <p>\[ -\left(-2^{n-1}\right)=2^{n-1}\notin\left[-2^{n-1},\,2^{n-1}-1\right]. \]</p>
+  <p>Java integer operators never signal overflow. After promotion, the 32-bit negation of \(-128\) is the perfectly valid \(+128\); narrowing it back to <code>byte</code> then reduces the value modulo \(2^{8}\), yielding \(-128\):</p>
+  <pre><code>byte m = -128;       // Byte.MIN_VALUE
+byte r = (byte) -m;  // int: -(-128) = 128; narrowed to byte -> -128
+System.out.println(r); // -128, not 128</code></pre>
+  <p>Bit-level check for \(n=8\): \(-128\) is <code>1000 0000</code>. Two's-complement negation inverts the bits (<code>0111 1111</code>) and adds 1, returning <code>1000 0000</code> — the identical pattern. No <code>+128</code> code exists; every 8-bit pattern above \(127\) is reinterpreted as a negative value.</p>
+  <table>
+    <thead>
+      <tr>
+        <th>Type</th>
+        <th>Most negative value</th>
+        <th>Negation result in type</th>
+        <th>Why</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><code>byte</code></td>
+        <td>\(-128 = -2^{7}\)</td>
+        <td>\(-128\) (wrap)</td>
+        <td>\(+128\) exceeds max \(127\)</td>
+      </tr>
+      <tr>
+        <td><code>int</code></td>
+        <td>\(-2147483648 = -2^{31}\)</td>
+        <td>\(-2147483648\) (wrap)</td>
+        <td>\(+2147483648\) exceeds max \(2^{31}-1\)</td>
+      </tr>
+      <tr>
+        <td><code>long</code></td>
+        <td>\(-2^{63}\)</td>
+        <td>\(-2^{63}\) (wrap)</td>
+        <td>\(+2^{63}\) exceeds max \(2^{63}-1\)</td>
+      </tr>
+    </tbody>
+  </table>
+  <p><strong>Practical guard:</strong> the standard library defines <code>Integer.MIN_VALUE</code>/<code>Long.MIN_VALUE</code> and checked helpers such as <code>Math.negateExact</code>, which throws <code>ArithmeticException</code> on precisely this overflow rather than wrapping — the explicit counterpart to the silent operator behaviour above.</p>
+</div>
 <div class="warning-box">
   <p><strong>Pitfalls</strong></p>
   <ol>
@@ -619,6 +660,26 @@ byte b2 = (byte) k; // narrowing, cast required — if k were 1000, b2 would wra
     <li><strong>Expecting <code>byte + byte</code> to stay <code>byte</code>:</strong> It becomes <code>int</code>.</li>
     <li><strong>Forgetting the final cast back:</strong> <code>byte c = a * b</code> is a compile error without <code>(byte)</code>.</li>
   </ol>
+</div>
+<div class="key-concept">
+  <p><strong>Formal Rule — Compound assignment carries an implicit narrowing cast</strong></p>
+  <p>The rule that <code>byte b = b * 2</code> fails does <em>not</em> apply to the shorthand <code>op=</code> family. The Java language defines a compound assignment expression of the form <code>E1 op= E2</code> as equivalent to <code>E1 = (T) ((E1) op (E2))</code>, where <code>T</code> is the declared type of <code>E1</code>, except that <code>E1</code> is evaluated only once.</p>
+  <p>Formally, for a primitive numeric type <code>T</code>:</p>
+  <p>\[ E1 \; \text{op=} \; E2 \;\equiv\; E1 = (T)\big((E1) \; \text{op} \; (E2)\big). \]</p>
+  <p>Promotion to <code>int</code> still happens exactly as in Section 20.3.2; the difference is the <em>compiler-inserted cast back to</em> <code>T</code> that simple assignment <code>=</code> does not provide.</p>
+</div>
+<div class="example-box">
+  <p><strong>Worked comparison — simple assignment versus compound assignment</strong></p>
+  <pre><code>byte b = 10;
+b = b + 1;   // ERROR: possible lossy conversion from int to byte
+b += 1;      // legal — compiles as b = (byte)(b + 1)</code></pre>
+  <p>Trace: in both lines the right-hand side <code>b + 1</code> promotes <code>b</code> to <code>int</code> and produces the <code>int</code> value \(11\). Simple assignment rejects storing that <code>int</code> into <code>byte</code>; compound assignment inserts <code>(byte)</code>, so \(11\) is stored with no explicit cast.</p>
+  <p>The rule holds even when a fractional literal would lose precision:</p>
+  <pre><code>short x = 3;
+x += 4.6;    // legal — x becomes (short)(3 + 4.6) = (short) 7.6 = 7
+x = x + 4.6; // ERROR: the promoted result cannot be assigned to short</code></pre>
+  <p>Sense-check: \(3 + 4.6 = 7.6\); narrowing to a 16-bit <code>short</code> discards the fraction, yielding \(7\). The compound form is therefore not merely shorthand for the long form when types differ — it adds the implicit narrowing step.</p>
+  <p><strong>Caveat:</strong> that implicit cast can hide overflow: <code>byte b = 127; b += 1;</code> compiles and wraps to \(-128\), the same modulo behaviour discussed in Section 20.2.</p>
 </div>
 <h3 id="20.3.3-worked-example-mixed-byte-char-short-int-float-double">20.3.3 Worked Example — Mixed byte, char, short, int, float, double</h3>
 <p>The session works with all six categories simultaneously: <code>byte b</code>, <code>char c</code>, <code>short s</code>, <code>int i</code>, <code>float f</code>, <code>double d</code>. Expression examined is conceptually <code>(f * b) + (i / c) - (d * s)</code> stored into <code>double result</code>.</p>

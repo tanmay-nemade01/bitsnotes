@@ -428,6 +428,43 @@
       <div class="warning-box">
         <p><strong>Scope.</strong> The \(\max\) bound assumes the device can actually copy while it computes: a separate copy engine, pinned memory, and a send that does not steal all the same SMs. It also assumes the tensor to send is already ready. If the backward kernel and the NCCL send contend for the same memory bandwidth, \(T_{\text{overlap}}\) creeps back toward \(T_{\text{ordered}}\). The bound is a stage delay, not a proof that end-to-end epoch time falls by the same ratio when every stage is already compute-bound.</p>
       </div>
+      <div class="important-note">
+        <p><strong>System Detail — what the “communicate” clock is made of.</strong> The \(T_{\text{communicate}}\) term in the overlap bound is not a raw physical constant. In data-parallel training it is the cost of an <em>AllReduce</em> collective over the gradient payload, and that cost depends on which collective algorithm the runtime selects for the current topology. Two standard choices are <em>Ring AllReduce</em> and <em>Tree AllReduce</em>.</p>
+        <p>In the four-GPU, fully connected example, Ring AllReduce first forms a single ring and then follows a “no ring, no use” rule: the two crossbar links that cannot join that ring sit idle, so scarce bandwidth is discarded. Tree AllReduce instead partitions each GPU's gradient into four chunks \(a_i, b_i, c_i, d_i\). All four GPUs concurrently send each non-local chunk to the peer that owns that chunk's reduction tree, each GPU locally reduces one chunk (for example \(A = a_1 + a_2 + a_3 + a_4\)), and then broadcasts its finished chunk back to the other three. Every link carries traffic.</p>
+        <p>The same split appears on an asymmetric topology such as a four-GPU DGX-1, where GPU 1 has five links but GPU 4 has four. Ring packs two concurrent rings and still leaves one link unused; Tree packs three concurrent trees and wastes no link. If \(g\) is the payload per GPU and \(B_{\text{link}}\) the bandwidth of one link, the per-GPU forward time with \(c\) concurrent channels is \(t \approx g/(c\,B_{\text{link}})\). Hence \(t_{\text{ring}} \approx g/(2B_{\text{link}})\) while \(t_{\text{tree}} \approx g/(3B_{\text{link}}) < t_{\text{ring}}\): identical payload, larger \(c\).</p>
+        <table>
+          <thead>
+            <tr>
+              <th>Property</th>
+              <th>Ring AllReduce</th>
+              <th>Tree AllReduce</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>Link coverage</td>
+              <td>Only links that form a ring are used; others abandoned</td>
+              <td>Concurrent trees cover all available links</td>
+            </tr>
+            <tr>
+              <td>Four-GPU, fully connected</td>
+              <td>Two crossbar links idle</td>
+              <td>All links active</td>
+            </tr>
+            <tr>
+              <td>Per-GPU forward time</td>
+              <td>\(g/(2B_{\text{link}})\)</td>
+              <td>\(g/(3B_{\text{link}})\)</td>
+            </tr>
+            <tr>
+              <td>Fits best</td>
+              <td>Uniform ring topology</td>
+              <td>Rich or asymmetric topology with spare links</td>
+            </tr>
+          </tbody>
+        </table>
+        <p><strong>Connection to overlap.</strong> Overlap hides a communication cost that the collective still pays; a topology-aware collective shrinks that cost <em>before</em> scheduling hides whatever remains. In a runtime such as NCCL, the algorithm is chosen from a set that includes both <code>ring</code> and <code>tree</code>, with the default selected from the node topology. A smaller \(T_{\text{communicate}}\) lowers the \(\max\) bound at the source, so the two optimizations are complementary: first pay fewer bytes of collective time, then hide the rest under math.</p>
+      </div>
       <h3 id="9.1.3-worked-timeline-several-batches-on-one-machine">9.1.3 Worked Timeline: Several Batches on One Machine</h3>
       <p>Take a short pipeline of layers and several mini-batches already waiting in memory. Batch 1 enters layer 1. Layer 1 computes activations and starts sending them to layer 2. Layer 2 computes while layer 1 may already be receiving or preparing the next slice. After the forward wave reaches the last layer, backward gradients form and travel back: sending back, sending back, sending back. While those gradients for batch 1 are still on the wire toward earlier layers, batch 2 can already be in the forward pipeline.</p>
       <p>One machine is then doing two things at once: receiving or sending gradients for the previous batch, and computing the current batch. That is the single-machine overlap picture. Computation of the current batch and communication of the previous batch’s gradients share the same device. Both run in parallel. The processing time drops because the idle gap between “I finished math” and “I finished the network copy” shrinks.</p>

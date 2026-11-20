@@ -457,6 +457,63 @@
   <p>Every device has a controller that speaks for it, and all controllers meet at the common bus. The bus is the shared bottleneck: the reason the operating system must later care about "who gets the memory cycle" is that the request traffic of all devices funnels through this one highway.</p>
 </div>
 
+<h3 id="1.4.3-direct-memory-access-dma-offloading-block-transfers" class="subsection-title">1.4.3 Direct Memory Access (DMA): Offloading Block Transfers</h3>
+<p>The bus picture raises a practical question: if every byte of a disk read had to be carried by the CPU, the processor would spend its life moving data instead of computing. For large blocks there is a hardware answer — <em>direct memory access</em> (DMA) — which the spoken lecture skipped but the companion treatment of system operation includes.</p>
+<div class="key-concept">
+  <p><strong>Direct memory access (DMA):</strong> a mode in which a dedicated DMA module (on the bus, or built into an I/O controller) transfers an entire block of data directly between the device and main memory, one word at a time, <em>without</em> the data passing through the processor. To start a transfer the CPU hands the module four items: (1) read or write, (2) the device address, (3) the starting memory address, and (4) the word count. The CPU then returns to other work; when the whole block is done, the DMA module raises a single interrupt. The processor is involved only at the beginning and at the end.</p>
+</div>
+<p>Three techniques for I/O now sit on one scale, from most to least CPU-bound:</p>
+<table>
+  <thead>
+    <tr>
+      <th>Technique</th>
+      <th>Who moves each word</th>
+      <th>CPU involvement</th>
+      <th>Completion signal</th>
+      <th>Best for</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td>Programmed I/O</td>
+      <td>CPU (under program control)</td>
+      <td>Polls the status register until ready — busy-waits</td>
+      <td>None; CPU discovers it by checking</td>
+      <td>Tiny transfers, simple hardware</td>
+    </tr>
+    <tr>
+      <td>Interrupt-driven I/O</td>
+      <td>CPU (inside the ISR)</td>
+      <td>Notified per device request; still executes every transfer instruction</td>
+      <td>One interrupt per transfer request</td>
+      <td>Sporadic, low-volume I/O</td>
+    </tr>
+    <tr>
+      <td>Direct memory access</td>
+      <td>DMA module, directly to/from memory</td>
+      <td>Sets up once, then interrupted only when the whole block finishes</td>
+      <td>One interrupt per <em>block</em></td>
+      <td>Large blocks: disks, network buffers</td>
+    </tr>
+  </tbody>
+</table>
+<div class="example-box">
+  <p><strong>Worked trace — a 4 KB disk read.</strong> A disk block of \(4\ \text{KB}\) is to be placed at main-memory address \(0x20000\), with a 16-bit word so the count is \(2048\) words.</p>
+  <ol>
+    <li>The CPU sends the DMA module: read, device = disk 0, start = \(0x20000\), count = \(2048\).</li>
+    <li>The CPU goes back to executing user code — it is <em>not</em> stalled for the milliseconds of mechanical seek and rotation.</li>
+    <li>The module transfers \(2048\) words one at a time straight into memory. For each word it must own the bus; when the CPU also needs the bus it simply pauses for one bus cycle. That pause is <em>cycle stealing</em>, not an interrupt — no context is saved.</li>
+    <li>After the last word the module asserts one interrupt. The CPU services it, and the block is ready.</li>
+  </ol>
+  <p>Interrupt-driven I/O would have required \(2048\) separate transfers through the processor, each with its own interrupt — DMA reduces that to one setup and one completion interrupt. The cost is the bus cycles stolen from the CPU while the module runs.</p>
+</div>
+<div class="important-note">
+  <p><strong>System detail:</strong> DMA and caches interact. Because a DMA module writes memory behind the processor's back, a stale copy may sit in the cache while main memory holds the fresh data. Real systems therefore mark DMA buffers as coherent or explicitly synchronize them — the device transfers to a memory address the CPU can later read safely, which is why setting up the buffer is part of starting a DMA transfer. Section 1.8 returns to the cache side of this problem.</p>
+</div>
+<div class="key-takeaway">
+  <p>DMA is the bus-level answer to the bottleneck: the CPU delegates a whole block to a hardware module, the module steals bus cycles to move the words directly to or from memory, and one interrupt announces completion. Programmed I/O busy-waits, interrupt-driven I/O interrupts per word, DMA interrupts per block.</p>
+</div>
+
 <h2 id="1.5-interrupts-how-the-os-finds-out-what-happened">1.5 Interrupts: How the OS Finds Out What Happened</h2>
 <h3 id="1.5.1-what-an-interrupt-is-and-how-the-vector-works">1.5.1 What an Interrupt Is and How the Vector Works</h3>
 <div class="important-note">
@@ -528,6 +585,21 @@
 <p>The important design rule that follows: as soon as the I/O starts, control returns to the user program <em>without waiting for the I/O completion</em>. Once a process has started its I/O, the next process in the queue gets the CPU — the CPU should not be idle. When that next process later finishes its turn or goes to I/O, it returns to the ready queue and waits for its turn again. There should always be some queue of processes, either at the CPU or at the I/O, to get full utilization of both. That is very important.</p>
 <div class="key-takeaway">
   <p>The operating system is interrupt driven, and the interrupt timeline is its heartbeat: I/O starts → control returns immediately to the user program → the next ready process takes the CPU → the device interrupts when done. Never let the CPU wait for I/O, and never let a device wait with an empty queue.</p>
+</div>
+
+<h3 id="1.5.5-the-interrupt-processing-sequence-and-nested-interrupts" class="subsection-title">1.5.5 The Interrupt Processing Sequence and Nested Interrupts</h3>
+<p>The timeline shows <em>when</em> control changes hands; the companion treatment of interrupts also spells out <em>how</em>. The sequence splits between hardware and software, and the same machinery must cope with a second interrupt arriving while the first is still being served.</p>
+<div class="key-concept">
+  <p><strong>The nine-step interrupt sequence.</strong> Hardware: (1) the device asserts an interrupt at the end of the current instruction; (2) the processor acknowledges it and disables further interrupts; (3) the current <em>program status word</em> (PSW) and <em>program counter</em> (PC) are pushed onto a control stack. Software then takes over: (4) the PC is loaded with the entry address from the interrupt vector; (5) the service routine saves the general registers and any other state it will overwrite; (6) it examines the device status and services or acknowledges the device; (7) it restores the registers; (8) it restores the PSW and PC from the stack; (9) execution resumes at the instruction after the one interrupted. Modern kernels express step (3)/(5) as a dedicated interrupt stack and step (4) as an IDT or vector table that maps each interrupt source to its handler.</p>
+</div>
+<div class="important-note">
+  <p><strong>Why the save/restore is unavoidable:</strong> an interrupt is <em>not</em> a routine called by the program — it can arrive at any instruction, with unpredictable timing. Nothing in the interrupted program arranged for its registers to be preserved, so the machine or the handler must push the entire state (all registers plus the return address \(N+1\)) onto the control stack before doing any work, and restore it byte for byte before returning. This is the same state-preservation idea that appears later in the context switch of §3.7; here it happens on a smaller, faster scale.</p>
+</div>
+<div class="warning-box">
+  <p><strong>Pitfall — two ways to handle multiple interrupts.</strong> (a) <em>Disable interrupts</em> while a handler runs: new requests stay pending and are checked after re-enabling. Simple, strictly sequential, but ignores urgency — a full communications buffer can overflow while a slow printer handler runs. (b) <em>Priority-based nesting</em>: assign each interrupt a priority and let a higher-priority one preempt a lower-priority handler. Worked timeline with priorities printer = 2, disk = 4, communications = 5: at \(t=10\) a printer interrupt starts; at \(t=15\) a communications interrupt preempts it (its state is pushed); at \(t=20\) a disk interrupt is held because 4 &lt; 5; at \(t=25\) communications finishes, the printer handler resumes but the disk interrupt immediately takes over; at \(t=35\) disk finishes; at \(t=40\) the printer handler finally completes and the user program resumes. The interrupt stack must be sized for this worst-case nesting depth.</p>
+</div>
+<div class="key-takeaway">
+  <p>Save state, jump through the vector, service and acknowledge the device, restore state, return — that is one interrupt. When interrupts overlap, either serialize them by disabling interrupts or nest them by priority; nesting buys responsiveness at the cost of a deeper stack and more careful bookkeeping.</p>
 </div>
 
 <h2 id="1.6-system-calls-and-the-device-status-table">1.6 System Calls and the Device Status Table</h2>

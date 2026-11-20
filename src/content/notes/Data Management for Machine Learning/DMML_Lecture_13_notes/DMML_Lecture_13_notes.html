@@ -1140,6 +1140,42 @@
 <h3 id="13.10.3-the-llm-ops-pipeline">13.10.3 The LLM Ops Pipeline</h3>
 <p>The LLM Ops pipeline is <strong>operation-centric</strong>: it manages the entire lifecycle — version control, continuous integration and continuous deployment (CI/CD), monitoring for drift and hallucinations, and cost optimization, which means token usage. Every time something comes in, we ask: how are we managing it? Was the previous version needed for the next one? Are we looking at data drift or model drift?</p>
 <p>Version management is real: people using the Gemini API have seen errors appear because the version changed; you have to specify the version properly and then it works. Whether it is model drift, data drift, or hallucination, you need proper optimization of the tokens you are using — and that is where extended prompt engineering, version control, and CI/CD come into play. The Ops pipeline is where an LLM application stops being a demo and becomes a service: reproducible versions, monitored behavior, and controlled cost.</p>
+
+<div class="important-note">
+  <p><strong>Engineering detail — the hidden technical debt the Ops pipeline must service.</strong> The Reliable ML texts warn that ML-specific debt differs from ordinary software debt: a large share of a production system is adapter or <em>glue code</em> that reshapes raw data into the formats a framework expects and interfaces with the model at serving time. That code grows quickly in size and complexity, and must be tested and monitored as rigorously as any other component. The canonical taxonomy (Sculley et al., <em>Hidden Technical Debt in Machine Learning Systems</em>, NeurIPS 2015) names the recurring risk factors:</p>
+  <table>
+    <thead>
+      <tr>
+        <th>Debt type</th>
+        <th>Mechanism</th>
+        <th>Ops-pipeline control</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>Glue code / pipeline jungles</td>
+        <td>Accumulated adapters and tangential data paths make the system hard to change without breakage.</td>
+        <td>Centralize and version transformation code; monitor it like production code.</td>
+      </tr>
+      <tr>
+        <td>Data dependencies &amp; entanglement</td>
+        <td>One change in upstream data ripples unpredictably through models that silently depend on it.</td>
+        <td>Track lineage and dependency contracts; pin and validate inputs.</td>
+      </tr>
+      <tr>
+        <td>Configuration debt</td>
+        <td>Numerous untracked settings — versions, flags, hyperparameters — decide behavior but are not managed as code.</td>
+        <td>Version the configuration alongside the model; keep the Ops pipeline's CI/CD discipline on it.</td>
+      </tr>
+      <tr>
+        <td>Hidden feedback loops</td>
+        <td>A model's outputs quietly influence the data used to train its next version, so errors are reproduced and amplified.</td>
+        <td>Monitor the loop; distinguish undeclared influence from the deliberate retraining loop of Section 13.16.3.</td>
+      </tr>
+    </tbody>
+  </table>
+  <p><strong>Takeaway:</strong> this is why the Ops pipeline is not optional overhead — version control, CI/CD, and monitoring are the mechanisms that keep a rapid prototype from accumulating unpayable maintenance costs.</p>
+</div>
 <h3 id="13.10.4-student-questions-and-answers">13.10.4 Student Questions and Answers</h3>
 <div class="important-note">
   <p><strong>Q:</strong> This last point is the hot topic in most companies — minimizing token usage and handling hallucinations. When you build an application you cannot repeat the workflows, cannot predict the same result every time — that is a problem.</p>
@@ -1345,6 +1381,42 @@
   <li><strong>Robustness</strong> — how well the model holds up under noisy or adversarial inputs.</li>
 </ul>
 <p>The fairness and bias check is why the NLP material on fairness and bias matters — bias checks ride along with every evaluation. A model is not evaluated on accuracy alone; it is evaluated on whether its answers are fair, accountable, and transparent.</p>
+
+<div class="important-note">
+  <p><strong>Engineering detail — evaluation diagnostics beyond the aggregate score.</strong> A single accuracy or BLEU number over the whole test set can conceal failures that appear only in specific subpopulations, or only after a model update. The Reliable ML literature adds four targeted procedures that complement the metrics above:</p>
+  <table>
+    <thead>
+      <tr>
+        <th>Diagnostic</th>
+        <th>How it is built</th>
+        <th>Failure it exposes</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>Golden set</td>
+        <td>Fix a slice of data from one past date that is never trained on; store its baseline predictions and re-run every new model against it.</td>
+        <td>Sudden model-quality regressions from a code or retraining change; a stable score reveals that a previous result was inflated by easier new data.</td>
+      </tr>
+      <tr>
+        <td>Stress-test distribution</td>
+        <td>Construct a test set that deliberately over-represents conditions absent from the IID test data — new geographies, accents, or skin tones.</td>
+        <td>Training–serving skew and covariate shift that an IID test set cannot reveal because those conditions were never sampled.</td>
+      </tr>
+      <tr>
+        <td>Sliced analysis</td>
+        <td>Filter an existing test set by a feature value and compute the metric separately for each slice — by language, region, or device.</td>
+        <td>Intersectional fairness gaps hidden by a strong overall average.</td>
+      </tr>
+      <tr>
+        <td>Counterfactual testing</td>
+        <td>Alter one attribute of a real example (swap a background or a pronoun) and check whether the prediction changes in the way it should.</td>
+        <td>Spurious correlations — the model keying on background or demographics instead of the target.</td>
+      </tr>
+    </tbody>
+  </table>
+  <p><strong>Why it matters:</strong> in the Gender Shades study, commercial classifiers reached up to 34.7% error on darker-skinned females while lighter-skinned males stayed near 0.8% — a gap invisible in a single average. The fairness and bias check of Section 13.9.2 must therefore be applied per slice, not only in aggregate; Google's What-If Tool implements exactly this, probing hypothetical situations and visualizing behavior across subsets of input data. <strong>Guardrail:</strong> a slice with too few examples is statistically meaningless, so require enough samples per slice before drawing conclusions.</p>
+</div>
 <div class="key-takeaway">
   <p><strong>Recap:</strong> the pipeline tracks model drift (data consistent, accuracy falling) and data drift (the input distribution moves), measured by PSI and KL divergence. The scorer evaluates LLM test cases (input, output, retrieval context, arguments) with weighted metrics, and when the weighted score says retrain, inference data flows back into training — the college-test weightage loop. Metrics: perplexity, BLEU, ROUGE, fairness and bias check, robustness.</p>
 </div>
@@ -1390,6 +1462,12 @@
 <h3 id="13.18.1-commit-roll-back-and-feature-flags">13.18.1 Commit, Roll Back, and Feature Flags</h3>
 <p>Deployment uses the same common sense as version control: <strong>commit or roll back</strong> — checkpoint, commit, roll back. The deployment of a model or a pipeline is treated like a code change: you make a checkpoint of the working state, you commit the new version, and if anything breaks you roll back to the checkpoint. There is no drama in deployment because every step is reversible.</p>
 <p>The second tool is the <strong>feature flag</strong>: flag which feature is good, which database, which flag — feature flags let you turn capabilities on and off per user. A feature flag is a switch in the configuration: the code is deployed, but the capability is switched on for some users and off for others. That separation of <em>deploying code</em> from <em>enabling features</em> is what makes rollback surgical — you can disable one flag without reverting the whole system.</p>
+
+<div class="important-note">
+  <p><strong>Engineering detail — fallback vs. rollback.</strong> When a deployed model is failing, "revert" is not a single action. The Reliable ML literature separates two recovery moves. A <em>rollback</em> restores a previously known-good model version: keep versioned, compiled binaries of earlier models so this can be done quickly, and ramp the old version back in gradually in case new compatibility issues make it unusable. A <em>fallback</em> temporarily serves an ultra-reliable, simpler substitute that gives acceptable — even if non-optimal — results.</p>
+  <p>A fallback is deliberately weaker than the main model (otherwise you would not have used the model at all), so it is a short-term bridge while the real failure is fixed, not a permanent replacement. Typical fallbacks: a far simpler model that does not train continuously, a lookup table of the most common responses, a small function returning the median prediction, or — in a recommender — showing the top-10 most popular items instead of broken personalization. Google's ML engineering guidance reaches the same conclusion from the opposite direction: a simple heuristic can get a product out the door, and a simple model supplies baseline behavior against which more complex models are tested.</p>
+  <p><strong>Pitfall — rollback is not always clean.</strong> Schema, format, or semantic changes between releases, and differences in how features are transformed from one model version to another (e.g., two different default rules for a missing pickup location), can make a rollback impractical or impossible without rebuilding the whole dependency suite — which is exactly when an algorithmic fallback becomes life-saving. Keep several model versions (primary, new, old) and periodically test falling back to them.</p>
+</div>
 <h3 id="13.18.2-a-b-testing-with-human-validation">13.18.2 A/B Testing with Human Validation</h3>
 <p>We can do <strong>A/B testing</strong> — this version or that version — and get user input and feedback. A human is involved: an unattended robot performs the process execution, then human validation happens, then human approval happens. The human-in-the-loop pattern carries into production.</p>
 <p>The A/B test is the deployment experiment: two versions (A and B) serve real users in parallel, the system collects behavior and feedback, and the comparison decides which version stays. The robot executes; the human validates and approves. The HIL pattern from Section 13.11 does not stop at training time — it is part of how production changes are approved.</p>

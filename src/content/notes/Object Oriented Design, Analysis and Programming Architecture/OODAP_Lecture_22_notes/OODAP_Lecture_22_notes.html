@@ -482,6 +482,24 @@
 <div class="warning-box">
   <p><strong>Scope and assumptions:</strong> Generics assume you work with reference types and that compile-time type checking is desired. The compiler enforces that all uses of \(T\) are consistent for a given instantiation and removes generic type information after checking — a process called <em>erasure</em>. This means at runtime there is really only one <code>Gen</code> class, with necessary casts inserted automatically. If you need runtime reflection on the actual type argument, erasure is a boundary — you must pass a <code>Class&lt;T&gt;</code> token explicitly.</p>
 </div>
+<div class="important-note">
+  <p><strong>Under the hood — what erasure actually compiles to:</strong> The compiler applies three transformations so that generic source remains compatible with pre-generics JVM bytecode. (1) Replace every type parameter with its bound — \(\text{Object}\) when unbounded, the first bound when written as \(\langle T \text{ extends Number} \rangle\). (2) Insert casts at each retrieval so the caller still receives the declared type. (3) Generate <em>bridge methods</em> so overriding still works after the signatures have been erased. The result is that no new classes exist for parameterized types — <code>Identity&lt;Long&gt;</code> and <code>Identity&lt;String&gt;</code> share one <code>Identity.class</code>, and generics carry no runtime overhead.</p>
+  <table>
+    <thead>
+      <tr><th>Source declaration</th><th>After erasure (bytecode view)</th><th>Why</th></tr>
+    </thead>
+    <tbody>
+      <tr><td><code>T ob;</code> in <code>Gen&lt;T&gt;</code></td><td><code>Object ob;</code></td><td>Unbounded \(T\) erases to \(\text{Object}\)</td></tr>
+      <tr><td><code>T getob() { return ob; }</code></td><td><code>Object getob()</code></td><td>Return type erases; caller's cast is inserted at the call site</td></tr>
+      <tr><td><code>Gen&lt;Integer&gt; g</code></td><td>one <code>Gen</code> class, cast to <code>Integer</code> on <code>getob()</code></td><td>Type arguments exist only in source</td></tr>
+      <tr><td><code>Stats&lt;T extends Number&gt;</code></td><td>field typed <code>Number</code></td><td>Bound replaces \(T\), so <code>doubleValue()</code> is legal</td></tr>
+    </tbody>
+  </table>
+  <p><strong>Bridge-method trace:</strong> Let <code>class Gen&lt;T&gt; { T ob; T getob() { return ob; } }</code> and <code>class Gen2 extends Gen&lt;String&gt; { String getob() { return ob; } }</code>. Erasure turns the parent's method into <code>Object getob()</code>, so the child's <code>String getob()</code> no longer has the same signature to override. The compiler therefore generates a synthetic bridge with the parent's erased signature that casts and delegates — effectively <code>Object getob() { return (String) getob(); }</code>. Inspecting the class with <code>javap</code> shows both methods:</p>
+  <p><code>java.lang.String getob();</code></p>
+  <p><code>java.lang.Object getob();</code> <em>// bridge method, inserted by the compiler</em></p>
+  <p><strong>Sense-check:</strong> the two methods differ only in return type, which source code would reject — but the bridge is synthesized at bytecode level, so it is invisible to the programmer and is exactly what keeps polymorphism working through a generic superclass. This also explains why casting a raw <code>Gen</code> back to <code>String</code> is the caller's responsibility.</p>
+</div>
 <div class="warning-box">
   <p><strong>Pitfalls:</strong> (1) Using a primitive as a type argument — <code>Gen&lt;int&gt;</code> fails to compile. (2) Believing the compiler creates separate classes per type — it does not; erasure leaves one class. (3) Mixing raw and parameterized forms without understanding that raw <code>Gen</code> disables type safety and reintroduces casts and <code>ClassCastException</code> risks.</p>
 </div>
@@ -1661,6 +1679,26 @@
   <p>in some order for <code>HashMap</code> (insertion order for <code>LinkedHashMap</code>). <strong>Sense-check:</strong> <code>mp.get("C")</code> returns <code>1003</code> as an <code>Integer</code>; <code>mp.containsKey("Z")</code> returns false; <code>mp.size()</code> is 4 after the four puts.</p>
   <p><strong>Overwrite trace:</strong> If you then call <code>mp.put("C", 9999)</code>, <code>get("C")</code> becomes <code>9999</code> and <code>size()</code> stays 4 — the map has no duplicate keys, only value replacement.</p>
 </div>
+<div class="example-box">
+  <p><strong>Extension — a bounded LRU cache with <code>LinkedHashMap</code>:</strong> A plain <code>HashMap</code> grows without limit; to cap it you need to know which entry is "oldest." <code>LinkedHashMap</code> extends <code>HashMap</code> but threads a doubly-linked list through its entries, so iteration order is predictable. The three-argument constructor <code>new LinkedHashMap&lt;&gt;(16, 0.75f, true)</code> sets the default capacity 16, load factor 0.75, and — critically — <code>accessOrder = true</code>, making iteration run from least- to most-recently <em>accessed</em>. Overriding the single added method <code>removeEldestEntry</code> turns the map into a fixed-size cache:</p>
+  <p><code>Map&lt;String,Integer&gt; cache = new LinkedHashMap&lt;&gt;(16, 0.75f, true) {</code></p>
+  <p><code>&nbsp;&nbsp;protected boolean removeEldestEntry(Map.Entry&lt;String,Integer&gt; eldest) {</code></p>
+  <p><code>&nbsp;&nbsp;&nbsp;&nbsp;return size() &gt; 3;&nbsp;&nbsp;// evict once the cache exceeds 3 entries</code></p>
+  <p><code>&nbsp;&nbsp;}</code></p>
+  <p><code>};</code></p>
+  <table>
+    <thead><tr><th>Step</th><th>Operation</th><th>Order after (eldest → newest)</th><th>Size / eviction</th></tr></thead>
+    <tbody>
+      <tr><td>1</td><td><code>put("A",1); put("B",2); put("C",3)</code></td><td>A, B, C</td><td>3, no eviction</td></tr>
+      <tr><td>2</td><td><code>cache.get("A")</code> → 1</td><td>B, C, A</td><td>3, A refreshed</td></tr>
+      <tr><td>3</td><td><code>put("D",4)</code></td><td>C, A, D</td><td><strong>B evicted</strong>, size stays 3</td></tr>
+      <tr><td>4</td><td><code>cache.get("C")</code> → 3</td><td>A, D, C</td><td>3, C refreshed</td></tr>
+      <tr><td>5</td><td><code>put("E",5)</code></td><td>D, C, E</td><td><strong>A evicted</strong>, size stays 3</td></tr>
+    </tbody>
+  </table>
+  <p><strong>Sense-check:</strong> without the <code>true</code> flag the order would be <em>insertion</em> order, so step 2 would not move A and step 3 would evict A instead of B — the cache would be FIFO, not LRU. Basic operations remain \(O(1)\) average, and <code>entrySet()</code> iterates in the tracked order, which is why a cache dump shows the eviction policy directly.</p>
+  <p><strong>Pitfall:</strong> in access-order mode a bare <code>get</code> counts as a structural modification, so iterating <code>entrySet()</code> while calling <code>get</code> throws <code>ConcurrentModificationException</code>; <code>containsKey</code> does not count as an access. The default <code>removeEldestEntry</code> simply returns <code>false</code>, so forgetting the override leaves an unbounded map.</p>
+</div>
 <div class="warning-box">
   <p><strong>Pitfalls:</strong> Writing <code>mp.add("A",1001)</code> — there is no <code>add</code> on <code>Map</code>; the correct verb is <code>put</code>. Confusing <code>keySet()</code> (returns <code>Set&lt;K&gt;</code>) with <code>entrySet()</code> (returns pairs). Also, using <code>==</code> to compare Integer values beyond the cached range -128..127 may fail — use <code>equals</code>.</p>
 </div>
@@ -1750,6 +1788,23 @@
   <p>\[ \text{interface SortedSet}\langle E \rangle \text{ extends Set}\langle E \rangle \]</p>
   <p>with additional ordered-view methods <code>E first()</code>, <code>E last()</code>, <code>SortedSet&lt;E&gt; headSet(E to)</code>, <code>tailSet</code>, <code>subSet</code>.</p>
   <p>Its definition in the lecture is that it contains methods inherited from <code>Set</code> and adds the feature that all elements are kept in sorted order. For strings, sorted means alphabetical ascending (<code>"C" &lt; "Java" &lt; "Python"</code>); for numbers, numeric ascending (<code>1 &lt; 2 &lt; 10</code>). The ordering is by natural ordering (<code>Comparable</code>) or a supplied <code>Comparator</code>. The framework again supplies the guarantee without requiring the programmer to write sorting or deduplication logic — <code>TreeSet</code> is the classic implementation (balanced tree).</p>
+</div>
+<div class="example-box">
+  <p><strong>Supplying the comparator — when natural order is not the order you want:</strong> <code>TreeSet</code> and <code>TreeMap</code> define "sorted" by an ordering object. With no argument they use natural ordering via <code>Comparable</code>; passing a <code>Comparator&lt;T&gt;</code> to the constructor overrides it. The comparator contract is <code>int compare(T o1, T o2)</code>, negative / zero / positive meaning <em>less than / equal to / greater than</em>, which must be antisymmetric and transitive. Since JDK 8 the interface is a functional interface with static builders, so most comparators are one line:</p>
+  <p><code>Comparator&lt;String&gt; desc = Comparator.reverseOrder();</code></p>
+  <p><code>Comparator&lt;String&gt; byLen = Comparator.comparingInt(String::length)</code></p>
+  <p><code>&nbsp;&nbsp;.thenComparing(String.CASE_INSENSITIVE_ORDER);</code></p>
+  <table>
+    <thead><tr><th>Declaration</th><th>Ordering rule</th><th>Iteration of {C, Java, Python}</th></tr></thead>
+    <tbody>
+      <tr><td><code>new TreeSet&lt;&gt;()</code></td><td>Natural (<code>Comparable</code>), ascending</td><td>C, Java, Python</td></tr>
+      <tr><td><code>new TreeSet&lt;&gt;(Comparator.reverseOrder())</code></td><td>Reverse of natural order</td><td>Python, Java, C</td></tr>
+      <tr><td><code>new TreeSet&lt;&gt;(byLen)</code></td><td>Length first, then case-insensitive</td><td>C, Java, Python (1, 4, 6 chars)</td></tr>
+      <tr><td><code>new TreeSet&lt;&gt;()</code> of <code>Employee</code> with no <code>Comparable</code></td><td>None available</td><td><code>ClassCastException</code> on second insert</td></tr>
+    </tbody>
+  </table>
+  <p><strong>Worked fix:</strong> for a class without a natural order, declare <code>Comparator&lt;Employee&gt; bySalary = Comparator.comparing(Employee::getSalary).thenComparing(Employee::getName)</code> and construct <code>new TreeSet&lt;&gt;(bySalary)</code>; the same comparator can be passed to <code>new TreeMap&lt;&gt;(bySalary)</code> so keys sort by salary instead of identity. A two-element tie in salary falls through to name, so no two distinct employees compare equal unless they share both fields.</p>
+  <p><strong>Pitfall — consistency with equals:</strong> a comparator whose <code>compare</code> returns 0 for objects that are not <code>equals</code> makes the sorted set "strangely" violate the <code>Set</code> contract: two such objects can both be inserted and <code>size()</code> grows although the set appears to contain one logical value. Keep the comparator consistent with <code>equals</code>, and note that <code>null</code> keys are rejected by <code>TreeSet</code>/<code>TreeMap</code> unless the comparator explicitly handles them via <code>Comparator.nullsFirst</code> / <code>nullsLast</code>.</p>
 </div>
 <p>Rule-check helper: to test understanding, apply both rules in order — first deduplicate, then sort. Many students sort then deduplicate and get confused; the framework does deduplication on insertion, then maintains sorted order automatically.</p>
 <div class="warning-box">

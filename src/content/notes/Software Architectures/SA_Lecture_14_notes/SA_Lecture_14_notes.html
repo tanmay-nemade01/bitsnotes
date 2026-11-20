@@ -626,6 +626,17 @@
 <p>Spark, also from the Apache Foundation, exists for quicker processing. The key difference: if the volumes of data can be handled in memory, Spark uses memory. Everything is done in memory. This is <em>in-memory cluster computing</em> (keeping the working dataset in RAM across a cluster of machines instead of on disks).</p>
 <p>It matters because real-time work needs quick processing. Typically, NewSQL databases with very large capacities that do MapReduce cannot handle real-time demands. Spark is the alternative created for real-time activity. Spark creates clusters and tasks across worker nodes; data is kept in cache and put together. If you have large volumes that must be processed online, this is the alternative to reach for.</p>
 <p>A concrete comparison makes the speedup visible: a multi-step job that MapReduce runs by writing each intermediate result to disk might take minutes; Spark keeps those intermediates in RAM and finishes in seconds. For batch work done once a night, minutes are fine. For flagging a fraudulent card swipe while the customer waits at the counter, only seconds will do.</p>
+
+<div class="important-note">
+  <p><strong>System Detail — how Spark processes a stream.</strong> "Real time" does not mean Spark abandons batching; it means the batches become so small that the answer arrives within the batch interval. Spark Streaming receives a live input stream and <em>divides it into batches</em>, each of which is processed by the Spark engine to produce a batch of results. The abstraction is the <em>discretized stream</em> (DStream): a continuous stream represented internally as a sequence of RDDs, where each RDD holds the records of one time slice.</p>
+  <ol>
+    <li>Choose a batch interval \(\Delta t\) (e.g. 1 second). Transactions arriving during slice \(k\) are buffered into one RDD \(R_k\).</li>
+    <li>Apply the same transformations used in batch jobs to every RDD: <code>map</code> each swipe to <code>(card, 1)</code>, then <code>reduceByKey</code> to count per card per slice.</li>
+    <li>Push each result batch to a dashboard or alert sink with an output operation; the end-to-end latency is roughly \(\Delta t\) plus the per-batch compute time.</li>
+  </ol>
+  <p><strong>Migration note:</strong> the DStream API is the previous-generation engine and is now legacy. Its successor, <em>Structured Streaming</em>, runs the same computation on DataFrames and hides the hard parts — incremental processing, checkpointing, and event-time <em>watermarks</em> that decide how late a transaction may still be counted. The mental model (slice the stream, process each slice on the cluster, emit results) is unchanged; only the API and the time semantics grew stronger.</p>
+  <p>This is the exact machinery behind the fraud alerts of the next subsection: a swipe is not compared against last night's file, but against the few seconds of history already sitting in memory.</p>
+</div>
 <h3 id="14.5.2-real-time-fraud-alerts">14.5.2 Real-Time Fraud Alerts</h3>
 <p>Real-time analysis in banking looks like this. User activities are analyzed as they stream. Patterns of behavior are checked, and alerts are raised on suspicious ones. SMS messages go out to customers, and security personnel are informed. Requests are processed based on the data being processed right now.</p>
 <p>Notice how this completes the fraud story from topic 14.3: the twice-daily report was batch analytics; this is the same detection logic moved into memory so the alert fires during the transaction, not after dinner. A sports platform example accompanies the reference material for this topic — live score feeds processed as they arrive rather than after the match.</p>
@@ -867,6 +878,18 @@
   <p>Sense-check: both probabilities within each branch sum to 1 (\(0.7+0.3=1\), \(0.9+0.1=1\)), and each expected value lies between the branch's best and worst outcomes — as any weighted average must.</p>
 </div>
 <p>Supervised learning in practice: you help the machine decide, feeding it lots of data and using that data to build the tree.</p>
+
+<div class="example-box">
+  <p><strong>Worked validation — why a perfect training score is worthless.</strong> Learning a prediction function and testing it on the <em>same</em> data is a methodological mistake: a model that merely repeats the labels it has seen scores perfectly yet predicts nothing useful on unseen data. That failure is <em>overfitting</em> — a model tuned to yesterday's weather may not predict tomorrow's. The companion warning applies directly to the fruit-basket examples above: memorizing which specific apples were shown is not learning "apple".</p>
+  <p>The remedy is to hold out data. A simple split reserves a test set (say 40%) and trains on the rest; but tuning hyperparameters against that same test set leaks knowledge of it into the model, so a third <em>validation</em> set is needed. Partitioning into three sets wastes samples, so the standard method is <em>\(k\)-fold cross-validation</em>:</p>
+  <ol>
+    <li>Split the training data into \(k\) equal folds (commonly \(k=5\) or \(k=10\)).</li>
+    <li>For each fold \(i\), train on the other \(k-1\) folds and score on fold \(i\) — giving accuracies \(a_1, \dots, a_k\).</li>
+    <li>Report the mean \(\bar{a} = \frac{1}{k}\sum_{i=1}^{k} a_i\) and the spread as the generalization estimate.</li>
+  </ol>
+  <p><strong>Worked numbers:</strong> five folds return \([0.96,\ 1.00,\ 0.96,\ 0.96,\ 1.00]\). Then \(\bar{a} = 4.88/5 = 0.98\) with standard deviation \(0.02\); a separate untouched test set gives the final, unbiased score.</p>
+  <p><strong>Sense-check:</strong> 5- or 10-fold is preferred to leave-one-out, which builds \(n\) nearly identical models and has high variance. Crucially, for the time-series data of topic 14.3 you must not shuffle — the folds must respect time order (forward chaining), or a "future" reading leaks into training and the reported accuracy is inflated.</p>
+</div>
 <p>The star example of unsupervised learning is the robotic vacuum cleaner. It goes around the house. Once it finds a table, it remembers there is a table there. Next time it will not bang against it — it bypasses. It carries a laser that sweeps the room and draws a map of the house. Its sensors strike obstacles, and it marks the map: table over here. That becomes the learning experience, and the machine improves on itself.</p>
 <p>Clustering assumes everything appears in clusters, so a fault inside a cluster gets corrected by the algorithm itself. If it suddenly finds a dot on your cheek in a photo, it can remove it when you say beautify or clean up — the dot does not belong to any skin-tone cluster, so the algorithm treats it as noise and erases it.</p>
 <p>Reinforcement was the robot recognizing the table, as above. Deep learning goes further: it models the way the brain works, with independent thought points. Like neural networks, deep learning systems share images, sounds, and videos and come to common decisions — sound matching, appearance matching, activity matching — and point out exceptions. The working feels almost human.</p>
@@ -936,6 +959,44 @@
   <p>Once you have been authorized, the next visit should recognize you as the same person. Either credentials are provided on the spot, or credentials you hold elsewhere can be used here.</p>
 </div>
 <p>That last line is exactly the role OpenID and OAuth play across websites: OpenID lets you prove identity once ("sign in with...") and reuse it; OAuth lets one site act on your behalf at another within granted limits — letting an application read your contacts without ever seeing your password. The Google Sheets mark sheet from topic 14.3.5 used both ideas at once: named accounts authenticated the faculty, cell-level rights authorized them.</p>
+
+<div class="key-concept">
+  <p><strong>Formal definition — OAuth 2.0 is delegated authorization.</strong> It lets a third-party application obtain <em>limited</em> access to a service without ever receiving the resource owner's password. The standard assigns four distinct roles:</p>
+  <table>
+    <thead>
+      <tr>
+        <th>Role</th>
+        <th>Responsibility</th>
+        <th>Worked-example instance</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>Resource owner</td>
+        <td>Entity that can grant access; authenticates and approves</td>
+        <td>The user whose photos are stored</td>
+      </tr>
+      <tr>
+        <td>Client</td>
+        <td>Application requesting access on the owner's behalf</td>
+        <td>The print-photos service</td>
+      </tr>
+      <tr>
+        <td>Authorization server</td>
+        <td>Authenticates the owner, obtains consent, issues tokens</td>
+        <td>The photo site's login/consent server</td>
+      </tr>
+      <tr>
+        <td>Resource server</td>
+        <td>Hosts the protected data, validates the presented token</td>
+        <td>The photo store holding the images</td>
+      </tr>
+    </tbody>
+  </table>
+  <p><strong>Authorization-code flow</strong> (the standard web pattern) runs in six steps: (A) the client directs the user to the authorization server; (B) the owner authenticates and approves a scoped request; (C) the server returns a short-lived, one-time <em>authorization code</em> via the registered callback URL; (D) the client exchanges that code — authenticating itself — at the token endpoint for an <em>access token</em>; (E) the client presents the access token to the resource server; (F) the server validates it and serves the resource.</p>
+  <p>The access token is a string denoting a specific <em>scope, lifetime, and access attributes</em> — the "valet key" that can drive the car but not open the trunk. A longer-lived <em>refresh token</em>, never sent to the resource server, obtains a fresh access token when the old one expires, so the user need not re-approve every transaction. The code and token exchanges travel over TLS; the authorization code is invalidated after its first use so an intercepted code cannot be replayed.</p>
+  <p>OpenID Connect sits on top as the <em>authentication</em> layer OAuth lacks: it returns an ID token attesting who signed in, while OAuth supplies the authorization token. Together they implement the "sign in with..." button — one identity, many narrowly scoped services.</p>
+</div>
 <h3 id="14.9.3-ldap-and-identity-management">14.9.3 LDAP and Identity Management</h3>
 <p>Companies set up LDAP (Lightweight Directory Access Protocol) servers to control authorization and authentication. Think of LDAP as the company's internal directory — a tree of users, groups, and permissions that applications query to ask "is this person who they claim to be, and may they do this?" Sometimes authentication and authorization run on separate servers; LDAP unifies them.</p>
 <p>Beyond LDAP, Identity and Access Management (IAM) is an industry of its own. Companies in this business control your IDs so that one unique ID works across any application of the company — and can reach beyond it. Within countries, identity management is handled by national systems: Aadhaar, for example, gives each resident a unique identity.</p>

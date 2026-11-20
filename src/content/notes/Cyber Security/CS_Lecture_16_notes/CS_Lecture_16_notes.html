@@ -421,6 +421,10 @@
 <div class="important-note">
   <p><strong>Q:</strong> What does CA stand for, and what does a CA signing key mean? <strong>A:</strong> CA stands for certificate authority — the authority whose role is to sign certificates. For example, a person has a public key and a private key; the CA is somebody who acts as the authority that signs the certificate so others can trust that the key belongs to the person.</p>
 </div>
+<div class="important-note">
+  <p><strong>System detail — how a leaked certificate is actually revoked.</strong> Signing a certificate is only half the story: when a private key leaks, the CA must be able to <em>un-trust</em> that certificate before its normal expiry. Two mechanisms exist. A <strong>CRL (Certificate Revocation List)</strong> is a signed list published by the CA of the serial numbers of certificates that are no longer valid, each with its revocation date; a verifier checks a received certificate against the current CRL for its issuing CA. The list is distributed either by <em>push</em> (the CA sends it out automatically at a regular interval) or by <em>pull</em> (downloaded by whoever wants to verify a certificate). An <strong>OCSP (Online Certificate Status Protocol)</strong> query is the newer, real-time alternative: instead of downloading a whole list, the verifier asks the CA about one specific certificate and receives its current status — <code>good</code>, <code>revoked</code>, or <code>unknown</code>. A certificate's <em>Authority Information Access</em> extension can point a verifier to the OCSP responder's address.</p>
+  <p>The trade-off: CRLs are simple and cacheable but only as fresh as the last publication, while OCSP gives timely per-certificate status at the cost of a live query. Heartbleed is the motivating case in the reference text — it forced the revocation and replacement of very large numbers of server certificates, exposing how poorly periodic CRLs scale when a mass revocation is needed.</p>
+</div>
 <h3 id="16.1.4-ssh-and-standard-port-numbers">16.1.4 SSH and Standard Port Numbers</h3>
 <p><em>SSH</em> (Secure Shell) is the protocol used for secure remote connections, and its standard port is 22. During the lab work the team had tried different port settings while testing SSL-related issues — they mentioned 501 and 614 — which caused confusion about which port was really in use. The instructor settled it: SSH is 22.</p>
 <div class="important-note">
@@ -1189,6 +1193,32 @@
 </div>
 <p>The instructor's closing comment was praise with a lesson: that one answer covered multiple technical controls — salting, password hashing — and these are the best practices most companies use nowadays.</p>
 <p><em>Salting</em> means adding a random string to each password before hashing it, so identical passwords produce different hashes and rainbow tables fail.</p>
+<div class="important-note">
+  <p><strong>System detail — why "hashed and salted" also needs a work factor.</strong> Salting defeats <em>precomputation</em>: each account receives a unique random salt joined to the password before hashing, so the same password produces a different stored hash for every user and one rainbow table cannot be reused across the whole file. But a salt does not by itself make a hash <em>slow</em> — if the hash is cheap, an attacker who steals the password file can still test billions of guesses offline. Adaptive password hashing therefore adds a deliberately expensive, tunable cost:</p>
+  <table>
+    <thead>
+      <tr>
+        <th>Scheme</th>
+        <th>Design basis</th>
+        <th>Cost control</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>MD5-crypt</td>
+        <td>MD5-based UNIX scheme whose inner loop is repeated 1,000 times</td>
+        <td>Fixed 1,000 iterations — slow for its era, now far too cheap to resist GPUs</td>
+      </tr>
+      <tr>
+        <td>bcrypt</td>
+        <td>Built on the Blowfish block cipher; 128-bit salt and a 192-bit hash output</td>
+        <td>A cost variable that raises the time per hash; administrators can assign a higher cost to privileged users</td>
+      </tr>
+    </tbody>
+  </table>
+  <p>The governing rule: a password hashing scheme takes a <code>password</code>, a <code>salt</code>, and a <em>cost factor</em>. The cost is set as high as practical without hurting the verifier's performance, then raised over time as hardware improves; the salt is at least 32 bits so that two accounts cannot share a hash. The aim is to make every single guess expensive enough that a stolen hash file stops being a practical cracking target.</p>
+  <p><strong>Link back to the Kaseya chain.</strong> This matters at the credential-reuse step: a stolen table of fast, unsalted hashes could be cracked offline and fed straight into the SSH/RDP pivot. A salted adaptive hash with a tuned work factor pushes that cracking effort out of reach, breaking the chain at step three before MFA is even needed.</p>
+</div>
 <div class="warning-box">
   <p><strong>Pitfalls.</strong> (1) One API for all CRUD operations: a single all-purpose backend API is a single point of failure — develop specific APIs for specific operations, even when they seem arbitrary, so an injection in one endpoint does not expose everything. (2) Storing passwords without salting: identical passwords then produce identical hashes, and precomputed rainbow tables crack them in bulk — salting gives every password a unique hash. (3) Stopping at the data breach: getting the data should not mean getting the systems — MFA must sit between stolen credentials and login. (4) Forgetting the accountability layer: the backend should be built with a stronger access matrix based on need-to-know privileges, so no single query or role can reach everything.</p>
 </div>
@@ -1219,6 +1249,41 @@
   </ul>
   <p>The naming line: <strong>SSL was the old generation, TLS is the current one, and OpenSSL is the library that implements them.</strong></p>
 </div>
+<div class="important-note">
+  <p><strong>System detail — what the TLS handshake actually negotiates.</strong> TLS is two cooperating sub-protocols: a <em>handshake protocol</em> that authenticates the parties, negotiates the cryptographic modes and parameters, and establishes shared keying material, and a <em>record protocol</em> that uses those keys to protect the traffic. The handshake runs in a few rounds: the client offers a version, a random nonce, a session id, a cipher list and a compression list; the server replies with the selected version (the highest both understand), cipher and compression, binding the connection to those choices. Once it completes, both sides derive the traffic keys that protect application data.</p>
+  <table>
+    <thead>
+      <tr>
+        <th>Property</th>
+        <th>TLS 1.2</th>
+        <th>TLS 1.3</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>Key exchange</td>
+        <td>Static RSA or ephemeral (EC)DHE; static RSA gives no forward secrecy</td>
+        <td>Static RSA removed; every public-key exchange provides forward secrecy</td>
+      </tr>
+      <tr>
+        <td>Messages after ServerHello</td>
+        <td>Sent in the clear</td>
+        <td>Encrypted (the EncryptedExtensions message)</td>
+      </tr>
+      <tr>
+        <td>Ciphers</td>
+        <td>Includes legacy algorithms</td>
+        <td>AEAD-only; compression and DSA removed</td>
+      </tr>
+      <tr>
+        <td>Handshake round trips</td>
+        <td>Two round trips for a full handshake</td>
+        <td>One round trip, with optional 0-RTT resumption</td>
+      </tr>
+    </tbody>
+  </table>
+  <p><strong>Why this matters for Heartbleed.</strong> The heartbeat extension rides on an already-established TLS connection, so the safety of that connection rests on the handshake that preceded it. Two properties matter: <em>forward secrecy</em> — with ephemeral (EC)DH, later compromise of a long-term key cannot decrypt previously recorded sessions — and, in TLS 1.3, the removal of static RSA and the encryption of all post-ServerHello messages. Patching the heartbeat bug fixes the immediate leak, but the handshake is where confidentiality, authentication, and integrity are established, and where the version and cipher choices decide whether past traffic stays private.</p>
+</div>
 <h3 id="16.11.3-heartbleed-out-of-bounds-memory">16.11.3 Heartbleed: Out-of-Bounds Memory</h3>
 <div class="important-note">
   <p><strong>Q:</strong> What is Heartbleed? <strong>A:</strong> It is a memory out-of-bounds access. In OpenSSL there is a feature called heartbeat — it is like an echo message. That feature was modified to gain information which is outside the memory bounds, so the server would answer back with memory contents it should never have shared.</p>
@@ -1240,6 +1305,10 @@
 </div>
 <div class="warning-box">
   <p><strong>Scope — where the vulnerability lives.</strong> The professor's answers pin down the boundary: Heartbleed is an <em>application-level</em> concern because it sits inside the TLS protocol implementation, which operates at the application layer of the network stack. And it is <em>not</em> an operating-system-specific flaw: it is not really tied to one OS, even though in practice it mattered most on the Linux systems that run OpenSSL and interact with the library's memory directly. The lesson: classifying a vulnerability correctly (which layer, which library, which OS exposure) determines where you look for it and where the fix goes.</p>
+</div>
+<div class="important-note">
+  <p><strong>System detail — what the heartbeat was designed to do.</strong> The TLS Heartbeat Extension runs on top of the TLS Record Protocol and defines just two message types: <code>heartbeat_request</code> and <code>heartbeat_response</code>. The responder must return an exact copy of the received payload, and a request is normally sent only after an idle period. Its legitimate jobs are a <em>liveliness check</em> — proving the peer is still alive without a costly renegotiation — and, chiefly in DTLS, <em>path MTU discovery</em> using probe messages whose random padding must be ignored by the receiver.</p>
+  <p><strong>Why this matters for Heartbleed.</strong> The defect was that the implementation trusted the declared <code>payload_length</code> and echoed back that many bytes without checking the real message size. The protocol's own safeguard is exactly the control the class asked for: a heartbeat message whose claimed payload length is too large for the record must be discarded silently. Validating the declared length against the actual record — ignoring out-of-bounds requests — is what turns the echo back into a safe keep-alive.</p>
 </div>
 <h3 id="16.11.4-controls-boundary-checks-and-library-updates">16.11.4 Controls: Boundary Checks and Library Updates</h3>
 <div class="important-note">

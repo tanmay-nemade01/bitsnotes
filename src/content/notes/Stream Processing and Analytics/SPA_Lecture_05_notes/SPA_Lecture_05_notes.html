@@ -202,11 +202,59 @@
   <p><strong>Scope: how unreliable networks really are.</strong> Even inside a single well-managed datacenter, a network is unreliable compared to a single machine: latency varies moment to moment, bandwidth changes over time, and connections can be lost. In a wide-area setting, a single severed cable can split previously unified networks in two — an event with the vivid industry name of a "backhoe event." Any of the three failure points above translates directly into the delays and missed processing described in Section 5.1.2.</p>
 </div>
 <p>Without a coordinator, these failures translate directly into the delays and missed processing from Section 5.1.2. The coordinator's job is to track these problems so the pipeline can react instead of silently degrading.</p>
+
+<div class="warning-box">
+  <p><strong>Scope: what "a node misbehaves" actually means.</strong> The third failure point listed above — a node inside the processing layer misbehaving — belongs to a formal <strong>fault model</strong>. Distributed systems classify node failures into distinct classes, and the class a protocol assumes determines how large a quorum must be:</p>
+  <table>
+    <thead>
+      <tr>
+        <th>Fault class</th>
+        <th>Behaviour</th>
+        <th>Quorum required</th>
+        <th>Role in this lecture</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>Crash-stop</td>
+        <td>Node halts and sends nothing further</td>
+        <td>Simple majority \( n/2 + 1 \)</td>
+        <td>The baseline model for Zab and ZooKeeper (Section 5.11.2)</td>
+      </tr>
+      <tr>
+        <td>Crash-recovery</td>
+        <td>Node fails, then rejoins with stale state</td>
+        <td>Majority plus an epoch/zxid to fence old state</td>
+        <td>Handled by session expiry and epoch numbers (Sections 5.4.1, 5.8.2)</td>
+      </tr>
+      <tr>
+        <td>Byzantine (arbitrary)</td>
+        <td>Node sends forged, contradictory, or malicious messages</td>
+        <td>Supermajority \( \gt \frac{2}{3} \) correct nodes</td>
+        <td>Explicitly outside ZooKeeper's design assumptions</td>
+      </tr>
+    </tbody>
+  </table>
+  <p>ZooKeeper assumes nodes are <em>unreliable but honest</em>: they may be slow, crashed, or stale, but a node that answers is following the protocol. Under that assumption a plain majority is enough, which is exactly why 3- or 5-node ensembles work (Section 5.11.3). If nodes could lie — the <strong>Byzantine Generals Problem</strong> — a majority would no longer be safe: the literature requires more than two-thirds correct nodes, so a 4-node ensemble would tolerate at most one faulty node. The practical consequence: the quorum defends against crashes and partitions, not against a compromised server; authentication, access control, and encryption remain the defenses there.</p>
+</div>
 <h3 id="5.3.2-clock-synchronization">5.3.2 Clock Synchronization</h3>
 <p>Every node in the network carries a system clock, and the times on those clocks vary. <strong>Clock synchronization</strong> is the mechanism that brings consistency into the time space of the cluster.</p>
 <p>Why does clock skew matter? Different systems will be having different times, and that becomes a real problem for applications that must be delivered on time — the professor's example is applications whose delivery depends on another cluster manager or cluster machines; if their clocks disagree, coordination breaks down and the delivery fails. Clock synchronization fixes the variability in times so every machine in the network works on a common timestamp. This is not optional polish; it is a prerequisite for any cross-node coordination.</p>
 <div class="warning-box">
   <p><strong>What happens when clocks drift.</strong> Server hardware clocks are not perfect and drift over time. If they drift far enough, one server can observe an event as happening <em>after</em> the current time. Concretely: an analysis system comparing the timestamps of two types of events can start computing <strong>negative durations</strong> — nonsense output caused purely by clock skew, not by the data. The standard fix is the Network Time Protocol (NTP), which adjusts each machine's clock against a set of time servers. NTP is "close enough" in most setups, but it fails when machines cannot synchronize to the same NTP servers — for example, a secure internal domain behind a restricted gateway. There the internal NTP server can drift away from the external one, and time-based services (such as authorization APIs that use time) can break outright.</p>
+</div>
+
+<div class="key-concept">
+  <p><strong>When physical clocks are not enough: logical clocks.</strong> NTP bounds clock skew but cannot eliminate it, so using wall-clock timestamps to decide "which event happened first" is fundamentally unsafe across nodes. When only the <em>relative order</em> of events matters — as it does for coordinating replicas — a system can use a <strong>logical clock</strong>, a counter that is incremented for operations rather than read from a quartz oscillator.</p>
+  <p><strong>Formal definition (Lamport timestamp).</strong> Each process \(p\) keeps a counter \(c_p\) and a unique id \(p\). Its timestamp for an event is the pair \(T = (c_p, p)\). The rules are:</p>
+  <ol>
+    <li>Before each local or send event, \(p\) increments: \(c_p \leftarrow c_p + 1\).</li>
+    <li>A message carries the sender's current \(T = (c, id)\).</li>
+    <li>On receipt, \(q\) first advances \(c_q \leftarrow \max(c_q, c) + 1\), then proceeds with \(T_q = (c_q, q)\).</li>
+  </ol>
+  <p>Timestamps are ordered lexicographically: \((c_1, id_1) \prec (c_2, id_2)\) iff \(c_1 \lt c_2\), or \(c_1 = c_2\) and \(id_1 \lt id_2\). This yields a <strong>total order consistent with causality</strong>: if event \(a\) causally precedes \(b\) then \(T(a) \prec T(b)\), because every causal dependency carries a larger counter forward.</p>
+  <p><strong>Worked trace.</strong> Nodes \(N_1\) (id 1) and \(N_2\) (id 2) start at \(c = 0\). \(N_1\) sends a write: \(c_1 = 1\), message carries \((1,1)\). \(N_2\) receives it with \(c_2 = 0\), so \(c_2 \leftarrow \max(0,1) + 1 = 2\) and its next event is \((2,2)\). \(N_2\) replies with \((2,2)\); \(N_1\) advances to \(c_1 = \max(1,2) + 1 = 3\), next event \((3,1)\). The order \((1,1) \prec (2,2) \prec (3,1)\) matches causality.</p>
+  <p><strong>Edge case and connection.</strong> Two events on different nodes that never exchange a message — say \((1,1)\) and \((1,2)\) — are <em>concurrent</em>, yet the tie-break still forces an arbitrary order; Lamport timestamps cannot distinguish "before" from "concurrent" (vector clocks extend them for that). ZooKeeper avoids the problem by having a single leader assign a monotonically increasing zxid (Section 5.4.1): a logical sequence number, not a wall-clock reading, which is why the clock skew described above can never reorder committed writes.</p>
 </div>
 <h3 id="5.3.3-the-split-brain-problem-and-replication">5.3.3 The Split Brain Problem and Replication</h3>
 <p>A second failure mode is the <strong>split brain problem</strong>. The professor's description is intuitive: within a certain timeframe, a chunk of information goes missing. Concretely: some amount of <strong>state becomes inaccessible</strong> — the state being computed at a particular node cannot be reached. The consequence is that the distributed state across the cluster cannot be updated. The cluster literally has two "brains" — the part that is reachable and the part that is not — and the system cannot reconcile them.</p>
@@ -438,6 +486,32 @@
 <p>The practical rule the professor states: <strong>as long as the majority of the servers are available, the service is available.</strong> Because the state is replicated across the ensemble, you do not need every node up — you need the majority. This is the fault-tolerance payoff of replication: a minority of dead nodes does not stop the service.</p>
 <div class="warning-box">
   <p><strong>Scope: why majority, and why odd numbers.</strong> A quorum rule requires a minimum number of servers to agree before the system commits anything. With an odd-sized ensemble (3 or 5 is standard), a network split always leaves exactly one group holding the majority — that group keeps serving, the minority degrades, and the two sides can never both believe they have the quorum. This is the split-brain defense from Section 5.3.3, now stated as a concrete arithmetic rule. An even number of servers buys no extra fault tolerance over its odd neighbor: 4 servers tolerate the same one failure as 3, so production ensembles are sized 3 or 5 — more on the sizing trade-off in Section 5.12.</p>
+</div>
+
+<div class="key-concept">
+  <p><strong>The theoretical backdrop: the CAP theorem.</strong> The majority rule above is one concrete point in a wider design space. The <strong>CAP theorem</strong> — Brewer's conjecture, proved in 2002 — states that <em>when a distributed data system is partitioned, it can be consistent or available but not both</em>. Here consistency means every read returns the most recent write or an error, and availability means every request to a non-failing node returns a response. The popular "choose two of C, A, P" slogan is misleading: partition tolerance is not optional on a real network, and the theorem only constrains behaviour <em>during</em> a partition.</p>
+  <table>
+    <thead>
+      <tr>
+        <th>Choice under partition</th>
+        <th>System behaviour</th>
+        <th>Ensemble analogue</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>Consistency (CP)</td>
+        <td>Reject or time out requests that cannot reach a quorum; never expose a stale value</td>
+        <td>ZooKeeper: a minority side degrades while the majority keeps serving (Sections 5.3.3, 5.11.3)</td>
+      </tr>
+      <tr>
+        <td>Availability (AP)</td>
+        <td>Every reachable node answers, possibly with stale data; reconcile after healing</td>
+        <td>Not ZooKeeper's model — this is the tolerant event/batch-serving side of the pipeline</td>
+      </tr>
+    </tbody>
+  </table>
+  <p><strong>Reading ZooKeeper through CAP.</strong> ZooKeeper is a <strong>CP</strong> system: it gives up availability on the side of a split that lacks a quorum rather than accept divergent updates. That is precisely why the ensemble is odd-sized — a partition always leaves one side with the majority, so there is a single authoritative brain (Section 5.3.3) — and why writes are acknowledged only after a quorum (Section 5.10.1). The five guarantees of Section 5.15.1 are the application-level expression of that consistency-first choice.</p>
 </div>
 <div class="key-takeaway">
   <p><strong>Recap:</strong> the ensemble is a replicated set of servers with no direct client-to-leader edge; writes travel as atomic broadcast — small, indivisible transactions delivered to every node in order (the standard literature calls it total order broadcast, implemented by Zab). Fault tolerance is bought by replication, and the availability rule falls out of it: as long as the majority of servers are available, the service is available.</p>

@@ -841,6 +841,27 @@ STORE sales INTO 'output/sales_ingested' USING PigStorage(',');</code></pre>
 <div class="key-concept">
   <p><strong><code>FOREACH ... GENERATE</code> vs. SQL <code>SELECT</code>:</strong> Both project and compute columns. The key difference is that <code>FOREACH</code> operates on <em>one relation at a time</em> (you cannot join inside a <code>FOREACH</code>). For multi-relation operations, use <code>JOIN</code>, <code>COGROUP</code>, or <code>CROSS</code> first, then <code>FOREACH</code> on the result.</p>
 </div>
+
+<div class="example-box">
+  <p><strong>Nested <code>FOREACH ... GENERATE</code> — per-group derived relations:</strong> A flat <code>FOREACH</code> projects one tuple at a time, but a <em>nested</em> <code>FOREACH</code> runs a small dataflow pipeline inside each group's bag before producing the final output tuple. It is the Pig equivalent of applying several filters or distinct operations inside a single grouped projection.</p>
+  <p>Within a nested block the only permitted operators are <code>CROSS</code>, <code>DISTINCT</code>, <code>FILTER</code>, <code>FOREACH</code>, <code>LIMIT</code>, and <code>ORDER BY</code>; the <code>GENERATE</code> statement must be the <em>last</em> statement in the block, and nesting is limited to two levels.</p>
+  <p>Weather-station example — count unique stations and quality-approved readings per year:</p>
+  <pre><code>records = LOAD 'weather.txt' USING PigStorage(',')
+    AS (year:chararray, usaf:chararray, temperature:int, quality:int);
+grouped = GROUP records BY year PARALLEL 20;
+
+year_stats = FOREACH grouped {
+    uniq_stations = DISTINCT records.usaf;
+    good_records  = FILTER records BY isGood(quality);
+    GENERATE FLATTEN(group) AS year,
+             COUNT(uniq_stations) AS station_count,
+             COUNT(good_records)  AS good_count,
+             COUNT(records)       AS total_count;
+};
+DUMP year_stats;</code></pre>
+  <p><strong>Worked trace:</strong> for the group <code>1920</code> the nested bag holds 8,595 tuples; <code>DISTINCT</code> collapses them to 8 unique station IDs while <code>FILTER</code> retains all 8,595 quality-approved readings, yielding <code>(1920,8L,8595L,8595L)</code>. For <code>1950</code> the same pipeline yields <code>(1950,1988L,8635452L,8641353L)</code> — the small gap between the good and total counts is exactly the corrupted readings the nested <code>FILTER</code> removed.</p>
+  <p><strong>Why it matters:</strong> all four aggregates are computed from one grouped bag inside a single nested block, so the per-group work stays in one reduce-side pipeline instead of requiring several separate <code>GROUP</code>/<code>FOREACH</code> passes; <code>PARALLEL 20</code> fixes the reducer count for the cluster.</p>
+</div>
 <h3 id="6.6.2-mathematical-calculations-revenue-and-profit-formulas">6.6.2 Mathematical Calculations: Revenue and Profit Formulas</h3>
 <p>Developers can compute new mathematical fields within <code>FOR EACH ... GENERATE</code> projections.</p>
 <p><strong>1. Revenue Calculation</strong></p>
@@ -910,6 +931,22 @@ STORE sales INTO 'output/sales_ingested' USING PigStorage(',');</code></pre>
 <p>Combines tuples from two or more relations based on matching key values:</p>
 <pre><code>joined_data = JOIN relation1 BY id, relation2 BY customer_id;</code></pre>
 <p>Supports <code>LEFT OUTER</code>, <code>RIGHT OUTER</code>, and <code>FULL OUTER</code> joins. By default, <code>JOIN</code> performs an inner join (only matching rows are kept).</p>
+
+<div class="important-note">
+  <p><strong>System Detail — specialized join strategies:</strong> The general <code>JOIN</code> is a reduce-side equijoin. Pig also exposes optimizer-selected variants through the <code>USING</code> clause:</p>
+  <table>
+    <thead>
+      <tr><th><code>USING</code> keyword</th><th>Strategy and applicable condition</th></tr>
+    </thead>
+    <tbody>
+      <tr><td><code>'replicated'</code></td><td>Fragment-replicate (map-side) join: one large relation plus small relations that fit in mapper memory are broadcast to every mapper and looked up in memory.</td></tr>
+      <tr><td><code>'skewed'</code></td><td>Skewed-key join for join keys with a highly non-uniform distribution.</td></tr>
+      <tr><td><code>'merge'</code>, <code>'merge-sparse'</code></td><td>Merge join for inputs already sorted on the join key; <code>'merge-sparse'</code> targets cases where at most 1% of rows match.</td></tr>
+    </tbody>
+  </table>
+  <pre><code>joined = JOIN big BY user_id, small BY user_id USING 'replicated';</code></pre>
+  <p>Composite keys use parentheses, and <code>PARALLEL n</code> sets the reduce-task count for reduce-side operators: <code>JOIN a BY (usaf, wban), b BY (usaf, wban) PARALLEL 30;</code></p>
+</div>
 <p><strong>2. ORDER BY</strong></p>
 <p>Sorts a relation based on one or more sort keys in ascending (<code>ASC</code>, the default) or descending (<code>DESC</code>) order:</p>
 <pre><code>sorted_sales = ORDER sales_with_revenue BY revenue DESC;</code></pre>
@@ -936,6 +973,21 @@ STORE sales INTO 'output/sales_ingested' USING PigStorage(',');</code></pre>
 <pre><code>cogrouped_data = COGROUP customers BY id, orders BY customer_id;</code></pre>
 <div class="important-note">
   <p><strong>COGROUP vs. JOIN:</strong> <code>JOIN</code> produces a flat result — each matching pair becomes one row. <code>COGROUP</code> produces a nested result — each unique key gets a tuple containing the key and <em>separate</em> bags from each input relation. Use <code>COGROUP</code> when you need to process each relation's matching tuples independently; use <code>JOIN</code> when you want a flat combined row.</p>
+</div>
+
+<div class="key-concept">
+  <p><strong>Additional relational operators in Pig Latin:</strong> Beyond the operators used so far, the Pig Latin reference defines:</p>
+  <table>
+    <thead>
+      <tr><th>Operator</th><th>Function</th></tr>
+    </thead>
+    <tbody>
+      <tr><td><code>CROSS</code></td><td>Cartesian product of two or more relations — expensive; use sparingly.</td></tr>
+      <tr><td><code>CUBE</code> / <code>ROLLUP</code></td><td>Multi-dimensional aggregation over all combinations (or hierarchical subsets) of grouping columns.</td></tr>
+      <tr><td><code>RANK</code></td><td>Prepends a rank to each tuple, optionally after sorting by fields; tied tuples share a rank.</td></tr>
+      <tr><td><code>ASSERT</code></td><td>Verifies a condition on every row and fails the script if it is violated.</td></tr>
+    </tbody>
+  </table>
 </div>
 <h3 id="6.6.7-pitfalls-non-deterministic-limit-without-order-by">6.6.7 Pitfalls: Non-Deterministic LIMIT without ORDER BY</h3>
 <div class="warning-box">
@@ -1041,6 +1093,51 @@ transformed_data = FOREACH sales GENERATE
 </div>
 <div class="warning-box">
   <p><strong>Pitfall — UDF case sensitivity:</strong> Function names in Pig are <em>case sensitive</em> because they map to Java class names. <code>REGISTER</code> and <code>DEFINE</code> are keywords (not case sensitive), but the function alias and fully-qualified class name must match exactly.</p>
+</div>
+
+<div class="important-note">
+  <p><strong>System Detail — Algebraic and Accumulator UDF interfaces:</strong> A plain <code>EvalFunc.exec(Tuple)</code> receives the <em>entire</em> grouped bag in one call, which forces the reducer to buffer all values in memory and rules out map/combiner-side pre-aggregation. Pig exposes two optional Java interfaces that remove this bottleneck.</p>
+  <p><strong>Formal definition:</strong> an aggregate \(f\) is <em>algebraic</em> if a partial combiner \(g\) exists such that:</p>
+  <p>\[ f(S) = g\big(f(S_1), f(S_2), \dots, f(S_k)\big), \qquad S = \bigcup_{i=1}^{k} S_i \]</p>
+  <p><code>COUNT</code>, <code>SUM</code> and <code>MAX</code> are algebraic; <code>MEDIAN</code> is not, because it needs the full sorted multiset.</p>
+  <table>
+    <thead>
+      <tr><th>Interface</th><th>Contract methods</th><th>MapReduce placement</th><th>Best for</th></tr>
+    </thead>
+    <tbody>
+      <tr><td><code>Algebraic</code></td><td><code>getInitial()</code>, <code>getIntermed()</code>, <code>getFinal()</code> — each names an <code>EvalFunc</code> subclass</td><td>Initial → map, Intermed → combiner (0+ times), Final → reducer</td><td>Combiner-enabled aggregates over large bags</td></tr>
+      <tr><td><code>Accumulator&lt;T&gt;</code></td><td><code>accumulate(Tuple)</code>, <code>getValue()</code>, <code>cleanup()</code></td><td>The same key's tuples are delivered continuously in small increments</td><td>Non-algebraic aggregates that cannot buffer the whole bag</td></tr>
+    </tbody>
+  </table>
+  <pre><code>public class IntMax extends EvalFunc&lt;Integer&gt;
+        implements Algebraic, Accumulator&lt;Integer&gt; {
+  private Integer intermediateMax = null;
+  public void accumulate(Tuple b) {
+    Integer curMax = max(b);
+    if (curMax != null)
+      intermediateMax = (intermediateMax == null)
+          ? curMax : Math.max(intermediateMax, curMax);
+  }
+  public Integer getValue() { return intermediateMax; }
+  public void cleanup()     { intermediateMax = null; }
+}</code></pre>
+  <p><strong>Key rule:</strong> a function that is algebraic but is also used alongside accumulator functions in one <code>FOREACH</code> must implement <em>both</em> interfaces; implementing <code>Algebraic</code> alone auto-generates a simulated <code>Accumulator</code>, which is correct but not the most efficient path.</p>
+</div>
+
+<div class="example-box">
+  <p><strong>Reusable Pig Latin — macros, <code>IMPORT</code> and parameter substitution:</strong> When the same transformation (group-and-count, maximum-per-group) appears in many scripts, Pig lets you package it as a <em>macro</em> instead of a Java UDF. A macro is a Pig Latin fragment expanded inline at compile time — no compilation, no JAR.</p>
+  <pre><code>-- Define a parameterized macro (parameters/return aliases use the \$ prefix)
+DEFINE max_by_group(X, group_key, max_field) RETURNS Y {
+    A = GROUP \$X BY \$group_key;
+    \$Y = FOREACH A GENERATE group, MAX(\$X.\$max_field);
+};
+
+-- Expand it in a script, and share it from a separate file
+max_temp = max_by_group(filtered_records, year, temperature);
+IMPORT 'max_temp.macro';</code></pre>
+  <p><strong>Expansion mechanics:</strong> the three parameters are substituted textually, and aliases local to the macro but not returned are renamed with the macro name and an instance id (<code>A</code> becomes <code>macro_max_by_group_A_0</code>) to avoid namespace collisions. Running <code>pig -dryrun script.pig</code> emits the fully expanded script <em>without executing it</em> — the primary debugging tool for macros.</p>
+  <p><strong>Complementary mechanism — runtime parameters:</strong> <code>pig -param data=mydata script.pig</code> substitutes <code>\$data</code> anywhere in the script; <code>%default DATE '20090101'</code> supplies a fallback and <code>%declare CMD</code> followed by a back-tick-quoted shell command injects that command's stdout. Precedence, highest to lowest: <code>%declare</code> &gt; <code>-param</code> &gt; <code>-param_file</code> &gt; <code>%default</code>.</p>
+  <p><strong>Constraints:</strong> macros cannot contain Grunt shell commands, recursion is not supported, and they cannot be placed inside a nested <code>FOREACH</code> block — use a Java UDF when the logic must run inside a nested projection.</p>
 </div>
 
 <h2 id="6.8-apache-hive-data-warehousing-fundamentals-architecture">6.8 Apache Hive Data Warehousing Fundamentals & Architecture</h2>

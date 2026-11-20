@@ -1104,6 +1104,49 @@ r_{nk} = \begin{cases}
 <p><strong>Scalability limits:</strong> K-Means scales linearly with \(N\) and \(d\), making it usable for moderate-sized datasets. For very large \(N\) (millions), mini-batch K-Means or approximate nearest-neighbor methods are used. The standard algorithm requires the entire dataset in memory — out-of-core variants exist but are not standard.</p>
 </div>
 
+<div class="important-note">
+<p><strong>Mechanism — Online (Sequential / Stochastic) K-Means:</strong> The algorithm in 15.6.2 is the <em>batch</em> version: every centroid is recomputed only after all \(N\) points have been assigned. Applying the Robbins–Monro stochastic-approximation procedure to the roots of \(\partial J/\partial \mu_k\) yields an <em>online</em> variant (MacQueen, 1967) that processes one point at a time. For each incoming point \(x_n\), find its nearest prototype \(\mu_k\) and perform a single incremental update:</p>
+<p>\[
+\mu_k^{\text{new}} = \mu_k^{\text{old}} + \eta_n\big(x_n - \mu_k^{\text{old}}\big), \qquad k = \arg\min_j \|x_n - \mu_j\|^2
+\]</p>
+<p>The factor \(\eta_n\) is a learning rate that must decrease monotonically (the Robbins–Monro conditions \(\sum_n \eta_n = \infty\) and \(\sum_n \eta_n^2 &lt; \infty\), e.g. \(\eta_n \propto 1/n\)). The term \(\eta_n(x_n - \mu_k)\) is a noisy single-sample estimate of the full batch gradient \(2\sum_{n \in C_k}(\mu_k - x_n)\); the shrinking step averages out the noise so the centroid converges to the cluster mean without ever storing the whole cluster. This is the per-sample limit of the streaming-average update used by mini-batch K-Means.</p>
+<table>
+<thead>
+<tr>
+<th>Variant</th>
+<th>Update timing</th>
+<th>Cost / iteration</th>
+<th>Memory</th>
+<th>Typical use</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Batch K-Means</td>
+<td>After a full pass over all \(N\) points</td>
+<td>\(O(NKd)\)</td>
+<td>Entire dataset in RAM</td>
+<td>Moderate \(N\), stable clusters</td>
+</tr>
+<tr>
+<td>Mini-batch K-Means</td>
+<td>Once per mini-batch of \(b\) points</td>
+<td>\(O(bKd)\)</td>
+<td>One mini-batch</td>
+<td>Large \(N\); slight quality loss</td>
+</tr>
+<tr>
+<td>Online (stochastic) K-Means</td>
+<td>After every single point</td>
+<td>\(O(Kd)\)</td>
+<td>\(K\) centroids only</td>
+<td>Streaming data; <code>partial_fit</code>-style incremental learning</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Takeaway:</strong> All three minimize the same inertia \(J\); they differ only in how often the centroid estimate is refreshed. More frequent, noisier updates trade a little clustering quality for large savings in computation and memory — the same speed–accuracy trade-off seen between standard and mini-batch implementations.</p>
+</div>
+
 <h3 class="subsection-title">When to Use / Alternatives</h3>
 <table>
 <thead>
@@ -1194,6 +1237,25 @@ r_{nk} = \begin{cases}
 
 <div class="warning-box">
 <p><strong>Pitfall:</strong> K-Means is guaranteed to converge (each E-step and M-step reduces or maintains \(J\)), but it converges to a <strong>local minimum</strong>, not necessarily the global minimum. Different random initializations can lead to different final clusterings. This is why multiple runs with different starting points (see section 15.9) are recommended.</p>
+</div>
+
+<div class="key-concept">
+<p><strong>Proof — Why the Two Steps Can Only Decrease \(J\):</strong> The distortion measure from 15.6.10 is</p>
+<p>\[
+J = \sum_{n=1}^{N}\sum_{k=1}^{K} r_{nk}\,\|x_n - \mu_k\|^2 \;\ge\; 0
+\]</p>
+<p>and it is bounded below by zero because every squared norm is non-negative.</p>
+<p><strong>1. E-step (fix \(\mu_k\), optimize \(r_{nk}\).)</strong> The constraints are \(r_{nk} \in \{0,1\}\) and \(\sum_k r_{nk} = 1\) for each \(n\). For a fixed \(n\), substituting the one-hot constraint leaves a single surviving term \(J_n = \|x_n - \mu_{k^*}\|^2\) where \(k^*\) is the chosen cluster. Minimizing \(J_n\) therefore reduces to picking the centroid with the smallest distance: \(k^* = \arg\min_j \|x_n - \mu_j\|^2\). This is exactly the nearest-centroid assignment rule, so the E-step minimizes \(J\) over all legal assignments and cannot increase it.</p>
+<p><strong>2. M-step (fix \(r_{nk}\), optimize \(\mu_k\).)</strong> The part of \(J\) depending on \(\mu_k\) is \(J_k(\mu_k) = \sum_{n=1}^{N} r_{nk}\|x_n - \mu_k\|^2\). Differentiating:</p>
+<p>\[
+\frac{\partial J_k}{\partial \mu_k} = 2\sum_{n=1}^{N} r_{nk}\,(\mu_k - x_n) = 0
+\quad\Longrightarrow\quad
+\mu_k = \frac{\sum_{n=1}^{N} r_{nk}\,x_n}{\sum_{n=1}^{N} r_{nk}}
+\]</p>
+<p>Because \(J_k\) is a convex quadratic in \(\mu_k\) (positive semidefinite Hessian \(2(\sum_n r_{nk})I\)), this stationary point is its unique global minimum. The new centroid is the cluster mean, so the M-step also cannot increase \(J\).</p>
+<p><strong>3. Convergence.</strong> Combining steps 1–2 gives \(J^{(t+1)} \le J^{(t)}\) for every iteration, while \(J \ge 0\). A monotone non-increasing sequence bounded below must approach a limit, so the cost settles and the centroids stop moving — the numerical test used in practice.</p>
+<p><strong>4. Finite termination.</strong> There are only \(K^N\) possible hard assignments of \(N\) points to \(K\) clusters, and for each assignment the optimal \(\{\mu_k\}\) is uniquely determined by the M-step formula. Each strict decrease of \(J\) therefore moves to a previously unvisited assignment; the algorithm cannot cycle, and it must terminate after at most \(K^N\) iterations.</p>
+<p><strong>Caveat:</strong> The proof guarantees arrival at <em>some</em> local minimum of \(J\), not the global one — which is precisely why 15.9 recommends K-Means++ initialization and multiple random restarts.</p>
 </div>
 
 <h3 class="subsection-title">15.8.2 Convergence Visualization</h3>

@@ -399,6 +399,13 @@
 <h3 id="6.2.4-exactly-once">6.2.4 Exactly Once</h3>
 <p>Exactly once means the message is delivered and processed exactly one time: you lose nothing in delivery and nothing in processing, and you never process the same message twice. It is the strongest of the three guarantees — and the most expensive and hardest to implement, because you must check both ends of the connection to make sure each message was delivered, acknowledged, and processed just once.</p>
 <p>Where at least once is a one-sided guarantee (the producer keeps trying until it hears back), exactly once is two-sided: the producer must confirm delivery, and the processing layer must confirm that the work happened exactly once — which in practice means tracking which messages have already been processed so that a retried delivery cannot double-count.</p>
+
+<div class="key-concept">
+  <p><strong>Formal meaning — "exactly once" is an observable contract, not a physical count.</strong> The formula \(n = 1\) from section 6.2.2 counts the <em>observable</em> effect of a message, not the number of times bytes physically crossed the wire. A framework may retry an operator or resend an unacknowledged delivery — the record can genuinely be processed several times — and still provide exactly-once semantics as long as the visible result is identical to a single execution. This is the standard formulation: although restarting a failed task means a record may in fact be processed multiple times, the visible effect in the output is as if it had been processed once, and that observable equivalence is what the semantic promises.</p>
+  <p><strong>Why it must be phrased this way.</strong> In an asynchronous network a timeout cannot distinguish a lost request, a failed remote node, and a lost response — the sender only knows that no answer has arrived yet. A producer therefore can never <em>know</em> that its message was processed exactly once; the classic Two Generals result formalizes this inability to attain certainty over an unreliable link. What a system <em>can</em> guarantee is that retries leave no trace.</p>
+  <p>\[ \underbrace{\text{at-least-once delivery}}_{\text{retry until acknowledged}} \;+\; \underbrace{\text{deduplicated / idempotent processing}}_{\text{retries have no visible effect}} \;=\; \text{exactly-once (effectively-once) processing} \]</p>
+  <p><strong>Consequence.</strong> The two-sided bookkeeping above does not try to force one physical delivery — it makes repeated attempts observationally identical to one. The acknowledgement half supplies at-least-once; the consumer-side tracking upgrades it to exactly-once <em>processing</em>. This is why practitioners often say <em>effectively once</em>: the \(n = 1\) is enforced at the output, not at the wire.</p>
+</div>
 <p>Now that all three are defined, the side-by-side view:</p>
 <table>
   <thead>
@@ -564,6 +571,23 @@
   <p><strong>A:</strong> Exactly once works in two halves. On the delivery side, the collection layer ensures the message is sent — it looks for an acknowledgement from the processing layer, and until the acknowledgement comes, the message is not considered delivered. On the processing side, fault tolerance is taken care of by the processing layer itself, because it is a multi-node cluster, not a single machine: data is replicated — the same data is copied and preserved on different nodes — using partitions and a replication factor. If one node fails, the other nodes still hold the data. So a failure inside the processing layer never loses a message that was already received; the message lives on in the replicas.</p>
 </div>
 <p>The exchange is worth unpacking, because it answers "how can a <em>guarantee</em> exist in a world where <em>everything</em> can fail?" The guarantee is not magic — it is the sum of two engineered halves. The collection half makes delivery verifiable: a message is not "sent" until the processing layer acknowledges it, so an unacknowledged message is retried rather than assumed done. The processing half makes storage survivable: a cluster with, say, a replication factor of 3 keeps three copies of the data on different nodes, so a single node's death costs nothing. The guarantee holds because every individual link in the chain is checked, and every piece of state has a backup. That is the price that the "most expensive" verdict names: each check and each replica is part of the bill.</p>
+
+<div class="important-note">
+  <p><strong>System detail — idempotence is what makes the processing half survivable.</strong> Acknowledgement plus replication keeps a message from being lost, but on a retry the downstream write can still happen twice. The missing ingredient is an <em>idempotent</em> operation: one you can perform multiple times with the same effect as performing it once. Formally, \(f\) is idempotent when \(f(f(x)) = f(x)\) — applying it again changes nothing. Setting a key to a fixed value or deleting a record by id is idempotent; incrementing a counter or appending to a list is not. Network-request standards encode the same rule: because the intended effect of several identical requests equals that of one, a client may safely retry such a request after a communication failure.</p>
+  <table>
+    <thead>
+      <tr><th>Operation</th><th>Naturally idempotent?</th><th>How a retry is made safe</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>Set <code>balance = 500</code></td><td>Yes — re-writing the same value overwrites identically</td><td>None needed</td></tr>
+      <tr><td>Delete by transaction id</td><td>Yes — the second delete finds nothing to remove</td><td>None needed</td></tr>
+      <tr><td>Increment <code>count</code></td><td>No — a retry double-counts</td><td>Store the triggering record's monotonic offset with the value; skip the update if that offset was already applied</td></tr>
+      <tr><td>Send an email or push alert</td><td>No — an external side effect cannot be rolled back</td><td>Record "notification sent" with the message id in the same transaction, then skip on replay</td></tr>
+    </tbody>
+  </table>
+  <p><strong>The deduplication token.</strong> In a log-based broker every record carries a monotonically increasing offset. Writing that offset alongside the value lets the consumer detect an already-applied update and skip it, avoiding a second application of the same effect. Production exactly-once configurations build on this: producers are set to write idempotently so a retried send cannot create a duplicate, and the records of one read–process–write are grouped into a single transaction that either commits in full or aborts — with the consumer's offset committed together with the output, so a crash cannot leave the two out of sync.</p>
+  <p><strong>Three assumptions idempotence depends on.</strong> A failed task must replay the <em>same messages in the same order</em>, which a replayable log provides; processing must be <em>deterministic</em>, so a replay computes the same value; and no other node may concurrently update the same value, otherwise <em>fencing</em> is needed to stop a node that is thought dead but is still alive. Break any one and the "same effect as once" property quietly fails; satisfy all three and idempotence delivers exactly-once processing with only modest overhead — which is how <em>at-least-once delivery plus an idempotent consumer</em> becomes effectively-once end to end.</p>
+</div>
 <div class="warning-box">
   <p><strong>Pitfalls.</strong></p>
   <ul>

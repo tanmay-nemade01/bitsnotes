@@ -360,6 +360,48 @@
     <p><strong>Buffer initialization (a practical detail the papers often skip):</strong> before training begins, the buffer must be populated with initial transitions. The professor's recommended starting strategy: initialize the Q-network parameters randomly, then play the game with random actions to collect a batch of initial transitions. Only after the buffer has some data should learning begin. This step is rarely spelled out in the papers but is critical — an empty buffer cannot provide mini-batches, and a randomly initialized network cannot provide sensible targets.</p>
   </div>
   <p>In the original 2013 paper the buffer held the last \(N = 1{,}000{,}000\) frames, and mini-batches of size 32 were sampled. As with all hyperparameter numbers, these are reference values, not exam material.</p>
+
+  <div class="important-note">
+    <p><strong>Framework extension — Prioritized Experience Replay (PER).</strong> Uniform sampling treats every stored transition as equally informative, replaying each one at the same frequency it was originally experienced. In practice some transitions are far more "surprising" than others: a humanoid learning to stand learns far more from the rare moments when it balances than from the many moments it lies on the ground. PER replaces uniform sampling with a distribution biased toward transitions whose current predictions are most wrong, improving sample efficiency without altering the network, the loss, or the target formula.</p>
+    <p><strong>Priority from the TD error.</strong> For transition \(i\), define the TD error \(\delta_i = Y_i - Q(s_i, a_i; \theta)\) — the same mismatch already computed during the DQN update. Its priority is \(p_i = |\delta_i| + \epsilon\), where \(\epsilon > 0\) is a small constant that ensures a transition whose error has fallen to zero can still be sampled. New transitions arrive with no known TD error and are stored at the maximum priority seen so far, so every experience is replayed at least once. The sampling probability is:</p>
+    <p>\[ P(i) = \frac{p_i^{\alpha}}{\sum_k p_k^{\alpha}} \]</p>
+    <p>The exponent \(\alpha\) interpolates between the two extremes: \(\alpha = 0\) gives \(P(i) = 1/N\), exactly the uniform buffer above, while larger \(\alpha\) sharpens the preference for high-error transitions. For two transitions with \(|\delta_1| = 2.0\) and \(|\delta_2| = 3.5\) (ignoring \(\epsilon\)):</p>
+    <table>
+      <thead>
+        <tr>
+          <th>\(\alpha\)</th>
+          <th>\(P(1)\)</th>
+          <th>\(P(2)\)</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>0.0 (uniform)</td>
+          <td>0.50</td>
+          <td>0.50</td>
+        </tr>
+        <tr>
+          <td>0.5</td>
+          <td>0.43</td>
+          <td>0.57</td>
+        </tr>
+        <tr>
+          <td>1.0</td>
+          <td>0.36</td>
+          <td>0.64</td>
+        </tr>
+        <tr>
+          <td>2.0</td>
+          <td>0.25</td>
+          <td>0.75</td>
+        </tr>
+      </tbody>
+    </table>
+    <p><strong>Correcting the induced bias.</strong> Non-uniform sampling changes the data distribution the network trains on, which shifts the fixed point of the updates. The correction is an importance-sampling weight \(w_i = \left(\frac{1}{N}\cdot\frac{1}{P(i)}\right)^{\beta}\), applied by scaling the TD error to \(w_i \delta_i\). At \(\beta = 1\) the bias is fully compensated; in practice \(\beta\) is annealed up to 1 over training, because early on the policy and bootstrap targets are non-stationary anyway and a small bias is harmless. Weights are normalized by \(1 / \max_i w_i\) so that they only shrink updates, which also protects gradient stability when high-error transitions are repeatedly sampled.</p>
+    <p><strong>Efficient implementation.</strong> Sampling in proportion to \(p_i^{\alpha}\) would be slow if priorities were scanned linearly on every draw. A <em>sum-tree</em> stores each priority at a leaf and each internal node as the sum of its children, so the root holds \(\sum_k p_k^{\alpha}\): a sample is drawn by descending the tree with a random value in \([0, \sum_k p_k^{\alpha}]\), and updating one priority costs \(O(\log N)\). Only four things change in the DQN loop — store one extra priority per transition, sample proportionally to priority, recompute \(\delta_i\) after each update, and write the new priorities back.</p>
+    <p><strong>Impact.</strong> Combined with Double DQN on Atari, prioritized replay improved the score on 41 of 49 games and roughly halved the training time needed to reach a given performance level — a gain complementary to the target network (section 13.2) and Double DQN's decoupling (section 13.3).</p>
+  </div>
+
   <h3 id="13.1.5-dqn-training-loop-detailed-walkthrough">13.1.5 DQN Training Loop — Detailed Walkthrough</h3>
   <p>The full DQN algorithm is a procedure, so it is best read as one. The loop runs over episodes; within each episode, these steps repeat:</p>
   <div class="key-concept">

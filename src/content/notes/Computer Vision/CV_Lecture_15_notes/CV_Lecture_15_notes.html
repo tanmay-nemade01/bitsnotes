@@ -472,6 +472,9 @@
 <p>\[I(x, y, t-1) = I(x+u, y+v, t)\]</p>
 <p>where \(I\) is scalar pixel intensity, \((x, y)\) is the pixel position, \(t-1\) and \(t\) are back-to-back frame indices, and \(u\) and \(v\) are the small horizontal and vertical shifts in pixels. This brightness constancy equation equates the shifted intensities: same point, same brightness, new address. Texts call it the brightness constancy constraint, and it is the standard starting point for translational alignment.</p>
 <p>This rules out the sliding-lamp fake: if light changes between frames, the equality breaks and the method must stay silent.</p>
+<div class="important-note">
+  <p><strong>Textbook relaxation — bias and gain:</strong> The strict constancy equation above is the assumption this lecture keeps, but matching texts relax it for exposure changes by modelling corresponding patches as \(I_1(\mathbf{x}+\mathbf{u}) = (1+\alpha)I_0(\mathbf{x}) + \beta\), with \(\beta\) an additive bias and \(\alpha\) a multiplicative gain. Fitting \(\alpha\) and \(\beta\) by least squares before comparing patches absorbs a global brightness shift, so the residual that remains is due to motion rather than light. Normalized correlation scores are the related invariant: a perfect match is one that holds up to an affine intensity shift and scale, which is exactly the gain-and-bias idea. Colour images may need a separate bias and gain per channel.</p>
+</div>
 <h3 id="15.8.2-small-motion">15.8.2 Small motion</h3>
 <div class="important-note">
   <p>Between two back-to-back frames, nothing travels far.</p>
@@ -588,6 +591,11 @@
 <p>Spatial coherence says neighbours on one object share one \((u, v)\). The Lucas-Kanade method (1981, a local method alongside global and dense variants) exploits this: take a 5 by 5 window around the point of interest — the session traces it around a detected person — and assume all 25 pixels moved by the same \((u, v)\). Each pixel contributes its own \(I_x u + I_y v + I_t = 0\), so one equation grows into 25. Stack them as the 25 by 2 window system \(A \mathbf{v}\) equals \(\mathbf{b}\):</p>
 <p>\[A \mathbf{v} = \mathbf{b}\]</p>
 <p>where \(A\) is the 25 by 2 stack of \([I_x, I_y]\) rows (one row per pixel, gradients measured as neighbour differences within the window), \(\mathbf{v} = \begin{bmatrix} u \\ v \end{bmatrix}\) is the shared 2 by 1 shift, and \(\mathbf{b}\) is the 25 by 1 column of \(-I_t\) values. Other solvers exist for other settings — the Horn-Schunck method solves globally with smoothness penalties across the whole frame, and the Farneback method estimates dense polynomial-expansion flow, used for jobs such as oil flow in engine systems — but the course focuses on the Lucas-Kanade method.</p>
+<div class="important-note">
+  <p><strong>Frequency-domain alternative — phase correlation:</strong> The gradient stack is not the only way to find a shift. Whitening the cross-power spectrum of two frames turns a translation into a single peak: for \(I_1(\mathbf{x}+\mathbf{u}) = I_0(\mathbf{x})\),</p>
+  <p>\[\frac{\mathcal{F}\{I_0\}(\omega)\,\mathcal{F}^*\{I_1\}(\omega)}{\left|\mathcal{F}\{I_0\}(\omega)\right|\,\left|\mathcal{F}\{I_1\}(\omega)\right|} = e^{-2\pi j\,\mathbf{u}\cdot\omega}\]</p>
+  <p>Inverting that spectrum gives one impulse at the true shift \(\mathbf{u}\), and a sub-pixel centroid around the peak refines it. The method is fast for global registration, but it returns a single translation for the whole frame, not a per-pixel flow field, and low-texture or noisy inputs can split the peak into several candidates.</p>
+</div>
 <div class="key-concept">
   <p><strong>Lucas-Kanade trades one exact equation for 25 agreeing ones.</strong> The shared-motion assumption is its engine; where neighbours truly move together, the stack over-constrains \((u, v)\) enough to solve.</p>
 </div>
@@ -597,8 +605,63 @@
 <p>Written out, the 2 by 2 structure tensor and its right-hand side are:</p>
 <p>\[\begin{bmatrix} \sum I_x^2 & \sum I_x I_y \\ \sum I_x I_y & \sum I_y^2 \end{bmatrix} \begin{bmatrix} u \\ v \end{bmatrix} = -\begin{bmatrix} \sum I_x I_t \\ \sum I_y I_t \end{bmatrix}\]</p>
 <p>with sums running over the 25 window pixels. Solving gives the single motion that best fits the whole patch.</p>
+<div class="key-concept">
+  <p><strong>Global counterpart — the variational energy:</strong> Lucas–Kanade solves a small aggregated system per window; the global formulation instead minimizes one energy over the entire flow field at once:</p>
+  <p>\[E(u,v) = \iint \big[(I_x u + I_y v + I_t)^2 + \lambda\big(\|\nabla u\|^2 + \|\nabla v\|^2\big)\big]\,dx\,dy\]</p>
+  <p>The first term integrates the same brightness-constancy residual over every pixel; the second penalizes flow gradients, so a poorly constrained pixel borrows certainty from its neighbours. Local windows assume one shared motion and stay cheap; global energy lets each pixel keep its own \((u, v)\) but needs the smoothness term to fill the gaps, and that coupling is why global methods hold up better across motion boundaries.</p>
+</div>
 <div class="example-box">
   <p><strong>Least squares with numbers.</strong> Suppose a tiny 3-pixel window gives gradient rows \([4, 0]\), \([0, 3]\), \([2, 2]\) with \(-I_t\) values \(8, 6, 10\). Then \(\sum I_x^2 = 16 + 0 + 4 = 20\), \(\sum I_y^2 = 0 + 9 + 4 = 13\), \(\sum I_x I_y = 0 + 0 + 4 = 4\), \(\sum I_x I_t = 32 + 0 + 20 = 52\), \(\sum I_y I_t = 0 + 18 + 20 = 38\). Solving the 2 by 2 system gives <strong>\(u = 2.4\), \(v = 2.2\)</strong> up to rounding. Sense-check: both gradient directions contribute, so both components come out finite — the signature of a trackable patch.</p>
+</div>
+<div class="important-note">
+  <p><strong>Algorithm detail — that least-squares solve is one Gauss–Newton step, not the whole algorithm.</strong> The single linearization in 15.9.3 is accurate only while the shift stays near zero. Practical Lucas–Kanade <em>iterates</em>: warp the target by the current estimate, re-linearize there, and add a correction. Define the sum-of-squared-differences (SSD) energy over the window between the template \(I_0\) and the warped target \(I_1\):</p>
+  \[E_{LK\text{-}SSD}(u + \Delta u) = \sum_i \left[I_1(\mathbf{x}_i + u + \Delta u) - I_0(\mathbf{x}_i)\right]^2\]
+  <p>Taylor-expanding the warped image around the current estimate \(u\), with Jacobian \(J_1(\mathbf{x}_i + u) = \nabla I_1(\mathbf{x}_i + u) = [I_x,\; I_y]\) and current residual \(e_i = I_1(\mathbf{x}_i + u) - I_0(\mathbf{x}_i)\), gives a quadratic in the correction:</p>
+  \[E_{LK\text{-}SSD}(u + \Delta u) \approx \sum_i \left[J_1(\mathbf{x}_i + u)\,\Delta u + e_i\right]^2\]
+  <p>Minimizing it yields the Gauss–Newton <em>normal equations</em> \(A\,\Delta u = b\):</p>
+  \[A = \sum_i J_1^\top(\mathbf{x}_i + u)\,J_1(\mathbf{x}_i + u) = \begin{bmatrix} \sum I_x^2 & \sum I_x I_y \\ \sum I_x I_y & \sum I_y^2 \end{bmatrix}, \qquad b = -\sum_i e_i\,J_1(\mathbf{x}_i + u) = -\begin{bmatrix} \sum I_x I_t \\ \sum I_y I_t \end{bmatrix}\]
+  <p>These are exactly the \(A\) and \(\mathbf{b}\) of the one-shot solve above, so every iteration reuses the same 2 by 2 structure tensor with refreshed gradients and residuals. The loop is: (1) warp \(I_1\) by \(u\); (2) form \(e_i\) and \(J_1\) at \(\mathbf{x}_i + u\); (3) solve \(A\,\Delta u = b\); (4) set \(u \leftarrow u + \Delta u\).</p>
+  <p>Stop when the correction \(\|\Delta u\|\) drops below about 0.1 pixel. Far from the true shift (1–2 pixels away) several iterations are needed, and large motions hand the first guess to the coarse-to-fine pyramid of Section 15.14. Near alignment the template gradient may substitute, \(J_1(\mathbf{x}_i + u) \approx J_0(\mathbf{x}_i)\), which freezes \(A\) and permits precomputation — the trick that makes the variants below cheap.</p>
+</div>
+<div class="key-concept">
+  <p><strong>Parametric extension — four Lucas–Kanade update rules.</strong> Translation estimates a 2-vector \(\Delta u\). Once the motion model has \(n\) parameters \(\mathbf{p}\) (affine: 6, homography: 8), what gets warped and what can be precomputed split the method into four variants. With the correspondence map \(\mathbf{x}' = W(\mathbf{x}; \mathbf{p})\) and residual \(e_i = I_1(\mathbf{x}'_i) - I_0(\mathbf{x}_i)\), the linearized least-squares problem is unchanged — only the parameter Jacobian \(J_1 = \nabla I_1 \, \partial \mathbf{x}' / \partial \mathbf{p}\) and the update rule differ:</p>
+  <table>
+    <thead>
+      <tr>
+        <th>Variant</th>
+        <th>Image warped each iteration</th>
+        <th>Hessian \(A\)</th>
+        <th>Trade-off</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>Forward additive</td>
+        <td>Target \(I_1\) by current \(\mathbf{p}\); add \(\Delta\mathbf{p}\) to \(\mathbf{p}\)</td>
+        <td>Recomputed at each warped position</td>
+        <td>Simplest; most expensive per iteration</td>
+      </tr>
+      <tr>
+        <td>Forward compositional</td>
+        <td>Target \(I_1\); compose the incremental warp with the current one instead of adding parameters</td>
+        <td>Recomputed each iteration</td>
+        <td>Handles complex warps such as homographies</td>
+      </tr>
+      <tr>
+        <td>Inverse additive</td>
+        <td>Target \(I_1\); image gradient replaced by the template gradient \(J_0\)</td>
+        <td>Precomputable once</td>
+        <td>Cheap; relies on template-gradient approximation</td>
+      </tr>
+      <tr>
+        <td>Inverse compositional</td>
+        <td>Template \(I_0\) by \(\Delta\mathbf{p}\); inverse Hessian and steepest-descent images precomputed</td>
+        <td>Constant, inverted once before the loop</td>
+        <td>Preferred: fastest, same Gauss–Newton convergence</td>
+      </tr>
+    </tbody>
+  </table>
+  <p><strong>Why it matters:</strong> all four solve the same linearized least-squares problem; they differ only in which image is warped and which quantities are fixed. Near correct alignment \(I_1(W(\mathbf{x};\mathbf{p})) \approx I_0(\mathbf{x})\), so substituting \(J_1 \approx J_0\) is legitimate and lets \(A^{-1}\) and the steepest-descent images be computed before the loop, moving the expensive work out of every iteration. For a complex warp the per-pixel motion Jacobian is awkward (a homography needs a division), so composing warps avoids forming it at all. Steepest descent and Levenberg–Marquardt are alternative update rules to Gauss–Newton; the inverse-compositional form keeps the Gauss–Newton convergence rate while staying cheap, which is why efficient region trackers are built on it.</p>
 </div>
 <h3 id="15.11.3-when-the-solution-exists">15.11.3 When the solution exists</h3>
 <p>\(A^\top A\) must be invertible, and its eigenvalues \(\lambda_1, \lambda_2\) decide the case — the same test met earlier in corner detection. Flat patch: both eigenvalues tiny, no intensity variation, nothing to hold onto (a plain sky with drifting cloud gives no reading). Edge: one eigenvalue large and the other small — motion along the edge stays ambiguous, so the patch is unusable. Corner or rich texture: both eigenvalues large, motion along both axes is pinned, and the window tracks. Only high-texture regions with two strong eigenvalues earn tracking.</p>

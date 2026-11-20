@@ -410,10 +410,45 @@ CREATE SCHEMA air;</code></pre>
 <p>Cross-database notes worth keeping: PostgreSQL and SQL Server both support <code>CREATE SCHEMA</code>, <code>ALTER SCHEMA</code>, and <code>DROP SCHEMA</code> with nearly identical shapes. MySQL uses <code>CREATE SCHEMA</code> as an alias for <code>CREATE DATABASE</code> instead, so there is no separate rename-a-namespace step. Snowflake matches PostgreSQL closely (<code>CREATE SCHEMA sales;</code>, <code>ALTER SCHEMA sales RENAME TO programming;</code>, <code>DROP SCHEMA programming;</code>) and adds <code>USE SCHEMA sales;</code> to pick the working schema. Since the concepts are the same and only the keyword alias differs, keep the PostgreSQL form.</p>
 <h3 id="19.2.1-create-schema-through-the-query-editor">19.2.1 CREATE SCHEMA Through the Query Editor</h3>
 <p>Point the query editor at the target database first. Then type <code>CREATE SCHEMA</code> followed by the chosen name and run it. Refresh the schema list to confirm the new entry. Build a second schema the same way when a new logical group is needed, and remember that a schema name may match the database name but never duplicate an existing schema name.</p>
+<div class="important-note">
+  <p><strong>System Detail — beyond <code>CREATE SCHEMA name;</code>:</strong> PostgreSQL accepts three further forms that matter for repeatable scripts. <code>IF NOT EXISTS</code> issues a notice instead of an error when the schema is already present; <code>AUTHORIZATION</code> fixes the owner at creation time; and one <code>CREATE SCHEMA</code> can embed subcommands that build the first objects inside the new schema in the same statement. These are the parts of the syntax the one-line demo does not show.</p>
+  <pre><code>-- Idempotent: safe to rerun in a migration script.
+CREATE SCHEMA IF NOT EXISTS staging;
+-- Create the schema and assign its owner in one statement.
+CREATE SCHEMA analytics AUTHORIZATION adam;
+-- Build a schema plus its first objects atomically (no internal semicolons).
+CREATE SCHEMA reporting
+  CREATE TABLE quarterly (quarter text, revenue numeric)
+  CREATE VIEW current_quarter AS
+    SELECT quarter FROM quarterly;</code></pre>
+  <table>
+    <thead>
+      <tr><th>Form</th><th>Behavior</th><th>Key restriction</th></tr>
+    </thead>
+    <tbody>
+      <tr><td><code>CREATE SCHEMA IF NOT EXISTS name;</code></td><td>Notices and does nothing if that name already exists</td><td>Cannot be combined with embedded schema elements</td></tr>
+      <tr><td><code>CREATE SCHEMA AUTHORIZATION role;</code></td><td>Schema name defaults to the role, which owns it</td><td>Caller must be able to <code>SET ROLE</code> to that role</td></tr>
+      <tr><td><code>CREATE SCHEMA name ... subcommands</code></td><td>Creates the schema and its objects in one statement</td><td>Only <code>CREATE TABLE/VIEW/INDEX/SEQUENCE/TRIGGER</code> and <code>GRANT</code> are accepted as subcommands</td></tr>
+    </tbody>
+  </table>
+  <p>The embedded form is the single-statement equivalent of running <code>CREATE SCHEMA reporting;</code> followed by separately qualified <code>CREATE TABLE reporting.quarterly ...</code> and <code>CREATE VIEW reporting.current_quarter ...</code> statements. Notice that the subcommands themselves carry no terminating semicolons; only the whole statement does.</p>
+</div>
 <h3 id="19.2.2-rename-with-alter-schema">19.2.2 RENAME With ALTER SCHEMA</h3>
 <p>Type <code>ALTER SCHEMA</code>, then the current name, then <code>RENAME TO</code> with the new name. Run it and refresh. The schema keeps all of its objects and only its label changes, as the sales-to-programming rename shows.</p>
 <h3 id="19.2.3-drop-schema-and-safety-habits">19.2.3 DROP SCHEMA and Safety Habits</h3>
 <p>Type <code>DROP SCHEMA</code> with the schema name and run it. The schema disappears on refresh. Because the query editor never asks twice, double-check the database, the schema name, and what lives inside before running a drop.</p>
+<div class="example-box">
+  <p><strong>Worked Drop — RESTRICT versus CASCADE:</strong> The full shape is <code>DROP SCHEMA [ IF EXISTS ] name [, ...] [ CASCADE | RESTRICT ]</code>. Plain <code>DROP SCHEMA</code> is the safe default because <code>RESTRICT</code> refuses to remove any schema that still contains objects. With a <code>demo</code> schema holding a table, a view over it, and a function, the sequence plays out like this:</p>
+  <pre><code>DROP SCHEMA demo;
+-- ERROR: cannot drop schema demo because other objects depend on it
+DROP SCHEMA demo RESTRICT;   -- identical refusal, made explicit
+DROP SCHEMA demo CASCADE;
+-- NOTICE: drop cascades to 3 other objects
+-- DETAIL: drop cascades to table demo.songs
+--          drop cascades to view demo.song_titles
+--          drop cascades to function demo.song_count()</code></pre>
+  <p><code>CASCADE</code> removes the objects contained in the schema and, transitively, everything that depends on them, following the database's dependency tracking. The notice lists each object actually removed, which is the verification step before the drop is called done. Two consequences are worth stating plainly: the schema owner may drop the schema — and thereby everything in it — even when some contained objects are owned by other roles, and a cascade can reach dependent objects that live in <em>other</em> schemas. <code>IF EXISTS</code> only downgrades a missing-schema error to a notice, so it helps in cleanup scripts but is no protection against a mistyped name.</p>
+</div>
 <h3 id="19.2.4-same-operations-in-the-graphical-tool">19.2.4 Same Operations in the Graphical Tool</h3>
 <p>In pgAdmin, right-click the database, open the create menu, and pick the schema option. Typing a name such as <code>air</code> shows the exact SQL it is about to run, which is <code>CREATE SCHEMA</code> with ownership set to the <code>postgres</code> superuser account, and saving adds the schema. Creating tables inside works the same way: right-click tables, add a table such as <code>employees</code>, and define columns such as an <code>employee_id</code> serial primary key plus <code>first_name</code> and <code>last_name</code> text columns of length 100. Refreshing shows the new table inside its schema. Deleting means right-clicking the schema and confirming the drop dialog. Renaming means right-clicking the schema, opening properties, and typing the new name, for example switching <code>air</code> to <code>human_resources</code>. Every create, rename, and drop done by typing has a matching point-and-click path.</p>
 

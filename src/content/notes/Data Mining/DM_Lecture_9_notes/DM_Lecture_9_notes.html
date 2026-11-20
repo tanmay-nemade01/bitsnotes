@@ -437,6 +437,11 @@
 <p>If K is too small, you get highly unstable, highly variable decision boundaries that are very sensitive to noise and have a high chance of overfitting, meaning over-learning the data. If K is too large — think of K = infinity — the dominant class in the dataset dominates everything: with 50 positive samples and 10 negative samples in the training set, every test sample anywhere would be predicted positive, because its neighborhood is majority positive.</p>
 <p>So K should be neither very small nor very large, but somewhere in the middle, and there is no thumb rule to find it. The honest procedure is empirical: use cross-validation — the K-fold cross-validation seen earlier in the course — and keep track of the training error through the process, checking again and again whether the error is coming down.</p>
 <p>The golf recap makes the same point: if the matched training samples split two negatives and two positives, you are stuck again — change K, or use a better weighting factor or tiebreaker.</p>
+
+<div class="key-concept">
+  <p><strong>Asymptotic guarantee — how good can KNN get?</strong> The empirical choice of K above answers "which K works on this data?"; theory answers "what is the best error any rule could reach?" The irreducible floor is the <em>Bayes error rate</em> \(R^{*}\), the error of an ideal classifier that knows the true class distribution. As the training set grows without bound, the 1-nearest-neighbor rule is guaranteed an error rate no worse than twice the Bayes error rate (in the two-class case, the bound tightens toward \(2R^{*}\) as \(R^{*}\) becomes small); if K is also allowed to grow with the sample size, the error rate approaches the Bayes error rate. This is the classical Cover–Hart nearest-neighbor bound.</p>
+  <p><strong>Read alongside 9.2.5 and 9.3.5.</strong> It justifies the small-K warning from the other side: K = 1 is never more than a factor of two worse than the best possible rule in the large-sample limit, yet it pays with the noisy, high-variance boundary of 9.3.5. Growing K recovers optimality only in the limit, so a usable finite K still has to be found empirically by cross-validation, exactly as this section prescribes.</p>
+</div>
 <h3 id="9.2.6-worked-example-a-noisy-point-with-1-nn-vs-3-nn">9.2.6 Worked Example: A Noisy Point with 1-NN vs 3-NN</h3>
 <div class="example-box">
   <p><strong>Worked example: one noisy neighbor vs three honest ones.</strong></p>
@@ -561,6 +566,41 @@
 <p>\[ O(N \cdot D) \]</p>
 <p>because there are \(N\) points, each requiring \(D\) work. Sorting the \(N\) distances adds another term. The session stated a sorting complexity of \(O(NK)\); the standard count for sorting \(N\) numbers with a comparison sort is \(O(N \log N)\), so the spoken form is a garbled version of the sorting step. Whichever way we count it, the message is the same: as the number of dimensions grows, the cost of KNN grows drastically.</p>
 <p>Why \(O(N \log N)\) for the sort? Sorting N distances arranges N items, and each comparison between two distances settles part of the ordering; a comparison sort needs about \(\log_2 N\) comparisons per item, so the whole sort costs \(N \log_2 N\) — written \(O(N \log N)\). Two refinements matter in practice: only the K smallest distances are wanted, so a partial selection can be cheaper than a full sort, and indexed structures (search trees, KD-trees) can replace the full distance scan with about \(O(\log N)\) comparisons per query.</p>
+
+<div class="important-note">
+  <p><strong>System detail — how real KNN implementations avoid the full scan.</strong> The recipe in 9.5.1 measures every one of the N distances at every query. Production implementations instead pre-build a spatial index and discard whole groups of training points with one cheap test. Two structures dominate. A <em>KD-tree</em> recursively splits the space along the data axes into nested boxes; a <em>ball tree</em> groups points into nested hyperspheres, each with a centroid \(C\) and radius \(r\). The ball tree exploits the triangle inequality: if \(d(z, C) - r\) already exceeds the distance to the best neighbor found so far, no point inside that ball can win, so the entire node is skipped without one point-to-point distance.</p>
+  <table>
+    <thead>
+      <tr>
+        <th>Search structure</th>
+        <th>Query cost</th>
+        <th>Where it is strong</th>
+        <th>Where it breaks</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>Brute force</td>
+        <td>\(O(ND)\) per query</td>
+        <td>Small \(N\); exact, zero setup</td>
+        <td>Every query rescans all \(N\) points</td>
+      </tr>
+      <tr>
+        <td>KD-tree</td>
+        <td>about \(O(D\log N)\) for low \(D\) (below roughly 20)</td>
+        <td>Low-dimensional, axis-aligned data</td>
+        <td>Cost climbs toward \(O(ND)\) as \(D\) grows</td>
+      </tr>
+      <tr>
+        <td>Ball tree</td>
+        <td>about \(O(D\log N)\), data-dependent</td>
+        <td>Structured data in higher dimensions</td>
+        <td>More expensive to build than a KD-tree</td>
+      </tr>
+    </tbody>
+  </table>
+  <p><strong>Why this matters here.</strong> Indexing does not repeal the curse of dimensionality of 9.6.1: the KD-tree advantage fades once \(D\) is large, the same geometric thinning that empties neighborhoods. Nor does it change the \(O(ND)\) worst case of an exhaustive scan — it cuts the work actually performed by pruning groups of points, which is precisely the engineering trade-off behind the "alternatives" note below.</p>
+</div>
 <h3 id="9.5.3-why-the-cost-grows-with-dimensions">9.5.3 Why the Cost Grows with Dimensions</h3>
 <p>Every extra dimension adds one more term to every distance computation, and we compute distances to every training point for every test point. Ten dimensions make the formula ten terms long; a thousand dimensions make it a thousand terms long. Nothing is cached in advance — that is the price of being lazy — so high-dimensional data makes KNN genuinely expensive.</p>
 <div class="example-box">
@@ -575,6 +615,38 @@
 <div class="warning-box">
   <p><strong>When to use / alternatives.</strong> KNN is the right tool when the boundary is complex, training is cheap, and test-time latency is tolerable. When queries must be fast on huge data, the alternatives step in: build an index (search trees, KD-trees) to avoid the full scan, subsample or prune the stored set (editing and condensing), or switch to an eager model that pays its cost once at training.</p>
 </div>
+
+<div class="important-note">
+  <p><strong>Prototype reduction — editing, condensing, and early abandonment.</strong> The "prune the stored set" option above has formal implementations. <em>Editing</em> removes training tuples that prove useless — typically those whose label disagrees with the majority of their own neighbors. <em>Condensing</em> (the condensed nearest-neighbor rule) greedily keeps only a small subset of prototypes that still classifies the remaining tuples correctly. Both shrink the stored database, so every later query compares against fewer points.</p>
+  <table>
+    <thead>
+      <tr>
+        <th>Technique</th>
+        <th>Operation</th>
+        <th>Benefit</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>Editing</td>
+        <td>Remove tuples misclassified by their own neighborhood</td>
+        <td>Cleans noisy or ambiguous points while keeping the boundary</td>
+      </tr>
+      <tr>
+        <td>Condensing</td>
+        <td>Keep a subset that still classifies the rest under a 1-NN rule</td>
+        <td>A few prototypes replace the full stored database</td>
+      </tr>
+      <tr>
+        <td>Partial distance</td>
+        <td>Abandon a distance once its partial sum exceeds the best so far</td>
+        <td>Fewer attribute terms evaluated per query</td>
+      </tr>
+    </tbody>
+  </table>
+  <p><strong>Worked trace — early abandonment.</strong> Let the best neighbor found so far be at distance \(d_{\text{best}} = 3\), i.e. squared distance 9. For a stored tuple \(x\), suppose the first two of four attribute gaps are \(0.9\) and \(2.6\): the partial squared distance \(0.9^2 + 2.6^2 = 7.57\) is still below 9, so the last two attributes must be evaluated. If instead the second gap were \(2.9\), the partial sum \(0.81 + 8.41 = 9.22\) already exceeds 9, proving \(x\) cannot beat the current best; the tuple is discarded without computing its remaining gaps. The saved work grows with \(D\), exactly the regime of 9.6.1.</p>
+  <p><strong>Trade-off.</strong> Reduction is preprocessing, not a free lunch: prototypes are chosen once up front, and aggressive pruning can delete points that matter near a class boundary, undoing the flexibility of 9.7.3. Partial distance, by contrast, is exact — it never changes the answer, only how many terms are evaluated before the answer is known.</p>
+</div>
 <div class="key-takeaway">
   <p><strong>Recap.</strong> KNN prediction = compute all N distances (each O(D)) → sort (O(N log N)) → vote among the K smallest. The lazy design moves the whole bill to test time, and every added dimension raises every distance bill. Next: 9.6 collects what actually goes wrong — the curse of dimensionality, counterintuitive distances, and the scaling problem.</p>
 </div>
@@ -584,6 +656,11 @@
 <p>The first limitation is the curse of dimensionality: as you increase the number of features in the dataset, the performance of the classification model decreases drastically. The reason is computational. With 50 dimensions, each distance is a 50-term computation; with 5,000 dimensions, each distance sums 5,000 squared differences, using "all 5,000 dimensions" as the session puts it. Since the distance formula has one term per dimension and we must compute distances to every training point, the computation explodes as dimensions grow.</p>
 <div class="key-concept">
   <p><strong>Formalize.</strong> The cost sits inside the formula itself: \(d(A,B) = \sqrt{\sum_{i=1}^{D}(a_i - b_i)^2}\). One distance costs \(O(D)\); distances to all N training samples cost \(O(ND)\). Doubling the dimensions doubles every distance computation — and the problem is deeper than speed: in many dimensions, neighborhoods become mostly empty, so the stored samples are too far apart to judge anything locally.</p>
+</div>
+
+<div class="important-note">
+  <p><strong>Why neighborhoods go empty — concentration of distances.</strong> The qualitative claim above has a concrete geometric form. Scatter points uniformly in a \(D\)-dimensional unit cube and measure pairwise Euclidean distances. For \(D = 1\) the distances spread from nearly 0 up to 1 (average \(1/3\)): some points are true near neighbors, others far away. As \(D\) grows, two things happen together — almost every coordinate gap \(|x_i - y_i|\) is nonzero, so nearly every pair is at least about 1 apart, while the largest possible distance is only \(\sqrt{D}\) and almost no pair comes close to it. Distances therefore pile up near a common average: almost all pairs end up roughly the same distance apart.</p>
+  <p><strong>Consequence for KNN.</strong> When nearest and farthest are nearly equidistant, "closest" carries almost no information, the neighbor ranking becomes arbitrary, and the local majority vote loses the distinction it relies on. This is why the curse is structural, not merely a speed problem: no indexing trick can restore a neighborhood that the distances themselves no longer contain. It is the high-dimensional counterpart of the counterintuitive equal-distance pairs in 9.6.2.</p>
 </div>
 <h3 id="9.6.2-counterintuitive-results">9.6.2 Counterintuitive Results</h3>
 <p>A second issue: KNN is sometimes counterintuitive. Four examples A, B, C, and D live in three dimensions (attributes D1, D2, D3). The distance between A and B comes out to 1.4, and the distance between C and D also comes out to 1.4 — yet the two pairs of points are very different from each other. Distance is a single number; it compresses all the differences down to one value, and relying on distance alone can produce results that look wrong.</p>

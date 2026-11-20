@@ -588,6 +588,25 @@ flowchart LR
 JButton btn = new JButton(new GreetingAction("Mr. Lee"));</code></pre>
   <p>Behavior: <code>JButton</code> is constructed with the action as its model — the button's <code>isEnabled()</code> appearance follows <code>action.isEnabled()</code>, and <code>putValue(NAME, ...)</code> updates the button label automatically. A button press calls <code>actionPerformed</code>. Changing the timing logic to prefer <code>Good Morning, Ms. ...</code> versus <code>Mr. ...</code> requires editing only <code>GreetingAction</code>, not the <code>JButton</code> code. A name-aware variant could branch on a <code>sex</code> attribute: if <code>sex == female</code> show <code>Ms.</code> else <code>Mr.</code> — mirroring the factory honorific example but now as command state. <strong>Answer highlighted: the <code>AbstractAction</code> stores presentation state (<code>NAME</code>, <code>SMALL_ICON</code>) so one command can back both a menu item and a toolbar button consistently.</strong></p>
 </div>
+<div class="example-box">
+  <p><strong>Example 4 — MacroCommand: composing several commands into one operation.</strong> A menu item may need to run an open-ended sequence of commands — for example centering a page <em>and</em> switching to normal size. The GoF solution is a <em>MacroCommand</em>: a concrete command that stores a list of subcommands and whose <code>execute()</code> simply invokes each in order. It has no receiver of its own — every subcommand supplies its own receiver — so menus, buttons, and scripts can treat the group as a single command object.</p>
+  <pre><code>class MacroCommand implements Command {
+    List&lt;Command&gt; commands = new ArrayList&lt;&gt;();
+    void add(Command c) { commands.add(c); }
+    void execute() { for (Command c : commands) c.execute(); }
+    void unDo() {
+        for (int i = commands.size() - 1; i &gt;= 0; i--)
+            commands.get(i).unDo();   // reverse order
+    }
+}
+Command center = new CenterDocumentCommand(doc);
+Command normal = new NormalSizeCommand(doc);
+MacroCommand both = new MacroCommand();
+both.add(center); both.add(normal);
+menuItem.setCommand(both);   // invoker sees one command</code></pre>
+  <p><strong>Trace.</strong> Clicking the menu item calls <code>both.execute()</code> → <code>center.execute()</code> (document centered) → <code>normal.execute()</code> (zoom set to 100%). One entry in the history list now represents both edits, so a single undo reverses them together: <code>both.unDo()</code> calls <code>normal.unDo()</code> then <code>center.unDo()</code> — strictly the reverse of execution order. Batched undo therefore comes for free from the same object structure.</p>
+  <p><strong>Framework instance:</strong> Swing's <code>javax.swing.undo.CompoundEdit</code> is exactly this idea — it assembles small <code>UndoableEdit</code>s into one large edit, and its <code>undo()</code> sends undo to all contained edits in the reverse of the order in which they were added. <strong>Answer highlighted: a MacroCommand is still a Command — it satisfies the same interface — so every invoker, history list, and undo mechanism works unchanged; the composition is hidden behind the abstraction.</strong></p>
+</div>
 <h3 id="14.3.4-student-questions-and-answers">14.3.4 Student Questions and Answers</h3>
 <div class="important-note">
   <p><strong>Q:</strong> Is a command just a piece of behavior we can call? <strong>A:</strong> In object-oriented practice it is more. A command carries <strong>behavior that must be executed</strong> and <strong>state that describes whether it is currently usable, what it looks like, and what history it belongs to</strong>. That is why the command interface needs both an execution method (<code>execute()</code> or <code>actionPerformed</code>) and methods that manipulate state such as <code>isEnabled()</code> / <code>setEnabled()</code> and <code>putValue()</code> / <code>getValue()</code> for icon or name.</p>
@@ -617,6 +636,48 @@ JButton btn = new JButton(new GreetingAction("Mr. Lee"));</code></pre>
   <p>Mapping: attendance sheet = <code>Subject</code> interface, classmate = <code>Proxy</code>, you = <code>RealSubject</code>, professor = client. The war-sleep image used while describing the modification — the proxy may wait or sleep before delegating — signals that proxies are about <em>when</em> and <em>how</em> the real work happens, not about changing <em>what</em> the work is. Break point: a real attendance proxy can forge a signature; a software Proxy cannot change the result — it must forward the <em>same</em> method with the <em>same</em> semantics, only adding timing, caching, or permission around it.</p>
 </div>
 <p>The companion text adds two more proxy intents that help you recognize the pattern in questions: <strong>access control</strong> — the proxy validates <code>hasPermission(user)</code> before forwarding — and <strong>copy-on-write</strong> — the proxy initially shares the original large object and only copies it when a mutation occurs. If the description says "check rights," "validate access," or "copy only when changed," that is also Proxy, not Decorator.</p>
+<div class="key-concept">
+  <p><strong>Formalize — the fourth GoF proxy kind: Smart Reference.</strong> The GoF taxonomy lists four proxy kinds; the three already discussed (remote, virtual, protection) share a theme of <em>where</em> or <em>whether</em> the real object is reached. The fourth — <em>smart reference</em> — replaces a bare pointer with a stand-in that performs extra work on <em>every access</em>. Its canonical duties are: (1) reference counting — free the real object when no references remain (a smart pointer); (2) load a persistent object into memory on first reference; and (3) check that the real object is locked before access so no other object can change it.</p>
+  <table>
+    <thead>
+      <tr>
+        <th>Proxy kind</th>
+        <th>What it adds</th>
+        <th>Typical trigger</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>Remote</td>
+        <td>Local representative; encodes and forwards across an address space</td>
+        <td>Any method call on a remote subject</td>
+      </tr>
+      <tr>
+        <td>Virtual</td>
+        <td>Creates an expensive object on demand; caches metadata such as extent</td>
+        <td>First <code>paint</code> / <code>draw</code></td>
+      </tr>
+      <tr>
+        <td>Protection</td>
+        <td>Checks the caller's access rights before forwarding</td>
+        <td>Every privileged request</td>
+      </tr>
+      <tr>
+        <td>Smart reference</td>
+        <td>Reference counting, persistent load, or locking on access</td>
+        <td>Every dereference of the real object</td>
+      </tr>
+    </tbody>
+  </table>
+  <p><strong>Worked trace — copy-on-write needs reference counting.</strong> Copying a large subject is expensive; if the copy is never modified, the cost is wasted. The proxy defers it:</p>
+  <ol>
+    <li>Copying the proxy does not clone the subject — it only increments the subject's reference count.</li>
+    <li>Both proxies now point at the <em>same</em> subject; read requests are forwarded with no copy.</li>
+    <li>Only when a client requests a <em>modifying</em> operation does the proxy actually clone the subject, then decrement the shared subject's count.</li>
+    <li>When a subject's count reaches zero it is deleted. The cost is paid once, and only if a mutation truly occurs.</li>
+  </ol>
+  <p><strong>Concrete instance:</strong> <code>java.util.concurrent.CopyOnWriteArrayList</code> applies the same idea — all mutative operations are implemented by making a fresh copy of the underlying array, while iterators hold a stable snapshot. <strong>Takeaway:</strong> Smart Reference and copy-on-write are housekeeping proxies — they change <em>when</em> and <em>how often</em> work happens, never the interface or the result the client sees.</p>
+</div>
 <h3 id="14.4.2-structure-participants-and-collaboration">14.4.2 Structure, Participants, and Collaboration</h3>
 <div class="key-concept">
   <p><strong>Formalize — participants.</strong> The abstraction is a subject interface type. <code>RealSubject</code> provides the service specified by that interface. The proxy is useful when you want to modify the service to make it more versatile — for example to add lazy creation, caching, access control, or connection handling — while still offering the same services as the subject type.</p>
@@ -931,6 +992,47 @@ flowchart TD
     </tbody>
   </table>
   <p>One-sentence rule: if creation is "choose by data value," think Simple Factory; if creation is "let my subclass choose," think Factory Method. Both hide instantiation logic from the client and refer to products through a common interface.</p>
+</div>
+<div class="key-concept">
+  <p><strong>Formalize — the third creational option: Abstract Factory.</strong> The lecture notes that several creational patterns address constructor limitations but develops only two. The missing member is <em>Abstract Factory</em>: "provide an interface for creating families of related or dependent objects without specifying their concrete classes." Where Simple Factory picks one product by a parameter and Factory Method lets a subclass pick one product, an Abstract Factory exposes <em>several</em> creation methods — one per product in a family — so switching the concrete factory switches the whole coherent set at once.</p>
+  <table>
+    <thead>
+      <tr>
+        <th>Dimension</th>
+        <th>Simple Factory</th>
+        <th>Factory Method</th>
+        <th>Abstract Factory</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>What varies</td>
+        <td>Which subtype is returned, chosen by a data value</td>
+        <td>Which subtype is returned, chosen by the subclass</td>
+        <td>Which <em>family</em> of related products is returned</td>
+      </tr>
+      <tr>
+        <td>Creation interface</td>
+        <td>One method with an <code>if/switch</code></td>
+        <td>One abstract method overridden per creator</td>
+        <td>One method <em>per product kind</em> on a factory interface</td>
+      </tr>
+      <tr>
+        <td>Extension</td>
+        <td>Edit the factory branch</td>
+        <td>Add a <code>ConcreteCreator</code></td>
+        <td>Easy to add a new <em>family</em>; hard to add a new <em>product kind</em> — the interface must grow</td>
+      </tr>
+      <tr>
+        <td>Example</td>
+        <td><code>getShape(type)</code></td>
+        <td><code>collection.iterator()</code></td>
+        <td><code>WidgetFactory</code> → <code>MotifWidgetFactory</code> / <code>PMWidgetFactory</code> (look and feel)</td>
+      </tr>
+    </tbody>
+  </table>
+  <p><strong>Worked illustration — pluggable look and feel.</strong> Define <code>WidgetFactory</code> with <code>createScrollBar()</code>, <code>createButton()</code>, and <code>createTextEditor()</code>. <code>MotifWidgetFactory</code> returns Motif variants; <code>PMWidgetFactory</code> returns Presentation Manager variants. A client writes <code>WidgetFactory f = new MotifWidgetFactory(); Button b = f.createButton();</code> — committing to one interface and never to a concrete widget. Swapping <code>f</code> to <code>new PMWidgetFactory()</code> changes the entire family in one line. The factory also <em>enforces consistency</em>: a Motif scroll bar is automatically paired with a Motif button, preventing mixed-family assemblies. In Swing this is realized by <code>UIManager.setLookAndFeel(...)</code> — each component asks the UI manager for the UI delegate implementing its look and feel, so the whole widget family changes together.</p>
+  <p><strong>Relationship:</strong> an Abstract Factory is typically <em>implemented</em> with factory methods (one per product). The discriminator is scope — Factory Method defers creation of <em>one product</em> to subclasses, while Abstract Factory assembles a <em>set of products</em> behind one interface.</p>
 </div>
 <div class="warning-box">
   <p><strong>Pitfalls — Factory traps.</strong></p>

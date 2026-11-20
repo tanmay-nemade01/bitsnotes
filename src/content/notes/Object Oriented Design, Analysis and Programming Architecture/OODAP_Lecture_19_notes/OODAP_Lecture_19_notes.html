@@ -989,6 +989,46 @@ boolean exists = f1.exists();    // true if file at that location is present</co
   </ul>
   <p>Every concrete class — <code>FileInputStream</code>, <code>FileOutputStream</code>, <code>FileReader</code>, <code>BufferedReader</code>, <code>InputStreamReader</code>, <code>PrintWriter</code>, <code>Scanner</code>'s underlying channel — is a subclass of one of these four, inheriting the single-method <code>read()</code>/<code>write()</code> contract and adding device or buffering specifics.</p>
 </div>
+<div class="important-note">
+  <p><strong>Stream families you will meet in <code>java.io</code>:</strong> The four abstract bases above anchor two parallel hierarchies. The table maps the commonly used concrete classes (as catalogued in the standard <code>java.io</code> API) onto each base so you can see which flavour fits a task and why byte streams remain the substrate even when you work in characters.</p>
+  <table>
+    <thead>
+      <tr>
+        <th>Family / base</th>
+        <th>Representative concrete classes</th>
+        <th>Data unit</th>
+        <th>Choose it when</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>Byte input — <code>InputStream</code></td>
+        <td><code>FileInputStream</code>, <code>BufferedInputStream</code>, <code>ByteArrayInputStream</code>, <code>DataInputStream</code>, <code>SequenceInputStream</code></td>
+        <td>raw bytes</td>
+        <td>Binary data (images, serialized objects) or exact-byte control; <code>DataInputStream</code> reads primitive Java types portably.</td>
+      </tr>
+      <tr>
+        <td>Byte output — <code>OutputStream</code></td>
+        <td><code>FileOutputStream</code>, <code>BufferedOutputStream</code>, <code>ByteArrayOutputStream</code>, <code>DataOutputStream</code></td>
+        <td>raw bytes</td>
+        <td>Writing binary files or primitive values; the low-level bridge that <code>PrintWriter</code> wraps.</td>
+      </tr>
+      <tr>
+        <td>Character input — <code>Reader</code></td>
+        <td><code>FileReader</code>, <code>BufferedReader</code>, <code>InputStreamReader</code>, <code>CharArrayReader</code>, <code>StringReader</code></td>
+        <td>Unicode chars (via a charset)</td>
+        <td>Text with international characters; <code>InputStreamReader</code> is the byte→char bridge you wrap for keyboard and socket input.</td>
+      </tr>
+      <tr>
+        <td>Character output — <code>Writer</code></td>
+        <td><code>FileWriter</code>, <code>BufferedWriter</code>, <code>OutputStreamWriter</code>, <code>CharArrayWriter</code>, <code>PrintWriter</code></td>
+        <td>Unicode chars (via a charset)</td>
+        <td>Human-readable text; <code>PrintWriter</code> adds the familiar <code>print</code>/<code>println</code> API on top of <code>OutputStreamWriter</code>.</td>
+      </tr>
+    </tbody>
+  </table>
+  <p><strong>Reading the table:</strong> The pairs <code>FileReader</code>/<code>FileWriter</code> are the character conveniences for files, while <code>InputStreamReader</code>/<code>OutputStreamWriter</code> are the explicit byte↔character bridges that let you name a charset (for example UTF-8) instead of accepting the platform default — the charset-safe variant referenced in 19.7.2. The <code>DataInput</code>/<code>DataOutput</code> families read and write primitive Java types in a portable binary form, a middle ground between the raw <code>read()</code>/<code>write()</code> of 19.8–19.9 and the formatted text of <code>PrintWriter</code>.</p>
+</div>
 <h3 id="19.6.2-classification-of-streams">19.6.2 Classification of Streams</h3>
 <div class="key-concept">
   <p><strong>Two orthogonal classifications — and the same idea beyond files</strong></p>
@@ -1370,6 +1410,22 @@ jump over the lazy dog</code></pre>
   <li><strong>Idiom:</strong> <code>outputStream.close();</code> after the last write. Guard with <code>if (outputStream != null) outputStream.close();</code> when not using try-with-resources, to avoid <code>NullPointerException</code> when the open failed. With try-with-resources: <code>try (PrintWriter outputStream = new PrintWriter(new FileOutputStream("stuff.txt"))) { outputStream.println(...); }</code> — no explicit <code>close()</code> needed.</li>
   <li><strong>Exception-aware variant:</strong> <code>close()</code> itself can throw <code>IOException</code> on the underlying stream (disk full while flushing). Production code often uses <code>try-with-resources</code> precisely because it suppresses a close-time exception correctly instead of hiding the first exception.</li>
 </ul>
+<div class="important-note">
+  <p><strong>Resource-management detail — what <code>try</code>-with-resources actually guarantees:</strong> The classic <code>close()</code>-in-<code>finally</code> idiom has a subtle failure: if the <code>try</code> body throws an I/O error and the subsequent <code>close()</code> in <code>finally</code> throws too, the second exception wins and the original is lost — and a stream opened during a partially failed sequence can leak. Java 7's <em>try-with-resources</em> closes every resource automatically at the end of the block and reverses that loss instead of masking it.</p>
+  <ul>
+    <li><strong>Eligibility:</strong> only objects implementing <code>java.lang.AutoCloseable</code> (which includes everything implementing <code>java.io.Closeable</code>) may appear in the resource list — every stream, reader, and writer in <code>java.io</code> qualifies, which is why <code>BufferedReader</code>, <code>PrintWriter</code>, and <code>FileInputStream</code> all work.</li>
+    <li><strong>Implicit final and scope:</strong> a resource declared in the <code>try(...)</code> header is implicitly <code>final</code> and its scope is limited to the <code>try</code> block; from JDK 9 an already-declared, effectively-final variable may be reused.</li>
+    <li><strong>Reverse close order:</strong> with several resources separated by semicolons, <code>close()</code> is called in the <em>opposite</em> order of creation — the last opened is closed first, which is correct for wrappers such as <code>BufferedReader</code> over <code>FileReader</code>.</li>
+  </ul>
+  <pre><code>try (FileInputStream fin = new FileInputStream("in.txt");
+     FileOutputStream fout = new FileOutputStream("out.txt")) {
+    int b;
+    while ((b = fin.read()) != -1) fout.write(b);
+} catch (IOException e) {
+    for (Throwable t : e.getSuppressed()) t.printStackTrace();
+}</code></pre>
+  <p><strong>Suppression:</strong> when the body and one or more <code>close()</code> calls all throw, the <em>body</em> exception propagates and the close-time exceptions are attached to it as <em>suppressed</em> exceptions, retrievable with <code>Throwable.getSuppressed()</code>. Even if opening the second resource in the header fails, the first is still closed. This is precisely why the modern form is preferred over the classic <code>finally</code> pattern above for the same file-closing job: no leak on a failed open and no lost root cause.</p>
+</div>
 <div class="warning-box">
   <p><strong>Pitfalls:</strong></p>
   <ul>

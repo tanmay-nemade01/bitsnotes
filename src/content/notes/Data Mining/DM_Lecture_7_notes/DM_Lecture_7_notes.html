@@ -224,6 +224,20 @@
     <li>Small data traps: with one training point per class cluster, the tree may cut "between" points that are only 0.01 apart; the model then fits the training noise instead of the real class shape.</li>
   </ul>
 </div>
+
+<div class="important-note">
+  <p><strong>Architectural extension — oblique decision trees.</strong> The axis-aligned limitation noted above is a property of the test condition, not of trees in principle. An <em>oblique decision tree</em> replaces the single-attribute test \(x_j \le t\) with a linear combination of attributes, for example \(x + y &lt; 1\). A single node carrying that test separates the two triangular classes of a diagonal example that an axis-aligned tree can only approximate with a long staircase of cuts.</p>
+  <table>
+    <thead>
+      <tr><th>Split type</th><th>Test condition</th><th>Boundary geometry</th><th>Cost / expressiveness</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>Axis-aligned (classic)</td><td>\(x_j \le t\), one attribute</td><td>rectangles with edges parallel to the axes</td><td>cheap to search; many cuts needed for a diagonal boundary</td></tr>
+      <tr><td>Oblique (multivariate)</td><td>\(\sum_j w_j x_j \le t\), several attributes</td><td>hyperplanes (a line in 2-D), rotated regions</td><td>more compact and expressive; finding the optimal weights and cut is computationally expensive</td></tr>
+    </tbody>
+  </table>
+  <p>The trade-off is why classic learners stay axis-aligned: testing every candidate threshold of one attribute is already linear in the data after sorting, whereas searching a weight vector at each node is a far harder optimization. Oblique trees appear where a rotated or interaction-dependent boundary matters and tree depth must be kept small; the classic family studied here deliberately gives up that expressiveness in exchange for speed and interpretability.</p>
+</div>
 <div class="key-takeaway">
   <p><strong>Recap:</strong> a decision tree is divide and conquer on the data space — cut a rectangle along one axis, keep cutting any sub-rectangle that still mixes classes, and stop when every piece holds one class. The tree of tests and the partition of rectangles are the same object in two languages. The next question is practical: when there are many attributes, which one should be cut first? That is the attribute-selection problem that the rest of this lecture answers.</p>
 </div>
@@ -356,6 +370,9 @@
   <p><strong>Taxable income as a continuous attribute, both strategies.</strong></p>
   <p>A sample earning 95K goes to the "> 80K" child in the first tree and to the "> 80K" bucket child in the second — same destination, different machinery. A sample earning 30K goes to the "≤ 80K" child in the first tree, but to the "25K–50K" bucket in the second — here the two trees disagree about where the sample sits, which is exactly why the choice between threshold and buckets changes the tree.</p>
   <p>Sense-check: the threshold question is "is income greater than 80K?" — one comparison; the bucket question is "which of five ranges contains income?" — the same information, carved differently.</p>
+</div>
+<div class="important-note">
+  <p><strong>Mechanism — how a tree chooses a continuous threshold.</strong> A continuous attribute has infinitely many possible cut points, so a tree learner first narrows them to a finite set: sort the training values once, costing \(O(N\log N)\), and take the midpoints between adjacent distinct values as candidate thresholds. Testing every one of the N observed values would instead cost \(O(N^2)\), because each candidate requires a fresh scan of the data; after sorting, each subsequent candidate's class counts can be updated in constant time by moving the records crossed by the cut from one side to the other. The search can be shortened further by keeping only midpoints between adjacent records with <em>different</em> class labels — a cut inside a run of identical labels cannot separate the classes. Every surviving candidate is then scored with the same impurity criterion used for any other split (Gini or entropy), and the threshold with the lowest impurity is kept.</p>
 </div>
 <p>Summary of the options: binary attributes give two branches; multi-way attributes give more than two branches. Nominal attributes support both binary and multi-way splits. Ordinal attributes also support both, with the constraint that order must not be violated. Continuous attributes must first be broken into ranges (buckets) or thresholds, then split.</p>
 <div class="important-note">
@@ -584,6 +601,11 @@
   <p>Candidate attribute B splits into child 1 (all 10 C0) and child 2 (all 10 C1). Both children are pure, so \(H(\text{child}) = 0\) for each:</p>
   <p>\[ \text{Gain}(B) = 1 - \left(\frac{10}{20}(0) + \frac{10}{20}(0)\right) = 1 - 0 = 1 \]</p>
   <p><strong>Choose B</strong>: its gain (1) far exceeds A's gain (0.1187). Sense-check: B's split is perfectly separating — after it, every sample is already classified, so the tree ends immediately at depth 1. A's split leaves both children 88% mixed, so the tree would need more splits below — exactly the "smallest tree" logic from Section 7.4, now driven by a number.</p>
+</div>
+<div class="key-concept">
+  <p><strong>Extension — gain ratio (C4.5) and the many-valued-attribute bias.</strong> Impurity measures such as entropy and Gini tend to favour attributes with many distinct values: an identifier like a student ID gives one record per branch, so every child looks perfectly pure even though it carries no predictive information — the student-ID trap of Section 7.6.2. The C4.5 algorithm corrects information gain by dividing it by the split's own information:</p>
+  <p>\[ \text{GainRatio}(A) = \frac{\text{Gain}(A)}{\text{SplitInfo}(A)}, \qquad \text{SplitInfo}(A) = -\sum_{i=1}^{k} P(v_i)\log_2 P(v_i) \]</p>
+  <p>Here \(v_i\) is the \(i\)-th outcome of the test on \(A\), \(P(v_i)\) is the fraction of samples taking that outcome, and \(k\) is the number of outcomes. If the outcomes are equally sized, \(P(v_i) = 1/k\) and \(\text{SplitInfo} = \log_2 k\), so an attribute producing many branches earns a large denominator and its gain ratio is reduced; the attribute with the largest gain ratio is chosen. CART takes the alternative route — it allows only binary splits, which sidesteps the problem by construction.</p>
 </div>
 <h3 id="7.8.3-student-questions-and-answers">7.8.3 Student Questions and Answers</h3>
 <div class="important-note">
@@ -869,6 +891,26 @@
 <p>Domain-knowledge-based early stopping is allowed: you do not always have to split until purity.</p>
 <div class="important-note">
   <p><strong>Why the third stop exists.</strong> Pure-set stopping can overfit: a tiny training set can be carved into perfect but meaningless leaves (the student-ID trap of Section 7.6). The third criterion lets the builder stop while a node is still slightly mixed, accepting a small training error to keep the tree simple — a domain call that trades a little accuracy for much more reliability on new data. In practice this shows up as limits like "maximum depth" or "minimum samples per leaf," which Section 7.12 lists among the scikit-learn parameters.</p>
+</div>
+
+<div class="important-note">
+  <p><strong>Extension — pruning is the step after stopping.</strong> The stopping criteria above are <em>pre-pruning</em> (early stopping): growth is halted before the tree fits the training data perfectly, by tightening the stop condition — for instance, stop when the impurity gain falls below a threshold.</p>
+  <p><strong>Pre-pruning versus post-pruning.</strong></p>
+  <table>
+    <thead>
+      <tr><th>Strategy</th><th>When the decision is made</th><th>Mechanism</th><th>Weakness</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>Pre-pruning (early stopping)</td><td>during growth</td><td>tighter stopping rule: impurity-gain, depth, or leaf-size threshold</td><td>can stop too soon and underfit — a useful split may follow an unpromising one</td></tr>
+      <tr><td>Post-pruning</td><td>after full growth</td><td>bottom-up trimming: subtree replacement (one leaf labeled with the majority class) or subtree raising (replace the subtree by its most-used branch)</td><td>pays to grow branches that are later removed</td></tr>
+    </tbody>
+  </table>
+  <p>Post-pruning usually generalizes better because it judges each subtree with the whole tree in view; the textbook notes that the pruning strategy affects the final tree more than the choice of impurity measure.</p>
+  <p><strong>Formal mechanism — minimal cost-complexity pruning.</strong> The canonical post-pruning objective (Breiman et al.'s CART) scores a subtree \(T\) by its leaf impurity plus a penalty per terminal node:</p>
+  <p>\[ R_\alpha(T) = R(T) + \alpha\,|\widetilde{T}| \]</p>
+  <p>Here \(R(T)\) is the total impurity (or misclassification rate) of the leaves, \(|\widetilde{T}|\) is the leaf count, and \(\alpha \ge 0\) trades fit against size. For a node \(t\) whose branch is \(T_t\), the effective alpha at which keeping and collapsing that branch tie is</p>
+  <p>\[ \alpha_{\text{eff}}(t) = \frac{R(t) - R(T_t)}{|\widetilde{T}_t| - 1} \]</p>
+  <p>The node with the smallest \(\alpha_{\text{eff}}\) is the "weakest link" and is collapsed first; larger \(\alpha\) prunes more. scikit-learn exposes this as the <code>ccp_alpha</code> parameter of <code>DecisionTreeClassifier</code> (with <code>cost_complexity_pruning_path</code> listing the candidate alphas): at \(\alpha = 0\) the full tree overfits, and a positive \(\alpha\) gives up some training accuracy for better generalization — the practical counterpart of the small-tree bias of Section 7.4.</p>
 </div>
 <h3 id="7.11.4-a-recursive-gini-example-from-a-slide">7.11.4 A Recursive Gini Example from a Slide</h3>
 <p>A slide-based illustration of recursion: at a node, split on the third attribute \(X_3\) with condition \(X_3 \leq 0.8\). The left branch reaches a homogeneous node — Gini 0, all samples of one class — so it becomes a leaf. The right branch still has Gini 0.5, so it is split again, this time on the second attribute \(X_2\), and the process recurses until every branch reaches a decision point.</p>

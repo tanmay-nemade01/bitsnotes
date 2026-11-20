@@ -504,6 +504,33 @@ END;
 </div>
 <p>Catalog teams wrap exactly this shape for dashboard tiles — one stored call behind a "highest price" card instead of pasting the raw MAX query into every report.</p>
 
+<h3 id="33.3.4-function-behavior-attributes" class="subsection-title">33.3.4 Function Behavior Attributes: Volatility and NULL Input</h3>
+<p>The header fixes more than name, parameters, and return type. Trailing keywords tell the optimizer how the function behaves and whether NULL arguments ever reach the body. The spoken build never needs them, but real PostgreSQL DDL uses them, and getting them wrong can change results or performance.</p>
+<div class="key-concept">
+  <p><strong>Formal Definition:</strong> A <em>volatility attribute</em> is a promise about how a result relates to inputs and to database state. PostgreSQL allows at most one of <code>IMMUTABLE</code>, <code>STABLE</code>, and <code>VOLATILE</code>; with none written, <code>VOLATILE</code> is assumed. The companion promise <code>RETURNS NULL ON NULL INPUT</code> (short form <code>STRICT</code>) skips the body entirely and returns NULL whenever any argument is NULL.</p>
+  <table>
+    <thead><tr><th>Attribute</th><th>Database access</th><th>Result stability</th><th>Planner effect</th></tr></thead>
+    <tbody>
+      <tr><td><code>IMMUTABLE</code></td><td>None — no lookups</td><td>Same inputs always give the same output</td><td>Constant arguments may be folded at plan time</td></tr>
+      <tr><td><code>STABLE</code></td><td>Reads, no writes</td><td>Fixed within one scan; may differ across statements</td><td>One evaluation per scan suffices</td></tr>
+      <tr><td><code>VOLATILE</code> (default)</td><td>Unrestricted, may write</td><td>May change even within one scan</td><td>No optimization; every call runs</td></tr>
+    </tbody>
+  </table>
+</div>
+<div class="example-box">
+  <p><strong>Worked Header:</strong> A pure helper writes its contract after the language tag, where earlier headers stopped:</p>
+  <pre><code>CREATE OR REPLACE FUNCTION fn_percent_change(new_value numeric, old_value numeric, places integer DEFAULT 1)
+RETURNS numeric AS \$\$
+  SELECT round(((new_value - old_value) / old_value) * 100, places);
+\$\$ LANGUAGE sql IMMUTABLE RETURNS NULL ON NULL INPUT;</code></pre>
+  <p>For 110, 108, and 2 places:</p>
+  <p>\[ \text{pct} = \mathrm{round}\!\left(\frac{110 - 108}{108} \times 100,\ 2\right) = 1.85 \]</p>
+  <p>The same three arguments always yield 1.85, which is what makes <code>IMMUTABLE</code> honest. Call with a NULL old_value and the body never runs — the result is NULL, so the division is never attempted.</p>
+</div>
+<div class="warning-box">
+  <p><strong>Pitfall — a false promise:</strong> declaring <code>IMMUTABLE</code> on a function that reads a table or calls <code>now()</code> lets the planner fold calls to constants, so a stale value can be reused. Stay <code>VOLATILE</code> when unsure. Function-level <code>STRICT</code> is also not the <code>STRICT</code> of <code>SELECT ... INTO STRICT</code> in the exception section: one skips a call on NULL input, the other demands exactly one row.</p>
+</div>
+
 <h2 id="33.4-block-structure">33.4 Block Structure</h2>
 <h3 id="33.4.1-labels-declare-begin-and-end">33.4.1 Labels, DECLARE, BEGIN, and END</h3>
 <p>Why split a function into two labeled parts? Declarations must exist before the body runs, so the language fences them apart — names first, work second.</p>

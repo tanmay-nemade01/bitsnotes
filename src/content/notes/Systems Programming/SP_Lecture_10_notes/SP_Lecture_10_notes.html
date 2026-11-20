@@ -873,6 +873,58 @@ ls.out</code></pre>
 <div class="important-note">
   <p><strong>Intuition — numbered mailboxes:</strong> Think of the command line as a row of <em>numbered mailboxes</em> outside the script's house. Mailbox <code>0</code> always holds the house's own nameplate. Mailboxes <code>1</code>, <code>2</code>, <code>3</code> hold each word the caller slipped in. Inside the script, writing <code>\$1</code> is like opening mailbox <code>1</code> and reading the slip. The mapping is explicit: position on command line → mailbox number → variable expansion. Where it breaks: mailboxes only go to <code>9</code> by single digit; beyond that you need a combination lock <code>\${10}</code>.</p>
 </div>
+<div class="key-concept">
+  <p><strong>Formalize — the <code>shift</code> builtin (consuming positional parameters):</strong> The positional slots of 10.7.1 are not fixed forever — the Bourne-family builtin <code>shift [n]</code> shifts the whole argument list to the left by \(n\) places, permanently discarding the first \(n\). The old parameters \(n+1 \dots \$\#\) are renamed to \(\$1 \dots \$\#-n\), and the count drops by \(n\):</p>
+  \[ \$1' = \$2,\; \$2' = \$3,\;\dots,\;\$(\$\#-1)' = \$\#,\;\$\#' = \$\#-1 \qquad (n = 1) \]
+  <p>With no argument \(n = 1\); the shell requires \(n \le \$\#\), and shifting more places than exist is a non-zero-status error that leaves the list unchanged. Crucially, <code>\$0</code> (the script name) is <em>never</em> shifted — only <code>\$1</code> onward move.</p>
+  <p><strong>Worked trace</strong> (script invoked with four arguments):</p>
+  <pre><code>./args.sh joe mary tom sam   # \$1=joe \$2=mary \$3=tom \$4=sam  \$#=4
+# -- inside the script --
+shift                        # joe dropped → \$1=mary \$2=tom \$3=sam  \$#=3
+echo \$*                      # mary tom sam
+shift 2                      # mary,tom dropped → \$1=sam  \$#=1
+echo \$*                      # sam
+shift 2                      # n (2) &gt; \$# (1) → error "cannot shift"</code></pre>
+  <table>
+    <thead>
+      <tr>
+        <th>State</th>
+        <th>\$1</th>
+        <th>\$2</th>
+        <th>\$3</th>
+        <th>\$4</th>
+        <th>\$#</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>at entry</td>
+        <td>joe</td>
+        <td>mary</td>
+        <td>tom</td>
+        <td>sam</td>
+        <td>4</td>
+      </tr>
+      <tr>
+        <td>after <code>shift</code></td>
+        <td>mary</td>
+        <td>tom</td>
+        <td>sam</td>
+        <td>—</td>
+        <td>3</td>
+      </tr>
+      <tr>
+        <td>after <code>shift 2</code></td>
+        <td>sam</td>
+        <td>—</td>
+        <td>—</td>
+        <td>—</td>
+        <td>1</td>
+      </tr>
+    </tbody>
+  </table>
+  <p><strong>Why it matters:</strong> <code>shift</code> is the companion to the <code>\$0</code>–<code>\$9</code> mapping — a script can read <code>\$1</code>, shift it away, and repeat to process an arbitrary number of arguments without ever naming <code>\$10</code>, <code>\$11</code>, and so on.</p>
+</div>
 <h3 id="10.7.2-creating-variables-and-accessing-values-with-and">10.7.2 Creating Variables and Accessing Values with \$ and \${}</h3>
 <p>You can create variables inside a script at will — no declaration, no <code>int</code> keyword, no import. The creation rule is simple and strict: \[ \texttt{variable=value} \] with no spaces around <code>=</code>. Examples shown are <code>number=10</code> (numeric string), <code>vec=bus</code> (word), and <code>str=V</code> (single character). Assigning a null value as <code>vec=</code> is allowed and means empty — the variable exists but holds the null string.</p>
 <p>To use the value stored in a variable, you prefix the name with <code>\$</code>. The form <code>\$var</code> expands to the value of <code>var</code>, while <code>\${var}</code> does the same with braces that delimit the name explicitly. Braces disambiguate when the variable name abuts other characters: <code>\${var}x</code> is the value of <code>var</code> plus <code>x</code>, while <code>\$varx</code> would look up a different variable <code>varx</code>.</p>
@@ -883,6 +935,48 @@ ls.out</code></pre>
   <pre><code>read name        # name is the container (no \$)
 echo Hello \$name # \$name is the content of that container</code></pre>
   <p>In <code>read name</code>, <code>name</code> is the destination variable as a name. In <code>echo \$name</code>, the <code>\$</code> signals you want the value present in that container. Whatever word the user typed — <code>Tixna</code>, <code>Rajesh</code> — gets assigned to <code>name</code>, and <code>\$name</code> retrieves it for display. The same pattern holds for created variables: <code>number=10</code> creates, <code>echo \$number</code> retrieves <code>10</code>.</p>
+</div>
+
+<div class="key-concept">
+  <p><strong>Formalize — default-value parameter expansions:</strong> The braced <code>\${parameter}</code> form of 10.7.2 does more than delimit a name. POSIX/Bash define four operators that test whether a variable is unset or null and substitute (or assign) a <code>word</code>. Including the colon tests "unset <em>or</em> null"; omitting it tests "unset" only:</p>
+  <table>
+    <thead>
+      <tr>
+        <th>Expansion</th>
+        <th>If unset or null</th>
+        <th>If set and non-null</th>
+        <th>Purpose</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><code>\${var:-word}</code></td>
+        <td>substitute <code>word</code></td>
+        <td>substitute <code>\$var</code></td>
+        <td>supply a default value</td>
+      </tr>
+      <tr>
+        <td><code>\${var:=word}</code></td>
+        <td>assign <code>word</code>, then substitute</td>
+        <td>substitute <code>\$var</code></td>
+        <td>set a default in place</td>
+      </tr>
+      <tr>
+        <td><code>\${var:?message}</code></td>
+        <td>print error, exit non-zero (scripts)</td>
+        <td>substitute <code>\$var</code></td>
+        <td>catch missing input</td>
+      </tr>
+      <tr>
+        <td><code>\${var:+word}</code></td>
+        <td>substitute nothing</td>
+        <td>substitute <code>word</code></td>
+        <td>test that a var is set</td>
+      </tr>
+    </tbody>
+  </table>
+  <p><strong>Worked:</strong> with <code>count</code> unset, <code>echo \${count:-0}</code> prints <code>0</code>; with <code>count=7</code> it prints <code>7</code>. As an argument guard, <code>filename=\${1:?"usage: \$0 file"}</code> makes a missing <code>\$1</code> print <code>filename: usage: ...</code> and exit non-zero — the same check written with <code>if [ \$# -eq 0 ]</code> in 10.8/10.12, but in one line. Two caveats: the assignment form <code>:=</code> cannot be applied to positional or special parameters, and dropping the colon (<code>\${count-0}</code>) treats a set-but-null value as present.</p>
+  <p><strong>Connection:</strong> these operators reuse the very braces that disambiguate <code>\${var}x</code> earlier in this section; the operator between the name and <code>word</code> simply adds a conditional default on top of that delimiter role.</p>
 </div>
 <div class="example-box">
   <p><strong>Worked example — creation, access, and braced form:</strong> Script <code>vars.sh</code>:</p>

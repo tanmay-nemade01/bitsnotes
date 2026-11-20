@@ -538,6 +538,24 @@
 <h3 id="10.6.3-overlap-handling-preview">10.6.3 Overlap Handling Preview</h3>
 <p>Overlap comes from sliding windows and from multi-scale pyramids. A simple fix is <em>non-maximum suppression</em> (keep the best span and drop the rest that overlap it strongly). A softer fix decays scores of overlapping spans instead of hard removal. Details follow in 10.8. The pipeline stays the same while backbones and scoring choices vary, giving proposal-based versus anchor-free designs.</p>
 
+<div class="example-box">
+  <p><strong>Formal Procedure — Greedy Non-Maximum Suppression:</strong> The preview above has an exact algorithm. Given candidate spans with confidence scores and a suppression threshold \(\theta\): (1) sort all candidates by score, highest first; (2) take the highest-scoring span still alive and mark it <em>kept</em>; (3) compute \(TIOU\) (from 10.9) between it and every lower-scored span still alive, and delete those with \(TIOU > \theta\) because they duplicate a more confident span; (4) repeat until no spans remain. The procedure is greedy — decisions are made one leader at a time rather than by a global optimum — and is normally run within a single class so that, say, a goal and a yellow card at the same instant do not erase each other.</p>
+  <p><strong>Worked trace at \(\theta = 0.5\):</strong> five same-class candidates, already sorted by score:</p>
+  <table>
+    <thead>
+      <tr><th>Candidate</th><th>Score</th><th>TIOU vs the kept leader</th><th>Decision</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>\(A = [100, 104]\)</td><td>0.95</td><td>—</td><td>kept (first leader)</td></tr>
+      <tr><td>\(C = [36, 40]\)</td><td>0.90</td><td>\(0\)</td><td>kept (disjoint)</td></tr>
+      <tr><td>\(B = [101, 105]\)</td><td>0.88</td><td>\(\frac{3}{5} = 0.60\)</td><td>deleted</td></tr>
+      <tr><td>\(D = [102, 106]\)</td><td>0.70</td><td>\(\frac{2}{6} \approx 0.33\)</td><td>kept</td></tr>
+      <tr><td>\(E = [50, 54]\)</td><td>0.60</td><td>\(0\)</td><td>kept</td></tr>
+    </tbody>
+  </table>
+  <p>For \(B\): intersection \(= \min(104, 105) - \max(100, 101) = 3\), union \(= 105 - 100 = 5\), so \(TIOU = 0.60 > 0.5\) and the weaker duplicate goes. For \(D\): intersection \(= 104 - 102 = 2\), union \(= 106 - 100 = 6\), so \(TIOU \approx 0.33 < 0.5\) and it survives even though it overlaps the already-deleted \(B\) — a direct consequence of the greedy order. <strong>Final result:</strong> survivors \(A, C, D, E\); \(B\) is removed. Raising \(\theta\) to \(0.7\) would retain \(B\), so the threshold is a precision/recall dial rather than a fixed constant — the same role that \(\sigma\) plays for soft suppression in 10.8.2.</p>
+</div>
+
 <h2 id="10.7-proposal-method-with-start-end-and-action-scores">10.7 Proposal Method with Start End and Action Scores</h2>
 <div class="important-note">
   <p>How do we turn rough window proposals into tight bounds? A <em>boundary-sensitive network</em> (a proposal method that scores start, end, and action curves) changes step two of the pipeline: instead of trusting window edges, it scores every instant as a possible start, end, or action middle. A <em>temporal evaluation module</em> (the scoring part of that network) takes snippet features and outputs three probability curves over time. Proposals form by pairing start peaks with end peaks and checking the middle.</p>
@@ -602,6 +620,22 @@
 <h3 id="10.8.2-worked-pyramid-and-losses">10.8.2 Worked Pyramid and Losses</h3>
 <div class="example-box">
   <p>Build levels by stride. Level 0 uses all spots \(F_{1}, F_{2}, F_{3}, F_{4}, F_{5}\). Stride 2 skips one each time and repeats attention plus labeling. Stride 4 skips more. One talk example reaches \(F_{9}\) to \(F_{17}\) at a coarse level, where \(9 + 8 = 17\): a stride-8 step links spots 8 apart into one long view. Each spot at each level outputs a class and a class probability.</p>
+
+<div class="key-concept">
+  <p><strong>Mechanism — How a feature pyramid is actually built:</strong> The stride list above fixes the <em>scale grid</em>; the standard structure that fills it is the Feature Pyramid Network (FPN). A naive image pyramid recomputes the whole network at every input scale, which is expensive, while taking raw backbone stages directly is cheap but leaves fine levels with little class semantics, because early layers are attuned to texture rather than abstract constructs. FPN uses two paths: a <em>bottom-up pathway</em> that is simply the backbone producing one map per stage, and a <em>top-down pathway</em> that upsamples the coarsest, most semantic map step by step. A <em>lateral connection</em> fuses each upsampled map with the backbone map at the same scale — a 1-by-1 convolution aligns channels, then the two are added — so every level carries both high-level semantics and precise spatial or temporal detail. Each fused level then feeds its own classification and regression head, i.e. the two heads of 10.8.1 applied at several strides at once.</p>
+  <table>
+    <thead>
+      <tr><th>Construction</th><th>Extra cost</th><th>Semantics at fine levels</th><th>Scale behaviour</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>Single feature map (coarsest stage only)</td><td>None</td><td>Absent — one stride only</td><td>Short and long actions share one scale</td></tr>
+      <tr><td>Image pyramid (resize input per scale)</td><td>Very high — a full pass per scale</td><td>Good</td><td>Good, but too slow for long video</td></tr>
+      <tr><td>Deep feature pyramid (reuse backbone stages)</td><td>Low</td><td>Weak — early stages are low-level</td><td>Partial; fine levels miss class meaning</td></tr>
+      <tr><td>FPN (top-down plus lateral)</td><td>Marginal</td><td>Strong at every level after fusion</td><td>Short bursts at fine levels, long plays at coarse levels</td></tr>
+    </tbody>
+  </table>
+  <p>In the one-dimensional temporal setting of 10.8 the same principle holds: a stride level is useful only if it carries both fine time resolution and class-level meaning, which is what the fusion — not the stride count alone — supplies.</p>
+</div>
   <p>Short actions pop at fine levels — a quick kick spans a few frames at stride 1. Long actions pop at coarse levels — if \(F_{1}\) and \(F_{17}\) share the same action, a coarse level links them as one long span. Fine levels keep tight bounds for quick kicks or jumps. That is how one net catches both scales in a single pass.</p>
   <p>Focal numbers show the effect. With \(\alpha = 0.25\) and \(\gamma = 2.0\), an easy background spot with \(p = 0.95\) gets factor \((1-0.95)^{2} = 0.0025\), so its loss is \(FL = -0.25 \times 0.0025 \times \log(0.95) \approx 0.00003\) — it almost vanishes. A hard action spot with \(p = 0.40\) keeps factor \((1-0.40)^{2} = 0.36\), giving \(FL = -0.25 \times 0.36 \times \log(0.40) \approx 0.082\) — thousands of times larger, so it still drives learning. The right class gets higher confidence than wrong rivals because hard spots dominate every batch. <strong>Sense-check:</strong> the ratio of the two losses is about 2500 to 1, which is exactly the rebalancing the pyramid needs.</p>
 </div>

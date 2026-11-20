@@ -458,6 +458,16 @@
 <div class="warning-box">
   <p><strong>Scope:</strong> the formula assumes the window tiles the image with no overlap and no stride tricks; with stride \(s\) the count becomes roughly \((H/s) \times (W/s)\) per scale, even larger for dense strides. <strong>Assumption:</strong> windows are axis-aligned rectangles — rotated objects still get cut. <strong>Pitfall:</strong> adding scales feels like progress but each new scale adds hundreds of negatives per positive, deepening the imbalance below.</p>
 </div>
+
+<div class="key-concept">
+  <p><strong>Classical escape from the window explosion (Viola–Jones, 2001):</strong> the 65,536-window count above looks fatal, yet face detectors once ran at video rate on a 2001 CPU. Three ideas did it. First, <em>Haar-like rectangle features</em>: a single number formed by subtracting summed pixel intensities over adjacent rectangles (two, three, or four boxes) — for example "eye strip darker than cheek strip." Second, an <em>integral image</em> (summed-area table) \(S(x,y)=\sum_{x'\le x,\,y'\le y} I(x',y')\), computed once in \(O(N)\); thereafter any rectangle sum is four array lookups and a rectangle-difference feature costs \(4r\) additions for \(r\in\{2,3,4\}\) boxes, instead of rescanning pixels at every window. Third, a boosted classifier built from decision stumps — threshold tests on one feature with a polarity —</p>
+  <p>\[h(\mathbf{x}) = \operatorname{sign}\!\left(\sum_{j=1}^{M} \alpha_j\, h_j(\mathbf{x})\right), \qquad h_j(\mathbf{x}) \in \{-1, +1\}\]</p>
+  <p>where <em>AdaBoost</em> re-weights misclassified windows after each round so later stumps concentrate on the hard cases, and the final weights \(\alpha_j\) come from the stage-wise error. The result is a strong detector assembled from many deliberately weak tests.</p>
+</div>
+<div class="example-box">
+  <p><strong>Worked cost trace — cascading away the 54-to-1 majority:</strong> a 24-by-24 window admits over 160,000 rectangle features; AdaBoost keeps about 6,000 as the strong classifier. Testing all 6,000 at every window would recreate the brute-force cost. Instead the features are grouped into a <em>cascade</em>: stage 1 has 1 feature, stage 2 has 10, then 25, 25, 50, and so on across 38 stages. Most windows hold no face, so stage 1 rejects them after a single \(4\times 2 = 8\)-addition feature; only survivors reach stage 2. Published figures put the average at about 10 of the 6,000 features evaluated per sub-window.</p>
+  <p><strong>Numbers:</strong> if each early stage rejects 50 percent of its inputs, stage 1 discards \(65{,}536/2 = 32{,}768\) windows for 8 additions each, stage 2 discards a further 16,384, and after \(k\) stages only \(65{,}536/2^{k}\) windows remain — exponential pruning of the dull majority. <strong>Insight:</strong> the cascade answers the same imbalance raised in 13.3.2 — spend almost nothing on obvious negatives, reserve full classification for a few promising windows — and it does so with cheap tests rather than the region merging of 13.8.</p>
+</div>
 <h3 id="13.3.2-worked-counting-example">13.3.2 Worked Counting Example</h3>
 <div class="example-box">
   <p>Take the pedestrian image scanned at many shapes and scales. The slices stack up to 330 windows. Only 6 of them hold a pedestrian, so positives form</p>
@@ -658,6 +668,17 @@
   <p><strong>Q:</strong> How do IoU, Jaccard, F1, and ROC fit together. <strong>A:</strong> IoU matches the Jaccard score — same ratio, different name. It also plays the role F1 plays, joining precision-like and recall-like views (overlap vs coverage) into one. mAP plays the role of the ROC area, since both read performance as area under a curve rather than a single threshold number.</p>
 </div>
 
+<h3 id="13.6.5-non-maximum-suppression-keeping-one-box-per-object">13.6.5 Non-Maximum Suppression: Keeping One Box Per Object</h3>
+<div class="key-concept">
+  <p><strong>Definition:</strong> A detector often emits several overlapping boxes for the same object. <em>Non-maximum suppression</em> (NMS) keeps one representative and discards the rest: sort all boxes of a class by confidence, take the highest-scoring box, then delete every remaining box whose IoU with it exceeds a suppression threshold \(A\), commonly \(A = 0.5\). Repeat on what survives. This is the prediction-side counterpart of the duplicate rule in 13.6.1 — NMS removes redundant boxes <em>before</em> scoring, while the duplicate rule assigns a false positive to any that slipped through.</p>
+</div>
+<div class="example-box">
+  <p><strong>Worked trace:</strong> Take a class whose predicted boxes score 0.90, 0.82 and 0.78, where the top box overlaps each of the other two at IoU 0.8. With \(A = 0.5\), the 0.90 box is kept first; since 0.8 &gt; 0.5, both lower boxes are suppressed. One detection survives for that object, so two redundant claims never enter the ranked list of 13.6.1.</p>
+</div>
+<div class="warning-box">
+  <p><strong>Pitfall — nearby objects:</strong> a single threshold cannot tell "two boxes, one object" from "two boxes, two adjacent objects." At \(A = 0.5\) two butterflies close together can exceed the threshold, so the lower-confidence but correct box is wrongly deleted. <em>Soft-NMS</em> avoids hard deletion: instead of removing a box it decays its score by \(\exp(-\text{IoU}^{2}/\sigma)\) with a typical \(\sigma = 0.5\), so heavily overlapping boxes fade rather than vanish and a second score threshold prunes them.</p>
+</div>
+
 <h2 id="13.7-histogram-of-oriented-gradients-and-template-matching">13.7 Histogram of Oriented Gradients and Template Matching</h2>
 <div class="important-note">
   <p>Before networks learned their own features, engineers counted edge directions by hand — and that simple histogram carried pedestrian detection for a decade.</p>
@@ -719,6 +740,16 @@ flowchart TB
 <p>The backbone is swap-ready. AlexNet trained on ImageNet and tuned on Pascal's 21 classes (20 objects plus background) did the first duty, and VGG, ResNet, ResNet-150, Inception, or NASNet can slot in just as well — pretrain on ImageNet, fine-tune on Pascal, then train the end classifier. The last stage trains its own end classifier plus a box regressor, a small linear model that nudges each proposed box's edges toward truth (shifting x, y, width, height by learned deltas). On Pascal VOC 2010 the jump was real: about 53.7 percent mAP against 35.1 percent for pure segmentation proposals and the older deformable-parts HOG design — an 18-point gain from learned features on proposed regions. Reading advice: the R-CNN paper first, then the selective-search paper, since the two together show where the boxes come from and what the network does with them.</p>
 <div class="key-concept">
   <p>R-CNN's purpose: replace hand-built HOG templates with learned CNN features while keeping the proposal funnel. Inputs: one image plus about 2000 selective-search boxes. Steps: warp each box to fixed size, run the CNN per box, classify plus regress edges. Output: scored, nudged boxes. The design works — and its cost is the next section's target.</p>
+</div>
+
+<div class="example-box">
+  <p><strong>What the "nudge" actually computes:</strong> the box regressor of the previous paragraph is a regression from a proposal (anchor) box to a nearby target box in a normalized coordinate space. Let \((x,y,w,h)\) be a box's centre and size, \((x_a,y_a,w_a,h_a)\) the anchor, and \((x^{*},y^{*},w^{*},h^{*})\) the ground truth. The four regression targets are</p>
+  <p>\[t_x = \frac{x - x_a}{w_a},\quad t_y = \frac{y - y_a}{h_a},\quad t_w = \log\frac{w}{w_a},\quad t_h = \log\frac{h}{h_a}\]</p>
+  <p>with \(t^{*}_x,t^{*}_y,t^{*}_w,t^{*}_h\) defined the same way using the starred truth coordinates. The head predicts \(\hat{\mathbf{t}}\) and is trained with a robust smooth-\(L_1\) loss \(R(\hat{\mathbf{t}}-\mathbf{t}^{*})\), less sensitive to outliers than squared error. Centre offsets are divided by the anchor size, so the same small number works at any scale; sizes live in log space, so a positive target means "grow," a negative one "shrink," and the effect is multiplicative.</p>
+  <p><strong>Worked numeric (bounded variant from the companion text):</strong> constrain network outputs \(X,Y,W,H\in[-1,1]\) and rescale by the anchor, \(x_{\text{pix}} = X\cdot U\cdot w_a + x_a\), \(y_{\text{pix}} = Y\cdot U\cdot h_a + y_a\), \(w_{\text{pix}} = w_a e^{W\cdot V}\), \(h_{\text{pix}} = h_a e^{H\cdot V}\), with \(U=0.1\), \(V=0.2\). For an anchor centred at \((50,60)\) of size \(32\times 64\) and predictions \((X,Y,W,H)=(0.5,-0.25,0.8,0.3)\):</p>
+  <p>\[x_{\text{pix}} = 0.5(0.1)(32)+50 = 51.6,\qquad y_{\text{pix}} = -0.25(0.1)(64)+60 = 58.4\]</p>
+  <p>\[w_{\text{pix}} = 32e^{0.16} \approx 37.6,\qquad h_{\text{pix}} = 64e^{0.06} \approx 68.0\]</p>
+  <p><strong>Result:</strong> the regressor turns a \(32\times 64\) anchor into roughly a \(37.6\times 68.0\) box centred at \((51.6, 58.4)\) — a small, controlled refinement. <strong>Sense-check:</strong> all-zero outputs return the anchor unchanged, and \(\pm 1\) bounds position to \(\pm 10\%\) and size to \(\pm 20\%\), which is exactly the meaning of \(U\) and \(V\).</p>
 </div>
 <h3 id="13.9.1-the-two-bottlenecks">13.9.1 The Two Bottlenecks</h3>
 <div class="warning-box">
@@ -784,6 +815,14 @@ flowchart TB
   <p><strong>Q:</strong> Does Faster R-CNN still run a segmentation model for proposals. <strong>A:</strong> No. The proposal network is a learned convolutional stage on the shared map. Hand-built segmentation leaves the pipeline entirely — one network proposes and decides.</p>
   <p><strong>Q:</strong> Rounding moves things by less than a pixel on the map, so why care. <strong>A:</strong> The map is 16 times smaller than the image, so a fraction on the map is many pixels on the street: 0.5 becomes 8. Sub-pixel slips become multi-pixel misses, and four slipping corners at once drag IoU down hard.</p>
   <p><strong>Q:</strong> Is 512 the new proposal count in the fast design. <strong>A:</strong> No. 512 is the channel depth of the feature map — the number of learned pattern detectors per location. Proposal counts stay near 2000 in the fast design and become a tuned knob, tested at many values, in the faster design.</p>
+</div>
+
+<h3 id="13.11.3-multi-scale-detection-with-feature-pyramid-networks">13.11.3 Multi-Scale Detection with Feature Pyramid Networks</h3>
+<div class="key-concept">
+  <p><strong>Problem:</strong> R-CNN, Fast R-CNN and Faster R-CNN all read one single-resolution feature map, so a small object shrinks to only a few map cells while a large one spans many — the anchor scales in 13.11 cannot fully recover what a coarse map has already washed out. A <em>feature pyramid network</em> (FPN) builds feature maps at several scales: a top-down path carries semantic strength from deep layers back down, and lateral connections fuse it with the higher-resolution early layers, so every level holds both fine spatial detail and high-level meaning.</p>
+</div>
+<div class="important-note">
+  <p><strong>System detail:</strong> assigning small objects to fine levels and large objects to coarse levels lifts accuracy on small instances and makes performance far less sensitive to object size. The same top-down-plus-lateral pattern is reused by modern one-stage detectors, so it is a reusable design idea rather than a Faster R-CNN quirk.</p>
 </div>
 
 <h2 id="13.12-assignment-four-contrastive-image-text-pairs">13.12 Assignment Four: Contrastive Image-Text Pairs</h2>

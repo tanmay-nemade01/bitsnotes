@@ -576,6 +576,26 @@ stateDiagram-v2
   <p><strong>Analogy:</strong> a doctor does the same thing. Given your symptoms, the doctor wants the disease — that is hard to read off directly. So the doctor instead asks: how well does each disease explain these symptoms, and how common is each disease? Then picks the best fit. Bayes' rule turns one hard question into two easy ones.</p>
 </div>
 <p>The likelihood is built from emission probabilities — the probability that the word is "a" given that the tag is DT — and the prior is built from transition probabilities — the probability of the next tag given that the earlier tag was DT.</p>
+
+<div class="key-concept">
+  <p><strong>The evidence we dropped: the forward algorithm.</strong> In the Bayes derivation above we removed \(P(w_1^n)\) because it is identical for every candidate tag sequence. It is nevertheless a well-defined quantity — the probability the model assigns to the observed word sequence — and computing it completes the picture. Summing the joint scores of all \(T^n\) tag sequences, \(P(w_1^n) = \sum_{t_1^n} P(w_1^n, t_1^n)\), is the same exponential enumeration that motivates Viterbi. The <em>forward algorithm</em> computes this sum in \(O(N^2 T)\) with a dynamic-programming trellis.</p>
+  <p>Let \(\alpha_t(j) = P(w_1, \ldots, w_t, q_t = j)\) be the probability of having generated the first \(t\) observations and ended in state \(j\). Then:</p>
+  \[
+  \alpha_1(j) = \pi_j \, b_j(w_1), \qquad \alpha_t(j) = \left[\sum_{i=1}^{N} \alpha_{t-1}(i)\, a_{ij}\right] b_j(w_t)
+  \]
+  <p>where \(a_{ij} = P(j \mid i)\) is a transition, \(b_j(w_t) = P(w_t \mid j)\) an emission, and \(\pi_j\) the start probability. This is structurally the Viterbi recurrence with the <strong>sum over previous states replacing the max</strong>, and with no backpointers — we need a total, not a best path.</p>
+  <p><strong>Worked trace (two-state ice-cream model, observations 1, 3, 1):</strong> using \(\pi_H = 0.8, \pi_C = 0.2\), \(a_{HH}=0.7, a_{CH}=0.4, a_{HC}=0.3, a_{CC}=0.6\) and \(P(1\mid H)=0.2, P(3\mid H)=0.4, P(1\mid C)=0.5, P(3\mid C)=0.1\):</p>
+  \[
+  \alpha_1(H) = 0.8 \times 0.2 = 0.16, \qquad \alpha_1(C) = 0.2 \times 0.5 = 0.10
+  \]
+  \[
+  \alpha_2(H) = (0.16\times0.7 + 0.10\times0.4)\times0.4 = 0.0608, \qquad \alpha_2(C) = (0.16\times0.3 + 0.10\times0.6)\times0.1 = 0.0108
+  \]
+  \[
+  \alpha_3(H) = (0.0608\times0.7 + 0.0108\times0.4)\times0.2 = 0.009376, \qquad \alpha_3(C) = (0.0608\times0.3 + 0.0108\times0.6)\times0.5 = 0.01236
+  \]
+  <p><strong>Final result:</strong> \(P(1,3,1) = \alpha_3(H) + \alpha_3(C) = 0.021736\) — exactly the total obtained by adding the eight individually scored weather sequences.</p>
+</div>
 <h3 id="6.4.4-the-bigram-and-independence-assumptions">6.4.4 The bigram and independence assumptions</h3>
 <p>To compute the full tag sequence probability we make two assumptions.</p>
 <div class="key-concept">
@@ -640,6 +660,47 @@ stateDiagram-v2
 </div>
 <div class="warning-box">
   <p><strong>Pitfall — the zero-count trap.</strong> If a tag-word pair never appears in the corpus, its count is zero, so its emission probability is zero. Because the sequence score is a product, one zero factor makes the whole tag sequence score zero — the tagger would rule out a sentence structure that is actually fine, just rare. Real taggers fix this with smoothing, which shifts a little probability onto unseen pairs; you will meet smoothing again in the language modeling material.</p>
+</div>
+
+<div class="important-note">
+  <p><strong>Beyond smoothing: the unseen-word (OOV) problem.</strong> Smoothing helps when a tag–word pair is absent from the corpus, but it cannot help for a word that never appears at all. Proper names, acronyms, and newly coined nouns and verbs arrive faster than any dictionary can be updated, yet the emission table has no entry for them. Without a fallback, \(P(w \mid t) = 0\) for that word, every candidate tag sequence containing it scores zero, and the tagger has no answer — the zero-count trap at the whole-sentence level.</p>
+  <p><strong>Three textbook fallbacks, weakest to strongest:</strong></p>
+  <ol>
+    <li>Uniform ambiguity: treat the unknown word as equally likely under all \(T\) tags and let the transition context decide.</li>
+    <li>Hapax estimate: model the tag distribution of unseen words on words that occurred exactly once in training (<em>hapax legomena</em>) — both groups are mostly nouns, then verbs, and almost never determiners.</li>
+    <li>Morphology and orthography: infer the tag from the spelling of the word itself, then combine the cues.</li>
+  </ol>
+  <p>The features are trained separately and multiplied under an independence assumption:</p>
+  \[
+  P(w_i \mid t_i) = p(\text{unknown}\mid t_i)\cdot p(\text{capitalised}\mid t_i)\cdot p(\text{endings/hyphen}\mid t_i)
+  \]
+  <table>
+    <thead>
+      <tr>
+        <th>Orthographic / morphological cue</th>
+        <th>Likely tag</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>ends in -s</td>
+        <td>NNS (plural noun)</td>
+      </tr>
+      <tr>
+        <td>ends in -ed</td>
+        <td>VBD / VBN (past verb)</td>
+      </tr>
+      <tr>
+        <td>starts with a capital letter</td>
+        <td>NNP (proper noun)</td>
+      </tr>
+      <tr>
+        <td>contains a hyphen</td>
+        <td>JJ (adjective)</td>
+      </tr>
+    </tbody>
+  </table>
+  <p><strong>Final result:</strong> smoothing covers rare <em>pairs</em> that were seen; a morphology-based unknown-word model supplies a nonzero emission for a word never seen, which is what keeps the Viterbi path from collapsing to zero on real text full of new names.</p>
 </div>
 <h3 id="6.4.8-worked-example-disambiguating-race">6.4.8 Worked example: disambiguating "race"</h3>
 <div class="example-box">

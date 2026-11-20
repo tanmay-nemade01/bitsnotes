@@ -600,6 +600,54 @@ flowchart LR
 <div class="important-note">
   <p><strong>The correction in full.</strong> <em>Serialization</em> is the act of converting an in-memory object into a sequence of bytes that can travel over a wire or be read by another program. In a Java application you meet it when saving objects; in a stream pipeline its purpose is different: many different systems downstream must read the same messages, so the message must be encoded in a format every one of them understands — portable — and compact enough to move quickly — fast. The data is never altered along the way: written once, read by whoever is listening. That is why JSON became popular: plain text, readable by any language, cheap to transmit.</p>
 </div>
+<div class="important-note">
+  <p><strong>System Detail — Schema evolution keeps serialization portable over time.</strong> Portability only pays off if producers and consumers can be deployed independently. A message written today may be read months later by a consumer running newer code, so the encoding must tolerate the <em>schema</em> changing underneath it. Avro's answer is to carry two shapes: the <strong>writer's schema</strong> (the version used when the bytes were produced) and the <strong>reader's schema</strong> (the version the consumer expects). The library resolves the two side by side at read time — the reference text notes they need not be identical, only compatible, and because the writer's schema must accompany the data a reader can always locate the shape that produced a given record.</p>
+  <p><strong>The two compatibility directions</strong> (following the standard Avro/confluent convention): <em>backward compatible</em> means a <em>new reader</em> can read data written by an old writer; <em>forward compatible</em> means an <em>old reader</em> can read data written by a new writer. Fields are matched by name, not position: a writer-only field is ignored, while a reader-only field is filled from its <code>default</code> — the Avro specification restricts a field default to being used only when reading a record that lacks that field, which is exactly the schema-evolution case. Adding or removing a field <em>without</em> a default breaks one of the two directions.</p>
+  <table>
+    <thead>
+      <tr>
+        <th>Schema change</th>
+        <th>Backward (new reader / old data)</th>
+        <th>Forward (old reader / new data)</th>
+        <th>Reason</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>Add a field with a default</td>
+        <td>Yes</td>
+        <td>Yes</td>
+        <td>New reader fills the default; old reader ignores the extra field</td>
+      </tr>
+      <tr>
+        <td>Remove a field that had a default</td>
+        <td>Yes</td>
+        <td>Yes</td>
+        <td>Old reader fills the default; new reader ignores the field</td>
+      </tr>
+      <tr>
+        <td>Add a field with no default</td>
+        <td>No</td>
+        <td>Yes</td>
+        <td>New reader cannot fill a missing value; old reader simply ignores the new field</td>
+      </tr>
+      <tr>
+        <td>Rename a field, reader declares an <code>alias</code></td>
+        <td>Yes</td>
+        <td>No</td>
+        <td>Alias maps the old writer name forward; an old reader has no alias for the new name</td>
+      </tr>
+      <tr>
+        <td>Change type arbitrarily (e.g. <code>string</code> → <code>int</code>)</td>
+        <td>No</td>
+        <td>No</td>
+        <td>Only Avro's promotion ladder (<code>int → long → float → double</code>, <code>string ↔ bytes</code>) is permitted; otherwise resolution signals an error</td>
+      </tr>
+    </tbody>
+  </table>
+  <p><strong>Worked trace.</strong> A producer writes <code>{"event_id": "e-1", "amount": 250}</code> under schema \(S_1\). A consumer on \(S_2\) adds <code>currency: string = "USD"</code>. Reading an \(S_1\)-encoded message with \(S_2\) succeeds — <code>amount</code> matches by name and the missing <code>currency</code> takes its default (backward). Reading an \(S_2\)-encoded message with \(S_1\) also succeeds because the extra <code>currency</code> field is ignored (forward). Change <code>amount</code> from <code>long</code> to <code>string</code> instead and resolution fails in both directions — exactly the coupling that independent deployment is meant to avoid.</p>
+  <p><strong>Why this belongs in a stream.</strong> The long-term store of Section 4.4.5 may retain a topic's bytes for days, so one stream can hold records written under several schema versions at once. Avro's <em>single-object encoding</em> solves the identification problem: a two-byte marker followed by an 8-byte schema fingerprint precedes the bytes, letting a reader locate the writer's schema without shipping the whole schema in every message. Portability is therefore not merely "many languages parse JSON" — it is "many independently evolved versions still parse the same bytes."</p>
+</div>
 <h3 id="4.4.7-message-delivery-semantics">4.4.7 Message Delivery Semantics</h3>
 <p>One more concept belongs to the data flow tier: <strong>message delivery semantics</strong> — how you want to deliver the messages to the processing layer. Do you want every message delivered, or are samples enough?</p>
 <div class="key-concept">

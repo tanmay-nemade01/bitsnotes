@@ -504,6 +504,30 @@ Percentage reduction:
 
 <p>The fact table then stores only <strong>one single foreign key</strong> (<code>Junk_Order_Status_Key</code>), dramatically streamlining the schema.</p>
 
+<div class="example-box">
+<p><strong>Worked Calculation — Junk Dimension Cardinality and Valid-Combination Pruning:</strong> For \(m\) independent flags with per-flag cardinalities \(|V_j|\), the theoretical upper bound on junk-dimension rows is the Cartesian product \(N_{\text{junk}} = \prod_{j=1}^{m} |V_j|\). For the 8 binary order-status flags in this case study, \(N_{\text{junk}} = 2^8 = 256\) rows.</p>
+<p><strong>Step 1 — Business-rule constraints:</strong> A pure cross-join materialises states that can never occur (e.g. <code>Refunded = Y</code> while <code>Delivered = N</code>). Enforce the monotone fulfillment chain <code>Picked → Packed → Shipped → Delivered → Received</code> together with <code>Returned ⇒ Delivered</code>, <code>Refunded ⇒ Returned</code>, and <code>Restocked ⇒ Returned</code>.</p>
+<p><strong>Step 2 — Enumerate by chain prefix length \(k\):</strong> Let \(k \in \{0,1,2,3,4,5\}\) be the number of leading Y flags in the monotone chain; the remaining trailing states are then determined by the dependency rules.</p>
+<table class="concept-table">
+  <thead>
+    <tr><th>Chain prefix \(k\)</th><th>Delivered?</th><th>Free trailing flags</th><th>Valid rows</th></tr>
+  </thead>
+  <tbody>
+    <tr><td>0 (none Y)</td><td>No</td><td>none</td><td>1</td></tr>
+    <tr><td>1 (Picked)</td><td>No</td><td>none</td><td>1</td></tr>
+    <tr><td>2 (Packed)</td><td>No</td><td>none</td><td>1</td></tr>
+    <tr><td>3 (Shipped)</td><td>No</td><td>none</td><td>1</td></tr>
+    <tr><td>4 (Delivered)</td><td>Yes</td><td>Returned, Refunded, Restocked</td><td>1 + 2 × 2 = 5</td></tr>
+    <tr><td>5 (Received)</td><td>Yes</td><td>Returned, Refunded, Restocked</td><td>1 + 2 × 2 = 5</td></tr>
+  </tbody>
+</table>
+<p><strong>Step 3 — Total and reduction:</strong></p>
+\[
+N_{\text{valid}} = 4 + 5 + 5 = 14
+\]
+<p>Only 14 of the 256 Cartesian combinations are legal, a \(\frac{256 - 14}{256} \times 100 \approx 94.5\%\) pruning. The lookup dimension therefore holds 14 rows instead of 256 while still representing every real workflow state.</p>
+</div>
+
 <h3 class="subsection-title">4.4.3 Operational vs. Strategic Business Value Distinction</h3>
 
 <p>A critical theoretical distinction exists between mini-dimensions and junk dimensions:</p>
@@ -592,6 +616,23 @@ Percentage reduction:
   <li><strong>Advantages:</strong> Preserves perfect historical accuracy. Historical sales recorded prior to September 2022 join to <code>Customer_SK = 1001</code> (Mumbai), while new sales recorded after September 2022 join to <code>Customer_SK = 4509</code> (Bengaluru).</li>
   <li><strong>Disadvantages:</strong> Increases dimension table row count; requires robust surrogate key lookup pipelines during ETL staging.</li>
 </ul>
+
+<div class="important-note">
+<p><strong>Mechanism — Point-in-Time Surrogate Key Resolution:</strong> A Type 2 dimension encodes each version's validity as a half-open interval \([\text{Effective\_Date}, \text{Expiration\_Date})\). For a fact row whose business event occurred at time \(t\), the surrogate-key pipeline must select the unique version \(v\) satisfying \(\text{Effective\_Date}_v \le t \lt \text{Expiration\_Date}_v\):</p>
+\[
+\text{SK}(t) = \{\, v.\text{SurrogateKey} \mid v.\text{Effective} \le t \lt v.\text{Expiration} \,\},\qquad |\text{SK}(t)| = 1
+\]
+<p>The upper bound is deliberately exclusive: at the instant one version expires, its successor becomes effective, so exactly one row matches and no duplicate join can occur.</p>
+<pre><code class="language-sql">
+-- Resolve the historically correct surrogate key for a delayed fact row
+SELECT d.Customer_SK
+FROM Dim_Customer d
+WHERE d.Natural_Customer_ID = :source_customer_id
+  AND d.Effective_Date  &lt;= :event_timestamp
+  AND d.Expiration_Date &gt;  :event_timestamp;  -- half-open interval
+</code></pre>
+<p><strong>Worked trace:</strong> Natural key <code>CUST-77</code> has version <code>SK 2200</code> valid <code>[2023-01-01, 2024-06-01)</code> and version <code>SK 3310</code> valid <code>[2024-06-01, 9999-12-31)</code>. A sale on <code>2024-05-31</code> resolves to <code>SK 2200</code>; a sale on <code>2024-06-01</code> resolves to <code>SK 3310</code>. Crucially, a delayed sale dated <code>2024-03-15</code> that physically arrives in July still resolves to <code>SK 2200</code>, because the lookup is driven by the <em>event</em> timestamp rather than the ETL load timestamp.</p>
+</div>
 
 <h3 class="subsection-title">4.5.5 Type 3 — Add New Attribute / Soft Transition Columns</h3>
 
@@ -743,6 +784,21 @@ Percentage reduction:
 </ul>
 
 <h3 class="subsection-title">4.7.2 Comparative Analysis: Mini-Dimension vs. Outrigger vs. Snowflake Schema</h3>
+
+<div class="important-note">
+<p><strong>Structural Comparison:</strong> The three patterns differ in where the extra table attaches and what it buys. A standard star keeps roughly 10 to 20 denormalized dimensions in a single halo around the fact table; the same data fully snowflaked can require 100 or more linked dimension tables.</p>
+<table class="concept-table">
+  <thead>
+    <tr><th>Pattern</th><th>Joins To</th><th>Schema Form</th><th>Primary Benefit</th><th>Primary Cost</th></tr>
+  </thead>
+  <tbody>
+    <tr><td>Mini-Dimension</td><td>Central fact table (own FK)</td><td>Flat, binned lookup</td><td>Decouples volatile attributes; bounded combinatorics</td><td>Band design and dual foreign keys</td></tr>
+    <tr><td>Outrigger</td><td>Parent dimension table</td><td>One extra layer, not full 3NF</td><td>Reuses a sub-attribute set across dimensions</td><td>Exception only; extra join and key maintenance</td></tr>
+    <tr><td>Snowflake</td><td>Dimension to dimension (recursive)</td><td>Full 3NF normalization</td><td>Removes repeated text; easier attribute updates</td><td>Query complexity and optimizer burden dominate</td></tr>
+  </tbody>
+</table>
+<p><strong>Quantified trade-off:</strong> In a 500,000-row product dimension, replacing a 20-byte repeated category name with a 4-byte key saves \(500{,}000 \times (20 - 4) = 8{,}000{,}000\) bytes (\(\approx 8\) MB). Against a \(\approx 200\) MB dimension and a \(\approx 20\) GB fact table, that is roughly 4% of the dimension and negligible overall—far less than the cost of the additional joins and ETL key management.</p>
+</div>
 
 <h3 class="subsection-title">4.7.3 Resolving Demographic Sparsity with Outriggers</h3>
 

@@ -702,6 +702,53 @@ flowchart TB
 </div>
 <p>Real-world and domain placement: even when you never write assembly by hand, compilers emit it and debuggers show it. Reading <code>14 1033</code> as "store to RETADR" is the skill that lets you interpret a crash dump, a disassembly view, or an embedded system's hex listing — the same literacy that systems engineers use to bring up a new board before any high-level toolchain is fully working.</p>
 
+<h3 id="13.4.6-sicxe-instruction-formats-and-addressing-modes">13.4.6 SIC/XE Instruction Formats and Addressing Modes</h3>
+<div class="key-concept">
+  <p><strong>Formalize — the four SIC/XE formats.</strong> The three-byte <code>[opcode | address]</code> layout used throughout the COPY example is the standard-SIC special case; the extended SIC/XE hardware defines four formats, selected by the assembler from the opcode and the operand:</p>
+  <table>
+    <thead>
+      <tr><th>Format</th><th>Size</th><th>Field layout</th><th>Typical use</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>1</td><td>1 byte</td><td>opcode (8 bits) only</td><td>no operand needed (e.g. <code>SIO</code> = <code>F0</code>, <code>TIO</code> = <code>F8</code>)</td></tr>
+      <tr><td>2</td><td>2 bytes</td><td>opcode (8) + r1 (4) + r2 (4)</td><td>register-register ops (<code>ADDR r1,r2</code>, <code>SHIFTL</code>)</td></tr>
+      <tr><td>3</td><td>3 bytes</td><td>opcode (6) + n i x b p e + 12-bit disp</td><td>most instructions; <code>e = 0</code>, backward-compatible with SIC</td></tr>
+      <tr><td>4</td><td>4 bytes</td><td>same flags, 20-bit address, <code>e = 1</code></td><td>target outside the 12-bit displacement range, written with a <code>+</code> prefix</td></tr>
+    </tbody>
+  </table>
+  <p>The six flag bits modify how the address field becomes the target address \(TA\): \(n\) = indirect, \(i\) = immediate, \(x\) = indexed (\(+\,(X)\)), \(b\) = base-relative (\(+\,(B)\)), \(p\) = PC-relative (\(+\,(PC)\)), \(e\) = extended format.</p>
+</div>
+<div class="important-note">
+  <p><strong>Mechanics — displacement computation and reach.</strong> The assembler computes the displacement in reverse: \[ \text{disp} = TA - (\text{PC}) \quad\text{or}\quad \text{disp} = TA - (B). \] Because the PC is advanced before execution, \((PC)\) is the address of the <em>next</em> instruction, not the current one. A 12-bit displacement allows \(0\) to \(4095\) in base-relative mode and \(-2048\) to \(+2047\) (two's complement) in PC-relative mode. If neither mode reaches the symbol and no <code>+</code> prefix is given, the assembler reports an error rather than silently truncating the address.</p>
+</div>
+<div class="example-box">
+  <p><strong>Worked encodings — three real SIC/XE object words.</strong></p>
+  <ul>
+    <li><code>STL RETADR</code> at \(0000_{16}\), \(TA=0030_{16}\): \((PC)=0003_{16}\), so \(\text{disp}=0030-0003=2D_{16}\). With \(p=1\) and \(n=i=1\) the opcode byte becomes \(14_{16}\) with the \(n/i\) bits set → \(17_{16}\); object word <code>17 20 2D</code>. (With the flags of the plain SIC model it would be <code>14 10 33</code> — same instruction, different addressing mode.)</li>
+    <li><code>J CLOOP</code> at \(0017_{16}\), \(TA=0006_{16}\): \((PC)=001A_{16}\), so \(\text{disp}=0006-001A=-14_{16}\), held as a 12-bit two's-complement value \(FEC_{16}\); object word <code>SF 2F EC</code>.</li>
+    <li><code>+JSUB RDREC</code>, \(TA=1036_{16}\): the displacement is too large, so \(e=1\) and the full 20-bit address is stored directly — object word <code>4B 10 10 36</code> (four bytes).</li>
+  </ul>
+  <p><strong>Sense-check:</strong> the <code>+</code> prefix is what tells the assembler to emit Format 4; without it the same source line could not be assembled.</p>
+</div>
+
+<h3 id="13.4.7-literals-literal-pools-and-the-literal-table">13.4.7 Literals, Literal Pools, and the Literal Table</h3>
+<div class="key-concept">
+  <p><strong>Formalize — the literal operand.</strong> A <em>literal</em> lets the programmer write a constant value directly where it is used, with no separate label to invent. In SIC/XE assembler notation the <code>=</code> prefix introduces a literal whose body uses the same syntax as a <code>BYTE</code> constant: <code>LDA =C'EOF'</code> specifies a three-byte character constant, <code>TD =X'05'</code> a one-byte hex constant. The assembler generates the value as data at some other address and puts <em>that address</em> in the instruction's operand field — the effect is identical to defining the constant with a label and referring to the label.</p>
+  <p><strong>Literal versus immediate.</strong> With immediate addressing (<code>LDA #3</code>) the value is assembled <em>into</em> the instruction (<code>01 00 03</code>). With a literal (<code>LDA =C'EOF'</code> at \(001A_{16}\)) the instruction is <code>03 20 10</code> — the last two bytes are the pool address \(2010_{16}\), not the characters "EOF". In symbols: \[ \text{operand}(\texttt{=}v)=\text{addr}(\text{pool entry for }v),\qquad \text{operand}(\texttt{\#}v)=v. \]</p>
+</div>
+<div class="important-note">
+  <p><strong>Data structure — LITTAB.</strong> Literals are tracked in a <em>literal table</em> (LITTAB), usually a hash table keyed by the literal's name or value. In Pass 1, encountering a literal triggers a search: if the identical value is already present (duplicate literals collapse to one pool entry), its entry is reused; otherwise a new entry is inserted with its address still unassigned. When the assembler places the literal pool it assigns each entry its address. In Pass 2 the operand address is obtained by searching LITTAB again, and the pool's data bytes are emitted into the object program. LITTAB is thus a third per-program table alongside OPTAB and SYMTAB — created in Pass 1, consumed in Pass 2.</p>
+</div>
+<div class="example-box">
+  <p><strong>Worked control — <code>LTORG</code> and pool placement.</strong></p>
+  <ul>
+    <li>By default all literals are gathered into one pool at the end of the program. In the textbook's COPY variant, <code>LDA =C'EOF'</code> and <code>TD =X'05'</code> are emitted as constants \(45\,4F\,46\) and \(05\) in that trailing pool.</li>
+    <li>The directive <code>LTORG</code> forces a pool at that exact point, containing every literal used since the previous <code>LTORG</code> or the start of the program.</li>
+    <li><strong>Why it matters:</strong> in the example, omitting <code>LTORG</code> would push the pool past the 4096-byte <code>BUFFER</code> reservation to about \(1073_{16}\), placing the literal operand out of PC-relative range and forcing a four-byte Format 4 instruction. Placing the pool before the buffer keeps the operand close and the instruction three bytes.</li>
+  </ul>
+  <p><strong>Sense-check:</strong> the same trade-off appears in production assemblers, where an explicit <code>LTORG</code>-style directive exists precisely to keep a constant pool within the reach of the instructions that reference it; duplicate constants are folded into a single pool entry to avoid wasting space.</p>
+</div>
+
 <h2 id="13.5-core-functions-of-the-assembler-the-five-translation-steps">13.5 Core Functions of the Assembler — The Five Translation Steps</h2>
 <h3 id="13.5.1-overview">13.5.1 Overview</h3>
 <div class="important-note">
@@ -1435,6 +1482,33 @@ flowchart TD
   <p><strong>Recap + bridge.</strong> A pass is one full scan to END. Pass 1 assigns addresses via LOCCTR, saves every label to SYMTAB, and handles sizing directives, writing an intermediate file. Pass 2 reads that file, looks up opcodes in OPTAB and addresses in SYMTAB, emits data for BYTE/WORD, and writes the H/T/E object plus listing. Two passes suffice because the first makes every future label present. Next is the machinery that makes both passes fast and correct: the two tables and the counter that ties them together.</p>
 </div>
 <p>Real-world and domain placement: the "collect then fill" pattern appears far beyond assemblers — compilers collect declarations then emit code, linkers collect defined symbols then patch references, and even <code>make</code> collects dependencies then builds. Recognizing when a problem is "future information needed" tells you whether a second pass or a fixup table will be required, which is a routine design decision in systems tools.</p>
+
+<h3 id="13.10.6-one-pass-assemblers-and-forward-reference-backpatching">13.10.6 One-Pass Assemblers and Forward-Reference Backpatching</h3>
+<div class="key-concept">
+  <p><strong>Alternative design — resolve forward references without a second scan.</strong> A <em>one-pass assembler</em> emits object code while reading the source once. It exists in two forms: a <em>load-and-go</em> assembler that places machine code directly in memory for immediate execution (no object file, no loader), useful where programs are reassembled on nearly every run; and an assembler that still writes a conventional object program. Both must solve the same problem the two-pass design avoids — a forward reference whose symbol is undefined at the moment the instruction is emitted.</p>
+  <p>The backpatching protocol is:</p>
+  <ol>
+    <li>On a reference to an as-yet-undefined symbol, emit the instruction with the operand address omitted (load-and-go) or set to 0 (object-producing).</li>
+    <li>Enter the symbol in SYMTAB flagged undefined, and record the location of that operand field in a reference list attached to the entry.</li>
+    <li>When the label is finally defined, scan its reference list and write the now-known address into every saved location.</li>
+    <li>At the end of source, report any SYMTAB entry still flagged undefined; a load-and-go assembler then jumps to the address of the <code>END</code> symbol to begin execution.</li>
+  </ol>
+</div>
+<table>
+  <thead>
+    <tr><th>Dimension</th><th>Two-pass (taught above)</th><th>One-pass with backpatching</th></tr>
+  </thead>
+  <tbody>
+    <tr><td>Scans over source</td><td>Two (define symbols, then translate)</td><td>One</td></tr>
+    <tr><td>Intermediate file</td><td>Written in Pass 1, read in Pass 2</td><td>Not needed</td></tr>
+    <tr><td>Forward reference</td><td>Absent from SYMTAB until Pass 2 — so Pass 1 must finish first</td><td>Flagged undefined in SYMTAB, patched when defined</td></tr>
+    <tr><td>Output</td><td>H/T/E object program + listing</td><td>In-memory code (load-and-go) or object program with later correction records</td></tr>
+    <tr><td>Cost profile</td><td>Extra pass + intermediate I/O</td><td>Extra bookkeeping (reference lists) in one pass</td></tr>
+  </tbody>
+</table>
+<div class="warning-box">
+  <p><strong>Limitations — why this is not the default.</strong> Forward references to <em>data</em> can be eliminated by placing all storage reservations at the start of the program, but forward jumps to instruction labels cannot be removed without distorting program logic, so the reference-list machinery is unavoidable. The approach also assumes a symbol's value is known once its label is met; a forward reference inside a symbol-defining expression (for example an <code>EQU</code> that depends on a later symbol) leaves a dependency chain that one pass cannot evaluate, and a multi-pass assembler storing the defining expression with its undefined-symbol count is required instead. The two-pass design taught here avoids both complications at the price of one extra scan — which is why it remains the standard pedagogical and practical choice.</p>
+</div>
 
 <h2 id="13.11-data-structures-for-assembly-optab-symtab-and-locctr">13.11 Data Structures for Assembly — OPTAB, SYMTAB, and LOCCTR</h2>
 <h3 id="13.11.1-optab-the-operation-table">13.11.1 OPTAB — The Operation Table</h3>

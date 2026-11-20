@@ -597,6 +597,42 @@
 <h3 id="7.6.4-exchangeable-components-and-caching">7.6.4 Exchangeable Components and Caching</h3>
 <p>When the interface is stable, the components are exchangeable. A <strong>caching layer</strong> is the common example: the application can exchange a slow data source for a fast one that keeps the popular entries in memory. Distributed memory stores such as <strong>Memcache</strong> sit between the layers without changing the caller — the business layer asks for "product 42" exactly as before; whether the answer comes from RAM or from the database is invisible above the interface.</p>
 <p>The exchange has a cost worth naming: cached data can go stale, so the architect must choose a refresh policy (time-to-live, write-through invalidation). Exchangeability gives you the <em>option</em> to optimise; the policy decides whether the option pays off.</p>
+
+<div class="important-note">
+  <p><strong>Architectural detail — caching is a strategy, not a single switch.</strong> Placing a cache behind an interface exposes a second design choice: <em>how</em> entries enter and leave it. A cache holds a small, transient subset of the data in fast memory, trading capacity for speed. A request served from the cache is a <em>cache hit</em>; one that falls through to the database is a <em>cache miss</em>. The three standard population strategies are:</p>
+  <table>
+    <thead>
+      <tr>
+        <th>Strategy</th>
+        <th>Population rule</th>
+        <th>Freshness</th>
+        <th>Primary cost / failure mode</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>Lazy loading (cache-aside)</td>
+        <td>On a miss: read DB → write cache → return</td>
+        <td>Can be stale until evicted or expired</td>
+        <td>Miss penalty = cache lookup + DB query + cache write</td>
+      </tr>
+      <tr>
+        <td>Write-through</td>
+        <td>On every DB write, also update the cache</td>
+        <td>Always current</td>
+        <td>Two writes per update; empty new nodes; churn for never-read data</td>
+      </tr>
+      <tr>
+        <td>TTL / hybrid</td>
+        <td>Attach seconds-to-live; on expiry lazily reload</td>
+        <td>Bounded staleness</td>
+        <td>Burst of misses at mass expiry (thundering herd)</td>
+      </tr>
+    </tbody>
+  </table>
+  <p><strong>Worked trace (cache-aside):</strong> for <code>get_product(42)</code>, request 1 misses — three trips (cache, DB, cache) — costing <code>3</code> time units; requests 2–9 hit, one trip each, costing <code>8</code> units; total <code>11</code> versus <code>9</code> if the database were read uncached every time. The miss is repaid only after enough hits accumulate, which is why sweeping a large, fast-changing key space defeats caching.</p>
+  <p><strong>Key point:</strong> cache placement is invisible to the caller, but the refresh policy is a genuine architectural decision with measurable response-time and consistency consequences — exactly the trade-off this section is about.</p>
+</div>
 <h3 id="7.6.5-the-database-layer-and-shared-data">7.6.5 The Database Layer and Shared Data</h3>
 <p>The bottom of the stack is the <strong>data layer</strong>. Many applications share a single database, so the data layer must be designed for concurrent access: hundreds of requests arrive together, read overlapping rows, and write competing updates. The database keeps the data consistent while several layers read and write at the same time — through transactions that make multi-step updates all-or-nothing, and locking or snapshot isolation that stops two writers from corrupting each other.</p>
 <p>Because every layer above funnels down to this one, the shared database is usually the first bottleneck a growing product meets — which is exactly why the caching layer of 7.6.4 sits in front of it.</p>
@@ -725,6 +761,24 @@
   <p>Presentation = facade + browser/server split; business = rules, workflows, sessions, transactions kept independent of the UI; data = standard interfaces (ODBC/JDBC/SQLJ) and object mapping — three layers, each swappable behind its interface.</p>
 </div>
 <p><strong>Real-world connection.</strong> This is the exact shape of Microsoft's application architecture guidance and of countless enterprise stacks: WCF facades exposing business services, JSP/ASP.NET page frameworks serving browsers, and JDBC/ODBC bridges into shared databases — the same vertical cut seen in 7.6, now with its component types named.</p>
+
+<h3 id="7.8.6-the-service-layer" class="subsection-title">7.8.6 The Service Layer: A Fourth Layer at the Boundary</h3>
+<p>The three-layer picture is extensible. When a system must expose its functionality to consumers outside the application, enterprise guidance inserts a <strong>service layer</strong> between the presentation and business layers. It is a façade at system scale: a coarse-grained interface over fine-grained business operations, reached by messages rather than by in-process calls.</p>
+<div class="key-concept">
+  <p><strong>Service layer in one line:</strong> one contract-facing boundary that translates external message and data contracts into internal business entities — a service never exposes its internal business entities to consumers.</p>
+  <ul>
+    <li><strong>Service interfaces</strong> — the operations and their contracts; a façade over the business logic.</li>
+    <li><strong>Message / data contracts</strong> — the schema of exchanged data (for example, Command or Document message types).</li>
+    <li><strong>Translator components</strong> — map data contracts to business entities and back, keeping the two independent.</li>
+  </ul>
+</div>
+<div class="important-note">
+  <p><strong>Design sequence (contract first):</strong> define data/message contracts → define service contracts (operations) → define fault contracts → design translators → design the abstraction over the business layer.</p>
+  <p><strong>Message-based nuance:</strong> unlike an in-process call, a message may be delayed, duplicated, reordered, or lost. Two properties must therefore be designed in: <em>idempotency</em> (a duplicate message has no additional effect) and <em>commutativity</em> (out-of-order messages are buffered and processed in the correct order). Coarse-grained, application-scoped operations avoid chatty network round trips; validation treats every inbound message as potentially invalid.</p>
+</div>
+<div class="warning-box">
+  <p><strong>Pitfall:</strong> treating the service layer as merely another name for the business façade. It is a distinct boundary with its own contracts, validation, and versioning — leaking business entities through it couples external consumers to internal structure and defeats the swap-ability the layered style promises.</p>
+</div>
 
 <h2 id="7.9-atam-architecture-trade-off-analysis-method">7.9 ATAM: Architecture Trade-off Analysis Method</h2>
 <h3 id="7.9.1-why-evaluate-the-architecture">7.9.1 Why Evaluate the Architecture</h3>

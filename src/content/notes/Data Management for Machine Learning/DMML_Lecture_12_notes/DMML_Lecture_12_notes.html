@@ -497,6 +497,10 @@
   <p><strong>Hook:</strong> One file, one machine, one point of failure. The whole history of distributed storage starts with a simple act of cutting: a single file sliced into pieces, and the pieces scattered across many machines. Nothing about big data works until you accept that cutting.</p>
 </div>
 <p>The old way: everything stored in one file, in one place. The big data way: break the file into multiple blocks. Whatever the input — customer data, log data, a video file — it is split into blocks. For simplicity, think of a file split into five blocks. Block sizes vary: 2 MB, 4 MB, 16 MB are all normal, and the sizes step through a kilobytes series — 2 KB, 4 KB, 8 KB, 16 KB — and so on.</p>
+
+<div class="important-note">
+  <p><strong>Scale detail — real HDFS block sizes:</strong> the 2–16 MB figures above are pedagogical, small enough to make the five-block diagram easy to follow. A production HDFS deployment uses a much larger block: a typical block size is 128 MB, so a large file is chopped into 128 MB chunks. The reason is bookkeeping — the name node maintains a detailed catalog of where every block lives, so fewer and larger blocks keep that metadata small relative to the data. That is why the classroom numbers illustrate the <em>pattern</em> of splitting, while real systems choose a block size that balances parallel work against the size of the block catalog.</p>
+</div>
 <p>Now the blocks are scattered across machines. A <em>node</em> (one computer in the cluster, whether a physical machine, a virtual machine, or an AWS instance) holds some of the blocks. Block 2 of the file lives on node A, another copy on node B, another on node D; block 1 sits on nodes B, C, and E. The same block appears on multiple nodes.</p>
 <div class="important-note">
   <p><strong>Intuition — why cut at all?</strong> Picture one giant book that ten readers must each read a different chapter from. If the book must stay on one desk, only one reader works at a time and everyone else waits. Cut the book into chapters and put each chapter on a different desk: ten readers now work at once. Blocks are the chapters, and the desks are the nodes. The trade-off is the bookkeeping — somebody must track which chapter is on which desk — and that bookkeeping turns out to be the name node of section 12.5.4.</p>
@@ -527,6 +531,10 @@
 <p>Who keeps track of where everything is? The name node. The name node keeps the metadata: which block of which file is stored where — which node, which block, which location. It also knows the topology: whether the block sits in rack one of data center one or rack two of data center two. When a client reads a file, the client first asks the name node, and the name node points to the exact location; the client then pulls the block from the nearest place. The name node is the metadata brain of the file system.</p>
 <div class="important-note">
   <p><strong>Intuition — remember the metadata lecture?</strong> Section 12.1 said every artifact needs metadata, and here the file system agrees: the name node is a living metadata store for blocks. Notice the pattern — metadata is not an add-on; it is the single point that makes the whole distributed system navigable. Also notice what the topology knowledge buys: if block 2 has copies in rack 1 and rack 2, a client in rack 2 reads from its own rack, not from the far one. That is the locality principle of section 12.4.2, applied inside the file system.</p>
+</div>
+
+<div class="important-note">
+  <p><strong>Mechanism — replication is self-healing, not static:</strong> the name node does not merely record where copies are; it actively maintains the replication factor. Every data node periodically sends a heartbeat (proof that it is alive) and a block report (the list of blocks it holds). When a heartbeat stops arriving, the name node marks that data node dead, identifies every block whose copy count has fallen below its configured factor, and instructs other data nodes to create fresh replicas until the factor is restored. Re-replication is also triggered by a corrupted replica, a failed disk, or an increase in the factor. So the earlier claim that "the block can be recovered" is not a manual restore step — it is a continuous background loop, which is what makes the three-copy scheme genuinely fault tolerant.</p>
 </div>
 <h3 id="12.5.5-student-questions-and-answers">12.5.5 Student Questions and Answers</h3>
 <div class="important-note">
@@ -615,6 +623,46 @@
 <p><em>Parallel computing</em>: multiple processors work at the same time, using the same memory. Each processor runs a symmetric multiprocessing arrangement; the processors share one memory and one system.</p>
 <p><em>Distributed computing</em>: multiple computing resources are connected in a network, and computing tasks are distributed across them. Not only the data is distributed — reading from 10 machines instead of one — the compute is too. Each node has its own processor and its own memory; nodes communicate by passing messages, and each machine keeps its own coupling to its memory. Parallel systems are tightly coupled computing; distributed systems are loosely coupled computers. A parallel system is one single machine, a tightly coupled cluster of multiple processors with a unified architecture — that is called a shared memory architecture. A distributed system spans multiple independent computers, each node with its own independent memory, where nodes pass messages to one another.</p>
 <p>There is a control node — the master node — that coordinates. Multiple computing resources sit in the network, tasks are distributed across them: one machine processes something, another machine processes something else, and whichever node you need the data from — the nearby node, by locality of reference — performs the work. That is where load balancing comes into the picture: the master hands each task to the node that is ready and near the data, so no single machine drowns while others idle. When you need more computing resources to improve processing capability, you can go distributed; parallel systems grow inside one machine, distributed systems grow across machines.</p>
+
+<div class="key-concept">
+  <p><strong>Formal taxonomy — three ways to scale a system:</strong> the parallel-versus-distributed contrast of this section is one instance of a three-way architectural choice. The three models are distinguished by what the processors share:</p>
+  <table>
+    <thead>
+      <tr>
+        <th>Architecture</th>
+        <th>What is shared</th>
+        <th>Scaling path</th>
+        <th>Boundary / cost behaviour</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>Shared-memory</td>
+        <td>All CPUs address one global memory and one disk subsystem</td>
+        <td>Vertical (scale up): add CPUs, RAM and disks to one machine</td>
+        <td>Cost grows faster than linearly, \(C(2n) &gt; 2C(n)\), while bottlenecks mean a machine twice the size need not handle twice the load, \(T(2n) \not\approx 2T(n)\); confined to one location</td>
+      </tr>
+      <tr>
+        <td>Shared-disk</td>
+        <td>Independent CPUs and RAM, but one shared disk array over a fast network</td>
+        <td>Add nodes that all reach the same disks</td>
+        <td>Contention and locking overhead limit scalability; used for some warehouse workloads</td>
+      </tr>
+      <tr>
+        <td>Shared-nothing</td>
+        <td>Nothing: each node owns its CPUs, RAM and disks; coordination is in software over a conventional network</td>
+        <td>Horizontal (scale out): add commodity nodes</td>
+        <td>Any price/performance hardware; can span regions and survive a datacenter loss, at the price of greater application complexity</td>
+      </tr>
+    </tbody>
+  </table>
+  <p><strong>Why it refines this section:</strong> the "parallel" machine above is the <em>shared-memory</em> row, and the distributed cluster is the <em>shared-nothing</em> row — a name node holding small shared metadata over data nodes with private disks is a shared-nothing cluster with a shared-memory coordinator. The <em>shared-disk</em> row is the missing middle: it explains why the single RDBMS with shared disk and shared memory of section 12.4.4 runs into a wall, and why scale-out on commodity nodes — not an ever-bigger single box — is the default choice for big data.</p>
+</div>
+
+<div class="key-concept">
+  <p><strong>Distributed-systems foundation — eventual vs strong consistency:</strong> once data is spread across nodes, a write takes time to reach every copy, so a reader may briefly see an older value. An <em>eventually consistent</em> system accepts this: a read returns quickly, and repeated reads converge to the latest value once replication catches up. The textbook acronym for this family is <strong>BASE</strong> — basically available, soft state, eventual consistency — framed as the counterpart of ACID. A <em>strongly consistent</em> system instead requires agreement across nodes before a write is accepted, so every read returns the latest committed value, at the cost of higher latency. Real systems expose the choice: DynamoDB serves eventually consistent reads by default and offers an optional strongly consistent read that reflects all prior successful writes, at higher cost.</p>
+  <p><strong>Why it belongs here:</strong> HDFS sidesteps much of this tension with its write-once, read-many model, but any distributed store that accepts concurrent updates must pick a point on this latency-versus-freshness spectrum — the same horizontal-scaling trade-off that defines distributed computing in this section.</p>
+</div>
 <h3 id="12.7.2-clusters-old-wine-in-a-new-bottle">12.7.2 Clusters: Old Wine in a New Bottle</h3>
 <p>The idea itself is not new. Before big data systems, Oracle already had a cluster — Oracle RAC, the Real Application Cluster. Microsoft has clusters; SQL Server clusters, DB2 clusters, Informix clusters — all the database systems, and not only database systems, can be clustered. Clustering means grouping things together; when you group, you need a common information bus that carries the data between members, and the messaging has to be clear — that is where fiber optic cable matters, because speed matters inside a cluster.</p>
 <div class="important-note">
@@ -1115,6 +1163,42 @@
   </tbody>
 </table>
 <p>Whether it is Hadoop on your own hardware, AWS, or Google Cloud, every big data platform supports the same two things: distributed storage and distributed/parallel processing. Learn the concepts once — blocks, replication, name nodes, mappers, reducers, in-memory engines — and every vendor's stack is just a set of new names for the same architecture.</p>
+
+<div class="important-note">
+  <p><strong>Architectural detail — colocation versus separation of compute and storage:</strong> the two pillars of this lecture were born <em>colocated</em>. Hadoop deliberately puts compute and storage on the same nodes: blocks live on the data nodes and MapReduce ships the map tasks to those very nodes, so the scan is strictly local and the network is reserved for the shuffle. The cloud platforms in this section invert that choice — data is kept in cheap, durable object storage while compute is spun up on demand and discarded when the job finishes.</p>
+  <table>
+    <thead>
+      <tr>
+        <th>Property</th>
+        <th>Colocation (HDFS + MapReduce)</th>
+        <th>Separation (object store + elastic compute)</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>Data location</td>
+        <td>On the same nodes that run the tasks (blocks on data nodes)</td>
+        <td>In durable object storage, independent of any compute cluster</td>
+      </tr>
+      <tr>
+        <td>Compute lifetime</td>
+        <td>Long-lived cluster you own and maintain</td>
+        <td>Ephemeral: spin up a cluster for the job, delete it afterwards</td>
+      </tr>
+      <tr>
+        <td>What is optimised</td>
+        <td>Network bandwidth saved by local scans; the shuffle is the only cross-node traffic</td>
+        <td>Cost: pay for compute only while it runs; object storage is cheap and highly available</td>
+      </tr>
+      <tr>
+        <td>Typical pattern</td>
+        <td>Map tasks scheduled where the blocks already are — the locality of section 12.4.2</td>
+        <td>AWS EMR stands up a temporary HDFS cluster, pulls from S3, keeps intermediates on local HDFS, writes results back to S3, then removes the cluster</td>
+      </tr>
+    </tbody>
+  </table>
+  <p><strong>Why Spark still straddles both:</strong> Spark relies on in-memory storage between processing steps, but the underlying files still sit on HDFS or an object store; because dynamic RAM is expensive, the cloud practice is to rent large memory for the duration of a job and release it on completion. Moving toward separation does not erase locality — it relocates the colocation decision into the caching layer, where local SSD or memory replaces the permanent local disk.</p>
+</div>
 <div class="key-takeaway">
   <p><strong>Recap + bridge — the whole lecture in two pillars:</strong> distributed storage (HDFS: blocks, replication, name node, data nodes) and distributed processing (MapReduce: split, map, shuffle, reduce; Spark: in-memory RDD partitions) — supported by parallel and distributed computing, powered by in-memory engines, extended by streaming, and renamed by every cloud vendor. This is the conceptual foundation; the big data systems course next semester will build the full depth of HDFS, MapReduce, YARN, and the ecosystem on top of it.</p>
 </div>

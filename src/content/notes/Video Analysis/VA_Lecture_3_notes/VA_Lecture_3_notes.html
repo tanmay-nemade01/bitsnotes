@@ -560,6 +560,12 @@
 <div class="key-concept">
   <p>Spatial squeeze keeps one tone per flat patch and logs the breaks. In practice this leans on entropy coding and block cosine plans of the JPEG family. The verbal rule is keep one tone per flat patch and log the breaks. Smooth sky, wall, and road zones shrink hard under this rule, while busy texture shrinks less.</p>
 </div>
+<div class="key-concept">
+  <p><strong>Mechanism — why a flat patch shrinks:</strong> the encoder does not store the patch pixel by pixel. It first re-expresses each \(8 \times 8\) block in a frequency basis. The type-2 two-dimensional DCT of an \(N \times N\) block \(s(n_1, n_2)\) is</p>
+  <p>\[ F(k_1, k_2) = \alpha(k_1)\,\alpha(k_2) \sum_{n_1=0}^{N-1}\sum_{n_2=0}^{N-1} s(n_1, n_2) \cos\!\left(\frac{\pi (2n_1+1)k_1}{2N}\right) \cos\!\left(\frac{\pi (2n_2+1)k_2}{2N}\right) \]</p>
+  <p>with the orthonormal scales \(\alpha(0) = 1/\sqrt{N}\) and \(\alpha(k>0) = \sqrt{2/N}\). The term \(F(0,0)\) is the DC coefficient, the block's mean tone; growing \(k_1\) and \(k_2\) index horizontal and vertical detail. A flat patch puts almost all its energy in \(F(0,0)\), so every high-frequency coefficient is near zero and can be dropped at little visual cost. That is the "one tone per flat patch" rule with an explicit basis.</p>
+  <p><strong>Energy compaction:</strong> the KLT packs variance most tightly but has data-dependent basis functions and no fast algorithm, so a codec cannot afford it. The DCT uses fixed, image-independent basis functions, real arithmetic, and fast \(O(N^2 \log N)\) implementations while approaching KLT compaction for natural images. In the \(8 \times 8\) example on a real sequence, the coefficients near \((0,0)\) are large while those toward the lower-right corner are tiny. Quantising and storing only the large low-frequency terms, then entropy-coding the rest, is exactly how smooth sky, wall, and road zones shrink far harder than busy texture.</p>
+</div>
 <p>The frame that keeps full spatial facts after this pass is the <em>I-frame</em> (the information frame). It is squeezed yet whole. It needs no other frame to paint fully. It serves as the anchor on which later delta frames lean.</p>
 <p>We write the grid size facts as width \(W\) and height \(H\), where \(W = 1920\) and \(H = 1080\) in the road shot case. A five-pixel change set \(G\) against \(W\) alone reads as \(5\) over \(1920\), a tiny share. That share is why spatial plans win big on flat zones like sky, wall, and road.</p>
 <div class="warning-box">
@@ -576,6 +582,11 @@
 <p>A rough cadence makes the chain firm. With 30 frames in one second, mark every 10th frame as an I-frame. Frames 1, 10, 20, and 30 anchor the second. Mark every 5th frame between anchors as a P-frame. Frames 5, 15, and 25 predict forward from anchors. All frames between these marks, such as 2, 3, 4, 6, 7, 8, and 9, are B-frames fused from both sides.</p>
 <div class="example-box">
   <p><strong>Worked chain trace.</strong> Anchor frame 1 as I with full facts. Frame 5 as P stores forward deltas from frame 1: shifted runner spots plus the lost sky disc. Frame 2 as B blends frame 1 and frame 5 with weights that favor the nearer anchor. At rebuild, frame 2 = blend(I1, P5) + small fix-up. Frame 3 blends the same pair with shifted weights. <strong>Sense-check: I holds the most data, P holds less, B holds the least.</strong></p>
+</div>
+<div class="key-concept">
+  <p><strong>Display order is not decoding order:</strong> a B-frame is predicted from a picture that appears later in display time, so the future reference must be transmitted and reconstructed first. The order in which pictures are coded and decoded therefore differs from the order in which they are shown. Take a GOP of size \(N = 9\) with anchor spacing \(M = 4\). Display runs \(0, 1, 2, 3, 4, 5, 6, 7, 8\), but the encoded sequence is</p>
+  <p>\[ 0,\ 4,\ 1,\ 2,\ 3,\ 8,\ 5,\ 6,\ 7 \]</p>
+  <p>Picture 4 is a P-picture predicted from picture 0. Pictures 1, 2, and 3 are B-pictures built from the pair \((0, 4)\). Picture 8 is the next anchor predicted from picture 4, and pictures 5, 6, and 7 are B-pictures from \((4, 8)\). Because two references must coexist before any B-picture can be rebuilt, the decoder needs a reorder buffer holding at least two reconstructed pictures. This is the origin of B-frame latency, and it is why a blind draw from stored order has no guarantee of landing on a full anchor: the "mark every 10th frame" cadence above is a display-order statement, while the bitstream follows the encoded sequence.</p>
 </div>
 <p>This chain bites at sample time. A B-frame sample holds far less true detail than an I-frame sample. So when one frame per second is drawn from a 30-frame run, the draw must land on an I-frame. Blind draw may land on weak frame so land on full frame. A blind draw that lands on a B-frame or a P-frame hands weak facts to all later steps, since every later grade then scores thinned facts.</p>
 <div class="warning-box">
@@ -602,6 +613,12 @@
     <text x="430" y="234" font-size="13" fill="#334155" text-anchor="middle">store</text>
   </svg>
   <p class="text-xs text-slate-500 mt-2"><strong>Figure:</strong> The squeeze, travel, and store triple as a triangle: pulling one corner drags the other two, so no codec moves one corner alone.</p>
+</div>
+<div class="key-concept">
+  <p><strong>The codec's operating rule — Lagrangian rate–distortion:</strong> the squeeze, travel, and store triangle has a quantitative decision. For every candidate coding mode of a block, the encoder minimises a cost</p>
+  <p>\[ J = D + \lambda R \]</p>
+  <p>Here \(D\) is the reconstruction distortion, measured as the sum of squared differences (SSD) or sum of absolute differences (SAD) between original and rebuilt samples; \(R\) is the number of bits required to encode the block under that mode; and \(\lambda\) is a Lagrange multiplier that rises as the quantiser step grows. The mode with the smallest \(J\) wins: a cheaper but blurrier choice is taken only when its bit saving \(\Delta R\) justifies its distortion rise \(\Delta D\), that is when \(\Delta D < \lambda \, \Delta R\).</p>
+  <p><strong>Worked two-mode read.</strong> Mode A gives \(D = 40\), \(R = 100\) bits; mode B gives \(D = 60\), \(R = 40\) bits. With \(\lambda = 0.5\): \(J_A = 40 + 0.5(100) = 90\), \(J_B = 60 + 0.5(40) = 80\), so B wins — it saves 60 bits for 20 extra distortion, and \(20 < 0.5 \times 60 = 30\). With a tighter quality target \(\lambda = 0.2\): \(J_A = 40 + 20 = 60\), \(J_B = 60 + 8 = 68\), so A wins. Dividing SSD by pixel count gives the MSE that PSNR grades through \(PSNR = 10\log_{10}(MAX^2/MSE)\), so this rule is the formal bridge between the quality dials of Section 3.2 and the bitrate math of this section.</p>
 </div>
 <div class="warning-box">
   <p><strong>Scope:</strong> the ratio \(C\) compares like with like: same clip, same length, raw versus packed. <strong>Assumption:</strong> both sizes use the same units. The ratio breaks when raw counts headers or audio that packed drops, so fix the count scope before dividing.</p>

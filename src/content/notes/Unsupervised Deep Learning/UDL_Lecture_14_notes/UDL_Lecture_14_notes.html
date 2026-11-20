@@ -529,6 +529,24 @@
 </ol>
 <p>Why zero the last \( \mathbf{z} \)? The final transition should <em>commit</em> to a single clean image rather than shake the result one more time — after all the refinement, extra randomness would only blur the finish. Notice the rhythm: the U-Net consumes \( \mathbf{x}_t \), emits a noise estimate, that estimate plus \( \mathbf{z} \) produces \( \mathbf{x}_{t-1} \), and the same trained U-Net runs again on the cleaner input, all the way down.</p>
 <p>With the DDIM variant, the same skeleton runs over a <em>sub-sequence</em> of timesteps (the hop list above), each update built from the recovered \( \hat{\mathbf{x}}_\theta \); because updates are deterministic, large hops stay accurate enough to keep quality high while cutting the number of U-Net calls by an order of magnitude or more.</p>
+
+<div class="key-concept">
+  <p><strong>Formal Detail — the reverse update DDIM actually uses:</strong> Section 14.6.1 recovered a clean-image estimate \( \hat{\mathbf{x}}_\theta(\mathbf{x}_t,t) = \frac{\mathbf{x}_t - \sqrt{1-\bar{\alpha}_t}\,\boldsymbol{\epsilon}_\theta}{\sqrt{\bar{\alpha}_t}} \), but the loop above never wrote down how \( \mathbf{x}_{t-1} \) is assembled from it. The family of reverse updates compatible with the <em>same</em> trained noise predictor is</p>
+  <p>\[ \mathbf{x}_{t-1} = \sqrt{\bar{\alpha}_{t-1}}\;\underbrace{\hat{\mathbf{x}}_\theta(\mathbf{x}_t,t)}_{\text{predicted clean data}} \;+\; \sqrt{1-\bar{\alpha}_{t-1}-\sigma_t^2}\;\boldsymbol{\epsilon}_\theta(\mathbf{x}_t,t) \;+\; \sigma_t\,\mathbf{z}, \qquad \mathbf{z}\sim\mathcal{N}(\mathbf{0},\mathbf{I}) \]</p>
+  <p>The three terms are recognizable: push the predicted clean image forward to step \( t-1 \), point back toward the current \( \mathbf{x}_t \) along the predicted-noise direction, and add fresh randomness of strength \( \sigma_t \). The schedule still fixes every \( \bar{\alpha} \); the only freedom is \( \sigma_t \). Parameterize it by \( \eta \ge 0 \) as</p>
+  <p>\[ \sigma_t = \eta\,\sqrt{\frac{1-\bar{\alpha}_{t-1}}{1-\bar{\alpha}_t}}\,\sqrt{1-\frac{\bar{\alpha}_t}{\bar{\alpha}_{t-1}}} \]</p>
+  <table>
+    <thead>
+      <tr><th>Setting</th><th>Sampler</th><th>Update character</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>\( \eta = 1 \)</td><td>DDPM — original Markovian chain</td><td>Stochastic: a fresh \( \mathbf{z} \) at every step</td></tr>
+      <tr><td>\( \eta \in (0,1) \)</td><td>Interpolating samplers</td><td>Partial stochasticity, tunable</td></tr>
+      <tr><td>\( \eta = 0 \Rightarrow \sigma_t = 0 \)</td><td>DDIM</td><td>Deterministic: \( \mathbf{x}_{t-1} = \sqrt{\bar{\alpha}_{t-1}}\,\hat{\mathbf{x}}_\theta + \sqrt{1-\bar{\alpha}_{t-1}}\,\boldsymbol{\epsilon}_\theta \)</td></tr>
+    </tbody>
+  </table>
+  <p>This explains the loop above precisely: randomness enters <em>only</em> through \( \sigma_t \), so DDIM need never draw \( \mathbf{z} \) at all, while DDPM draws it at every step. With \( \sigma_t = 0 \) the entire trajectory is a fixed function of the starting \( \mathbf{x}_T \) and the weights — re-running the same seed reproduces the same image, and hops over a sub-sequence retain the high-level structure of a full walk. That is the deterministic "consistency" that makes aggressive step-skipping safe.</p>
+</div>
 <div class="example-box">
   <p><strong>Trace of two sampling rounds (\( T = 3 \), toy scalars).</strong> Start: draw \( x_3 = 1.20 \) from the standard normal. Round 1 (\( t = 3 \)): the network sees \( x_3 \) and outputs \( \epsilon_\theta = 0.50 \); with \( z \sim \mathcal{N}(0, 0.01) \) giving \( z = 0.05 \), suppose the update yields \( x_2 = 0.60 \). Round 2 (\( t = 2 \)): network outputs \( \epsilon_\theta = -0.10 \); fresh \( z = -0.02 \) gives \( x_1 = 0.45 \). Final round (\( t = 1 \)): \( \mathbf{z} \) is forced to \( 0 \); the network outputs \( \epsilon_\theta = -0.30 \) and the update commits to \( x_0 = 0.80 \) — the finished "image". Every number stayed moderate and drifted away from pure-noise scale toward data scale, exactly as intended.</p>
 </div>
@@ -640,6 +658,27 @@
 <p>Start from several different draws of the same Gaussian with the same prompt and you get different images, because the noise samples themselves differ. The prompt fixes the destination region of the data distribution; the starting noise picks which point inside that region you visit. Same sentence, ten seeds, ten distinct pictures — all matching the words. And since outputs are color images, the process starts from three channels, not one.</p>
 <div class="example-box">
   <p><strong>Worked example — one prompt, two seeds.</strong> Prompt: "a red umbrella on wet asphalt." Encode it into an embedding vector \( \mathbf{c} \in \mathbb{R}^{d} \) (say \( d = 768 \)). Run A starts from seed noise \( \mathbf{x}_T^{(A)} \): after denoising, the umbrella stands left-of-center with reflections running diagonally. Run B uses the identical prompt but seed \( \mathbf{x}_T^{(B)} \): now the umbrella sits right-of-center, shot from a lower angle. Both satisfy the condition because every denoising step was guided by the same \( \mathbf{c} \); they differ because every intermediate sample descended from a different initial static pattern. Sense-check: conditioning constrains <em>what</em> appears, randomness chooses <em>which version</em>.</p>
+</div>
+
+<div class="important-note">
+  <p><strong>Technical Extension — how conditioning is strengthened:</strong> Injecting \( \mathbf{c} \) into every U-Net block gives a conditional predictor \( \boldsymbol{\epsilon}_\theta(\mathbf{x}_t, \mathbf{c}) \), but sampling from it alone trades prompt adherence against variety. Two textbook mechanisms control that trade-off <em>after</em> training, without changing the noise-regression loss.</p>
+  <p><strong>Classifier guidance.</strong> Train an auxiliary classifier \( p_\phi(\mathbf{c}\mid\mathbf{x}_t) \) on noisy samples and bias each reverse step toward inputs it labels \( \mathbf{c} \):</p>
+  <p>\[ \boldsymbol{\mu}_{t-1} \;\leftarrow\; \hat{\boldsymbol{\mu}}_{t-1} + \sigma_t^2\,\nabla_{\mathbf{x}_t}\log p_\phi(\mathbf{c}\mid\mathbf{x}_t) \]</p>
+  <p>Equivalently the score becomes \( \tilde{\boldsymbol{\epsilon}}_\theta = \boldsymbol{\epsilon}_\theta(\mathbf{x}_t,\mathbf{c}) - w\,\sigma_t\nabla_{\mathbf{x}_t}\log p_\phi(\mathbf{c}\mid\mathbf{x}_t) \). Larger \( w \) sharpens class adherence but shrinks diversity — the same fidelity–variety knob as the GAN truncation trick of Section 13.2.3. The cost is a whole extra classifier, and it must be trained on noisy \( \mathbf{x}_t \), so a pretrained clean-image classifier cannot simply be reused.</p>
+  <p><strong>Classifier-free guidance.</strong> Drop the classifier entirely: use <em>one</em> network for both jobs by randomly replacing \( \mathbf{c} \) with a null token during training, then amplify the gap between its conditional and unconditional predictions at sampling time:</p>
+  <p>\[ \tilde{\boldsymbol{\epsilon}}_\theta(\mathbf{x}_t,\mathbf{c}) = \boldsymbol{\epsilon}_\theta(\mathbf{x}_t) + w\Bigl(\boldsymbol{\epsilon}_\theta(\mathbf{x}_t,\mathbf{c}) - \boldsymbol{\epsilon}_\theta(\mathbf{x}_t)\Bigr) = (1+w)\boldsymbol{\epsilon}_\theta(\mathbf{x}_t,\mathbf{c}) - w\,\boldsymbol{\epsilon}_\theta(\mathbf{x}_t) \]</p>
+  <table>
+    <thead>
+      <tr><th>Property</th><th>Classifier guidance</th><th>Classifier-free guidance</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>Extra model</td><td>Yes — classifier on noisy \( \mathbf{x}_t \)</td><td>No — the same U-Net with a null condition</td></tr>
+      <tr><td>Training change</td><td>Train and maintain a separate classifier</td><td>Randomly drop \( \mathbf{c} \) (a one-line change)</td></tr>
+      <tr><td>Cost per step</td><td>U-Net forward + classifier gradient</td><td>Two U-Net passes: conditional and unconditional</td></tr>
+      <tr><td>Guidance knob \( w \)</td><td>Weight on classifier log-prob gradient</td><td>Weight on conditional-minus-unconditional gap</td></tr>
+    </tbody>
+  </table>
+  <p><strong>Reading the scale:</strong> \( w = 0 \) recovers ordinary conditional sampling; \( w = 1 \) doubles the push away from the unconditional prediction; large \( w \) raises per-image fidelity and Inception Score while eroding mode coverage and worsening FID — exactly the 14.5 trade-off. The companion text notes this "over-weighted conditioning" produces very high quality but slightly stereotypical outputs, the same phenomenon as truncation in GANs.</p>
 </div>
 <h3 id="14.8.2-latent-diffusion-and-stable-diffusion">14.8.2 Latent Diffusion and Stable Diffusion</h3>
 <p>Every diffusion model discussed so far ran on the original image. <em>Latent diffusion</em>, as the name suggests, first encodes the original image into a latent space much smaller than the pixel space. It then runs the entire diffusion process there, and a decoder maps the result back to images. Concretely, a picture on the order of \( 1000 \times 600 \) pixels might live in a latent grid on the order of \( 40 \times 60 \) — treat both sizes as illustrative magnitudes rather than exact specifications; the point is that each side shrinks by more than an order of magnitude.</p>

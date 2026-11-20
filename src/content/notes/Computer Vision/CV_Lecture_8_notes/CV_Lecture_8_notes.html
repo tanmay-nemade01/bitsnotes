@@ -372,6 +372,21 @@
 </div>
 <p>In panoramas the same vote joins overlapping views: the largest agreeing match cluster across the overlap sets the warp and stray pairs are dropped. In frame-to-frame tracking the same vote holds the motion while a few leftover wrong matches are tolerated. The line in class is a stand-in; the vote is the real lesson.</p>
 
+<h3 id="8.2.6-setting-the-band-width-from-noise-and-rejecting-degenerate-samples" class="subsection-title">8.2.6 Setting the Band Width from Noise and Rejecting Degenerate Samples</h3>
+<p>The band half-width \(\delta\) was left as a rule of thumb near 1 to 3 pixels. A more principled choice ties it to the noise of a correct match rather than to a fixed pixel guess, and a second check rejects samples that cannot define a stable line at all.</p>
+<div class="key-concept">
+  <p><strong>Robust noise scale:</strong> let \(r_i = y_i - (m x_i + c)\) be the residual of match \(i\). The median absolute deviation of the residuals is \(\mathrm{MAD} = \operatorname{median}(|r_i - \operatorname{median}(r)|)\), often simplified to \(\mathrm{MAD} = \operatorname{median}(|r_i|)\). For Gaussian inlier noise, \(\hat\sigma \approx 1.4 \times \mathrm{MAD}\) is a robust estimate of the inlier standard deviation, and the band is set to a multiple of it:</p>
+  <p>\[ \delta = k\,\hat\sigma \approx 1.4\,k \cdot \mathrm{MAD} \]</p>
+  <p>where \(k\) is the number of standard deviations to admit, for example \(k = 2\) keeps roughly 95 percent of Gaussian inliers on a one-sided offset test. Using the median rather than the mean is what keeps the estimate from being contaminated by the very outliers being removed.</p>
+</div>
+<div class="example-box">
+  <p><strong>Worked scale estimate.</strong> Residuals from a candidate line, in pixels: \(\{0.4, -0.6, 0.5, -0.3, 0.7, -18, 22, -0.5\}\). Sorted absolute values: \(0.3, 0.4, 0.5, 0.5, 0.6, 0.7, 18, 22\), so \(\mathrm{MAD} = (0.5 + 0.6)/2 = 0.55\) and \(\hat\sigma \approx 1.4 \times 0.55 = 0.77\) px. With \(k = 2\), \(\delta \approx 1.54\) px, inside the usual range but derived from this match set rather than guessed. The two gross errors at 18 and 22 px are ignored by the median; a mean-based standard deviation would exceed 10 px and swallow them into the band.</p>
+  <p><strong>Degeneracy check:</strong> a sample with \(x_b \approx x_a\) makes \(m = (y_b - y_a)/(x_b - x_a)\) explode, so that hypothesis is rejected before scoring. Two matches at nearly the same location carry too little information to fix a line. Implementations expose this as an explicit validity test on the sampled subset: a hypothesis is skipped when the sample is degenerate, not counted as a losing try.</p>
+</div>
+<div class="important-note">
+  <p><strong>Why this matters here:</strong> the inlier target and the trial budget in the next section assume \(\delta\) is fixed before the search, so the threshold is chosen once, from a robust scale estimate or from the application's known localisation accuracy, and then held constant across all tries. Re-estimating \(\delta\) from the inliers of each new hypothesis would change the scoring rule mid-search and make inlier counts incomparable, the same pitfall flagged earlier for widening the band between tries.</p>
+</div>
+
 <h2 id="8.3-thresholds-iterations-and-limits-of-the-method">8.3 Thresholds, Iterations and Limits of the Method</h2>
 <h3 id="8.3.1-how-many-lines-are-enough">8.3.1 How Many Lines Are Enough</h3>
 <p>Two points fix a line, so the number of possible lines through a match set is huge. The method handles this with an inlier target that stops the loop. Spoken forms from class: need at least 12 inlier points, or need 80 percent inliers, or need more than 50 percent inliers. The loop draws, fits, counts, and repeats until the target is met.</p>
@@ -381,6 +396,43 @@
 <p>Work the numbers once so the rule feels concrete. With \(N = 20\) proposed matches, the 80 percent target asks for at least \(0.8 \times 20 = 16\) inliers. Line two from the last section held 14, so it would fall short of 16 and the loop draws on. With \(N = 10\), the 12-point minimum can never be met, which tells at once that the minimum must be reset for a small set. The target, the loop that draws and counts, and the repeats until the percent or minimum is reached all belong together: target sets the bar, draws produce tries, counts score them, repeats continue until the bar is cleared.</p>
 <div class="key-concept">
   <p>An <em>inlier target</em> (the count or share that ends the search) turns an open-ended random draw into a task with a stop rule. Common forms are a point minimum such as 12, a share such as 80 percent, or a bare-majority floor above 50 percent. The loop draws a sampled pair, fits \(m\) and \(c\), counts inliers inside \(\delta\), and repeats until the target is met or the round budget runs out.</p>
+</div>
+<div class="key-concept">
+  <p><strong>Formal RANSAC success bound:</strong> the random draw is a Bernoulli trial. If \(p\) is the probability that any single correspondence is an inlier and \(k\) points are sampled per hypothesis, the chance that one trial is all-inliers is \(p^k\). After \(S\) independent trials the probability of never drawing an all-inlier set is</p>
+  <p>\[ 1 - P = (1 - p^k)^S \]</p>
+  <p>so the minimum number of trials for a target success probability \(P\) is</p>
+  <p>\[ S = \frac{\log(1 - P)}{\log(1 - p^k)} \]</p>
+  <p>where \(p \in (0,1]\) is the inlier share, \(k\) is the number of points sampled per fit, and \(P \in (0,1)\) is the desired confidence. This is the counting answer to "how many lines are enough": the inlier-target stop rule ends the loop on a good fit, while this bound sizes the round budget needed to be confident of ever drawing one.</p>
+</div>
+<div class="example-box">
+  <p><strong>Worked trial budget — 99% success target.</strong> Substituting into \(S = \log(1-P)/\log(1-p^k)\):</p>
+  <table>
+    <thead>
+      <tr>
+        <th>Sample size \(k\)</th>
+        <th>Inlier share \(p\)</th>
+        <th>Trials \(S\) for 99% success</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>3</td>
+        <td>0.5</td>
+        <td>35</td>
+      </tr>
+      <tr>
+        <td>6</td>
+        <td>0.6</td>
+        <td>97</td>
+      </tr>
+      <tr>
+        <td>6</td>
+        <td>0.5</td>
+        <td>293</td>
+      </tr>
+    </tbody>
+  </table>
+  <p>For the two-point line of this lecture (\(k = 2\)) with half the matches inliers (\(p = 0.5\)), the same formula gives \(S \approx 17\) trials. The jump from 35 to 293 when \(k\) grows from 3 to 6 at the same inlier share is why practice uses the smallest sample size that still determines the model: fewer points per hypothesis means far fewer rounds for the same confidence.</p>
 </div>
 <h3 id="8.3.2-why-the-target-can-hurt">8.3.2 Why the Target Can Hurt</h3>
 <p>Two failure shapes came up. First, the target may never be reachable. If the best possible cluster sticks at 60 percent and the target asks for 80 percent, more rounds never close the gap. Second, the cost curve can turn steep. The first 100 rounds may lift the count to 75 percent, while the next 5 percent needs ten thousand or a million more rounds. That tail is not worth paying in most tasks.</p>
@@ -441,6 +493,53 @@
 </div>
 <div class="key-takeaway">
   <p><strong>Recap:</strong> set a reachable target, pay for the steep early rounds, and stop when inliers cover the asked share or loss sits near zero. The plain least-squares loop passes below about 50 percent outliers and leaves a few strays even at 40 to 45 percent.</p>
+</div>
+
+<h3 id="8.3.5-m-estimators-and-iteratively-reweighted-least-squares" class="subsection-title">8.3.5 M-Estimators and Iteratively Reweighted Least Squares</h3>
+<p>The consensus loop above makes a hard decision: inside \(\delta\) a match gets full weight, outside it gets zero. A complementary robust strategy keeps every residual but downweights large ones smoothly. This is the M-estimator family from robust statistics, and it is the standard refinement applied once a consensus step has supplied a good inlier set.</p>
+<div class="key-concept">
+  <p><strong>Formal definition:</strong> with residual \(r_i = y_i - (m x_i + c)\), an M-estimator minimises a robust objective \(E = \sum_{i} \rho(\|r_i\|)\) instead of the squared sum \(\sum_i r_i^2\). Setting the derivative to zero gives \(\sum_i \psi(\|r_i\|)\,\partial\|r_i\|/\partial p = 0\) with the <em>influence function</em> \(\psi(r) = \rho'(r)\). Defining the weight \(w(r) = \psi(r)/r\) turns the stationary condition into an equivalent weighted problem:</p>
+  <p>\[ E_{\mathrm{IRLS}} = \sum_i w(\|r_i\|)\,\|r_i\|^2 \]</p>
+  <p>Iteratively reweighted least squares alternates two steps: compute the weights \(w(\|r_i\|)\) from the current residuals, then solve the weighted least-squares problem with those weights held fixed. Small residuals keep weights near one; large residuals get weights that fall toward zero.</p>
+</div>
+<table>
+  <thead>
+    <tr>
+      <th>Loss \(\rho(r)\)</th>
+      <th>Shape parameter \(\alpha\)</th>
+      <th>Growth for large \(r\)</th>
+      <th>Effect on outliers</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td>L2 (quadratic)</td>
+      <td>\(\alpha = 2\)</td>
+      <td>Quadratic</td>
+      <td>Full linear weight; gross errors dominate the fit</td>
+    </tr>
+    <tr>
+      <td>Charbonnier / L1-like</td>
+      <td>\(\alpha = 1\)</td>
+      <td>Linear</td>
+      <td>Equal weight to all larger residuals; bounded influence</td>
+    </tr>
+    <tr>
+      <td>Cauchy</td>
+      <td>\(\alpha = 0\)</td>
+      <td>Logarithmic</td>
+      <td>Strong downweighting; non-convex objective</td>
+    </tr>
+    <tr>
+      <td>Geman–McClure</td>
+      <td>\(\alpha = -2\)</td>
+      <td>Saturating</td>
+      <td>Very strong downweighting; multiple local minima</td>
+    </tr>
+  </tbody>
+</table>
+<div class="important-note">
+  <p><strong>Connection to this lecture:</strong> the scale \(c\) of a robust penalty marks the boundary between inlier-like and outlier-like residuals, so it plays the same role as the band \(\delta\). A Huber-style loss is quadratic for residuals smaller than \(c\) and linear beyond, which limits the pull of an outlier without discarding the match entirely: the soft counterpart to the hard keep-or-drop vote. As \(\alpha\) falls below 2, large residuals are discounted more strongly and the objective becomes non-convex, introducing multiple local minima. Because IRLS can stall when too many matches start out wrong, the consensus step is normally run first to find a clean inlier set, and the robust fit then polishes the final model on that set.</p>
 </div>
 
 <h2 id="8.4-where-match-points-come-from-and-how-matching-works">8.4 Where Match Points Come From and How Matching Works</h2>

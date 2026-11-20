@@ -1335,6 +1335,17 @@
   <p><strong>Answer: 19:40:29.50631, zone kept.</strong> Sense-check: each hand moved by exactly one with no carry, the cleanest possible confirmation. Backward case: <code>DATE '2020-01-01' - INTERVAL '1 hour'</code> = <strong>2019-12-31 23:00</strong>, proving subtraction crosses midnight into the prior day.</p>
 </div>
 <div class="warning-box">
+  <p><strong>Edge case — month-end clamping.</strong> An interval month is a calendar month, not a fixed 30-day block. The months field advances the date keeping the day number unless that day does not exist in the target month; then it clamps to the last valid day:</p>
+  <p>\[ \text{day}_{\text{result}} = \min\bigl(\text{day}_{\text{source}},\ N_{\text{month}}\bigr), \quad N_{\text{month}} = \text{days in the target month} \]</p>
+  <ul>
+    <li><code>DATE '2020-01-31' + INTERVAL '1 month'</code> → <strong>2020-02-29</strong> (leap year); the same start in 2021 → <strong>2021-02-28</strong>.</li>
+    <li><code>DATE '2020-03-31' + INTERVAL '2 months'</code> → <strong>2020-05-31</strong> — day 31 exists again, so no clamp fires.</li>
+    <li>MySQL's <code>DATE_ADD('2024-03-31', INTERVAL 1 MONTH)</code> returns <strong>2024-04-30</strong> — the identical rule under different syntax.</li>
+  </ul>
+  <p><strong>Edge case — a calendar day is not always 24 hours.</strong> On a DST-aware timestamp, <code>interval '1 day'</code> advances the calendar date while <code>interval '24 hours'</code> adds a fixed duration. In <code>America/Denver</code>, 2005-04-02 12:00 −07 plus one day reads <strong>2005-04-03 12:00 −06</strong>, but plus 24 hours reads <strong>2005-04-03 13:00 −06</strong> — the same nominal span, one wall hour apart, because an hour was skipped at the spring-forward.</p>
+  <p><strong>Takeaway:</strong> use calendar units for "the same time tomorrow" and fixed-hour durations for elapsed time; never assume a month is 30 days or a day is 24 hours when reconciling intervals across months or daylight shifts.</p>
+</div>
+<div class="warning-box">
   <p><strong>Scope:</strong> bare clock parts added to a plain DATE without timestamp typing are ignored — wrap in timestamp kind first. <strong>Assumption:</strong> interval division and multiplication scale every field proportionally.</p>
 </div>
 <p>Picture a control panel with four levers: shift-stamp, fuse date+time, step backward, combine intervals. Each lever moves its gauge predictably, including across midnight in both directions. The takeaway: pick the lever matching the kinds on both sides.</p>
@@ -2147,6 +2158,49 @@ ORDER BY 2 DESC;</code></pre>
     <li>1980-05-01 bucket: <strong>2 titles</strong>. 1979-08-01: <strong>2 titles</strong>. 1972-06-01: <strong>1 title</strong>.</li>
   </ul>
   <p><strong>Answer: September 2020 leads with 2; peaks and singles listed high to low.</strong> Sense-check: bucket stamps all read day 01 (month truncation zeroes the day dial), confirming the grain. Same shape answers sales-per-month or events-per-day.</p>
+</div>
+<div class="example-box">
+  <p><strong>Worked derivation — month boundaries from a bucket.</strong> The month bucket above reads day 01 because <code>DATE_TRUNC</code> sets every field less significant than the chosen one to its floor — day 01, time 00:00:00. To get the same month's <em>last</em> day, step forward one month, then back one day:</p>
+  <p>\[ \text{last} = \bigl(\text{DATE\_TRUNC}(\text{'month'}, d) + \text{INTERVAL '1 month'}\bigr) - \text{INTERVAL '1 day'} \]</p>
+  <ul>
+    <li>February 2020: first = \(2020\text{-}02\text{-}01\); +1 month = \(2020\text{-}03\text{-}01\); −1 day = <strong>2020-02-29</strong> (leap year).</li>
+    <li>February 2021: first = \(2021\text{-}02\text{-}01\); +1 month = \(2021\text{-}03\text{-}01\); −1 day = <strong>2021-02-28</strong>.</li>
+  </ul>
+  <p><strong>Answer: 29 and 28 — the leap-year verdict falls out of the arithmetic.</strong> Sense-check: stepping back one day from the first of the <em>next</em> month always lands on the current month's last day, whatever its length, so the rule needs no hand-maintained month-length table.</p>
+</div>
+<table>
+  <thead>
+    <tr>
+      <th>Engine</th>
+      <th>Last day of month — idiomatic form</th>
+      <th>Note</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td>PostgreSQL</td>
+      <td><code>DATE_TRUNC('month', d) + INTERVAL '1 month' - INTERVAL '1 day'</code></td>
+      <td>No dedicated <code>LAST_DAY</code>; the bucket supplies the first day</td>
+    </tr>
+    <tr>
+      <td>MySQL</td>
+      <td><code>LAST_DAY(d)</code></td>
+      <td>Returns <code>NULL</code> for an invalid date</td>
+    </tr>
+    <tr>
+      <td>Snowflake</td>
+      <td><code>LAST_DAY(d)</code></td>
+      <td>Optional part: year, quarter, month, week; result is DATE</td>
+    </tr>
+    <tr>
+      <td>Databricks</td>
+      <td><code>last_day(d)</code></td>
+      <td>DATE argument, DATE result</td>
+    </tr>
+  </tbody>
+</table>
+<div class="key-takeaway">
+  <p><strong>Takeaway:</strong> a month bucket is already the first-of-month stamp; add one month and subtract one day — or call <code>LAST_DAY</code> where it exists — to bound a reporting period, and let the calendar decide February's length.</p>
 </div>
 <div class="warning-box">
   <p><strong>Scope:</strong> ORDER BY 2 sorts the second output column; renumber when the select list changes. <strong>Assumption:</strong> release_date is timestamp-kind; text dates need conversion first.</p>

@@ -535,6 +535,21 @@ F_{\text{weighted}, 3} = \$10,000 \times 0.20 = \$2,000
 </ul>
 </div>
 
+<div class="important-note">
+<p><strong>Advanced Pattern — Time-Varying Multivalued Bridge Tables:</strong> The static bridge tables above assume group membership never changes. When the multi-valued dimension is a <em>Type 2 slowly changing dimension</em> (e.g., a bank account linked to different joint holders over its lifetime), the bridge table itself must be effective-dated. Kimball prescribes adding <code>Begin_Effective_DTTM</code> and <code>End_Effective_DTTM</code> columns, yielding the six-column grain <code>[Account_Key, Customer_Key, Weighting_Factor, Begin_Effective_DTTM, End_Effective_DTTM]</code>. A changing relationship is handled by expiring the old row (<code>End_Effective_DTTM</code> = change instant) and inserting a new row with the correct begin stamp — the same expiry-and-reinsert mechanic used for Type 2 dimension rows, but applied to the bridge.</p>
+
+<p><strong>Worked Trace:</strong> Account <code>A-100</code> is jointly held by John (\( w = 0.60 \)) and Mary (\( w = 0.40 \)) from <code>2024-01-01</code>. On <code>2025-07-01</code> John is removed from the account.</p>
+<ol>
+<li>Expire the historical pair: <code>(A-100, John, 0.60, 2024-01-01, 2025-06-30 23:59:59)</code>.</li>
+<li>Expire Mary's old fractional row and insert the new full-ownership row: <code>(A-100, Mary, 0.40, 2024-01-01, 2025-06-30 23:59:59)</code> → <code>(A-100, Mary, 1.00, 2025-07-01, 9999-12-31)</code>.</li>
+<li>A balance of \$10,000 posted on <code>2025-03-15</code> is constrained to the single instant <code>'2025-03-15'</code> and allocates \$6,000 to John and \$4,000 to Mary; the same balance posted on <code>2025-08-15</code> allocates \$10,000 entirely to Mary.</li>
+</ol>
+</div>
+
+<div class="warning-box">
+<p><strong>Pitfall — Missing Point-in-Time Predicate:</strong> An effective-dated bridge table <em>must</em> be constrained to exactly one reporting instant. A query omitting the predicate (e.g., <code>WHERE as_of_DTTM BETWEEN b.Begin_Effective_DTTM AND b.End_Effective_DTTM</code>) will fetch both the expired and the current path simultaneously, producing overlapping, mutually exclusive memberships and over-counted balances. Always freeze the bridge to one consistent snapshot before applying weighting factors.</p>
+</div>
+
 <h3 class="subsection-title" id="5.2.7">5.2.7 Visual Intuition</h3>
 <div class="diagram-container my-6 text-center">
 <pre class="mermaid">
@@ -613,6 +628,43 @@ flowchart LR
 <li><em>Examples:</em> Corporate organizational charts (CEO \(\rightarrow\) VP \(\rightarrow\) Director \(\rightarrow\) Manager \(\rightarrow\) Employee), multi-level sales territories, or biological taxonomies.</li>
 <li><em>Design:</em> Cannot be cleanly represented using fixed columns. Requires a <strong>Hierarchy Bridge Table</strong> (also called a hierarchy helper table).</li>
 </ul>
+
+<div class="key-concept">
+<p><strong>Alternative Technique — Pathstring (Materialized Path) Attributes:</strong> Kimball's second strategy for ragged hierarchies avoids the bridge table entirely by storing, in the dimension row itself, a specially encoded text string that records the complete path from the supreme (root) node down to that node. Standard SQL prefix or path operators then answer ancestor/descendant questions without recursive joins or an auxiliary path table. The trade-off is that pathstrings cannot rapidly substitute alternative hierarchies or represent shared-ownership structures, and a structural change near the root can force relabeling of the entire subtree.</p>
+
+<p><strong>Engine Implementation (PostgreSQL <code>ltree</code>):</strong> The <code>ltree</code> module provides a dot-separated label-path type with ancestor testing (<code>@&gt;</code>), descendant testing (<code>&lt;@</code>), depth (<code>nlevel()</code>), and GiST indexing. A corporate tree CEO <code>1</code> → VP <code>2</code> → Director <code>10</code> is stored directly in the organization dimension:</p>
+
+<table>
+<thead>
+<tr><th>Org_Key</th><th>Org_Name</th><th>Path (ltree)</th><th>nlevel(Path) = Depth</th></tr>
+</thead>
+<tbody>
+<tr><td>1</td><td>CEO</td><td><code>1</code></td><td>0</td></tr>
+<tr><td>2</td><td>VP Sales</td><td><code>1.2</code></td><td>1</td></tr>
+<tr><td>10</td><td>Director West</td><td><code>1.2.10</code></td><td>2</td></tr>
+</tbody>
+</table>
+
+<p><strong>Worked Queries (no recursive CTE, no bridge join):</strong></p>
+<ul>
+<li>All descendants of the VP: <code>SELECT * FROM org_dim WHERE path &lt;@ '1.2';</code> → returns <code>1.2</code> and <code>1.2.10</code>.</li>
+<li>All ancestors of the Director: <code>SELECT * FROM org_dim WHERE path @&gt; '1.2.10';</code> → returns <code>1</code>, <code>1.2</code>, and <code>1.2.10</code>.</li>
+<li>Depth without a self-join: <code>nlevel(path) - 1</code> yields \( 0, 1, 2 \) for the three rows above, mirroring the <code>Depth</code> column of the hierarchy bridge table.</li>
+</ul>
+
+<table>
+<thead>
+<tr><th>Property</th><th>Hierarchy Bridge Table</th><th>Pathstring / Materialized Path</th></tr>
+</thead>
+<tbody>
+<tr><td>Storage</td><td>One row per ancestor–descendant pair, \( \sum_{v \in V}(\text{depth}(v)+1) \) rows</td><td>One path column per dimension row — no extra path table</td></tr>
+<tr><td>Traversal</td><td>Standard SQL equality join on <code>Parent_Key</code></td><td>Path-operator or prefix match (<code>&lt;@</code>, <code>@&gt;</code>, <code>LIKE '1.2.%'</code>)</td></tr>
+<tr><td>Alternative hierarchies</td><td>Supported — build a second bridge</td><td>Not supported without re-encoding</td></tr>
+<tr><td>Shared ownership / DAG</td><td>Supported via fractional path weights</td><td>Not supported — one path per node</td></tr>
+<tr><td>Node relocation cost</td><td>Update affected path rows and flags</td><td>Relabel every descendant pathstring</td></tr>
+</tbody>
+</table>
+</div>
 
 <h3 class="subsection-title" id="5.3.2">5.3.2 Limitations of Recursive Foreign Keys and SQL Hierarchical Queries</h3>
 <p>In standard transactional OLTP schema design, variable-depth hierarchies are typically modeled using a self-referencing recursive foreign key (e.g., an <code>Employee</code> table containing a <code>Manager_ID</code> column pointing back to <code>Employee_ID</code>).</p>

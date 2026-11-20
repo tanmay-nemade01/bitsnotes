@@ -363,6 +363,18 @@
   <p><strong>Q:</strong> In the formula, instead of remembering 0.691, can we remember ln 2? ln 2 is 0.693, not 0.691. <strong>A:</strong> Yes, that is also correct. The constant is ln 2 — about 0.693 — and the difference between 0.691 and 0.693 makes almost no difference in practice.</p>
 </div>
 
+<h3 id="14.1.10-deletion-support-counting-bloom-filters">14.1.10 Deletion Support: Counting Bloom Filters</h3>
+<p>Every filter built so far is insert-only: a bit is set to 1 and never cleared, which is why Section 14.1.1 lists "no removal" as a hard limit. A <em>counting Bloom filter</em> removes that limit by replacing each of the \(m\) single bits with a small counter. Insertion increments the \(k\) addressed counters, a membership test asks whether all \(k\) of them are non-zero, and deletion decrements the same \(k\) counters. The hash functions, the sizing rules and the false-positive analysis of Sections 14.1.5–14.1.7 carry over unchanged — only the width of a register changes.</p>
+<div class="key-concept">
+  <p><strong>Formal mechanism:</strong> Let \(c[j]\) be the counter at position \(j \in \{1, \dots, m\}\), initially \(0\). Insert \(x\): for each \(i \in \{1, \dots, k\}\), \(c[h_i(x)] \gets c[h_i(x)] + 1\). Delete \(x\): \(c[h_i(x)] \gets c[h_i(x)] - 1\) for each \(i\). Query \(x\): report "present" iff \(\min_{i} c[h_i(x)] > 0\). A counter records how many currently stored keys hash to it, so decrementing undoes exactly the contribution of a deleted key, and the one-sided error is preserved: a key that is present can still never be reported absent.</p>
+</div>
+<div class="warning-box">
+  <p><strong>Pitfall — overflow and space cost:</strong> Counters are narrow: the original Summary Cache design found that allocating 4 bits per count is ample, which already makes the structure about four times larger than the bit-level filter. If a counter saturates at its maximum, later decrements cannot undo its insertions, so a removed key keeps reporting "present"; deleting a key that was never inserted corrupts shared counters in the same way. The false-positive bound of Section 14.1.5 still applies, but the clean "no false negatives ever" property now depends on keeping the counters correct.</p>
+</div>
+<div class="example-box">
+  <p><strong>Worked trace (m = 8 positions, k = 2 hashes):</strong> Insert \(a\) with \((h_1(a), h_2(a)) = (2, 5)\) → \(c[2] = 1, c[5] = 1\). Insert \(b\) with \((h_1(b), h_2(b)) = (1, 5)\) → \(c[1] = 1, c[5] = 2\). Query \(a\): \(\min(c[2], c[5]) = \min(1, 2) = 1 > 0\) → present. Delete \(a\): \(c[2] = 0, c[5] = 1\). Re-query \(a\): \(\min(0, 1) = 0\) → absent, correctly. Re-query \(b\): \(\min(1, 1) = 1\) → present, showing that the shared counter \(c[5]\) still holds \(b\)'s contribution after \(a\) was removed. <strong>Sense-check:</strong> with a plain bit array, bit 5 would have stayed at 1 too, but there would have been no way to remove \(a\) at all.</p>
+</div>
+
 <h2 id="14.2-count-min-sketch">14.2 Count-Min Sketch</h2>
 <h3 id="14.2.1-the-sketch-table-and-the-insertion-rule">14.2.1 The Sketch Table and the Insertion Rule</h3>
 <div class="important-note">
@@ -535,6 +547,28 @@
 <div class="key-takeaway">
   <p><strong>Recap:</strong> the count-min sketch answers "how many times?" with a table of counters, increments at insert time, and reports the minimum of the key's cells at query time. It only ever overestimates, so the minimum is the safest estimate. The Bloom filter and the count-min sketch are the two windowed algorithms to master side by side — presence versus frequency.</p>
 </div>
+
+<h3 id="14.2.4-the-error-guarantee-and-update-models">14.2.4 The Error Guarantee and Update Models</h3>
+<p>Section 14.2.3 argued qualitatively that the minimum "resists inflation". The original Count-Min analysis makes that precise. Let \(a_i\) be the true frequency of key \(i\), let \(N = \|a\|_1 = \sum_j a_j\) be the total number of stream elements, let \(w\) be the number of counters per row (the lecture's "rows") and \(d\) the number of hash functions (the lecture's "columns"). For one hash function \(h_j\), a different key \(k \neq i\) collides with \(i\) with probability \(1/w\), so the expected collision noise in the cell \(h_j(i)\) is</p>
+<p>\[ \mathbb{E}[X_{i,j}] = \sum_{k \neq i} a_k \cdot \Pr[h_j(i) = h_j(k)] \le \frac{N}{w} \]</p>
+<p>By Markov's inequality, \(\Pr[X_{i,j} > \varepsilon N] \le \mathbb{E}[X_{i,j}]/(\varepsilon N) \le 1/(w\varepsilon)\). Setting \(w = \lceil b/\varepsilon \rceil\) makes this at most \(1/b\) in one row; with \(d\) independent rows the failure probability becomes \((1/b)^d\). Choosing \(d = \lceil \log_b(1/\delta) \rceil\) yields the guarantee:</p>
+<div class="key-concept">
+  <p><strong>Formal guarantee:</strong> For parameters \(\varepsilon, \delta \in (0,1)\) and any base \(b > 1\), set the width \(w = \lceil b/\varepsilon \rceil\) and the depth \(d = \lceil \log_b(1/\delta) \rceil\). Then for every key \(i\),</p>
+  <p>\[ a_i \;\le\; \hat{a}_i \;=\; \min_{j=1}^{d} \mathrm{count}[j, h_j(i)] \;<\; a_i + \varepsilon \|a\|_1 \]</p>
+  <p>with probability at least \(1 - \delta\). The lower bound is unconditional — estimates never underestimate — and the additive error is measured against the <em>stream total</em> \(N = \|a\|_1\), not against the key's own count. The textbook constants are the choice \(b = 2\) (\(w = 2/\varepsilon\), \(d = \log_2(1/\delta)\)); the original paper's default \(b = e\) (\(w = \lceil e/\varepsilon \rceil\), \(d = \lceil \ln(1/\delta) \rceil\)) minimises memory.</p>
+</div>
+<div class="example-box">
+  <p><strong>Worked sizing:</strong> Target an additive error of \(5\%\) of the stream total with \(99\%\) confidence: \(\varepsilon = 0.05, \delta = 0.01\). With \(b = 2\): \(w = 2/0.05 = 40\) counters per row and \(d = \log_2(1/0.01) \approx 6.64 \to 7\) rows — a \(40 \times 7 = 280\)-counter table. Per-row failure is at most \(1/2\), and \((1/2)^7 \approx 0.0078 \le 0.01\). Pushing to \(w = 128, d = 8\): \(\varepsilon \approx 2/128 = 1.56\%\) and \((1/2)^8 \approx 0.0039\), i.e. about \(1.5\%\) error at \(99.6\%\) confidence. <strong>Sense-check:</strong> doubling the width halves the additive error, while each extra row multiplies the failure probability by \(1/b\) — halving it again for \(b = 2\).</p>
+</div>
+<table>
+  <thead>
+    <tr><th>Update model</th><th>Allowed changes</th><th>Cumulative counts</th><th>Sketch support</th></tr>
+  </thead>
+  <tbody>
+    <tr><td>Cash Register</td><td>Insertions only (\(c_t \ge 0\))</td><td>Always non-negative</td><td>Standard Count-Min; this lecture's insert rule</td></tr>
+    <tr><td>Turnstile</td><td>Insertions and deletions (\(c_t\) may be negative)</td><td>May decrease; strict turnstile keeps final counts non-negative</td><td>Supported by Count-Min; not by the conservative-update variant</td></tr>
+  </tbody>
+</table>
 
 
 <h2 id="key-industry-applications">Key Industry Applications</h2>

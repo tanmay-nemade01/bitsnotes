@@ -323,6 +323,57 @@
 <p>The NAS stack is worth unpacking because each layer has a job. The <em>network file system</em> (NFS) is the file-level protocol: your machine asks, in file terms, "give me bytes 0–4095 of file <code>report.pdf</code>." The <em>remote procedure call</em> (RPC) wraps that request as a function call that travels to a remote machine. The <em>transport</em> layer (TCP or UDP) carries the RPC packet over the IP network. So the whole path is file request → RPC → TCP/UDP → network → remote storage server.</p>
 <p>Real-world: NAS appliances in offices and data centers follow exactly this shape — NFS over RPC over TCP/IP — which is why a file server can be shared by many client machines. When the storage must not share bandwidth with ordinary network traffic (for example, a database cluster), the same fiber channel technology reappears as a separate <em>storage area network</em> (SAN): a private switched network connecting servers to storage arrays, which is how large installations give many hosts fast access to the same disk pools.</p>
 
+<p><strong>Block-level networking: iSCSI.</strong> NFS is a <em>file-level</em> protocol — the client asks for bytes of a named file and the remote file system decides which blocks to touch. A complementary design keeps the SCSI command set but transports it over an IP network. <strong>iSCSI</strong> (Internet Small Computer Systems Interface) encapsulates SCSI commands and data inside TCP packets, so the initiator treats a remote logical unit exactly as if it were a directly attached disk: the host owns the file system and the block layout, and the array exposes only raw blocks. Because it rides on ordinary IP networks and Ethernet, iSCSI reaches storage beyond the distance limits of a SCSI cable or a fiber-channel fabric, paying for that reach with TCP/IP processing on every I/O and with bandwidth shared against ordinary network traffic.</p>
+<table>
+  <thead>
+    <tr>
+      <th>Approach</th>
+      <th>Protocol path</th>
+      <th>What the host sees</th>
+      <th>Strength</th>
+      <th>Limitation</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td>Host-attached (SCSI / SATA)</td>
+      <td>SCSI commands over a local bus</td>
+      <td>Local block device</td>
+      <td>Lowest latency; simplest path</td>
+      <td>Cable length and device-count limits; no sharing</td>
+    </tr>
+    <tr>
+      <td>NAS (NFS / CIFS)</td>
+      <td>File request → RPC → TCP/UDP → IP</td>
+      <td>Remote file and directory</td>
+      <td>Many clients share one pool by name</td>
+      <td>Server owns the file system; lower performance</td>
+    </tr>
+    <tr>
+      <td>FC SAN</td>
+      <td>SCSI over a switched Fibre Channel fabric</td>
+      <td>Remote logical unit (block)</td>
+      <td>High throughput on a private fabric</td>
+      <td>Dedicated, expensive infrastructure</td>
+    </tr>
+    <tr>
+      <td>iSCSI</td>
+      <td>SCSI → iSCSI PDU → TCP → IP → Ethernet</td>
+      <td>Remote logical unit (block)</td>
+      <td>Uses existing IP networks; long distance</td>
+      <td>TCP/IP overhead; competes with data traffic</td>
+    </tr>
+    <tr>
+      <td>InfiniBand</td>
+      <td>Native high-speed interconnect with hardware/OS support</td>
+      <td>Remote block or memory region</td>
+      <td>Very high throughput, low latency</td>
+      <td>Specialized hardware and software stack</td>
+    </tr>
+  </tbody>
+</table>
+<p>The axis that separates these choices is <em>file-level versus block-level</em>. NAS moves naming and allocation to the server, which makes sharing easy; iSCSI and FC SAN leave the file system on the host and move only blocks, which lets databases and clusters keep their own on-disk layout. Storage arrays may use either a switched fiber-channel fabric or the simpler IP-based path underneath, but the host-visible result is the same: a remote disk that behaves like a local one.</p>
+
 <h2 id="16.2-disk-scheduling">16.2 Disk Scheduling</h2>
 <h3 id="16.2.1-why-we-schedule">16.2.1 Why We Schedule</h3>
 <p>Disk scheduling is one of the important parts of the disk, and the reason is the aim stated above: fast access time. Requests for I/O — input or output — come from many sources: the operating system, system processes, and user processes. Each request arrives with a disk address in terms of cylinders, sector, and block (plus the direction of the transfer, the memory address to use, and the number of sectors to move). When more than one request comes at the same time, the system maintains a <em>queue</em>: if the disk is idle, the work is done immediately; otherwise the disk puts the processes in the queue, and according to the type of scheduling algorithm, the service is done. The algorithm decides the order in which queued requests reach the head — and because seek time depends on seek distance, a clever order means a much shorter total head journey.</p>
@@ -606,6 +657,17 @@
   <li><strong>Hot spare disk</strong>: a disk dedicated mainly to replacing the failed disk — it carries no information, so whenever a disk fails, another disk is used in its place and is rebuilt. The hot spare mainly decreases the <em>mean time to repair</em>. A hot spare is configured into the array and does nothing until a disk fails; then the array rebuilds the failed disk's data onto the spare automatically, restoring the RAID level without waiting for a human to install a replacement.</li>
 </ul>
 <p>Still, failures and corruptions will occur at times and cannot be prevented, so they must be detected and then corrected.</p>
+<div class="key-concept">
+  <p><strong>Stable storage — an atomic write built from unreliable blocks.</strong> RAID and checksums protect against a failed or corrupted disk, but a single write can still be interrupted. A disk write has three possible outcomes: <em>successful completion</em> (all data written correctly), <em>partial failure</em> (only some sectors received the new data, and the sector under the head may be corrupted), or <em>total failure</em> (the write never started, so the old values remain). Stable storage is the abstraction that hides all three: a read of a just-written block returns either entirely the old value or entirely the new one, never a mixture.</p>
+  <p><strong>Construction.</strong> The system keeps <em>two physical blocks for every logical block</em>, preferably on disks with independent failure modes, and updates them in a fixed order:</p>
+  <ol>
+    <li>Write the information to the first physical block.</li>
+    <li>Only after that write completes successfully, write the same information to the second physical block.</li>
+    <li>Declare the operation complete only after the second write succeeds.</li>
+  </ol>
+  <p><strong>Recovery rule.</strong> After a failure, examine every pair. If both copies agree and neither has a detectable error, do nothing. If one copy has a detectable error, overwrite it from the good copy. If neither has an error but the two differ, copy the <em>second</em> block into the <em>first</em> — the second was written last, so it is the value whose write actually reached completion. The result is that a stable write either succeeds completely or leaves no change at all, even if another failure strikes during recovery.</p>
+  <p>The scheme extends to any number of copies, but two are normally enough: data survives unless one failure destroys both copies together. Waiting for two synchronous disk writes is slow, which is why storage arrays place a battery-backed NVRAM write cache in front of the disks — once the data reaches non-volatile memory it is already part of stable storage, and the ordered writes to the two physical blocks can proceed in the background.</p>
+</div>
 <div class="important-note">
   <p><strong>Real-world (ZFS):</strong> some file systems add checksums for all the data and metadata. In the Solaris ZFS file system, checksums are placed in each and every block, and a block points to the checksum of the next block: the metadata block 1 has address 1 and address 2, where address 2 contains the checksum pointed to for the next block, and that block holds an address which points to the checksum of the data. Whether data is written or read, the checksum is checked first against what is already present; if the calculated checksum and the stored one are the same, there is no problem, and if they differ, the data has to be corrected. So ZFS detects and then corrects both the data and the metadata.</p>
   <p>The design point is <em>where</em> the checksum lives: each block's checksum is stored with the pointer to that block, not inside the block itself. If the block is corrupted, its own stored checksum would be corrupted too, but the parent's copy of the checksum survives — so ZFS can tell exactly which block went bad, and if a good copy exists (for example, from a mirror), it repairs the bad block automatically. RAID protects against whole-disk failure; ZFS's checksums extend protection to silent bit rot and corrupted metadata that RAID cannot even see.</p>

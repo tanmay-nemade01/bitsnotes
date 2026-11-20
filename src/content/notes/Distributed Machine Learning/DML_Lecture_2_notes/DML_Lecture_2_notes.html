@@ -459,6 +459,44 @@
 <p>A sharp question was asked: did we slice the model here, with a few layers as model zero and a few as model one. The answer was no. Here the model is replicated, not sliced. Data is split into shards. Slicing by layers belongs to model parallelism, not here. That replication-not-slicing warning is worth memorizing: whenever every worker holds a full copy of every layer, the split is on data; whenever each device holds only some layers, the split is on the model.</p>
 <p>Concrete split used in the demo: total 2000 images, worker zero took rows 0 to 999, worker one took rows 1000 to 1999. Both started from the same weight values. At each step worker zero computed gradients on its block and worker one computed gradients on its block, then the pair was averaged and the same averaged update was applied to both copies so they stayed synced.</p>
 <p>Think of two cooks with the same recipe working on different ingredient piles, then tasting together and agreeing on one shared tweak to the recipe before the next round. Without that shared tweak each cook would drift into a different dish. The shared tweak is the averaged gradient; the agreement step is the all-reduce.</p>
+
+<div class="important-note">
+  <p><strong>System Detail — what the all-reduce step actually executes:</strong> The merge \(G_{avg} = (G_{1}+G_{2})/2\) is a <em>collective</em>: every worker contributes a gradient list and every worker receives the same reduced list. In deep-learning frameworks this is exposed as the <code>all_reduce</code> primitive — it aggregates data among multiple processes and distributes the result back to them, and it is used to average dense tensors. Three common designs realize it.</p>
+  <p><strong>Protocol 1 — parameter server (centralized):</strong> one node collects, sums, and re-sends. With \(N\) workers and per-node link bandwidth normalized to \(1\), the server must fan its weights out to \(N\) workers at once, so its per-worker send bandwidth is only \(1/N\); during gradient push it must receive from \(N\) workers at once, so its per-worker receive bandwidth is again \(1/N\). The server is the bottleneck in both directions. Sharding the model across \(M \le N\) servers restores each worker's full link: it talks to all \(M\) servers in parallel at \(1/M\) each, for a total of \(M \times 1/M = 1\).</p>
+  <p><strong>Protocol 2 — ring all-reduce (decentralized):</strong> there is no dedicated server; the workers form a logical ring and the merge runs in two phases. In the reduce phase each GPU forwards its accumulated gradient to the next GPU for \(N\) transmissions total (GPU 1 sends \(g_1\); GPU 2 adds \(g_2\) and sends \(g_1+g_2\); GPU 3 adds \(g_3\) and sends \(g_1+g_2+g_3\); …). In the broadcast phase the fully reduced vector travels around the ring for \(N-1\) more transmissions. On a four-GPU ring that is \(4+3=7\) forwards of gradient data, with no single bottleneck node.</p>
+  <p><strong>Protocol 3 — tree all-reduce:</strong> each worker splits its gradient into \(N\) chunks, e.g. for four GPUs worker \(i\) holds \(a_i, b_i, c_i, d_i\). In phase one each GPU sends its non-local chunks to the peer that owns that chunk's reduction, so GPU 1 reduces \(A=a_1+a_2+a_3+a_4\), GPU 2 reduces \(B=b_1+\cdots+b_4\), and so on. In phase two each GPU broadcasts its one reduced chunk to the other three. Unlike ring, this uses cross links that cannot form a ring.</p>
+  <table>
+    <thead>
+      <tr>
+        <th>Property</th>
+        <th>Parameter server</th>
+        <th>Ring all-reduce</th>
+        <th>Tree all-reduce</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>Who aggregates</td>
+        <td>One (or \(M\)) dedicated servers</td>
+        <td>Distributed around the ring</td>
+        <td>Chunk owner per tree</td>
+      </tr>
+      <tr>
+        <td>Link usage</td>
+        <td>Server link saturated at \(1/N\) per worker</td>
+        <td>Only links that form a ring; cross links idle</td>
+        <td>Uses otherwise idle cross links</td>
+      </tr>
+      <tr>
+        <td>Typical transmission count</td>
+        <td>\(N\) pushes + \(N\) pulls</td>
+        <td>\(N + (N-1) = 2N-1\) forwards</td>
+        <td>\((N-1)\) chunk sends + \((N-1)\) broadcasts</td>
+      </tr>
+    </tbody>
+  </table>
+  <p><strong>Worked link comparison (four GPUs in one host):</strong> on an asymmetric DGX-style topology two concurrent rings can be formed, so the textbook's per-GPU round time scales as \(t_{ring} \propto g/(2\,BW_{gpu})\), with one scarce link still wasted. Packing three concurrent trees uses all links, giving \(t_{tree} \propto g/(3\,BW_{gpu})\) — a smaller denominator, hence faster synchronization. The lesson: the same \(G_{avg}\) can be computed by several collectives whose cost depends on topology, which is why framework libraries expose the algorithm as a tunable rather than a fixed step.</p>
+</div>
 <div class="warning-box">
   <p><strong>Scope:</strong> This pattern assumes workers start from identical weights, use the same model shape and optimizer settings, and can exchange gradients every step. It fits the 2000-row two-worker demo and multi-GPU training with fast links. It strains when links are slow (the merge dominates runtime), when shards differ wildly in size or class mix (a plain mean misleads), or when workers cannot share gradients at all.</p>
 </div>
@@ -638,6 +676,37 @@
 </div>
 <div class="warning-box">
   <p><strong>Scope:</strong> The cut assumes the model has a natural seam — here convolutions versus dense — and that the handoff tensor fits the link between devices. It fits large networks where one card cannot hold all weights and activations. It hurts when the handoff is huge or the link is slow, because every batch pays the transfer.</p>
+</div>
+
+<div class="important-note">
+  <p><strong>System Detail — activation recomputation (gradient checkpointing):</strong> Splitting stages lowers the <em>weight</em> footprint per device, but each stage still stores its intermediate activations for backward, and those feature maps can be orders of magnitude larger than the input image. When even a cut stage overflows device memory, the complementary lever is to trade compute for memory: keep only selected tensors from the forward pass, discard the rest, and recompute the discarded ones during backward from the saved stage input.</p>
+  <p><strong>Lifetime asymmetry:</strong> in an \(L\)-layer stack let \(A_i\) be the activation produced by layer \(i\). Backward needs \(A_L\) first and \(A_1\) last, yet forward creates \(A_1\) first and holds it longest. In a plain tape, peak activation memory is \(M_{naive} = \sum_{i=1}^{L} |A_i|\). Checkpointing a segment keeps its input \(X\) live and drops its internal activations; they are re-derived by re-running the same function just before their gradient is needed, so peak memory for that segment falls to roughly the largest single saved interval plus the boundary inputs — the lossless analogue of the size-weighted trade-offs seen for merges.</p>
+  <p><strong>Worked three-layer trace:</strong> forward produces \(A_1, A_2, A_3\) and the loss. Normally \(A_3\) is used immediately for \(G_3\) and freed, \(A_2\) next for \(G_2\), but \(A_1\) sits idle until the final \(G_1\). The recomputation schedule instead: (1) delete \(A_1\) right after \(A_2\) is produced; (2) while computing \(G_2\), re-run layer 1 on the stored batch to rebuild \(A_1\); (3) use the rebuilt \(A_1\) together with \(G_2\) to obtain \(G_1\). Applied to every segment, the gradients are numerically the same as plain backpropagation.</p>
+  <table>
+    <thead>
+      <tr>
+        <th>Policy</th>
+        <th>Activation memory</th>
+        <th>Forward compute per iteration</th>
+        <th>Gradient exactness</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>Keep all activations (plain tape)</td>
+        <td>Sum of all layer activations</td>
+        <td>\(1\times\)</td>
+        <td>Exact</td>
+      </tr>
+      <tr>
+        <td>Recompute each checkpointed segment</td>
+        <td>Boundary inputs + one live segment</td>
+        <td>Up to \(\approx 2\times\) for recomputed layers</td>
+        <td>Exact (same function re-run)</td>
+      </tr>
+    </tbody>
+  </table>
+  <p><strong>Practical contract and pitfall:</strong> frameworks expose this as <code>checkpoint(function, ...)</code> for an arbitrary segment and <code>checkpoint_sequential</code> with a chosen number of segments for a stack. The re-forward must reproduce the original exactly, so random operations such as dropout need their RNG state saved and restored; on multi-device runs the saved device state may not cover every device, in which case recomputed outputs can silently differ. In the pipeline of this section, checkpointing the convolution stage is the natural choice: only the small \(16 \times 7 \times 7\) handoff tensor and the stage input stay live, buying room on the device that holds the bulky filters.</p>
 </div>
 <h3 id="2.6.2-mathematical-formulation-for-staged-flow">2.6.2 Mathematical Formulation for Staged Flow</h3>
 <p>Let \(S_{1}\) be stage one with weights \(W_{S1}\). Let \(S_{2}\) be stage two with weights \(W_{S2}\). Let \(x_{b}\) be a batch of images. The staged forward pass is:</p>

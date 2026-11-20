@@ -468,6 +468,30 @@ def validate_input(features, expected_size):
   <p><strong>The 48-hour training job.</strong> Imagine launching an ML training job on an AWS EC2 instance that runs for 48 hours. You use <code>print</code> statements to track epochs, losses, and accuracy. Your SSH session disconnects — or the terminal buffer clears — and that information is gone forever. A properly configured logging system pipes all statements to a persistent file or observability platform like CloudWatch or Elasticsearch. The data survives session disconnects, terminal clears, and infrastructure hiccups. Anyone with access — team lead, project manager, business owner — can query those logs to understand why the model is not behaving as expected, what parameters it was using, and what errors occurred.</p>
 </div>
 <p>The lecture's practical rule of thumb: <code>print</code> for quick throwaway checks in a notebook or a 10-line script; logging the moment the code will outlive the current session. There is no size threshold that is exactly right for every team, but if the output matters after the process ends, it belongs in a log. Error messages benefit even more: the traceback itself can be recorded in the log, preserving the full call chain for later diagnosis.</p>
+
+<div class="key-concept">
+  <p><strong>Mechanism — recording the full traceback in a log.</strong> The standard-library way to realize the idea above is <code>logging.exception()</code>: it logs at <strong>ERROR</strong> level <em>and</em> attaches the currently active exception's full traceback to the record. The lower-level equivalent is <code>logging.error(..., exc_info=True)</code> — the <code>exc_info</code> keyword is what actually injects the exception information, and <code>logging.exception()</code> is the convenience wrapper that sets it for you. Both must be called from inside an <code>except</code> block, while the exception is still active.</p>
+  <pre><code>import logging
+
+def score_batch(features):
+    try:
+        return MODEL_WEIGHTS @ features
+    except ValueError:
+        logging.exception("Feature batch rejected")   # ERROR + full traceback
+        # equivalent: logging.error("Feature batch rejected", exc_info=True)
+        raise</code></pre>
+  <table>
+    <thead>
+      <tr><th>Call</th><th>Level</th><th>Traceback in log?</th><th>Use when</th></tr>
+    </thead>
+    <tbody>
+      <tr><td><code>logging.error("msg")</code></td><td>ERROR</td><td>No — message only</td><td>The message alone fully explains the failure.</td></tr>
+      <tr><td><code>logging.exception("msg")</code></td><td>ERROR</td><td>Yes, automatically</td><td>Inside <code>except</code>; you want the whole call chain preserved.</td></tr>
+      <tr><td><code>logging.error("msg", exc_info=True)</code></td><td>ERROR</td><td>Yes, explicit</td><td>You want exception details at a different severity or via a named logger.</td></tr>
+    </tbody>
+  </table>
+  <p>This is the logging-side counterpart of the bottom-to-top traceback reading in Section 11.1.6: the stored record contains the entire stack, so an engineer querying CloudWatch or Elasticsearch later can reconstruct the same call chain a debugger would have shown at the moment of failure.</p>
+</div>
 <p>Real-world: CloudWatch (AWS) and Elasticsearch are live examples of observability platforms where logs persist and can be searched. In production systems, log viewers and observability tooling pick up output from the Python logging module directly, which is why configuring it properly matters — the log is the system's memory.</p>
 <h3 id="11.1.9-standard-logging-levels">11.1.9 Standard Logging Levels</h3>
 <p>The lecture identifies the standard logging levels used in production systems:</p>
@@ -968,6 +992,25 @@ def predict(features: CustomerFeatures):
   <p>The <code>@app.get</code> and <code>@app.post</code> decorators register endpoints; the type annotations on <code>CustomerFeatures</code> drive both validation and the automatic <code>/docs</code> page. FastAPI is a <em>wrapper</em> around your code that makes your functions available to other people in a standardized format.</p>
 </div>
 <p>The professor's emphasis: develop the model separately, develop the API separately, then integrate them. Take care of the model in terms of stability and accuracy. Take care of the API in terms of stability and scalability. When you integrate them, you get the right GET/POST responses. The same discipline applies to the logic layer: keep the code that does the calculation separate from the API code, so you can swap frameworks or test logic without touching endpoints.</p>
+
+<div class="important-note">
+  <p><strong>Serving and documenting the inference service.</strong> Defining endpoints is only half the story — a FastAPI app is an <em>ASGI</em> application and needs an ASGI web server to become reachable. The companion text uses <strong>Uvicorn</strong>; for a module <code>churn_api.py</code> whose app object is <code>app</code>, the workflow is:</p>
+  <pre><code>$ pip install 'uvicorn[standard]'
+$ uvicorn churn_api:app
+INFO:     Application startup complete.
+INFO:     Uvicorn running on 127.0.0.1:8000 (Press CTRL+C to quit)</code></pre>
+  <p>The <code>module:object</code> syntax is the ASGI convention: <code>churn_api</code> is the Python module, <code>app</code> is the FastAPI instance inside it. Ctrl+C shuts the server down. Once it is running, the very same type hints and Pydantic models that drive validation also generate two additional artifacts:</p>
+  <table>
+    <thead>
+      <tr><th>Artifact</th><th>Where it appears</th><th>What it provides</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>OpenAPI schema</td><td><code>/openapi.json</code></td><td>A machine-readable definition of every path, parameter, and response model, derived from the code.</td></tr>
+      <tr><td>Swagger UI</td><td><code>/docs</code></td><td>Interactive documentation rendered from that schema — consumers can call the live endpoint from the browser.</td></tr>
+    </tbody>
+  </table>
+  <p>Because the schema is generated from the implementation rather than maintained separately, the documentation cannot silently drift away from the code. It can be enriched with decorator metadata — <code>@app.post("/predict", summary="Score a customer", description="Age, monthly bill, tenure in months")</code> — which FastAPI folds straight into the generated docs. For an ML team the practical consequence is that the endpoint contract is visible to consumers without a separate specification document, and editing a Pydantic field updates validation, the schema, and the docs in one place.</p>
+</div>
 <h3 id="11.5.4-validation-with-pydantic">11.5.4 Validation with Pydantic</h3>
 <p>Pydantic provides automated input validation that stops invalid data before it reaches the model. The professor's example: ensure that the <code>age</code> field is always an integer between 0 and 120, preventing runtime crashes from nonsensical inputs like negative ages or ages over 120.</p>
 <div class="example-box">

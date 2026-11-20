@@ -216,6 +216,11 @@
 </div>
 <p>Here the split library is the distributed design. A <em>distributed system</em> (a set of independent machines, each with its own processor and its own memory), such as three GPU workers each with 16 GB, holds a subset of the model and a subset of the data on each machine. Each machine processes its part and passes results to the next machine or to a merger. A <em>parallel system</em> with shared memory is different. There all workers read and write the same memory store. They cannot each hold a large private split in the same way because memory stays common, so the design must work around that shared store with locks and shared buffers.</p>
 <p>In this subject every machine has its own processor and memory. The task is to learn how to assign model parts and data parts, which algorithms to use for training, and how to link stages into a working pipeline. That assignment depends on three resource numbers: how much memory each machine has, how large the model is in parameters, and how large the data is in bytes and rows.</p>
+<div class="important-note">
+  <p><strong>System detail — activation recomputation (gradient checkpointing):</strong> Splitting is not the only lever against a memory limit. During forward propagation a network keeps intermediate activations because backward propagation needs them, and for a deep network those feature maps can be larger than the input itself. Recomputation deletes an activation soon after it is produced and rebuilds it from the saved input at the moment backward propagation needs it again — trading extra compute for lower peak memory without changing the numerical result.</p>
+  <p><strong>Three-layer trace:</strong> in the chain \(a_{1} = f_{1}(x)\), \(a_{2} = f_{2}(a_{1})\), \(a_{3} = f_{3}(a_{2})\), gradients are consumed in reverse order. \(a_{3}\) is needed almost immediately by the last backward step, but \(a_{1}\) would otherwise occupy memory until the very end. Delete \(a_{1}\) right after computing \(a_{2}\); while the gradient for layer two is being formed, re-run \(f_{1}(x)\) to rebuild \(a_{1}\), then use that rebuilt value with the incoming gradient to finish layer one. The same trick applies to \(a_{2}\). Peak activation memory falls from holding every layer's output at once to holding only the current reconstruction plus the layer boundaries.</p>
+  <p><strong>Why it matters here:</strong> if a model still does not fit after a layer or data split, recomputation is the complementary technique — it shrinks the activation part of the footprint rather than the parameter part, so it stacks with the partitioning schemes in this lecture. The price is roughly one extra forward pass over the recomputed layers per mini-batch, which is usually a good trade for networks hundreds of layers deep.</p>
+</div>
 <h3 id="1.1.2-splitting-patterns-and-resource-choices">1.1.2 Splitting Patterns and Resource Choices</h3>
 <div class="key-concept">
   <p>A dataset union split into disjoint row partitions is written as a set union. Let \(D\) be the full dataset, and let \(D_{1}, D_{2}, D_{3}\) be disjoint partitions held on different machines:</p>
@@ -284,6 +289,20 @@
 <div class="warning-box">
   <p><strong>Scope:</strong> Layer-wise splitting fits when the model has enough layers to spread and each layer block fits its card. <strong>Assumption:</strong> Links between cards are fast enough for feature maps and gradients. If the hand-off is slow or a middle machine stalls, the whole chain waits, so vanilla layer splits reach only about \(1/N\) use per card with \(N\) cards unless pipelining is added.</p>
 </div>
+<div class="example-box">
+  <p><strong>Worked derivation — where the \(1/N\) figure comes from.</strong> Take the three-layer chain \(F_{1} \rightarrow F_{2} \rightarrow F_{3}\) on three GPUs, with one time slot per forward or backward step. A full iteration runs forward order \(F_{1}, F_{2}, F_{3}\) and then backward order \(B_{3}, B_{2}, B_{1}\), so it lasts \(2N = 6\) slots. GPU \(k\) is active only in its own \(F_{k}\) and \(B_{k}\):</p>
+  <table>
+    <thead><tr><th>GPU</th><th>Active slots</th><th>Idle slots</th><th>Utilization</th></tr></thead>
+    <tbody>
+      <tr><td>GPU 1</td><td>\(F_{1}, B_{1}\)</td><td>\(F_{2}, F_{3}, B_{3}, B_{2}\)</td><td>\(2/6 = 1/3\)</td></tr>
+      <tr><td>GPU 2</td><td>\(F_{2}, B_{2}\)</td><td>\(F_{1}, F_{3}, B_{3}, B_{1}\)</td><td>\(2/6 = 1/3\)</td></tr>
+      <tr><td>GPU 3</td><td>\(F_{3}, B_{3}\)</td><td>\(F_{1}, F_{2}, B_{2}, B_{1}\)</td><td>\(2/6 = 1/3\)</td></tr>
+    </tbody>
+  </table>
+  <p>Generalize to \(N\) GPUs: forward needs \(N\) slots and backward needs \(N\), so \(t_{total} = 2N\). Each GPU works \(t_{work} = 2\) slots and idles \(t_{idle} = (N-1) + (N-1) = 2(N-1)\). Therefore:</p>
+  <p>\[ u = \frac{t_{work}}{t_{total}} = \frac{2}{2N} = \frac{1}{N} \]</p>
+  <p><strong>Answer:</strong> with \(N=3\) each card works one third of the time; with \(N=10\) it works \(2\) of \(20\) slots (10 percent), and with \(N=100\) just 1 percent. Sequential layer dependency — not slow hardware — is the cause, which is exactly what the pipeline of Section 1.4 is designed to repair.</p>
+</div>
 <p>Sketch the visual. The horizontal axis is depth through the network from input to output. The vertical axis is activation size. The curve starts tall and thin at raw pixels, gets shorter and deeper through convolutions, drops sharply at pooling, then collapses to a flat vector at flatten before rising to 10 bars at the softmax. The one-sentence takeaway: space shrinks while meaning builds.</p>
 <div class="warning-box">
   <p>Two traps show up here. First, learners think splitting changes what the network learns. It does not: the same \(W_{1}\) and \(W_{2}\) learn the same maps, only the street address of each weight changes. Second, learners expect the final decision layer to split for free. In this chain the decision block stays in one place, so the head is still a single point of load while feature extraction spreads.</p>
@@ -319,6 +338,14 @@ model.evaluate(x_test, y_test)</code></pre>
 <p>The key point is that after linking, training looks like normal training. Input flows forward through both devices. Error flows back through both devices. From the user side there is one input and one output. Internally the framework tracks ops across scopes so gradients reach both \(W_{1}\) and \(W_{2}\).</p>
 <div class="key-takeaway">
   <p><strong>Recap:</strong> A split CNN is one logical model with weights housed on two cards, joined by a feature-map hand-off. <strong>Bridge:</strong> Data parallelism takes the opposite route: it keeps full model copies everywhere and instead splits the data, with replicas that train in parallel and sync.</p>
+</div>
+<h3 id="1.2.3-intra-layer-tensor-model-parallelism" class="subsection-title">1.2.3 Intra-Layer (Tensor) Model Parallelism</h3>
+<div class="key-concept">
+  <p><strong>Formal definition:</strong> The layer split above assigns whole layers to devices. <em>Intra-layer</em> (or tensor) model parallelism instead splits a single layer's weight matrix across devices so that one layer's matrix multiply runs in parallel. Let \(X \in \mathbb{R}^{b \times d}\) be a batch of \(b\) inputs with \(d\) features, let \(A \in \mathbb{R}^{d \times m}\) be a layer's weight matrix with \(m\) neurons stored as columns, and partition \(A\) column-wise into \(A_{1} \in \mathbb{R}^{d \times m_{1}}\) and \(A_{2} \in \mathbb{R}^{d \times m_{2}}\) with \(m = m_{1} + m_{2}\). The forward pass of this one layer becomes:</p>
+  <p>\[ y = X A = [\,X A_{1},\; X A_{2}\,] = [\,y_{1},\; y_{2}\,] \]</p>
+  <p>Each device multiplies \(X\) by its own block of columns and stores only those neurons; stacking the two result blocks reconstructs the same \(y \in \mathbb{R}^{b \times m}\) a single device would have produced. Because the cut sits <em>inside</em> one layer, it complements the pipeline of Section 1.4: pipeline parallelism spreads different layers across devices, whereas intra-layer parallelism shrinks each individual matrix multiply. It is the mechanism used when a single weight matrix is itself too large for one card.</p>
+  <p><strong>Worked trace:</strong> take \(b=4\), \(d=4\), \(m=4\), so \(A\) has four neuron columns. Split \(A = [A_{01}\; A_{23}]\) with \(A_{01}, A_{23} \in \mathbb{R}^{4 \times 2}\). Device one computes \(y_{01} = X A_{01} \in \mathbb{R}^{4 \times 2}\) and device two computes \(y_{23} = X A_{23} \in \mathbb{R}^{4 \times 2}\). Stacking gives \(y = [y_{01}, y_{23}] \in \mathbb{R}^{4 \times 4}\), matching the unsplit result. Each device holds \(2\) of the \(4\) neuron columns, halving this layer's per-device weight memory; the extra cost is forwarding or gathering the two output blocks before the next layer.</p>
+  <p><strong>Shape check:</strong> column splitting requires the shared inner dimension \(d\) — the columns of \(X\) must equal the rows of every \(A_{j}\) — and yields output width \(m = m_{1} + m_{2}\). A row-wise alternative splits \(X\) instead and must sum the partial outputs before the next layer consumes them.</p>
 </div>
 
 <h2 id="1.3-data-parallelism-with-synchronous-replicas">1.3 Data Parallelism with Synchronous Replicas</h2>

@@ -345,6 +345,39 @@
 </div>
 <p>A transaction is a bundle, the bundle is all-or-nothing, and the rule covers crashes, mistakes, hostile input, and concurrent users alike. The next section opens the hood and shows the machinery, the log file, that makes the promise hold.</p>
 
+<h3 id="39.1.6-deadlocks-when-two-transactions-block-each-other" class="subsection-title">39.1.6 Deadlocks: When Two Transactions Block Each Other</h3>
+<div class="warning-box">
+  <p><strong>Pitfall — Deadlock:</strong> The lost-update case in 39.1.5 is silent because neither writer waits. A <em>deadlock</em> is the opposite outcome: two transactions each hold a row lock the other needs, so both wait forever unless the server intervenes. PostgreSQL detects the cycle automatically and aborts one of the two transactions so the other can finish; which one is aborted is difficult to predict and should not be relied upon.</p>
+  <p><strong>Worked trace:</strong> Transaction A runs <code>UPDATE accounts SET balance = balance + 100 WHERE acctnum = 11111</code> and holds the row lock on 11111. Transaction B runs <code>UPDATE accounts SET balance = balance + 100 WHERE acctnum = 22222</code>, holds 22222, then requests 11111 and blocks on A. A now requests 22222 and blocks on B: A waits for B and B waits for A, a cycle. Detection aborts one transaction, the survivor proceeds, and the aborted one must be retried from its first statement.</p>
+  <p><strong>Defense:</strong> Have every application acquire locks on multiple rows in the same order (for example always the lower account number first), and take the most restrictive mode needed at the first acquisition. If a consistent order is impractical, retry transactions that abort on deadlock; MySQL raises error 1213, "Deadlock found when trying to get lock; try restarting transaction", for the same condition. Snowflake picks the session with the most recent statement as victim and its <code>lock_timeout</code> session parameter bounds how long a blocked waiter waits before failing.</p>
+</div>
+<table>
+  <thead>
+    <tr>
+      <th>Engine</th>
+      <th>Deadlock resolution</th>
+      <th>Lock scope that can cycle</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td>PostgreSQL</td>
+      <td>Automatic detection; one transaction aborted, victim unpredictable</td>
+      <td>Row-level locks and explicit table locks</td>
+    </tr>
+    <tr>
+      <td>MySQL / InnoDB</td>
+      <td>Automatic detection; error 1213 to the victim, which should retry</td>
+      <td>Row-level locks with versioning</td>
+    </tr>
+    <tr>
+      <td>Snowflake</td>
+      <td>Most-recent-statement session chosen as victim; <code>lock_timeout</code> bounds the wait</td>
+      <td>Micro-partition scope (50 to 500 MB uncompressed)</td>
+    </tr>
+  </tbody>
+</table>
+
 <h2 id="39.2-how-sql-protects-the-database-during-a-transaction">39.2 How SQL Protects the Database During a Transaction</h2>
 <div class="important-note">
   <p>How does the database "remember" work it decided to forget? It keeps a private diary of every step, then reads that diary backward. That diary is the log file, and it is the whole reason ROLLBACK can be exact.</p>
@@ -402,6 +435,53 @@
 <p><em>Isolation</em> (the rule that each concurrent transaction runs in its own private world) answers the multi-user hazard from 39.1.5. A busy system runs hundreds of transactions in parallel: one user inserts a record, a second user deletes a record, a third user reads a different record. Three separate transactions, all alive at once. In an ACID database these parallel transactions must be totally cut off from one another, each running in its own domain.</p>
 <p>Total isolation is achieved by serialization: transactions are ordered so that each one runs as if the others were not there, even while they overlap in time. No parallel transaction leaks into another. A handy mental picture offered in the session is the Unix background process: each daemon runs its own job separately, unconcerned with what its companion daemons are doing. Transactions behave the same way, separate, self-contained, mutually unaware, and serialization is the mechanism that keeps them so.</p>
 <p>Practical systems tune how strict that separation is. PostgreSQL defaults to read committed, where each statement sees only committed data, and offers repeatable read and serializable for work that must hold one snapshot, such as online backups with pg_dump. Snowflake pins its engine at read committed: a statement never sees uncommitted changes from another session, though statements inside one transaction do see that transaction's own earlier writes. MySQL's InnoDB adds row-level locking with versioning so readers get a consistent view without blocking writers. The session's core claim stays fixed across all three: one transaction never disturbs another before <code>COMMIT</code>.</p>
+<div class="key-concept">
+  <p><strong>Formal Definition:</strong> The SQL standard defines four isolation levels. The strictest, <em>serializable</em>, is defined by the guarantee that any concurrent execution of a set of serializable transactions produces the same effect as running them one at a time in some order. The other three are defined by which interaction <em>phenomena</em> they must prohibit: a <em>dirty read</em> sees data written by a concurrent uncommitted transaction; a <em>nonrepeatable read</em> re-reads a row and finds it changed by a transaction that committed since the first read; a <em>phantom read</em> re-runs a search and finds new qualifying rows committed by another transaction; a <em>serialization anomaly</em> is a committed result inconsistent with every possible one-at-a-time ordering.</p>
+</div>
+<table>
+  <thead>
+    <tr>
+      <th>Isolation level</th>
+      <th>Dirty read</th>
+      <th>Nonrepeatable read</th>
+      <th>Phantom read</th>
+      <th>Serialization anomaly</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td>Read uncommitted</td>
+      <td>Allowed by standard; not in PostgreSQL</td>
+      <td>Possible</td>
+      <td>Possible</td>
+      <td>Possible</td>
+    </tr>
+    <tr>
+      <td>Read committed (PostgreSQL default)</td>
+      <td>Not possible</td>
+      <td>Possible</td>
+      <td>Possible</td>
+      <td>Possible</td>
+    </tr>
+    <tr>
+      <td>Repeatable read</td>
+      <td>Not possible</td>
+      <td>Not possible</td>
+      <td>Allowed by standard; not in PostgreSQL</td>
+      <td>Possible</td>
+    </tr>
+    <tr>
+      <td>Serializable</td>
+      <td>Not possible</td>
+      <td>Not possible</td>
+      <td>Not possible</td>
+      <td>Not possible</td>
+    </tr>
+  </tbody>
+</table>
+<div class="important-note">
+  <p><strong>PostgreSQL realization:</strong> A request for read uncommitted is mapped internally to read committed, so only three distinct levels exist. PostgreSQL's repeatable read also blocks phantoms, a stronger guarantee than the standard requires. A level is chosen per transaction with <code>SET TRANSACTION ISOLATION LEVEL</code>. At repeatable read or serializable, a transaction that tries to update a row changed by a concurrent committed transaction is rolled back with <code>ERROR: could not serialize access due to concurrent update</code>; at serializable, the read/write-dependency check returns SQLSTATE <code>40001</code>. Applications must abort and retry the whole transaction on these failures, while read-only transactions never hit serialization conflicts at repeatable read.</p>
+</div>
 <h3 id="39.3.5-durability-after-commit-or-rollback-the-state-holds">39.3.5 Durability: After COMMIT or ROLLBACK, the State Holds</h3>
 <p><em>Durability</em> (the promise that the settled state survives what comes next) begins where the transaction ends. After a transaction has committed, or after it has rolled back to its original state, the database must be countable-on: it sits in its proper state and it holds up-to-date data, the latest and greatest version of the truth.</p>
 <p>The guarantee reaches past crashes. Even if the system suffers a hard crash, a software outage, or an accidental change after <code>COMMIT</code> but before the data reaches disk, a well-designed durable system still restores the proper state on recovery. During restart the server rolls back every incomplete transaction it finds and replays every committed one from the log, so committed work is never lost and uncommitted work never leaks in. Commit strategy, rollback strategy, and storage design all feed into this, but the outward promise is single: once the transaction settles, by commit or by rollback, the database stays in that settled, current state no matter what failure follows. Atomicity, consistency, and isolation decide the correct outcome; durability makes the outcome stick.</p>

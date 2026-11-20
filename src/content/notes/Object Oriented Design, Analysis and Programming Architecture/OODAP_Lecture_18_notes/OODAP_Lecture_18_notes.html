@@ -1008,6 +1008,28 @@ s2.equals(s3)   // true  — equals() walks character by character</code></pre>
   <p><strong>Additional check after immutability step (18.4.3):</strong> after <code>s1 = s1 + "J2EE"</code> (see below), <code>System.out.println(s1 == s2);</code> → <code>false</code> (no longer same object), but <code>s1.equals("JavaJ2EE")</code> → <code>true</code> and <code>s2.equals("Java")</code> → <code>true</code> independently.</p>
   <p><strong>Sense-check:</strong> <code>==</code> can be true only when both references were derived from the same literal without <code>new</code> intervening, and without a reassignment that moved one reference to a new value. Content equality is always <code>equals()</code>.</p>
 </div>
+<div class="example-box">
+  <p><strong>Extension — lexicographic ordering with <code>compareTo()</code>, the ordering counterpart of <code>equals()</code>.</strong> Section 18.4.2 answers "are two strings equal?" with <code>equals()</code>; a second, distinct question is "which string comes first?" — answered by <code>compareTo()</code>, declared by <code>Comparable&lt;String&gt;</code> (which <code>String</code> implements) and used as the natural order when <code>Arrays.sort</code> is called on a <code>String[]</code>. Let <code>k</code> be the smallest index at which <code>s</code> and <code>t</code> differ:</p>
+  <p>\[ s.\text{compareTo}(t) = \begin{cases} s.\text{charAt}(k) - t.\text{charAt}(k) & \text{if such a } k \text{ exists} \\ s.\text{length}() - t.\text{length}() & \text{otherwise — one string is a prefix} \end{cases} \]</p>
+  <p>Only the <em>sign</em> matters: negative means <code>s</code> precedes <code>t</code>, zero means equal, positive means <code>s</code> follows <code>t</code>. The API contract states that <code>compareTo() == 0</code> holds exactly when <code>equals()</code> is true — so ordering and equality agree, but they answer different questions.</p>
+  <pre><code>String[] a = {"Java", "J2EE", "JavaJ2EE", "Java"};
+Arrays.sort(a);                          // natural order = compareTo order
+// a = [J2EE, Java, Java, JavaJ2EE]
+int r = "Java".compareTo("JavaJ2EE");    // -4  = 4 - 8  (prefix case)
+int c = "Java".compareTo("J2EE");        // 47  = 'a'(97) - '2'(50)</code></pre>
+  <table>
+    <thead>
+      <tr><th>Pair</th><th>First differing index <code>k</code></th><th>Computation</th><th>Result / meaning</th></tr>
+    </thead>
+    <tbody>
+      <tr><td><code>"Java"</code> vs <code>"JavaJ2EE"</code></td><td>none (prefix)</td><td>\(4 - 8\)</td><td>\(-4\) → shorter string precedes</td></tr>
+      <tr><td><code>"Java"</code> vs <code>"J2EE"</code></td><td>\(1\): <code>'a'</code> vs <code>'2'</code></td><td>\(97 - 50\)</td><td>\(+47\) → <code>"Java"</code> follows</td></tr>
+      <tr><td><code>"Java"</code> vs <code>"Java"</code></td><td>none, equal length</td><td>\(0\)</td><td>\(0\) ↔ <code>equals()</code> is true</td></tr>
+    </tbody>
+  </table>
+  <p><strong>Sense-check:</strong> sorting places <code>"J2EE"</code> before both <code>"Java"</code> entries because <code>'2'</code> (50) &lt; <code>'a'</code> (97), and <code>"JavaJ2EE"</code> last because it extends <code>"Java"</code>. Use <code>equals()</code> for content equality, <code>compareTo()</code> only for ordering; for locale-sensitive ordering prefer <code>Collator</code>, since <code>compareTo</code> compares raw Unicode values and ignores locale.</p>
+</div>
+
 <h3 id="18.4.3-immutability-in-action-and-the-stack-heap-mapping">18.4.3 Immutability in Action and the Stack-Heap Mapping</h3>
 <div class="key-concept">
   <p><strong>Formalize — immutability as assignment, not mutation.</strong></p>
@@ -1505,6 +1527,24 @@ System.out.println(sb.toString()); // Hello World! This is a builder test.</code
 </div>
 <h3 id="18.7.2-relationship-to-string-manipulation-methods">18.7.2 Relationship to String Manipulation Methods</h3>
 <p>Many string manipulation concerns — <code>String</code> methods, tokenizer behaviour, builder/buffer operations — share similar names (<code>append</code>, <code>insert</code>, <code>substring</code>, <code>indexOf</code>) and overlapping behaviours. The session defers exhaustive enumeration to the slides and advises self-practice, because the important conceptual takeaway is already covered: immutability of <code>String</code> versus mutability of <code>StringBuffer</code> and <code>StringBuilder</code>, and the synchronization guarantee that separates the latter two. The remaining methods are used exactly as illustrated in the textbook's catalog: <code>append(...)</code> adds at the tail, <code>insert(pos, ...)</code> splices at <code>pos</code>, <code>delete(start, end)</code> removes, <code>replace</code>, <code>reverse</code>, <code>charAt</code>/<code>setCharAt</code>, <code>getChars</code>, and <code>trimToSize</code>/<code>ensureCapacity</code> manage capacity — all behaving identically between <code>StringBuilder</code> and <code>StringBuffer</code> except the monitor around them.</p>
+
+<div class="example-box">
+  <p><strong>Worked trace — the in-place mutators catalogued above.</strong> The textbook catalog (T6 Chapter 17) exercises each mutation method on a fresh buffer. Three rules govern them all: (1) every mutator returns <code>this</code>, so calls chain; (2) two-index methods use the same half-open <code>[start, end)</code> window as <code>Arrays.sort</code>/<code>fill</code> in 18.2 — <code>end</code> itself is never touched; (3) <code>setLength</code> truncates the tail when shrinking and pads with <code>'\u0000'</code> when growing. <code>StringBuilder</code> exposes the identical API; only the <code>synchronized</code> monitor differs.</p>
+  <table>
+    <thead>
+      <tr><th>Call (on a fresh buffer)</th><th>Before</th><th>After</th><th>Contract detail</th></tr>
+    </thead>
+    <tbody>
+      <tr><td><code>setCharAt(1, 'i')</code> then <code>setLength(2)</code></td><td><code>"Hello"</code></td><td><code>"Hillo"</code> → <code>"Hi"</code></td><td>index overwrite; shrinking drops the tail</td></tr>
+      <tr><td><code>insert(2, "like ")</code></td><td><code>"I Java!"</code></td><td><code>"I like Java!"</code></td><td>inserts at offset 2, shifting the suffix right</td></tr>
+      <tr><td><code>delete(4, 7)</code> then <code>deleteCharAt(0)</code></td><td><code>"This is a test."</code></td><td><code>"This a test."</code> → <code>"his a test."</code></td><td>removes <code>[4,7)</code> = <code>" is"</code>; <code>end</code> exclusive</td></tr>
+      <tr><td><code>replace(5, 7, "was")</code></td><td><code>"This is a test."</code></td><td><code>"This was a test."</code></td><td>splice <code>[5,7)</code> = <code>"is"</code> with <code>"was"</code></td></tr>
+      <tr><td><code>reverse()</code></td><td><code>"abcdef"</code></td><td><code>"fedcba"</code></td><td>in-place character reversal</td></tr>
+      <tr><td><code>append("a = ").append(42).append("!")</code></td><td><code>new StringBuffer(40)</code></td><td><code>"a = 42!"</code></td><td>chaining via returned <code>this</code>; <code>int</code> converted by <code>String.valueOf</code></td></tr>
+    </tbody>
+  </table>
+  <p><strong>Sense-check:</strong> <code>delete</code>, <code>replace</code> and <code>getChars</code> all stop at <code>end - 1</code>, exactly the half-open convention of 18.2, while <code>insert</code> uses an offset (a position, not a window). Growing a buffer past its capacity still follows <code>new = old×2+2</code> (18.5.2) — mutation changes the content, capacity growth is a separate mechanism.</p>
+</div>
 <div class="warning-box">
   <p><strong>Assumptions & Scope — when each builder/buffer/string wins.</strong></p>
   <p><em>Applies/choose when:</em></p>

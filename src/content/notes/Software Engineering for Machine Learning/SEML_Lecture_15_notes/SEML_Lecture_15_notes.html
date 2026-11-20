@@ -881,6 +881,48 @@ flowchart LR
     <li><strong>Forgetting row-level provenance for edits.</strong> File-level versioning tells you the dataset changed; row-level provenance tells you <em>which customer's</em> record changed and by whom — critical for GDPR-style deletion and bias audits.</li>
   </ul>
 </div>
+
+<div class="key-concept">
+  <p><strong>How provenance is actually captured — four strategies.</strong> The provenance-versus-lineage distinction says <em>what</em> to track; it does not say <em>how</em>. The textbook groups provenance-tracking mechanisms by how much of the work is manual versus automatic, which is the practical choice an engineer faces when building the infrastructure behind an audit trail.</p>
+  <table>
+    <thead>
+      <tr>
+        <th>Strategy</th>
+        <th>Mechanism</th>
+        <th>What it captures</th>
+        <th>Limitation</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>Manual documentation</td>
+        <td>Text or diagrams describing source files, target files, and the overall data flow</td>
+        <td>A high-level description of the pipeline</td>
+        <td>Often stale, and does not record which data or code version produced a given file</td>
+      </tr>
+      <tr>
+        <td>Custom metadata in pipeline code</td>
+        <td>Instrument every transform to log what data is read, which code version runs, and what is written — exact paths, versions, or file hashes</td>
+        <td>Per-transform provenance; experiment trackers can collect it through APIs</td>
+        <td>Needs discipline — easy to forget instrumentation or emit incomplete records</td>
+      </tr>
+      <tr>
+        <td>Provenance-aware pipeline framework</td>
+        <td>Route all data access through a framework (DVC, Pachyderm, Flyte) that versions data and orchestrates declared input/output stages</td>
+        <td>Automatic provenance for every stage and intermediate artifact, without extra developer steps</td>
+        <td>Developers must adopt the framework's structure and execution front end</td>
+      </tr>
+      <tr>
+        <td>Integrated platform / transparent tracking</td>
+        <td>Keep all data and code on one platform; harvest logs of executed processes and file access after the fact</td>
+        <td>Detailed provenance with no convention imposed on developers</td>
+        <td>Requires committing to a single uniform platform for all workflows</td>
+      </tr>
+    </tbody>
+  </table>
+  <p>The middle two rows are where standardization matters. <strong>OpenLineage</strong> defines an open specification for lineage metadata with a generic model of <em>dataset</em>, <em>job</em>, and <em>run</em> entities, extended by user-defined <em>facets</em>; <strong>Marquez</strong> is its reference implementation for collecting and visualizing that metadata. That gives the "custom metadata" row a vendor-neutral format instead of a one-off schema, so lineage can be aggregated across schedulers and processing frameworks rather than re-instrumented per project.</p>
+</div>
+
 <p>#### Reproducibility — Can We Recreate the Same Experiment and Get Consistent Results</p>
 <div class="key-concept">
   <p><strong>Reproducibility defined.</strong> <em>Reproducibility</em> — can we recreate an ML experiment with the <strong>same code, same data, same configuration, same dependencies, and same environment</strong> and achieve consistent results? Pipeline versioning is the mechanism: with the same data source version, same feature-engineering code version, same configuration, same training dataset, and same library pins, the same outcome should be reproducible even if we run the pipeline 100 times.</p>
@@ -889,6 +931,18 @@ flowchart LR
   <p><strong>Reproducibility versus replicability (exam-useful distinction):</strong> <em>Replicability</em> (exact bit-for-bit identical results from the same experiment) is a stricter subset of <em>reproducibility</em> (comparable results under minor variations, such as the same method on fresh data). Determinism of data transforms and model inference helps replicability; controlling library versions, data versions, and seeds helps reproducibility. The textbook notes that strict bit-for-bit replicability of models is rarely the goal in production — some nondeterminism in training is accepted and versioned.</p>
 </div>
 <p><em>Visual — Reproducibility ladder:</em> Imagine a ladder with rungs: documented manual steps → automated pipeline → versioned code + data → pinned dependencies → fixed seeds + deterministic ops. Each rung reduces nondeterminism. The top rung gives bit-for-bit replicability but is the most expensive. Takeaway: climb as high as your audit and debugging needs require, but do not pay for a higher rung than you need.</p>
+<div class="example-box">
+  <p><strong>Determinism as a test — reproducible builds applied to ML pipelines.</strong> The abstract claim "the pipeline is reproducible" becomes checkable: execute the same pipeline repeatedly and on different machines, then compare the intermediate data files and final model artifacts <em>bit-for-bit</em>. In software engineering this practice is a <strong>reproducible build</strong> — given the same source code, build environment, and build instructions, any party can recreate bit-by-bit identical copies of all specified artifacts, with identity verified by comparing cryptographic hashes rather than eyeballing output.</p>
+  <ol>
+    <li>Pin the inputs: source revision, dependency versions, build flags, and the environment attributes the build actually reads.</li>
+    <li>Run the pipeline on machine A; record the hash \(h_A\) of each specified artifact (an intermediate feature file, a serialized model).</li>
+    <li>Run the identical pipeline on machine B; record \(h_B\).</li>
+    <li>Compare: \(h_A = h_B\) for every artifact means the pipeline is deterministic at that rung; a mismatch localizes the nondeterminism to the stage whose artifact differs.</li>
+  </ol>
+  <p><strong>Why invest in this.</strong> Beyond debugging, the rationale is supply-chain integrity: if independent parties arrive at the same bytes, there is strong evidence that no extra code was injected on a compromised build machine — an attacker who modifies a compiler or build tool cannot hide behind an identical artifact. For ML the same check catches accidental nondeterminism from unpinned libraries or unordered inputs that would otherwise masquerade as an accuracy improvement.</p>
+  <p><strong>Scope:</strong> aim these checks at transforms and inference steps whose outputs are contractually deterministic (feature encoding, preprocessing); the goal is to localize where nondeterminism enters, not to demand that every retrained artifact be identical.</p>
+</div>
+
 <p>#### Reproducibility Across Predictive, Generative, and Agentic AI — A Nuance</p>
 <div class="key-concept">
   <p><strong>Temperature decides whether reproducibility is even desirable.</strong></p>

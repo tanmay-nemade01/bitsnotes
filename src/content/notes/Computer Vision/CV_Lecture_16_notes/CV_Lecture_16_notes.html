@@ -335,6 +335,25 @@
     <li>Store the new position as the state and repeat for every following frame.</li>
   </ol>
 </div>
+<div class="key-concept">
+  <p><strong>The missing similarity function:</strong> step 5 scores candidate windows against the reference histogram. The textbook makes that score precise with the <em>Bhattacharyya coefficient</em>: if \(\hat{q}_u\) is the fraction of pixels in bin \(u\) of the frozen model histogram and \(\hat{p}_u(y)\) the fraction in bin \(u\) of the candidate window at position \(y\), over \(m\) bins, then</p>
+  <p>\[\rho\left(\hat{p}(y),\,\hat{q}\right) = \sum_{u=1}^{m} \sqrt{\hat{p}_u(y)\,\hat{q}_u}\]</p>
+  <p>The coefficient lies in \([0,1]\): it is 1 for identical histograms and drops as they differ. The matching distance is \(d(y) = 1 - \rho\left(\hat{p}(y), \hat{q}\right)\), so the tracker maximizes \(\rho\) (minimizes \(d\)) over candidate windows. This is the concrete quantity the kernel-weighted mean-shift rounds climb, and it is why the score stays smooth enough for the same hill-climbing steps to work.</p>
+</div>
+
+<div class="important-note">
+  <p><strong>Why the score is hill-climbable — the kernel-weighted step.</strong> Raw per-pixel color counts jump between neighboring positions, so a smooth similarity needs the target to be masked by an isotropic kernel before histogramming. The model region is normalized to a unit circle, each pixel \(x_i^{*}\) gets coordinates relative to the center, and a convex, monotonically decreasing profile \(k(x)\) supplies weights \(K(x) = k(\|x\|^2)\); the Epanechnikov profile is the textbook's recommendation, with the Gaussian another valid choice. Border pixels are down-weighted because they are the ones most often contaminated by background or occlusion.</p>
+  <p>With \(b(x_i)\) the histogram bin of pixel \(i\), \(\delta\) the Kronecker delta, and \(m\) bins, the normalized model and candidate distributions are:</p>
+  <p>\[\hat{q}_u = C\sum_{i=1}^{n} k\!\left(\|x_i^{*}\|^2\right)\delta\!\left(b(x_i^{*})-u\right),\qquad \hat{p}_u(y) = C_h\sum_{i=1}^{n_h} k\!\left(\left\|\frac{y-x_i}{h}\right\|^2\right)\delta\!\left(b(x_i)-u\right)\]</p>
+  <p>where \(C = 1/\sum_i k(\|x_i^{*}\|^2)\) and \(C_h = 1/\sum_i k(\|(y-x_i)/h\|^2)\) make each distribution sum to one, and the bandwidth \(h\) also fixes the candidate scale. Taylor-expanding \(\rho\) around the previous position \(\hat{y}_0\) splits the similarity into a constant plus a weighted density estimate:</p>
+  <p>\[\rho\!\left(\hat{p}(y),\,\hat{q}\right) \approx \frac{1}{2}\sum_{u=1}^{m}\sqrt{\hat{p}_u(\hat{y}_0)\,\hat{q}_u} \;+\; \frac{C_h}{2}\sum_{i=1}^{n_h} w_i\, k\!\left(\left\|\frac{y-x_i}{h}\right\|^2\right)\]</p>
+  <p>Each pixel's weight is its color ratio accumulated over its bin,</p>
+  <p>\[w_i = \sum_{u=1}^{m} \sqrt{\frac{\hat{q}_u}{\hat{p}_u(\hat{y}_0)}}\;\delta\!\left(b(x_i)-u\right)\]</p>
+  <p>Only the second term depends on \(y\), so maximizing similarity is exactly the mean-shift climb of Section 16.2.1 with an extra weight \(w_i\) per pixel. Writing \(g(x) = -k'(x)\), one step from \(\hat{y}_0\) to \(\hat{y}_1\) is:</p>
+  <p>\[\hat{y}_1 = \frac{\sum_{i=1}^{n_h} x_i\, w_i\, g\!\left(\left\|\frac{\hat{y}_0-x_i}{h}\right\|^2\right)}{\sum_{i=1}^{n_h} w_i\, g\!\left(\left\|\frac{\hat{y}_0-x_i}{h}\right\|^2\right)}\]</p>
+  <p>Two safeguards close the loop: if the new similarity \(\rho(\hat{y}_1)\) falls below \(\rho(\hat{y}_0)\), move halfway back with \(\hat{y}_1 \leftarrow \tfrac{1}{2}(\hat{y}_0 + \hat{y}_1)\) and re-evaluate; stop when \(\|\hat{y}_1 - \hat{y}_0\|\) is smaller than one pixel in the original image coordinates. This is the precise mechanism behind step 5 — the weights \(w_i\) pull the window toward pixels whose color matches the model while the kernel \(g\) keeps the pull local. The limit from Section 16.2.5 still binds: the true position must begin inside the kernel's attraction basin, or the climb settles on a different peak.</p>
+</div>
+
 <div class="example-box">
   <p><strong>Trace — the paddle hand across two frames.</strong> Frame one boxes the hand and records its histogram: mostly skin tones with a dark paddle stripe. In frame two the hand has slid ten pixels right. The kernel starts at the old center, its neighborhood covers the shifted hand, and two mean-shift rounds walk the window onto the new histogram peak. The similarity score against the reference histogram confirms the match, and the new center becomes the state for frame three. The mode stays put in histogram space even as the hand moves in image space.</p>
 </div>
@@ -403,6 +422,10 @@
 </div>
 <h3 id="16.3.5-combined-filters-and-guidance">16.3.5 Combined filters and guidance</h3>
 <p>No single filter covers a maneuvering craft, so practice stacks them. <em>IMM filters</em> (interacting multiple models) run a bank of Kalman filters side by side — some assuming constant velocity, others constant acceleration — and fuse their outputs in one compute unit that steers the craft. Missile guidance literature works the same way: model interceptor velocity, line-of-sight geometry, and lateral acceleration commands per scenario, then combine, because a missile that cruises, then weaves, then dives fits no single straight-line story. The Kalman filter is the building block inside each channel.</p>
+<div class="important-note">
+  <p><strong>When one Gaussian is not enough — particle filters:</strong> the scope note below names the case where a Kalman filter's single Gaussian belief fails: strong non-linearity, heavy clutter, or several plausible positions at once. A <em>particle filter</em> — the CONDENSATION algorithm in visual tracking — represents the belief not by a mean and covariance but by a weighted set of sample states, or <em>particles</em>, with weights \(\pi_t^{(i)}\) summing to 1.</p>
+  <p>Each round resamples particles in proportion to their weights, propagates each through the motion model with noise, reweights it by how well the new sighting fits, normalizes, and reports the weighted average \(\hat{x}_t = \sum_i \pi_t^{(i)} s_t^{(i)}\). Because the sample set can sit on several peaks at once, it keeps multiple hypotheses alive — say a target that turned left or right behind an occluder — where one Gaussian would collapse to the average. The cost is more computation, but the representation imposes no linearity or Gaussian requirement on the motion or observation model.</p>
+</div>
 <h3 id="16.3.6-matrix-walkthrough-beyond-the-syllabus">16.3.6 Matrix walkthrough beyond the syllabus</h3>
 <p>For readers who want the full machinery, the session walked through the matrices at whiteboard level: start from measurement \(z_k\) with noise \(R_k\) at time \(t_k\); form state \(x\) and covariance \(P\); propagate through the transition matrix; compute the Kalman gain that weighs prediction against sighting; and land on the updated state-error covariance. The algebra itself was flagged as outside the syllabus and left for self-study with a simplification guide, so no derivation steps are reproduced here.</p>
 <div class="key-takeaway">

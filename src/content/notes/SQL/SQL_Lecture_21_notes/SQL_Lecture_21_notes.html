@@ -583,6 +583,44 @@ WHERE book_info -&gt;&gt; 'author' = 'author one';</code></pre>
 </div>
 <p>The confusion is natural because the alias <code>author</code> looks like a column. But aliases cannot be reused in the same <code>WHERE</code> clause, so the full JSON path must be repeated there.</p>
 
+<h3 id="21.6.4-path-extraction-operators" class="subsection-title">21.6.4 Path Extraction Operators</h3>
+<p>Chained <code>-&gt;</code> reads walk a document one level at a time. PostgreSQL also provides two <em>path extraction operators</em> that reach a nested value in a single call: <code>#&gt;</code> returns the sub-object in JSON form, and <code>#&gt;&gt;</code> returns the same node as plain text. The path uses PostgreSQL array syntax: keys and zero-based array indexes separated by commas inside curly braces and single quotes.</p>
+<table>
+  <thead>
+    <tr>
+      <th>Operator</th>
+      <th>Path argument</th>
+      <th>Result type</th>
+      <th>Official example result</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><code>#&gt;</code></td>
+      <td><code>text[]</code></td>
+      <td>json / jsonb, matching the input</td>
+      <td><code>'{"a":{"b":["foo","bar"]}}'::jsonb #&gt; '{a,b,1}'</code> returns <code>"bar"</code></td>
+    </tr>
+    <tr>
+      <td><code>#&gt;&gt;</code></td>
+      <td><code>text[]</code></td>
+      <td>text</td>
+      <td><code>'{"a":{"b":["foo","bar"]}}'::jsonb #&gt;&gt; '{a,b,1}'</code> returns <code>bar</code></td>
+    </tr>
+  </tbody>
+</table>
+<div class="example-box">
+  <p><strong>Worked nested read:</strong> a film document carries <code>"rating": { "MPAA": "PG" }</code>. The path to the rating runs from the <code>rating</code> key into the <code>MPAA</code> key:</p>
+  <pre><code>SELECT film #&gt;  '{rating, MPAA}' AS rating_json,
+       film #&gt;&gt; '{rating, MPAA}' AS rating_text
+FROM films;</code></pre>
+  <p>The first column returns <code>"PG"</code> still wrapped as JSON; the second returns bare <code>PG</code>. A deeper path shows how array indexes join the walk: <code>'{characters, 0, name}'</code> starts at <code>characters</code>, takes element <code>0</code>, then reads that object's <code>name</code> key. The index is zero-based because JSON arrays start at position 0.</p>
+  <p><strong>Edge case:</strong> when a key or index in the path does not exist, the operator returns SQL <code>NULL</code> rather than raising an error, so a film with no <code>MPAA</code> node simply yields an empty result for that row.</p>
+</div>
+<div class="important-note">
+  <p><strong>Cross-engine note:</strong> <code>#&gt;</code> and <code>#&gt;&gt;</code> are PostgreSQL-specific spellings. MySQL reaches the same nested node with a path string inside <code>JSON_EXTRACT</code>, and Snowflake uses a dotted colon path. The result-type rule is shared everywhere: the single-mark form keeps JSON quoting, and the double-mark form strips to text.</p>
+</div>
+
 <h2 id="21.7-updating-and-deleting-keys-fields-and-array-elements">21.7 Updating and Deleting Keys, Fields and Array Elements</h2>
 <h3 id="21.7.1-inserting-a-work-row">21.7.1 Inserting a Work Row</h3>
 <p>A fresh row sets up the update drills:</p>
@@ -640,6 +678,20 @@ SET book_info = book_info #- '{availability_locations,1}'
 WHERE book_info -&gt;&gt; 'author' = 'Adnan'
 RETURNING *;</code></pre>
 <p>Spot 1, New Jersey, leaves the document, while New York stays. The same <code>-</code> form from the prior section would drop a whole top key such as pages, while <code>#-</code> reaches inside a nested path to drop one array slot. So minus drops the bestseller key while the path operator drops the New Jersey array slot: whole-key delete against surgical slot delete.</p>
+
+<div class="important-note">
+  <p><strong>Editing a nested value with <code>jsonb_set():</code></strong> the <code>||</code> merge replaces a whole top-level key, and <code>#-</code> removes a node, but neither edits a nested value in place. The <code>jsonb_set(target, path, replacement [, create_if_missing])</code> function does. It takes the document, a text-array path, the new JSON value, and an optional boolean (default <code>true</code>) that creates a missing final key. Every earlier step of the path must already exist, or the document is returned unchanged.</p>
+  <pre><code>UPDATE books
+SET book_info = jsonb_set(
+  book_info,
+  '{availability_locations}',
+  (book_info #&gt; '{availability_locations}') || '["Newark"]',
+  true
+)
+WHERE book_info -&gt;&gt; 'author' = 'Adnan'
+RETURNING *;</code></pre>
+  <p>The path names the <code>availability_locations</code> key, <code>#&gt;</code> fetches its current array, and <code>||</code> appends one more JSON string, so the stored list grows from New York to New York plus Newark. The replacement <code>'["Newark"]'</code> is a JSON array literal, and the fourth argument <code>true</code> is the default that creates the key if it is absent; pass <code>false</code> to refuse creation. Negative array indexes count from the end, so the same path syntax can target the last slot. Because the path array is the same one used by <code>#&gt;</code>, <code>#&gt;&gt;</code>, and <code>#-</code>, one path mental model now covers reading, rewriting, and deleting nested nodes.</p>
+</div>
 
 <h2 id="21.8-creating-json-from-tables-with-row-to-json">21.8 Creating JSON from Tables with row_to_json</h2>
 <h3 id="21.8.1-whole-rows-to-json">21.8.1 Whole Rows to JSON</h3>
@@ -799,6 +851,47 @@ FROM directors_docs, jsonb_to_record(directors_docs.body)
   <pre><code>SELECT * FROM directors_docs
 WHERE body -&gt; 'all_movies' @&gt; '[{"movie_name": "Toy Story"}]';</code></pre>
   <p><code>body -> 'all_movies'</code> points at the array node. The right side opens with <code>[</code> for the array, then <code>{</code> for the object holding <code>movie_name</code>. An early try without the inner braces faults; a try with braces outside brackets also faults. Brackets outside plus braces inside mirror that nesting, and then the match returns. <strong>Containment search for Toy Story inside the <code>all_movies</code> array of objects succeeds.</strong></p>
+</div>
+
+<h3 id="21.12.4-multi-key-existence-and-reverse-containment" class="subsection-title">21.12.4 Multi-Key Existence and Reverse Containment Operators</h3>
+<p>The single-key <code>?</code> and forward containment <code>@&gt;</code> operators belong to a larger jsonb-only Boolean family. Two variants test several keys at once and one reverses containment. All return a Boolean, work only on <code>jsonb</code>, and can use a GIN index.</p>
+<table>
+  <thead>
+    <tr>
+      <th>Operator</th>
+      <th>Question it answers</th>
+      <th>Example</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><code>?| text[]</code></td>
+      <td>Does <em>any</em> named string exist as a top-level key or array element?</td>
+      <td><code>body ?| '{first_name, rating}'</code></td>
+    </tr>
+    <tr>
+      <td><code>?&amp; text[]</code></td>
+      <td>Do <em>all</em> named strings exist as top-level keys or array elements?</td>
+      <td><code>body ?&amp; '{first_name, last_name}'</code></td>
+    </tr>
+    <tr>
+      <td><code>&lt;@ jsonb</code></td>
+      <td>Is the left document contained <em>in</em> the right one (the reverse of <code>@&gt;</code>)?</td>
+      <td><code>'{"first_name": "John"}'::jsonb &lt;@ body</code></td>
+    </tr>
+  </tbody>
+</table>
+<div class="example-box">
+  <p><strong>Worked multi-key filter:</strong> each director paper holds <code>first_name</code>, <code>last_name</code>, and an <code>all_movies</code> array. Ask for papers that have both name keys, then papers that have either a first name or a rating:</p>
+  <pre><code>SELECT body -&gt;&gt; 'first_name' AS first_name
+FROM directors_docs
+WHERE body ?&amp; '{first_name, last_name}';
+
+SELECT body -&gt;&gt; 'first_name' AS first_name
+FROM directors_docs
+WHERE body ?| '{first_name, rating}';</code></pre>
+  <p>The first query returns every director, because both name keys exist in each paper. The second also returns rows because <code>first_name</code> is present even where <code>rating</code> is not: <code>?|</code> acts like OR and <code>?&amp;</code> acts like AND. Reverse containment gives the same reach as the forward form, since <code>'{"first_name": "John"}'::jsonb &lt;@ body</code> returns the John row that <code>body @&gt; '{"first_name": "John"}'</code> also finds.</p>
+  <p><strong>Scope:</strong> because these variants share the top-level search of <code>?</code>, a key buried inside <code>all_movies</code> is invisible to them; use the containment form for nested objects.</p>
 </div>
 
 <h2 id="21.13-combined-sql-search-and-jsonb-indexing-with-gin">21.13 Combined SQL Search and JSONB Indexing with GIN</h2>

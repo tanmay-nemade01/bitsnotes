@@ -2091,6 +2091,28 @@ flowchart TD
   layers even if the intermediate processing lost or distorted them. Low-level information
   (edges, corners) persists through the entire depth.</p>
 
+  <div class="key-concept">
+    <p><strong>Formal Identity-Mapping Analysis — Why Extra Layers Cannot Degrade the Model:</strong>
+    Let \(\mathcal{F}\) be the class of functions a network architecture can represent. A deeper
+    architecture \(\mathcal{F}'\) is only guaranteed to be at least as powerful when
+    \(\mathcal{F} \subseteq \mathcal{F}'\); for non-nested classes its best solution can be worse.
+    Residual blocks enforce nesting by making every added layer capable of representing the
+    identity \(f(x) = x\), so the deeper network literally contains the shallower one as a
+    special case.</p>
+    <p>When both the shortcut and the after-addition activation are identities, the stack
+    telescopes. For any deeper unit \(L\) and shallower unit \(\ell\):</p>
+    \[
+    x_L = x_\ell + \sum_{i=\ell}^{L-1} F(x_i, W_i), \qquad
+    \frac{\partial \mathcal{E}}{\partial x_\ell}
+    = \frac{\partial \mathcal{E}}{\partial x_L}
+      \left(1 + \frac{\partial}{\partial x_\ell}\sum_{i=\ell}^{L-1} F(x_i, W_i)\right)
+    \]
+    <p>The additive \(1\) in the gradient is the precise mathematical statement of the
+    <em>gradient highway</em>: one path whose derivative is exactly 1, independent of how
+    small the learned weights become. A plain network instead multiplies Jacobians,
+    \(\prod_i W_i\), so the signal attenuates exponentially with depth.</p>
+  </div>
+
   <h3 class="subsection-title">11.6.5 Worked Example: Numerical Trace</h3>
 
   <div class="example-box">
@@ -2172,6 +2194,28 @@ flowchart TD
   <p>Each variant was trained on ImageNet and compared. The deeper variants achieve higher
   accuracy, confirming that residual connections truly solve the depth problem.</p>
 
+  <div class="example-box">
+    <p><strong>ResNeXt — Cardinality as a Third Dimension (Worked Parameter Match):</strong>
+    ResNeXt (Xie et al., 2017) keeps the repeated-block rule but replaces the single residual
+    transform with \(C\) parallel, identically-shaped transforms that are summed:
+    \(y = x + \sum_{i=1}^{C} \mathcal{T}_i(x)\). The count \(C\) is <em>cardinality</em>, a
+    dimension distinct from depth and width. Its equivalent implementation is a <em>grouped
+    convolution</em>, which splits input and output channels into \(g = C\) independent groups.</p>
+    <p><strong>General saving:</strong> a dense convolution from \(c_i\) to \(c_o\) channels has
+    \(O(c_i c_o)\) weights; splitting it into \(g\) groups of \(c_i/g \rightarrow c_o/g\) costs
+    \(O(g \cdot \frac{c_i}{g} \cdot \frac{c_o}{g}) = O(c_i c_o / g)\) — a \(g\)-fold reduction.</p>
+    <p><strong>Worked trace at matched complexity</strong> (256-channel residual path):</p>
+    \[
+    \text{ResNet bottleneck }(C{=}1,\, d{=}64):\; 256\cdot64 + 3^2\cdot64^2 + 64\cdot256 = 69{,}632
+    \]
+    \[
+    \text{ResNeXt-50 }(C{=}32,\, d{=}4):\; 32\,(256\cdot4 + 3^2\cdot4^2 + 4\cdot256) = 70{,}144
+    \]
+    <p>Both blocks cost \(\approx 70\)k parameters and roughly the same FLOPs, yet ImageNet top-1
+    error falls from 23.9% (ResNet-50) to 22.2% (ResNeXt-50). Raising cardinality from \(C = 1\)
+    to \(C = 32\) at fixed complexity beat going deeper or wider.</p>
+  </div>
+
   <h3 class="subsection-title">11.6.8 Where Residual Connections Are Used</h3>
 
   <div class="key-concept">
@@ -2236,6 +2280,24 @@ flowchart LR
     <strong>Batch normalization</strong> — applied inside the block before the addition —
     normalizes \(F(x)\) so its scale matches \(x\). This is why ResNet blocks always use BN
     before the addition.</p>
+  </div>
+
+  <div class="important-note">
+    <p><strong>Follow-up result — the pre-activation residual unit:</strong> He et al. (2016),
+    <em>Identity Mappings in Deep Residual Networks</em>, showed that the shortcut is a truly
+    clean path only when <em>both</em> the skip connection \(h(x) = x\) and the after-addition
+    activation \(f(y) = y\) are identities. In the original block the final ReLU sits after the
+    addition (\(f = \mathrm{ReLU}\)), clipping negative signals at every unit — an effect that
+    compounds once the network is 100+ layers deep.</p>
+    <p>The fix moves BN and ReLU <em>before</em> the weight layers (full pre-activation):</p>
+    \[
+    x_{\ell+1} = x_\ell + \mathcal{F}\left(\mathrm{ReLU}\left(\mathrm{BN}(x_\ell)\right);\, W_\ell\right)
+    \]
+    <p>Now the addition is the only operation on the shortcut, so the telescoping derivation
+    holds exactly and gradients pass between any two blocks unattenuated. Reordering matters:
+    on CIFAR-10 with ResNet-164, putting BN <em>after</em> the addition raises error to 6.50%
+    and a naive ReLU before addition gives 7.84%, while full pre-activation reaches 5.46%
+    (baseline 5.93%). At 1001 layers the CIFAR-100 error drops from 27.82% to 22.71%.</p>
   </div>
 
   <div class="key-takeaway">

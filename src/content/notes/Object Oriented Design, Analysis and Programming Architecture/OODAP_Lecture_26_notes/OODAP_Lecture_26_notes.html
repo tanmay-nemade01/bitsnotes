@@ -743,6 +743,23 @@ int c = a / b; // statement that may generate an exception</code></pre>
   <p><strong>Pitfalls:</strong> Do not place <code>catch (Exception e)</code> before <code>catch (ArithmeticException e)</code> — the first handler would swallow all exceptions including <code>ArithmeticException</code>, making the second unreachable; the compiler errors with "exception has already been caught." Do not assume <code>catch</code> runs when no exception occurs — it never does; only <code>finally</code> is guaranteed. Do not leave code after <code>c = a/b</code> outside any <code>try</code> expecting it to still run after a throw — without handling, the program terminates at the throw site. Do not write a bare <code>catch { }</code> that silently swallows <code>Throwable</code> including <code>OutOfMemoryError</code> — catch the most specific type you can handle and let truly fatal errors propagate.</p>
 </div>
 
+<div class="important-note">
+  <p><strong>Java 7 extension — try-with-resources and suppressed exceptions:</strong> The <code>finally</code> cleanup pattern above requires the programmer to call <code>close()</code> manually, and if <code>readLine()</code> throws while <code>close()</code> also throws, the original exception is lost — preempted by the one from <code>finally</code>. Since Java 7 the expanded <code>try</code> form, called the <em>try-with-resources</em> statement, declares the resource in parentheses and guarantees automatic closure on every exit path: <code>try (FileReader fr = new FileReader(path); BufferedReader br = new BufferedReader(fr)) { return br.readLine(); }</code>. A resource must implement <code>java.lang.AutoCloseable</code> (whose <code>close()</code> throws <code>Exception</code>), a superinterface of <code>java.io.Closeable</code> (whose <code>close()</code> throws <code>IOException</code>); the stream classes implement both. A resource declared in the <code>try</code> header is implicitly <code>final</code> and its scope is limited to that statement, and multiple resources are separated by semicolons and closed in the reverse order of their creation.</p>
+  <p><strong>Suppressed exceptions:</strong> When the <code>try</code> body throws and one or more <code>close()</code> calls also throw, try-with-resources keeps the body exception as the one propagated and attaches the closure exceptions to it as <em>suppressed</em> exceptions, retrievable with <code>Throwable.getSuppressed()</code> — the reverse of the <code>finally</code> behaviour where the original is lost. A try-with-resources statement may still have <code>catch</code> and <code>finally</code> clauses; both run <em>after</em> the declared resources have been closed.</p>
+  <table>
+    <thead>
+      <tr><th>Aspect</th><th>try / finally (manual close)</th><th>try-with-resources (Java 7+)</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>Closing mechanism</td><td>Explicit <code>close()</code> in <code>finally</code></td><td>Implicit <code>close()</code> at statement end</td></tr>
+      <tr><td>Body exception + close exception</td><td>Body exception lost; close exception propagates</td><td>Body exception propagates; close exceptions suppressed</td></tr>
+      <tr><td>Resource scope</td><td>Outer variable, assignable</td><td>Implicitly final, scoped to the <code>try</code></td></tr>
+      <tr><td>Requirement</td><td>Any object with a <code>close()</code> method</td><td>Must implement <code>AutoCloseable</code></td></tr>
+    </tbody>
+  </table>
+  <p><strong>Why it matters here:</strong> This is the same <code>finally</code>-as-guaranteed-cleanup idea of §26.7.2, refined so that closing a file or stream cannot silently discard the exception that caused the failure — a frequent source of corrupted state in the I/O and <code>IOException</code> handling this revision builds on.</p>
+</div>
+
 <h2 id="26.8-throw-versus-throws-checked-versus-unchecked-user-defined-exceptions">26.8 Throw versus Throws, Checked versus Unchecked, User-Defined Exceptions</h2>
 <h3 id="26.8.1-checked-versus-unchecked">26.8.1 Checked versus Unchecked</h3>
 <div class="important-note">
@@ -1252,6 +1269,34 @@ class Sync {
 </div>
 <div class="warning-box">
   <p><strong>Pitfalls:</strong> Do not synchronize on a boxed primitive or string literal that may alias unexpectedly — use a dedicated private <code>final Object lock = new Object();</code> in real code rather than exposing <code>this</code>. Do not leave one access path unsynchronized — a single <code>target.call(msg)</code> outside any monitor invalidates the protection of the other guarded calls. Do not expect fairness — the JVM wakes one waiter, but which of <code>ob2</code> or <code>ob3</code> wakes first is not guaranteed; the order observed as <code>[hello] [java] [programming]</code> matches start order in demos but can reorder at scale.</p>
+</div>
+
+<h3 id="26.13.5-wait-notify-and-guarded-blocks" class="subsection-title">26.13.5 Inter-Thread Cooperation — <code>wait()</code>, <code>notify()</code> and Guarded Blocks</h3>
+<div class="important-note">
+  <p><strong>Mechanism — cooperation, not just exclusion:</strong> <code>synchronized</code> guarantees mutual exclusion but gives threads no way to signal one another; polling a condition in a loop wastes CPU cycles. Java supplies inter-thread cooperation through three methods declared <code>final</code> in <code>Object</code> — <code>wait()</code>, <code>notify()</code>, and <code>notifyAll()</code> — all of which must be called from within a <code>synchronized</code> context so the caller owns the object's monitor. <code>wait()</code> makes the calling thread release the monitor and suspend until another thread enters the same monitor and calls <code>notify()</code> (wakes one waiter) or <code>notifyAll()</code> (wakes all waiters). This is the crucial contrast with <code>Thread.sleep()</code>: <code>sleep()</code> keeps the monitor held, whereas <code>wait()</code> releases it.</p>
+  <pre><code>class Drop {
+    private String message;
+    private boolean empty = true;
+    public synchronized String take() {
+        while (empty) {                 // guard: re-check the condition
+            try { wait(); } catch (InterruptedException e) {}
+        }
+        empty = true;
+        notifyAll();                    // wake the producer
+        return message;
+    }
+    public synchronized void put(String msg) {
+        while (!empty) {
+            try { wait(); } catch (InterruptedException e) {}
+        }
+        empty = false; message = msg;
+        notifyAll();                    // wake the consumer
+    }
+}</code></pre>
+  <p><strong>The guarded-block rule and spurious wakeup:</strong> <code>wait()</code> must always be called inside a <code>while</code> loop that re-tests the condition — a notification may be for a different event, and a thread can even resume via a rare <em>spurious wakeup</em> with no notification at all, so a one-time <code>if</code> check is incorrect. The <code>Drop</code> producer/consumer above shows why: the consumer waits while <code>empty</code>, the producer waits while <code>!empty</code>, and each calls <code>notifyAll()</code> after toggling the flag. <code>wait()</code> throws the checked <code>InterruptedException</code>, which the guarded loop handles by re-testing rather than by assuming it was the awaited event.</p>
+</div>
+<div class="warning-box">
+  <p><strong>Pitfall — deadlock:</strong> Coordination through monitors introduces a failure mode distinct from the bracket garbling of §26.13.2: <em>deadlock</em>, where two or more threads block forever waiting for each other. If thread A holds the monitor of object <code>X</code> and tries to enter a synchronized method on <code>Y</code> while thread B holds <code>Y</code> and tries to enter <code>X</code>, neither can proceed — each would have to release its own lock for the other to finish. Deadlock occurs only when the timing interleaves in just the right way (and can involve more than two threads and objects), which makes it hard to reproduce and debug. Avoid it by never acquiring two locks in opposite orders across threads, by keeping critical sections short, and by preferring the standard library's concurrent collections over hand-built shared buffers such as <code>Drop</code>.</p>
 </div>
 
 <h2 id="26.14-java-object-model-object-cloning-shallow-versus-deep-copy">26.14 Java Object Model — Object Cloning, Shallow versus Deep Copy</h2>

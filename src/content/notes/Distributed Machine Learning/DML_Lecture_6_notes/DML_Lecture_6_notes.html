@@ -258,6 +258,37 @@
       <p>A modern network may have millions or billions of parameters. For each parameter you store a weight and you compute a gradient. Every GPU that shares work must exchange those gradients. After mini-batch one finishes on one GPU, the values go across the network to another GPU. That is where a <em>network bottleneck</em> appears: the interconnect is slower than on-device math, and the payload is huge.</p>
       <p>The same numbers also occupy GPU memory. A 7 billion parameter model, an 8 billion parameter model, or a 120 billion parameter model makes the problem worse. Pre-trained large language models (LLMs) move enormous tensors during training and during serving. If you work with those models, gradient and weight traffic dominate cost.</p>
       <p>Imagine plotting two curves against model size. The horizontal axis is parameter count, from millions to hundreds of billions. The vertical axis is time per step. On-device multiply time grows, but interconnect time grows at least as fast, because the message is a full gradient tensor. The landmark is the crossing where wire time exceeds math time. Past that landmark, a faster GPU without a smaller message barely helps.</p>
+
+      <div class="important-note">
+        <p><strong>Systems Detail — Recomputation (activation checkpointing), the other memory lever:</strong> Weights, gradients, and optimizer buffers are not the only tensors held in GPU memory. During the forward pass each layer also saves its <em>activation</em>, the intermediate output that backward propagation needs in order to form \(\partial L / \partial w\). Quantization shrinks the <em>bits</em> of stored numbers; recomputation shrinks the <em>count of stored tensors</em> by deleting an activation and rebuilding it later from its input.</p>
+        <p><strong>Three-layer trace (from the bottlenecks chapter).</strong> For a 3-layer net, the forward pass stores \(A_1, A_2, A_3\). Backward forms \(G_3\) from \(A_3\), then \(G_2\) from \(A_2\) and \(G_3\), then \(G_1\) from \(A_1\) and \(G_2\). Because \(A_1\) is not needed until the last step, recomputation does this: (1) after computing \(A_1\), delete it and free the memory; (2) while forming \(G_2\), re-run layer 1 on the same input batch to rebuild \(A_1\); (3) use the rebuilt \(A_1\) with \(G_2\) to obtain \(G_1\). The same idea applies to \(A_2\). The saving lasts for the interval between the first deletion and the recompute.</p>
+        <table>
+          <thead>
+            <tr>
+              <th>Lever</th>
+              <th>What is reduced</th>
+              <th>Lossy?</th>
+              <th>Added cost</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>Quantization (this lecture)</td>
+              <td>Bits per stored or sent number</td>
+              <td>Yes — grid error</td>
+              <td>Low — no re-run of layers</td>
+            </tr>
+            <tr>
+              <td>Recomputation / checkpointing</td>
+              <td>Number of live activation tensors</td>
+              <td>No — tensors rebuilt from inputs</td>
+              <td>Roughly one extra forward pass per checkpointed segment</td>
+            </tr>
+          </tbody>
+        </table>
+        <p><strong>Framework form.</strong> Modern frameworks expose this as <em>activation checkpointing</em>: a sequential model is cut into segments, every segment except the last skips saving its intermediate activations, and the saved input of each segment is re-run during backward to regenerate them. It is a compute-for-memory trade, so it pairs naturally with the bit-width lever: checkpoint to cut activation memory, then quantize to cut the bits of what remains. It is distinct from freezing a converged stage: freezing discards gradient work permanently, while recomputation throws away a tensor it intends to rebuild exactly.</p>
+        <p><strong>Scope.</strong> The gain scales with depth. A three-layer toy saves little, while a network with hundreds of layers saves far more, because early activations otherwise sit in memory for the whole backward pass. The cost is roughly a second forward evaluation of the checkpointed layers on every step, so it pays off only when GPU memory, not compute, is the binding limit. Stochastic layers must reproduce their random state on the re-run for the rebuilt values to match.</p>
+      </div>
       <h3 id="6.1.3-student-questions-and-answers">6.1.3 Student Questions and Answers</h3>
       <p>A natural first guess is that the hard part is still calculus: can we even form \(\partial L / \partial w\)? That guess is understandable, because back propagation is the engine. It is not the remaining bottleneck.</p>
       <div class="important-note">

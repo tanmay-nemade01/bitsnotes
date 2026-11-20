@@ -286,6 +286,22 @@
   <p><strong>Pitfall 1: Using mean for outlier detection.</strong> The mean is pulled toward outliers, so deviations from the mean are <em>smaller</em> for outliers than they should be. Always use median-based features for anomaly detection.</p>
   <p><strong>Pitfall 2: Using median when you need the true center.</strong> If you are computing average response time for capacity planning, the mean is the right metric — it reflects the total load, including spikes.</p>
 </div>
+<h3 id="5.2.3-feature-scaling">5.2.3 Feature Scaling</h3>
+<div class="key-concept">
+  <p><strong>Feature scaling</strong> rescales numerical features onto a common range so that no single feature dominates a distance- or gradient-based model. In network-intrusion data the mean of <code>src_bytes</code> can be seven orders of magnitude larger than that of <code>num_failed_logins</code>; without scaling, <code>src_bytes</code> dominates and the model overlooks the other feature entirely.</p>
+  <p>Three standard choices:</p>
+  <table>
+    <thead>
+      <tr><th>Method</th><th>Transform</th><th>When to use</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>Standardization (z-score)</td><td>\(z = \dfrac{x - \mu}{\sigma}\), mean 0 / unit variance</td><td>Default for most estimators; outlier-sensitive</td></tr>
+      <tr><td>Min–max normalization</td><td>\(x' = \dfrac{x - x_{\min}}{x_{\max} - x_{\min}}\) into \([0,1]\)</td><td>Preserves sparse zeros and small original variances</td></tr>
+      <tr><td>Robust scaling</td><td>Subtract the median, divide by the interquartile range (IQR)</td><td>When outliers would distort the mean/variance</td></tr>
+    </tbody>
+  </table>
+  <p>Fit the scaler on the training fold only, then reuse that same fitted object on the test set; fitting it on the full dataset leaks test-set information and optimistically biases results.</p>
+</div>
 <div class="key-takeaway">
   <p><strong>Recap:</strong> Numerical transformations convert raw security data into features that models can learn from. The right transform depends on the data distribution (skewed, count, timing) and the detection goal (center estimation, outlier detection). Next, we tackle a different kind of challenge: categorical data, where the number of possible values can be astronomical.</p>
 </div>
@@ -595,6 +611,23 @@
 <h3 id="5.6.1-the-two-components">5.6.1 The Two Components</h3>
 <p>TF-IDF is one of the core techniques for text-based feature extraction, central to search algorithms and document similarity. It stands for <em>Term Frequency–Inverse Document Frequency</em>.</p>
 <div class="key-concept">
+  <p><strong>The bag-of-words model — the representation TF-IDF builds on.</strong> Before a document can be weighted, the raw text must first become a numeric vector. The <em>bag-of-words</em> (BoW) model builds a vocabulary \(V = \{t_1, t_2, \ldots, t_{|V|}\}\) from all documents in the corpus, then represents each document \(d\) as a count vector \(\mathbf{x}_d \in \mathbb{N}^{|V|}\) whose \(j\)-th component is the number of times term \(t_j\) appears in \(d\):</p>
+  <p>\[ x_{d,j} = \text{count}(t_j, d) \qquad \Rightarrow \qquad \mathbf{x}_d = \big(x_{d,1}, x_{d,2}, \ldots, x_{d,|V|}\big) \]</p>
+  <p>The model is called a "bag" because it deliberately discards word order, grammar, and structure — only term multiplicities survive. This is why a downstream technique must recover importance: raw counts treat "the" and "ransomware" alike.</p>
+  <p><em>Worked vectorization.</em> Take two emails and the vocabulary \(V = [\text{free}, \text{lottery}, \text{meeting}, \text{prize}, \text{review}, \text{schedule}, \text{tomorrow}, \text{winner}]\):</p>
+  <table>
+    <thead>
+      <tr><th>Document</th><th>Text</th><th>BoW count vector</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>Email A (spam)</td><td>free lottery winner prize</td><td>\((1, 1, 0, 1, 0, 0, 0, 1)\)</td></tr>
+      <tr><td>Email B (ham)</td><td>meeting schedule tomorrow review</td><td>\((0, 0, 1, 0, 1, 1, 1, 0)\)</td></tr>
+    </tbody>
+  </table>
+  <p><strong>Connecting the pieces:</strong> the TF defined next is simply the normalized BoW count, \(\text{TF}(t_j, d) = x_{d,j} / \sum_k x_{d,k}\), and TF-IDF multiplies that normalized count by the IDF weight. The full chain is therefore <em>text → vocabulary → BoW count vector → TF normalization → TF-IDF weighting</em>. A practical detail: scikit-learn's <code>CountVectorizer</code> produces exactly this document-term matrix, while <code>TfidfVectorizer</code> applies the weighting in one step.</p>
+  <p><strong>Limitation:</strong> because order is discarded, "not good" and "good not" collapse to the same vector. That is precisely why word/character n-grams (Section 5.5) are used as an enriched vocabulary when local context matters.</p>
+</div>
+<div class="key-concept">
   <p><strong>Term Frequency (TF)</strong> counts how many times a word appears in a document. The intuition is simple: if the word "phishing" appears 5 times in an email, it is probably important to that email.</p>
   <p>\[ \text{TF}(t, d) = \frac{\text{count of term } t \text{ in document } d}{\text{total terms in document } d} \]</p>
   <p>This normalizes by document length so that a long email with 5 occurrences of "phishing" is treated the same as a short email with 5 occurrences.</p>
@@ -639,6 +672,17 @@
   <p><em>Step 4:</em> When a new email arrives, compute its TF-IDF vector and compare it to the spam corpus using cosine similarity.</p>
   <p><em>Step 5:</em> If the similarity to spam emails exceeds a threshold, flag the email as spam.</p>
   <p>This approach is more robust than simple regular expression matching, which produces too many <em>false negatives</em> (spam that slips through). False negatives are dangerous in security — missing a spam email that contains a phishing link can lead to a breach. Similarity-based matching using TF-IDF catches variations that exact pattern matching misses.</p>
+</div>
+<div class="example-box">
+  <p><strong>Worked calculation — how the classifier consumes the TF-IDF features.</strong> The pipeline above ends at "classify with an ML algorithm." For word-count or TF-IDF features the standard downstream model is <em>multinomial Naive Bayes</em>. For a class \(c \in \{\text{spam}, \text{ham}\}\) and feature vector \(\mathbf{x}\) (the TF-IDF vector from Section 5.6.1), the class score is a naive (conditional-independence) product written in log space:</p>
+  <p>\[ \hat{c} = \arg\max_{c}\Big[ \log P(c) + \sum_{j=1}^{|V|} x_j \log P(t_j \mid c) \Big] \]</p>
+  <p>The logarithm is not cosmetic: multiplying hundreds of small probabilities underflows floating-point arithmetic, whereas summing log-probabilities is numerically stable — a standard implementation practice.</p>
+  <p><strong>Failure mode — the zero-frequency problem.</strong> If a term \(t_j\) never appeared in class \(c\) during training, the raw estimate \(P(t_j \mid c) = 0\) makes \(\log 0 = -\infty\), so a single previously unseen token would zero out the entire class likelihood. In security this is acute: a new IOC-like token in a phishing email would make the spam class impossible to score.</p>
+  <p><strong>Fix — Laplace (add-\(\alpha\)) smoothing.</strong> Add a pseudocount \(\alpha\) to every term probability, normalized by the total token count plus \(\alpha\) times the vocabulary size:</p>
+  <p>\[ P(t_j \mid c) = \frac{\text{count}(t_j \text{ in } c) + \alpha}{\sum_{t \in V}\text{count}(t \text{ in } c) + \alpha\,|V|} \]</p>
+  <p>With \(\alpha = 1\) this is <em>Laplace smoothing</em>; \(\alpha < 1\) is <em>Lidstone smoothing</em>. Worked numbers: let the spam training set contain 100 tokens total over a vocabulary of \(|V| = 3\), with the term "winner" appearing 8 times and "lottery" never appearing.</p>
+  <p>\[ P(\text{winner} \mid \text{spam}) = \frac{8 + 1}{100 + 1 \cdot 3} = \frac{9}{103} \approx 0.0874, \qquad P(\text{lottery} \mid \text{spam}) = \frac{0 + 1}{100 + 3} = \frac{1}{103} \approx 0.0097 \]</p>
+  <p><strong>Result:</strong> the unseen term "lottery" receives a small but non-zero probability, so the email remains classifiable instead of forcing the spam score to \(-\infty\). Standard implementations expose \(\alpha\) as the Laplace/Lidstone smoothing parameter (default \(\alpha = 1\)); and although the multinomial model is defined over integer counts, fractional TF-IDF weights are accepted in practice.</p>
 </div>
 <div class="warning-box">
   <p><strong>Pitfall 1: Not removing stopwords.</strong> Common words ("the", "is", "and") appear in every document and have near-zero IDF. If you do not remove them, they add noise to the TF-IDF vectors without adding signal.</p>
@@ -860,6 +904,14 @@
     <li><strong>Wrapper methods</strong> — evaluate subsets of features by actually training a model on each subset and measuring performance. These are computationally expensive but find the best feature combination for a specific model.</li>
     <li><strong>Embedded methods</strong> — the model itself performs feature selection during training (e.g., LASSO regression adds an L1 penalty that drives irrelevant feature weights to zero, random forests rank features by importance).</li>
   </ol>
+</div>
+<div class="key-concept">
+  <p><strong>Formal filter criteria.</strong> The filter methods listed above rank each feature by its statistical relationship to the label. Two common criteria:</p>
+  <ul>
+    <li><strong>Pearson correlation coefficient (PCC)</strong> measures <em>linear</em> dependence between a feature and the target, and applies to continuous or binary variables.</li>
+    <li><strong>Mutual information (MI)</strong> measures general (including non-linear) dependence, defined as \(I(X;Y) = H(X) - H(X \mid Y)\) — the reduction in the entropy of \(X\) after observing \(Y\). It is zero exactly when the variables are independent, so a higher MI score means a more informative feature. Unlike PCC it can capture non-monotonic relationships, but it is harder to estimate reliably for continuous data.</li>
+  </ul>
+  <p>Like all filter methods, both criteria are computed on the training fold only, before the downstream model is trained.</p>
 </div>
 <div class="key-concept">
   <p><strong>Graph-based dimensionality reduction</strong> is a specialized technique for security data with network structure. If you are analyzing how an attacker moves laterally through a network, the <em>graph structure</em> of connections matters — which hosts communicate with which, the sequence of hops, the direction of data flow. You need features that preserve this topology.</p>

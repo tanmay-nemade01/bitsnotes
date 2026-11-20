@@ -572,6 +572,38 @@
 <div class="warning-box">
   <p>A common trap is to report robustness as accuracy: a tracker that never drops the ball but trails ten pixels behind scores 1.0 on robustness and poorly on IOU. Another trap is to average IOU across frames with missing boxes without deciding how to score gaps — define the rule before comparing numbers.</p>
 </div>
+<div class="key-concept">
+  <p><strong>Detector-side evaluation — a different axis from the tracker metrics above:</strong> the boxes handed to association come from a per-frame detector, and that detector is judged by its own precision–recall machinery, not by robustness or tracking IOU. Rank all detections by confidence and label each one a true positive TP (correct class and IoU with a ground-truth box above a threshold) or a false positive FP (wrong class, or a ground-truth box already matched). With \(P\) the number of ground-truth objects and \(FN = P - TP\):</p>
+  <p>\[ \text{precision} = \frac{TP}{TP + FP}, \qquad \text{recall} = \frac{TP}{P}, \qquad F_1 = \frac{2\,TP}{2\,TP + FP + FN} \]</p>
+  <p>Sweeping the confidence threshold traces a precision–recall curve; the area under it is <em>average precision</em> (AP), and the mean over classes is <em>mean average precision</em> (mAP). IoU here is the same Jaccard overlap used above, now applied at the detection stage. PASCAL VOC reports mAP at a single IoU threshold \(0.5\); COCO averages AP over ten thresholds \(\mathrm{IoU} \in \{0.50, 0.55, \ldots, 0.95\}\) (written AP@[.50:.95], reported alongside AP\(_{50}\) and AP\(_{75}\)) and also breaks results down by object size.</p>
+  <table>
+    <thead>
+      <tr>
+        <th>Question answered</th>
+        <th>Metric family</th>
+        <th>Ground truth needed</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>Is the per-frame detector any good?</td>
+        <td>Precision, recall, AP, mAP</td>
+        <td>Class label and box on every evaluated frame</td>
+      </tr>
+      <tr>
+        <td>Did the tracker keep the object at all?</td>
+        <td>Robustness</td>
+        <td>Only the first frame</td>
+      </tr>
+      <tr>
+        <td>Was the tracked box well placed?</td>
+        <td>Tracking IOU, success, center-error precision</td>
+        <td>Box on every scored frame</td>
+      </tr>
+    </tbody>
+  </table>
+  <p>Worked reading: 80 true positives, 20 false positives, and 100 ground-truth objects give precision \(80/100 = 0.80\) and recall \(80/100 = 0.80\). Lowering the score threshold to admit 20 more true positives and 60 more false positives raises recall to \(100/100 = 1.00\) but drops precision to \(100/180 \approx 0.56\); the curve, not any single threshold, is the honest summary.</p>
+</div>
 <div class="key-takeaway">
   <p>Robustness counts survival, IOU measures alignment, and thresholding turns alignment into success and precision verdicts. With scoring settled, the simplest tracker — bare correlation — can be tried next.</p>
 </div>
@@ -726,6 +758,47 @@
 <p>\[ L = L_{\text{cls-log}} + \lambda \, L_{\text{reg-smooth-L1}} \]</p>
 <p>where \(L_{\text{cls-log}}\) is the classification log loss (cross-entropy over foreground versus background), \(L_{\text{reg-smooth-L1}}\) is the regression smooth-L1 loss summed over the four normalized deltas, and \(\lambda\) is a balancing regularization factor whose lecture value is 1.2. Keep 1.2 as the lecture's stated constant for exam arithmetic; standard references leave \(\lambda\) as a tunable balancer (commonly near 1) without contradicting the lecture form. In words: "the total loss will be the classification log plus lambda loss regression — we are applying a regularization factor to balance out the loss." Positive anchors are those with IOU above 0.6 with truth and negatives below 0.3, capped per pair, which is why the two heads see balanced supervision.</p>
 <p>Inference prunes to one-shot detection: the template branch runs once on frame one and its features become fixed convolution kernels; later frames run only the detection branch convolved with those kernels. A center window keeps only the middle \(7 \times 7\) anchor positions, a cosine window damps jumps, a size-ratio penalty damps shape jumps, and non-maximum suppression picks the final box with damped size update. That is why SiamRPN drops the five-scale test yet tracks shape better at 160 FPS.</p>
+<div class="example-box">
+  <p><strong>Worked NMS trace — why the detector emits one box per object:</strong> non-maximum suppression (NMS) takes the candidate boxes in decreasing confidence and greedily discards any lower-scoring box whose IoU with a kept box exceeds a threshold \(\tau\). Four candidates all claim the same ball in this frame:</p>
+  <table>
+    <thead>
+      <tr>
+        <th>Candidate</th>
+        <th>Box \((x, y, w, h)\)</th>
+        <th>Score</th>
+        <th>IoU with the current kept box</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>A</td>
+        <td>(120, 80, 60, 90)</td>
+        <td>0.95</td>
+        <td>— (kept first)</td>
+      </tr>
+      <tr>
+        <td>B</td>
+        <td>(124, 83, 58, 87)</td>
+        <td>0.88</td>
+        <td>\(\approx 0.87\)</td>
+      </tr>
+      <tr>
+        <td>C</td>
+        <td>(122, 81, 59, 88)</td>
+        <td>0.76</td>
+        <td>\(\approx 0.93\)</td>
+      </tr>
+      <tr>
+        <td>D</td>
+        <td>(300, 80, 60, 90)</td>
+        <td>0.70</td>
+        <td>\(0.00\)</td>
+      </tr>
+    </tbody>
+  </table>
+  <p>With \(\tau = 0.5\): A is kept as the most confident. B (IoU 0.87 with A) and C (0.93 with A) are suppressed as duplicate claims for the same ball. D has zero overlap with A, so it survives as a genuinely separate object. The final list is {A, D} — one box per object, which is exactly the deduplicated input the one-to-one association of Section 11.11 assumes.</p>
+  <p><strong>Final result:</strong> without NMS, B and C would compete for the same track and force mis-assignments or spurious new tracks — the identity-switch failure described earlier. The threshold is a trade-off: \(\tau\) too low merges two nearby real objects, too high lets duplicate boxes through.</p>
+</div>
 <div class="warning-box">
   <p><strong>Scope:</strong> SiamRPN fits single-target shape change with one template and fixed anchors. <strong>Assumption:</strong> the frame-one template stays representative and truth overlaps some anchor well. Long disappearance or a wholly new aspect outside the five ratios breaks coverage and needs re-detection.</p>
 </div>

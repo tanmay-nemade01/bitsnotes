@@ -765,6 +765,58 @@ meaning: type  user   group  others</code></pre>
 <div class="warning-box">
   <p><strong>Scope — absolute overwrites:</strong> Absolute mode always overwrites all nine bits. If you type <code>chmod 640 file</code> when you only meant to add <code>x</code> for others, you also change user and group bits to <code>6</code> and <code>4</code>, even if they were different before. To change one bit without touching the rest, use relative mode in 5.6.</p>
 </div>
+
+<div class="key-concept">
+  <p><strong>Formal Definition — the fourth octal digit:</strong> The <code>st_mode</code> word carries twelve permission-related bits: the nine <code>rwx</code> bits decoded above plus three <em>special bits</em>. Every <code>chmod</code> in this section therefore has an implicit leading <code>0</code>; when that digit is non-zero it is a fourth 4-2-1 group prepended to the three familiar digits:</p>
+  <p>\[ \text{special digit} = 4 \cdot S_{uid} + 2 \cdot S_{gid} + 1 \cdot S_{vtx}, \qquad S_{uid}, S_{gid}, S_{vtx} \in \{0,1\} \]</p>
+  <p>Here the flags are <code>S_ISUID</code> (set-user-ID, \(4000_{8}\)), <code>S_ISGID</code> (set-group-ID, \(2000_{8}\)) and <code>S_ISVTX</code> (sticky or saved-text, \(1000_{8}\)). Kernel constants confirm the weights \(04000\), \(02000\) and \(01000\) in <code>&lt;sys/stat.h&gt;</code>; only the low twelve bits of the mode word are permission bits at all.</p>
+</div>
+<table>
+  <thead>
+    <tr>
+      <th>Bit (symbolic form)</th>
+      <th>Leading digit</th>
+      <th>On an executable file</th>
+      <th>On a directory</th>
+      <th><code>ls -l</code> marker</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td>set-user-ID (<code>u+s</code>)</td>
+      <td>\(4\) — <code>04000</code></td>
+      <td>At exec the effective UID becomes the file owner's UID</td>
+      <td>Generally ignored</td>
+      <td><code>s</code> if owner <code>x</code> is set, else <code>S</code></td>
+    </tr>
+    <tr>
+      <td>set-group-ID (<code>g+s</code>)</td>
+      <td>\(2\) — <code>02000</code></td>
+      <td>At exec the effective GID becomes the file's group; without group <code>x</code> it requests mandatory locking</td>
+      <td>New entries inherit the directory's group; child directories inherit the bit</td>
+      <td><code>s</code> if group <code>x</code> is set, else <code>S</code></td>
+    </tr>
+    <tr>
+      <td>sticky / restricted deletion (<code>o+t</code>)</td>
+      <td>\(1\) — <code>01000</code></td>
+      <td>Historical saved-text; no effect on regular files on current Linux systems</td>
+      <td>Only the file owner, the directory owner or a privileged process may delete or rename an entry</td>
+      <td><code>t</code> if other <code>x</code> is set, else <code>T</code></td>
+    </tr>
+  </tbody>
+</table>
+<p>The lowercase marker means the special bit and its matching execute bit are both present; the uppercase marker means the special bit is stored but that execute bit is absent. The same bits are set symbolically with <code>chmod u+s</code>, <code>chmod g+s</code> and <code>chmod o+t</code>, so every three-digit command taught above is the four-digit form with a leading zero.</p>
+
+<div class="example-box">
+  <p><strong>Worked special-bit modes — decoding the leading digit:</strong> Split the four-digit mode into one special digit plus three ordinary triplets, then read the marker in the first permission slot.</p>
+  <ul>
+    <li><code>chmod 4755 /usr/bin/passwd</code> → <code>4</code> = set-user-ID, then <code>7, 5, 5</code> = <code>rwx</code>, <code>r-x</code>, <code>r-x</code>. Listing: <code>-rwsr-xr-x</code>. Because the owner <code>x</code> is lit, the set-user-ID slot prints lowercase <code>s</code>. Any account may run the program, and for the lifetime of that process the effective UID is the file owner's, which is how a password change can write an otherwise root-only password file.</li>
+    <li><code>chmod 2775 shared</code> → leading <code>2</code> = set-group-ID on a directory, listing <code>drwxrwsr-x</code>. Files created inside inherit the directory's group instead of the creator's primary group, so teammates can edit one another's new files without changing each file's group by hand.</li>
+    <li><code>ls -ld /tmp</code> typically shows <code>drwxrwxrwt</code>, i.e. <code>1777</code>: world-writable (<code>777</code>) yet guarded by the sticky bit. Any user may create a file there, but may not delete or rename a file owned by someone else — directory <code>w</code> alone is not sufficient. The marker is lowercase <code>t</code> because the others' execute bit is set.</li>
+    <li><code>chmod 2666 foo</code> → <code>2</code> = set-group-ID, but the group triplet <code>rw-</code> has no <code>x</code>; <code>ls -l</code> prints <code>-rw-rwSrw-</code>. The uppercase <code>S</code> is the diagnostic: the bit is present but cannot take effect until group execute is added.</li>
+  </ul>
+  <p><strong>Final check:</strong> decode the leading digit first (\(4\), \(2\) or \(1\)), then the three triplets exactly as before. Adding a special digit does not alter the 4-2-1 rule inside each triplet — it prepends a fourth 4-2-1 group to it.</p>
+</div>
 <h3 id="5.5.3-worked-examples-step-by-step">5.5.3 Worked Examples — Step by Step</h3>
 <div class="example-box">
   <p><strong>Example 1 — Remove everything: chmod 000.</strong> Start from a file that showed <code>rw-rw-r--</code> after <code>touch</code>.</p>
@@ -809,6 +861,69 @@ ls -l more.txt  --&gt;  -rw-rw-rw-</code></pre>
     <li><code>r--</code> -> \(4\) (\(4+0+0\))</li>
   </ul>
   <p>So absolute mode <code>664</code> maps to: \[ 664 = (110)_2 \, (110)_2 \, (100)_2 = rw- \, rw- \, r-- \] This is the <code>umask 002</code> default after <code>touch</code>: user and group get <code>rw-</code>, others get <code>r--</code>. A stricter <code>umask 022</code> would give <code>644</code> (\(rw- r-- r--\)).</p>
+
+<div class="key-concept">
+  <p><strong>Derivation — why <code>touch</code> never starts at <code>777</code>:</strong> Creation does not begin from an arbitrary mode. The kernel starts from a fixed base and clears the bits named by the process's <em>file mode creation mask</em> (<code>umask</code>):</p>
+  <p>\[ \text{mode}_{\text{new}} = \text{mode}_{\text{base}} \ \&\ \sim\,\text{umask} \]</p>
+  <p>The base is \(666_{8}\) for a newly created regular file — creation grants read and write but never execute — and \(777_{8}\) for a directory, which needs execute to be traversable. Only the nine low bits take part: the kernel stores <code>umask &amp; 0777</code>. For the ordinary masks the bitwise clearing gives the same result as subtracting the mask digit by digit, which is why the shorthand works for <code>002</code> and <code>022</code>.</p>
+</div>
+<table>
+  <thead>
+    <tr>
+      <th>Object</th>
+      <th>Base</th>
+      <th>umask</th>
+      <th>Bits cleared</th>
+      <th>Result</th>
+      <th><code>ls -l</code> field</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td>regular file</td>
+      <td>\(666\)</td>
+      <td>\(022\)</td>
+      <td>group <code>w</code>, other <code>w</code></td>
+      <td>\(644\)</td>
+      <td><code>-rw-r--r--</code></td>
+    </tr>
+    <tr>
+      <td>regular file</td>
+      <td>\(666\)</td>
+      <td>\(002\)</td>
+      <td>other <code>w</code></td>
+      <td>\(664\)</td>
+      <td><code>-rw-rw-r--</code></td>
+    </tr>
+    <tr>
+      <td>regular file</td>
+      <td>\(666\)</td>
+      <td>\(026\)</td>
+      <td>group <code>w</code>, other <code>rw</code></td>
+      <td>\(640\)</td>
+      <td><code>-rw-r-----</code></td>
+    </tr>
+    <tr>
+      <td>directory</td>
+      <td>\(777\)</td>
+      <td>\(022\)</td>
+      <td>group <code>w</code>, other <code>w</code></td>
+      <td>\(755\)</td>
+      <td><code>drwxr-xr-x</code></td>
+    </tr>
+    <tr>
+      <td>directory</td>
+      <td>\(777\)</td>
+      <td>\(002\)</td>
+      <td>other <code>w</code></td>
+      <td>\(775\)</td>
+      <td><code>drwxrwxr-x</code></td>
+    </tr>
+  </tbody>
+</table>
+<div class="important-note">
+  <p><strong>Bit-level check:</strong> take the others triplet of a file under <code>umask 002</code>. The base is <code>rw-</code> \(=110_2\), the mask contributes <code>010_2</code> for others' write, and \(110_2 \ \&\ \sim 010_2 = 110_2 \ \&\ 101_2 = 100_2 = r\text{--}\). The different bases explain the common sight of <code>664</code> files beside <code>775</code> directories in one shared tree. The mask is per process, inherited across <code>fork</code> and unchanged by <code>exec</code>, and it acts only at creation — a later <code>chmod</code> is not masked.</p>
+</div>
 </div>
 <div class="example-box">
   <p><strong>Example 7 — Add execute while keeping other bits: from 664 to 774.</strong> Exercise: add execute for user and group while keeping other rights. From <code>rw-rw-r--</code> (\(6\,6\,4\)) add <code>x</code> to the first two triplets:</p>

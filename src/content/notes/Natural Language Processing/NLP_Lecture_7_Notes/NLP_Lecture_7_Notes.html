@@ -637,6 +637,35 @@
 <p>We now move to the neural approaches. Everything from here on is a neural-network approach, and a key consequence is that you do not need to engineer features by hand: give the model labeled training data and it learns the features automatically through the hidden weights of the fully connected layers. This is the neural-network baseline for sequence tagging — not just for POS tagging, but for other NLP applications as well. Two terms matter here: the Bi-LSTM part addresses the <em>local</em> challenge, and the CRF part addresses the <em>global</em> challenge.</p>
 <h3 id="7.6.1-lstm-recap-and-the-vanishing-gradient">7.6.1 LSTM recap and the vanishing gradient</h3>
 <p>LSTM stands for <em>long short-term memory</em> — a sequence-learning neural network algorithm, familiar from the earlier DNN course. It has gates — including the forget gate — that decide what information to keep and what to remove, tracking the state over the sequence. GRU is a related architecture.</p>
+
+<div class="important-note">
+  <p><strong>Input representation — what actually enters the first LSTM step.</strong> The gates above operate on one vector \(x_t\) per word, and that vector is not the raw word. A neural tagger builds it from two learned pieces: a <em>word embedding</em> — one dense vector per known word, trained on large text — and a <em>character-level representation</em>, produced by a small network that reads the word's letters. The two are concatenated end to end: \[ x_t = [\;e_{\text{word}}(w_t)\;;\;e_{\text{char}}(w_t)\;] \in \mathbb{R}^{d_w + d_c}. \] If the word part has \(d_w = 4\) numbers and the character part \(d_c = 2\), the input is a single 6-number vector — for example \(x_t = [0.9,\; 0.8,\; -0.2,\; 0.1 \mid 0.7,\; -0.3]\).</p>
+  <table>
+    <thead>
+      <tr>
+        <th>Component</th>
+        <th>Built from</th>
+        <th>What it captures</th>
+        <th>Unseen word</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>Word embedding</td>
+        <td>Word identity via corpus co-occurrence</td>
+        <td>Syntax and meaning of words seen in training</td>
+        <td>No vector available</td>
+      </tr>
+      <tr>
+        <td>Character representation</td>
+        <td>Spelling read letter by letter</td>
+        <td>Morphology and shape (suffixes, capitalization)</td>
+        <td>Always computable from the spelling</td>
+      </tr>
+    </tbody>
+  </table>
+  <p><strong>Why the character half matters here.</strong> The suffix <code>-ly</code> points to an adverb and <code>-ing</code> to a verb, so a word never seen in training still receives a tag clue from its spelling alone — the network learns these orthographic patterns instead of a human enumerating them as MEMM features. Concatenation gives seen words both signals while unseen words fall back on the character part, which is why the neural baseline handles out-of-vocabulary items an emission table cannot.</p>
+</div>
 <div class="key-concept">
   <p><strong>The gated memory, one step at a time.</strong> At each word the LSTM updates two state vectors. Let \(x_t\) be the current word vector, \(h_{t-1}\) the previous hidden state (the running summary), and \(c_{t-1}\) the previous cell state (the notepad). Three gates — each a sigmoid \(\sigma(z) = 1/(1+e^{-z})\) producing a number between 0 and 1 — decide how much of each signal flows:</p>
   <ul>
@@ -858,6 +887,39 @@
 <div class="important-note">
   <p><strong>Q:</strong> If I am into prompting in one or two sentences — not giving paragraphs of data — could I always go with the Viterbi algorithm?</p>
   <p><strong>A:</strong> Yes, correct — because prompting has a cost. There are tokens when you use APIs — 15 dollars per month for those tokens — and the question is whether those tokens give you ROI. For an enterprise-level application earning money, tokens and API calls are money: you pay per token. So for short, structured tagging tasks, the classical algorithms remain a perfectly good choice.</p>
+</div>
+
+<h3 id="7.10.5-transformation-based-brill-tagging" class="subsection-title">7.10.5 Transformation-Based (Brill) Tagging: Learning Readable Rules</h3>
+<p>The classical family has a third member that is neither a probability table nor a neural network. <em>Transformation-based tagging</em> (Brill tagging) starts from the simplest possible tagger — label every word with its most frequent tag in a tagged corpus — and then learns an ordered list of correction rules from a manually annotated training set. It is supervised like the HMM and the MEMM, but its output is a human-readable rule list, which makes it as explainable as the statistical approaches discussed above.</p>
+<div class="key-concept">
+  <p><strong>Formal definition — transformation-based learning (TBL).</strong> The corpus is first tagged by the most-likely-tag rule, \(\text{tag}(w) = \arg\max_t P(t \mid w)\). A <em>transformation</em> has the form "change tag \(a\) to tag \(b\) when the local context satisfies condition \(c\)." Learning is greedy and error-driven: on each pass, generate the candidate instantiations of a small hand-written template set, pick the transformation that reduces tagging errors the most, apply it to the whole corpus, and append it to an ordered queue. Stop when the best remaining rule improves fewer than a threshold of tags. At test time the rules fire in exactly the learned order, so the queue itself is the tagging procedure.</p>
+  <p>The score used to choose a transformation on each pass is \[\text{score} = \#\text{good} - \#\text{bad}\] where a <em>good</em> instance is a position currently tagged \(a\) whose correct tag is \(b\) (the rule would repair it) and a <em>bad</em> instance is a position already correctly tagged \(a\) (the rule would break it). The instantiation with the largest score wins the pass.</p>
+</div>
+<div class="example-box">
+  <p><strong>Worked example — fixing "race" in the Brown corpus.</strong> Counting senses gives \(P(\text{NN} \mid \text{race}) = 0.98\) and \(P(\text{VB} \mid \text{race}) = 0.02\), so the most-likely-tag baseline calls <em>race</em> a noun in both contexts: "is/VBZ expected/VBN to/TO race/NN tomorrow/NN" (wrong) and "the/DT race/NN for/IN outer/JJ space/NN" (right). TBL learns the transformation <strong>change NN to VB when the previous tag is TO</strong>. It fires on the first sentence because <em>to</em> is tagged TO — yielding "expected/VBN to/TO race/VB" — and leaves the second sentence untouched because its previous tag is DT, so the correct noun tag survives. One rule repaired one error without breaking the other case: its score is \(1_{\text{good}} - 0_{\text{bad}} = +1\).</p>
+  <table>
+    <thead>
+      <tr>
+        <th>Template (each begins "change \(a\) to \(b\) when ...")</th>
+        <th>Learned rule it instantiated</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>The preceding word is tagged \(z\)</td>
+        <td>NN → VB when the previous tag is TO</td>
+      </tr>
+      <tr>
+        <td>One of the previous three tags is \(z\)</td>
+        <td>VBP → VB when one of the previous three tags is MD</td>
+      </tr>
+      <tr>
+        <td>One of the previous two tags is \(z\)</td>
+        <td>NN → VB when one of the previous two tags is MD</td>
+      </tr>
+    </tbody>
+  </table>
+  <p><strong>Why templates matter:</strong> the space of imaginable rules is infinite, so each pass searches only instantiations of a short template list. That restriction is what makes greedy search over rules tractable — and it is the price paid for a tagger whose every decision can be read off the rule queue.</p>
 </div>
 <div class="key-takeaway">
   <p><strong>Recap.</strong> Every approach from this session is still in use, chosen by requirement: HMM and Viterbi for explainable, low-cost, short structured tagging; MEMM when hand-built features matter; Bi-LSTM + CRF for the accurate neural baseline; fine-tuned transformers for near-perfect accuracy when compute and money allow; prompting when you need a quick answer without training; and agents that call all of the above as tools. Accuracy, explainability, cost, and data constraints decide which one is "most suitable" — the exact judgment the exam asks you to make.</p>

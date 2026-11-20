@@ -1066,6 +1066,27 @@ SELECT * FROM movies_revenues WHERE revenues_domestic IS NOT NULL;</code></pre>
 <div class="key-concept">
   <p><strong>Formalize — the unknown logic:</strong> NULL means unknown, and any compare against unknown stays unknown rather than true or false. \(date\_of\_birth = NULL\) is unknown for every row, so WHERE (which keeps only true) returns nothing — not even the NULL rows. \(IS\ NULL\) skips the compare and asks directly "is this cell marked missing?", which votes a clean true or false per row. \(IS\ NOT\ NULL\) is the exact mirror. The logic is standard across PostgreSQL, MySQL, Snowflake, Databricks, and SQL Server with no spelling differences.</p>
 </div>
+
+<div class="key-concept">
+  <p><strong>Formalize — three-valued logic (3VL):</strong> a predicate evaluates to one of \(TRUE\), \(FALSE\), or \(UNKNOWN\) (written NULL). WHERE keeps a row only when the final value is exactly \(TRUE\); both \(FALSE\) and \(UNKNOWN\) reject it. The truth table below formalizes the vote picture used from 5.3 through 5.5. AND is the cautious join: one FALSE is enough to reject, but a lone UNKNOWN with no FALSE stays UNKNOWN. OR is the generous join: one TRUE is enough to accept, but a lone UNKNOWN with no TRUE stays UNKNOWN. NOT flips TRUE and FALSE while leaving UNKNOWN unchanged.</p>
+  <table>
+    <thead>
+      <tr><th>\(a\)</th><th>\(b\)</th><th>\(a\ AND\ b\)</th><th>\(a\ OR\ b\)</th><th>\(NOT\ a\)</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>TRUE</td><td>TRUE</td><td>TRUE</td><td>TRUE</td><td>FALSE</td></tr>
+      <tr><td>TRUE</td><td>FALSE</td><td>FALSE</td><td>TRUE</td><td>FALSE</td></tr>
+      <tr><td>TRUE</td><td>UNKNOWN</td><td>UNKNOWN</td><td>TRUE</td><td>FALSE</td></tr>
+      <tr><td>FALSE</td><td>TRUE</td><td>FALSE</td><td>TRUE</td><td>TRUE</td></tr>
+      <tr><td>FALSE</td><td>FALSE</td><td>FALSE</td><td>FALSE</td><td>TRUE</td></tr>
+      <tr><td>FALSE</td><td>UNKNOWN</td><td>FALSE</td><td>UNKNOWN</td><td>TRUE</td></tr>
+      <tr><td>UNKNOWN</td><td>TRUE</td><td>UNKNOWN</td><td>TRUE</td><td>UNKNOWN</td></tr>
+      <tr><td>UNKNOWN</td><td>FALSE</td><td>FALSE</td><td>UNKNOWN</td><td>UNKNOWN</td></tr>
+      <tr><td>UNKNOWN</td><td>UNKNOWN</td><td>UNKNOWN</td><td>UNKNOWN</td><td>UNKNOWN</td></tr>
+    </tbody>
+  </table>
+  <p><strong>Worked derivation — why <code>NOT IN</code> with a NULL returns nothing:</strong> \(x\ NOT\ IN\ (10, 50, NULL)\) expands to \(NOT\,(x = 10\ OR\ x = 50\ OR\ x = NULL)\). For any non-matching \(x\) the three arms vote \(FALSE, FALSE, UNKNOWN\). The OR row gives \(UNKNOWN\), and the NOT row leaves it \(UNKNOWN\), so WHERE rejects the row. This is the complete derivation of the empty-answer rule asserted in 5.11 and 5.12: a NULL anywhere in the list poisons every arm of the folded OR.</p>
+</div>
 <p>Cross-database note: the IS NULL spelling is identical everywhere, but NULL sort position differs — PostgreSQL sorts NULLs last on ascending by default, MySQL sorts them first, Snowflake follows the ORDER direction. That is why money sorts in 5.9 add explicit \(NULLS\ LAST\) rather than trusting defaults. A second shared trap: \(NOT\ IN\) lists holding NULL (5.11) go empty for the same unknown logic — filter NULLs out first when mixing the two.</p>
 <p>Picture NULL as a blank sticker on a file: \(=\) tries to read the sticker as a value and fails, while IS NULL checks for the sticker itself.</p>
 <div class="warning-box">
@@ -1089,6 +1110,28 @@ SELECT * FROM movies_revenues WHERE revenues_domestic IS NOT NULL;</code></pre>
 </div>
 <div class="example-box">
   <p><strong>Example 6 — failed equality trials:</strong> Four wrong shapes prove why IS NULL exists. \(WHERE\ date\_of\_birth = NULL\) returns no rows because NULL never equals anything, not even itself. \(WHERE\ date\_of\_birth = 'null'\) compares a date column against the four-letter text null and raises an invalid-input type error. \(WHERE\ date\_of\_birth = ''\) with an empty quote pair fails on type mismatch for a date field. \(WHERE\ date\_of\_birth = ' '\) with a blank space fails the same way. Only \(date\_of\_birth\ IS\ NULL\) states the missing-value test in legal form. Left type and right type must align, and NULL needs its own operator rather than \(=\) instead. Final lesson: quoted null, empty quotes, and blank space are all real text values, never the missing marker.</p>
+</div>
+
+<div class="important-note">
+  <p><strong>NULL-safe comparison — <code>IS DISTINCT FROM</code>:</strong> the failed trials above show that \(=\) and \(<>\) return UNKNOWN whenever either side is NULL. Standard SQL provides two comparison predicates that never return UNKNOWN. \(a\ IS\ DISTINCT\ FROM\ b\) means "different, treating NULL as an ordinary value"; \(a\ IS\ NOT\ DISTINCT\ FROM\ b\) means "same, treating NULL as an ordinary value". For two non-NULL inputs they behave exactly like \(<>\) and \(=\). When both inputs are NULL, DISTINCT is FALSE and NOT DISTINCT is TRUE. When exactly one input is NULL, DISTINCT is TRUE and NOT DISTINCT is FALSE. The full comparison makes the contrast explicit:</p>
+  <table>
+    <thead>
+      <tr><th>\(a\)</th><th>\(b\)</th><th>\(a = b\)</th><th>\(a <> b\)</th><th>\(IS\ DISTINCT\ FROM\)</th><th>\(IS\ NOT\ DISTINCT\ FROM\)</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>TRUE</td><td>TRUE</td><td>TRUE</td><td>FALSE</td><td>FALSE</td><td>TRUE</td></tr>
+      <tr><td>TRUE</td><td>FALSE</td><td>FALSE</td><td>TRUE</td><td>TRUE</td><td>FALSE</td></tr>
+      <tr><td>TRUE</td><td>NULL</td><td>UNKNOWN</td><td>UNKNOWN</td><td>TRUE</td><td>FALSE</td></tr>
+      <tr><td>FALSE</td><td>TRUE</td><td>FALSE</td><td>TRUE</td><td>TRUE</td><td>FALSE</td></tr>
+      <tr><td>FALSE</td><td>FALSE</td><td>TRUE</td><td>FALSE</td><td>FALSE</td><td>TRUE</td></tr>
+      <tr><td>FALSE</td><td>NULL</td><td>UNKNOWN</td><td>UNKNOWN</td><td>TRUE</td><td>FALSE</td></tr>
+      <tr><td>NULL</td><td>TRUE</td><td>UNKNOWN</td><td>UNKNOWN</td><td>TRUE</td><td>FALSE</td></tr>
+      <tr><td>NULL</td><td>FALSE</td><td>UNKNOWN</td><td>UNKNOWN</td><td>TRUE</td><td>FALSE</td></tr>
+      <tr><td>NULL</td><td>NULL</td><td>UNKNOWN</td><td>UNKNOWN</td><td>FALSE</td><td>TRUE</td></tr>
+    </tbody>
+  </table>
+  <p><strong>Worked use:</strong> to keep only rows whose <code>date_of_birth</code> really differs from a backup column, write \(WHERE\ date\_of\_birth\ IS\ DISTINCT\ FROM\ birth\_backup\). Rows holding two different real dates pass, and so do rows where one side is NULL — unlike \(date\_of\_birth\ <> birth\_backup\), which silently drops every row with a NULL on either side. The mirror \(IS\ NOT\ DISTINCT\ FROM\) finds rows that agree, including two NULLs, so it is the NULL-safe replacement for \(=\) when a missing marker must count as a match.</p>
+  <p><strong>Cross-database note:</strong> \(IS\ DISTINCT\ FROM\) and \(IS\ NOT\ DISTINCT\ FROM\) are standard-SQL predicates and run in PostgreSQL. MySQL spells the equality side \(<=>\), its NULL-safe equal operator, which its manual calls equivalent to standard \(IS\ NOT\ DISTINCT\ FROM\). The portability lesson is identical in both: never use bare \(=\) or \(<>\) when a NULL may sit on either side — choose the NULL-safe form so the predicate always votes TRUE or FALSE.</p>
 </div>
 <div class="warning-box">
   <p><strong>Pitfalls:</strong> the top fault is \(=\) NULL, which runs with no error but returns zero rows — silence rather than a message. The second is quoted \('null'\) on typed columns, which errors on dates but quietly matches nothing on text. The third is assuming an empty string equals NULL: in PostgreSQL and Snowflake they differ, while Oracle treats empty strings as NULL — check the target system before relying on either.</p>

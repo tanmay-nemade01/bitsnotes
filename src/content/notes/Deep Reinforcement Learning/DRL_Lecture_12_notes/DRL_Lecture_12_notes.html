@@ -458,6 +458,72 @@
           still much faster than Monte Carlo in practice due to lower variance.</p>
       </div>
 
+      <div class="key-concept">
+        <strong>Direct computation of the TD fixed point — Least-Squares TD (LSTD):</strong>
+
+        <p>Iteratively taking semi-gradient steps converges (with a decaying step size) to the fixed point
+          \(w_{TD} = A^{-1}b\), where \(A = \mathbb{E}[x_t(x_t - \gamma x_{t+1})^\top]\) and
+          \(b = \mathbb{E}[R_{t+1}x_t]\). This discards most of the information in each sample. LSTD instead estimates
+          the two expectations directly and solves for the fixed point in one matrix solve:</p>
+
+        \[
+        \hat{A}_t = \sum_{k=0}^{t-1} x_k(x_k - \gamma x_{k+1})^\top + \varepsilon I,
+        \qquad \hat{b}_t = \sum_{k=0}^{t-1} R_{k+1}x_k,
+        \qquad w_t = \hat{A}_t^{-1}\hat{b}_t
+        \]
+
+        <p>The \(\varepsilon I\) term (small \(\varepsilon > 0\)) keeps \(\hat{A}_t\) invertible. The missing \(1/t\)
+          factors cancel in the ratio \(\hat{A}_t^{-1}\hat{b}_t\) — these are estimates of \(tA\) and \(tb\), so the
+          scale is consistent with the fixed-point formula above.</p>
+
+        <p><strong>Incremental inverse (Sherman–Morrison):</strong> forming and inverting \(\hat{A}_t\) from scratch
+          costs \(O(d^3)\). Because \(\hat{A}_t\) is a sum of outer products, its inverse can be maintained in
+          \(O(d^2)\) per step:</p>
+
+        \[
+        \hat{A}_t^{-1} = \hat{A}_{t-1}^{-1} -
+        \frac{\hat{A}_{t-1}^{-1}x_t(x_t - \gamma x_{t+1})^\top \hat{A}_{t-1}^{-1}}
+        {1 + (x_t - \gamma x_{t+1})^\top \hat{A}_{t-1}^{-1}x_t},
+        \qquad \hat{A}_0^{-1} = \varepsilon^{-1}I
+        \]
+
+        <table>
+          <thead>
+            <tr>
+              <th>Property</th>
+              <th>Semi-gradient TD(0)</th>
+              <th>LSTD</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>Per-step computation / memory</td>
+              <td>\(O(d)\)</td>
+              <td>\(O(d^2)\)</td>
+            </tr>
+            <tr>
+              <td>Step-size \(\alpha\)</td>
+              <td>Required; its choice governs convergence</td>
+              <td>None; \(\varepsilon\) controls numerical stability instead</td>
+            </tr>
+            <tr>
+              <td>Data efficiency</td>
+              <td>Lower — one incremental pass</td>
+              <td>Highest for linear TD prediction</td>
+            </tr>
+            <tr>
+              <td>Forgetting under a changing policy</td>
+              <td>Natural through \(\alpha\)</td>
+              <td>None — requires an extra forgetting mechanism for control</td>
+            </tr>
+          </tbody>
+        </table>
+
+        <p>LSTD trades computation for data efficiency and removes the step size, but its inability to forget makes it
+          awkward when the target policy keeps changing — one reason deep RL practice retains the iterative
+          semi-gradient machinery developed below.</p>
+      </div>
+
       <h3 class="subsection-title">12.1.7 Student Questions and Answers</h3>
 
       <div class="important-note">
@@ -899,6 +965,57 @@
           When the algorithm says "observe state \(S_t\)", the next step is always "preprocess to form \(\phi_t\)".</p>
       </div>
 
+      <div class="important-note">
+        <strong>Implementation detail — frame skipping (action repeat):</strong> the preprocessing pipeline above is
+        applied to a <em>decision</em> timeline, not to every emulator frame. The Atari emulator runs at 60 Hz, but the
+        agent observes and selects actions only on every \(k\)-th frame, repeating its last action on the skipped
+        frames. The published DQN experiments use \(k = 4\) for every game, with one exception: in Space Invaders,
+        \(k = 4\) made the lasers invisible because of their blink period, so \(k = 3\) was used instead.
+
+        <p><strong>Why it works:</strong> advancing the emulator one step is far cheaper than running a CNN forward
+          pass, so the agent accumulates roughly \(k\) times more game time for nearly the same compute budget.
+          Discounting is applied per <em>decision</em>; with \(k = 4\), a 60 Hz game becomes an effective 15 Hz decision
+          process, and a discount of \(\gamma = 0.99\) per decision spans about \(1/(1 - 0.99) = 100\) decisions —
+          roughly 6.7 seconds of game time instead of 1.7 seconds if every frame were a decision.</p>
+
+        <table>
+          <thead>
+            <tr>
+              <th>Quantity</th>
+              <th>Every emulator frame</th>
+              <th>Frame skipping, \(k = 4\)</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>Decision rate</td>
+              <td>60 Hz</td>
+              <td>15 Hz</td>
+            </tr>
+            <tr>
+              <td>CNN forward passes per game-second</td>
+              <td>60</td>
+              <td>15</td>
+            </tr>
+            <tr>
+              <td>Spacing between stacked frames</td>
+              <td>1 emulator frame</td>
+              <td>4 emulator frames</td>
+            </tr>
+            <tr>
+              <td>Game experience per unit compute</td>
+              <td>\(1\times\)</td>
+              <td>\(\approx 4\times\)</td>
+            </tr>
+          </tbody>
+        </table>
+
+        <p><strong>Connection to the 4-frame stack:</strong> frame skipping changes <em>which</em> frames are stacked,
+          not the tensor shape. The stack still holds the four most recent decisions; with \(k = 4\) it spans 16 raw
+          emulator frames. This is precisely why velocity and direction stay visible to the network even though
+          actions are chosen sparsely.</p>
+      </div>
+
       <h3 class="subsection-title">12.3.4 Detailed Deep Convolutional Network Architecture Specifications</h3>
 
       <div class="key-concept">
@@ -1224,6 +1341,57 @@
         mini-batch drawn from 200,000 stored transitions is much closer to i.i.d. than 32 consecutive steps from the
         same episode. Additionally, each transition can be reused multiple times across different updates — improving
         sample efficiency compared to on-policy methods that discard data after one use.</p>
+
+      <div class="key-concept">
+        <strong>Why experience replay mandates an off-policy algorithm:</strong> a stored transition \((\phi_t, a_t,
+        r_t, \phi_{t+1})\) was generated by an older behavior policy — the \(\epsilon\)-greedy policy with whatever
+        \(\epsilon\) was in force when the sample was collected. By the time it is drawn, the online parameters have
+        changed and the current greedy policy differs. Replay is therefore only consistent with an off-policy
+        update rule: the current parameters are not the ones that generated the data.
+
+        <p><strong>Formal reason — the target is policy-independent:</strong></p>
+
+        \[
+        y = r + \gamma \max_{a'} \hat{q}(\phi', a'; \theta^-)
+        \]
+
+        <p>depends only on the <em>maximized</em> Q-value, not on the action the behavior policy actually chose. A
+          transition sampled from any behavior distribution is thus a valid training example for the optimal policy.
+          Contrast an on-policy SARSA-style target \(r + \gamma \hat{q}(\phi', a'; \theta)\), which needs the next
+          action drawn from the <em>current</em> policy; a replayed transition carries the stale next action instead,
+          so that target would be biased.</p>
+
+        <table>
+          <thead>
+            <tr>
+              <th>Aspect</th>
+              <th>On-policy control (SARSA)</th>
+              <th>Off-policy control (Q-learning / DQN)</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>Next action in the target</td>
+              <td>Action actually taken by the current policy</td>
+              <td>\(\arg\max_{a'} \hat{q}(\phi', a'; \theta^-)\)</td>
+            </tr>
+            <tr>
+              <td>Replay-compatible?</td>
+              <td>No — a stale next action mismatches the current policy</td>
+              <td>Yes — target independent of the behavior policy</td>
+            </tr>
+            <tr>
+              <td>Data reuse</td>
+              <td>Must discard after one update</td>
+              <td>Unbounded within buffer capacity \(N\)</td>
+            </tr>
+          </tbody>
+        </table>
+
+        <p><strong>Consequence:</strong> experience replay is not merely a storage trick — it is the reason DQN is
+          built on Q-learning rather than SARSA, and it is what makes the near-i.i.d. sampling argument of the
+          correlated-samples challenge mathematically sound.</p>
+      </div>
 
       <div class="warning-box">
         <strong>Pitfall — Buffer too small:</strong> If \(N\) is too small (e.g., 1,000), the buffer contains mostly

@@ -503,6 +503,76 @@
 <div class="example-box">
   <p><strong>Worked row softmax:</strong> fix video one with text scores \([0.97, 0.05, 0.10]\) before softmax. Exponentials are about \([2.64, 1.05, 1.11]\), summing to about 4.80. The positive probability is \(2.64 / 4.80 \approx \mathbf{0.55}\), already the clear winner, and training pushes it higher by raising the diagonal score and lowering the rest. <strong>Sense-check:</strong> a high diagonal with near-zero negatives gives a peaked softmax, which is exactly the training goal.</p>
 </div>
+
+<div class="key-concept">
+  <p><strong>Formal form — temperature-scaled InfoNCE (NT-Xent):</strong> the symmetric loss above averages two softmax directions; writing one direction in full makes a hidden design knob explicit.</p>
+  <p>With both sides L2 normalized so \(\|\hat{z}\|_{2} = 1\), the score for a positive pair \((i,j)\) inside a batch of \(2N\) views is</p>
+  <p>\[ \ell_{i,j} = -\log \frac{\exp(\hat{z}_{i}^{\top}\hat{z}_{j}/\tau)}{\sum_{k=1,\,k\neq i}^{2N} \exp(\hat{z}_{i}^{\top}\hat{z}_{k}/\tau)} \]</p>
+  <p>where \(\tau > 0\) is the <em>temperature</em>, \(\hat{z}_{i}^{\top}\hat{z}_{j}\) is the cosine score (a dot product once vectors are unit length), and the denominator sums the positive together with every in-batch negative, excluding \(k = i\) itself.</p>
+  <p>Averaging \(\ell_{i,j}\) and \(\ell_{j,i}\) over all positives recovers the \(\tfrac{1}{2}(\mathcal{L}_{i \to t} + \mathcal{L}_{t \to i})\) expression given earlier, so this is the same objective, not a new one.</p>
+  <p><strong>Why \(\tau\) matters:</strong> dividing the logits by \(\tau\) rescales their spread before the softmax. A small \(\tau\) sharpens the distribution, so a few close competitors dominate the gradient and <em>hard negatives</em> carry more weight; a large \(\tau\) flattens it and weakens the pressure on near ties. It is therefore a knob over which off-diagonal cells are emphasized.</p>
+  <table>
+    <thead>
+      <tr>
+        <th>Temperature</th>
+        <th>Softmax shape</th>
+        <th>Negative treatment</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>\(\tau \ll 1\)</td>
+        <td>Very peaked, near one-hot</td>
+        <td>Close competitors dominate; can over-sharpen</td>
+      </tr>
+      <tr>
+        <td>\(\tau \approx 0.1\)</td>
+        <td>Moderately peaked</td>
+        <td>Hard negatives emphasized; a typical operating point</td>
+      </tr>
+      <tr>
+        <td>\(\tau \gtrsim 1\)</td>
+        <td>Close to uniform</td>
+        <td>Negatives nearly equal in weight; weak separation</td>
+      </tr>
+    </tbody>
+  </table>
+  <p>The scale can equivalently be written as \(s = 1/\tau\) multiplying the hypersphere radius. Empirical sweeps place the best value near \(0.1\), with both much smaller and much larger settings degrading the learned representation, so \(\tau\) is tuned rather than assumed.</p>
+</div>
+
+<div class="important-note">
+  <p><strong>Angular-margin alternatives on the unit hypersphere:</strong> because L2 normalization places every embedding on a unit sphere, a match can be scored by the angle between two directions rather than by a raw dot product. A family of classification-style metric losses exploits this geometry by inserting a margin <em>in angle</em> on the positive class, so same-class vectors clump more tightly while other classes are pushed farther around the sphere.</p>
+  <p>With a fixed radius \(s\), a feature \(x\) and its class center \(w_{y}\), let \(\theta_{y} = \arccos(w_{y}^{\top}x)\) after both are normalized. ArcFace adds the margin to the angle itself and rescales the logit:</p>
+  <p>\[ \mathcal{L} = -\log \frac{\exp(s\cos(\theta_{y} + m))}{\exp(s\cos(\theta_{y} + m)) + \sum_{j \neq y}\exp(s\cos\theta_{j})} \]</p>
+  <p>where \(m > 0\) is the additive angular margin and \(s\) fixes the hypersphere radius. Because angle and arc correspond exactly on a unit sphere, this margin is a geodesic-distance margin.</p>
+  <table>
+    <thead>
+      <tr>
+        <th>Loss</th>
+        <th>Margin placement</th>
+        <th>Target logit</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>SphereFace</td>
+        <td>Multiplicative on angle</td>
+        <td>\(s\cos(m\theta_{y})\)</td>
+      </tr>
+      <tr>
+        <td>ArcFace</td>
+        <td>Additive on angle</td>
+        <td>\(s\cos(\theta_{y} + m)\)</td>
+      </tr>
+      <tr>
+        <td>CosFace</td>
+        <td>Additive on cosine</td>
+        <td>\(s(\cos\theta_{y} - m)\)</td>
+      </tr>
+    </tbody>
+  </table>
+  <p><strong>Link back to retrieval:</strong> these are classification-style counterparts of the pairwise InfoNCE loss above; they act on the same L2-normalized shared space and have been used as an embedding head alongside pairwise losses in visual similarity search, with multi-label extensions pulling one item toward several class centers instead of one.</p>
+</div>
 <p>After training, diagonal entries stand out as aligned and off diagonal entries stay non aligned. At inference time the stored side is ready in advance: each video is split into frames, each frame is embedded into the shared space, and those vectors wait in the store. At run time only the text query is encoded into a query vector \(z_{q}\), compared with stored vectors \(z_{v}\), and the top \(K\) vectors come back.</p>
 <div class="warning-box">
   <p><strong>Scope:</strong> contrastive heads align what the frozen encoders can already see. When the frozen image encoder misses motion or a fresh domain, no pairing loss can invent the missing signal, so light tuning of more layers is needed. <strong>Assumption:</strong> each batch holds true negatives. When captions repeat across items, such as many clips captioned sunset, off diagonal cells are not true negatives and the loss needs care.</p>
@@ -577,6 +647,44 @@ flowchart LR
 </div>
 <p>A second telling uses a five digit style number and bucket edges such as 0 to 10000 in A1 and \(10^{5}\) to \(10^{6}\) in A2: any value in a bucket maps to that bucket code, the base is subtracted to leave a residual, the residual maps to a B code, the next residual maps onward, and a fixed count of parts, for example four subvectors, gives the final short code. Only those few bytes are stored per item. In practice IVF and PQ are combined: IVF says where to look, by naming the approximate cells, and PQ says what is stored there, in compressed code form. The scan then runs fast and uses far less memory.</p>
 <p>Picture IVF plus PQ as a post office: IVF picks the right delivery zone, PQ shrinks each parcel so the van carries far more of them. Zone choice keeps recall high, shrinking keeps memory low, and both together cut latency.</p>
+
+<div class="important-note">
+  <p><strong>Compact binary codes and Hamming search:</strong> product quantization is not the only way to shrink a vector for approximate search. A complementary family maps each high-dimensional descriptor to a short bit string, so that two items are compared by counting differing bits rather than by summing float products.</p>
+  <p>The <em>Hamming distance</em> between two \(b\)-bit codes \(a\) and \(c\) is</p>
+  <p>\[ d_{H}(a,c) = \sum_{k=1}^{b} \mathbb{1}[\,a_{k} \neq c_{k}\,] \]</p>
+  <p>where \(\mathbb{1}[\cdot]\) is 1 when the bits differ and 0 otherwise. The count is a popcount of the XOR of two machine words, so each comparison is a handful of integer instructions instead of \(d\) multiply-adds. Locality-sensitive hashing extends the idea with several independent hash tables: a point falls into a bucket, and search visits buckets within a small Hamming radius of the query's code.</p>
+  <table>
+    <thead>
+      <tr>
+        <th>Representation</th>
+        <th>Bytes per vector</th>
+        <th>Distance</th>
+        <th>Trade-off</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>Float32, \(d = 512\)</td>
+        <td>\(512 \times 4 = 2048\)</td>
+        <td>Euclidean / dot product</td>
+        <td>Exact score, largest memory</td>
+      </tr>
+      <tr>
+        <td>PQ short code</td>
+        <td>A few bytes</td>
+        <td>Approximate in compressed domain</td>
+        <td>Adjustable by subquantizer count</td>
+      </tr>
+      <tr>
+        <td>Binary, \(b = 512\)</td>
+        <td>\(512 / 8 = 64\)</td>
+        <td>Hamming (popcount)</td>
+        <td>Fastest comparison, coarser values</td>
+      </tr>
+    </tbody>
+  </table>
+  <p><strong>Worked cost:</strong> a 512-bit code stores in 64 bytes, one thirty-second of a float32 vector's 2048 bytes and one sixteenth of a 16-bit vector's 1024 bytes; a 256-bit code needs only 32 bytes. Production libraries expose flat, IVF, and graph variants over such binary codes, plus multi-index hashing that splits the code into blocks so only buckets within a Hamming radius are visited. <strong>Sense-check:</strong> binary codes trade score resolution for an order-of-magnitude cut in both memory and comparison cost, the same recall-versus-latency-versus-memory bargain made by IVF and PQ.</p>
+</div>
 <h3 class="subsection-title" id="16.7.5-student-questions-and-answers">16.7.5 Student Questions and Answers</h3>
 <div class="important-note">
   <p><strong>Q:</strong> Can a graph database hold the index, and what mapping is still needed?</p>

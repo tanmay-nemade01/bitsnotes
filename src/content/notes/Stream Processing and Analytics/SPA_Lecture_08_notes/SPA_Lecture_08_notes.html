@@ -669,6 +669,47 @@
   <p>Sanity checks on the formula: the ratios are (throughput) ÷ (throughput), so the result is a plain count, not a unit of measure. If producer and consumer speeds were equal, both ratios would be identical and the max would be that common value. And in practice the answer is rounded up to a whole number — you cannot configure 16.67 partitions.</p>
 </div>
 <p>Unit hygiene is the whole game in these problems: system throughput is usually given per minute (GB per minute), while producer and consumer throughput are given per second (MB per second), so you must convert one side before dividing. The instructor accepts \(1\ \text{GB} = 10^3\ \text{MB}\) ("more precise is 1024, it doesn't matter"), so the numbers stay clean.</p>
+
+<div class="important-note">
+  <p><strong>System Detail — the consumer group behind \(T_t/T_c\).</strong> The ratio \(T_t/T_c\) counts consumers as if any number of them could simply be added. In Kafka's log-based model that is not free: the broker does not hand out individual messages to workers, it assigns <em>whole partitions</em> to the members of a consumer group, and each member then reads every message in its assigned partitions sequentially, in offset order.</p>
+  <table>
+    <thead>
+      <tr>
+        <th>Dimension</th>
+        <th>Log-based consumer group (Kafka)</th>
+        <th>Queue-based work distribution (JMS/AMQP style)</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>Unit assigned to a worker</td>
+        <td>An entire partition, read in offset order</td>
+        <td>One message at a time, acknowledged individually</td>
+      </tr>
+      <tr>
+        <td>Maximum parallel consumers</td>
+        <td>At most the number of partitions — extra consumers sit idle</td>
+        <td>Not bounded by partitions; workers scale independently</td>
+      </tr>
+      <tr>
+        <td>Ordering guarantee</td>
+        <td>Preserved within a partition, because one reader owns it</td>
+        <td>No per-partition order to preserve</td>
+      </tr>
+      <tr>
+        <td>Cost of one slow message</td>
+        <td>Head-of-line blocking: later messages in that partition wait</td>
+        <td>Only the one worker handling that message is held up</td>
+      </tr>
+      <tr>
+        <td>Recovery after a consumer fails</td>
+        <td>Another group member takes over its partitions and resumes at the last recorded offset</td>
+        <td>Acknowledgement deletes a message from the broker, so unacknowledged work can be redelivered</td>
+      </tr>
+    </tbody>
+  </table>
+  <p><strong>Consequence for the formula:</strong> \(N \geq T_t/T_c\) is not merely a throughput equality — it is the physical ceiling on consumption parallelism. A topic of \(N\) partitions can never be drained by more than \(N\) active consumers, so a design that needs \(T_t/T_c\) consumers must provision at least that many partitions. This is the mechanism that makes the <em>max</em> in Section 8.7.1 a hard architectural constraint rather than an arithmetic convenience.</p>
+</div>
 <div class="warning-box">
   <p><strong>Pitfalls:</strong></p>
   <ul>
@@ -748,6 +789,15 @@
   <p><strong>Sense-check:</strong> the result's unit comes from \(m\): with \(m\) in KB the storage is in KB; a real cluster would convert to GB (dividing by \(10^6\) under the course's \(10^3\) convention) — the arithmetic stays the same, only the unit label changes.</p>
 </div>
 <p>A student raised a sharp question during this discussion: if the system can process 400 MB per second and the producers only generate 50 MB per second total — the processing throughput is eight times the production rate — why store anything at all? The answer: storage is not about catching up; it is the partitions themselves. The messages must live in the partitions regardless of how fast they are consumed.</p>
+
+<div class="example-box">
+  <p><strong>Worked calculation — retention turns the partition store into a bounded buffer.</strong> Section 8.8 sizes the <em>footprint</em> as \(N \times n \times m\). A second question is how long that footprint can keep messages: the log is split into segments, and old segments are periodically deleted, so the store behaves as a bounded-size (ring) buffer whose lifetime is set by disk capacity divided by ingest rate.</p>
+  <p><strong>Step 1 — the back-of-the-envelope.</strong> A large disk holds \(6\ \text{TB} = 6 \times 10^{12}\ \text{bytes}\) and sustains \(150\ \text{MB/s} = 150 \times 10^{6}\ \text{bytes/s}\) of sequential writes. Writing at the maximum rate, the time to fill the disk is</p>
+  <p>\[ t_{\text{fill}} = \frac{6 \times 10^{12}\ \text{B}}{150 \times 10^{6}\ \text{B/s}} = 4.0 \times 10^{4}\ \text{s} \approx 11.1\ \text{hours} \]</p>
+  <p><strong>Step 2 — the failure mode it exposes.</strong> Once old segments are deleted, a consumer whose offset has fallen behind the oldest retained segment has simply missed those messages — it cannot rewind past the edge of the buffer. The loss is isolated to that one lagging consumer; other consumers reading from their own offsets are unaffected.</p>
+  <p><strong>Step 3 — connect back to the storage formula.</strong> \(N \times n \times m\) gives the instantaneous space taken by \(N\) partitions of \(n\) messages of \(m\) KB; the retention window decides how long messages survive before the segments holding them are discarded. A design must size both: enough disk for the footprint, and enough retention headroom that a temporary consumer outage does not slide a read position off the front of the buffer.</p>
+  <p><strong>Final result:</strong> about <strong>11 hours</strong> of full-rate writes fit on one 6 TB disk; real deployments run well below peak write bandwidth and typically retain days or weeks of messages. <strong>Takeaway:</strong> fast processing never removes the need for storage (Section 8.8), and a generous retention window is what lets a recovered consumer resume from its saved offset instead of losing data.</p>
+</div>
 <div class="key-takeaway">
   <p><strong>Recap:</strong> Storage is \(N \times n \times m\) — partition count from the throughput formula, message capacity per partition from the offset-array picture, message size assumed small in KB. Storage is the partitions themselves, so consumption speed never justifies skipping it. The next topic leaves numbers behind: security in the generalized architecture.</p>
 </div>

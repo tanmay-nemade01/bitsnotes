@@ -389,6 +389,32 @@ WHERE length_label = 'long';</code></pre>
   <p>Compute-then-filter is the payoff of the skeleton: the inner query derives what the outer query consumes — and the revenue example next scales this from one derived column to a full grouped aggregation.</p>
 </div>
 
+<h3 id="25.2.5-fabricating-a-banding-table-with-a-values-cte" class="subsection-title">25.2.5 Fabricating a Banding Table with a VALUES CTE</h3>
+<p>The length example bucketed rows with <code>CASE</code> written into the query. When the cutoffs are data — discount tiers, salary brackets, age bands — the cleaner move is to build a tiny temporary table of ranges with the <code>VALUES</code> row constructor inside a CTE, then join each fact row to the one band whose range contains it. The band definition is written once, lives at the top of the statement, and can be edited without touching the joining logic.</p>
+<div class="key-concept">
+  <p><strong>Formal definition:</strong> a <em>banding table</em> is a small relation \(B(\text{rank}, \text{label}, lo, hi)\) whose rows are pairwise disjoint intervals. A value \(v\) is assigned to the unique band with \(lo \le v \le hi\), because <code>BETWEEN</code> is inclusive of both endpoints — the standard spells <code>v BETWEEN lo AND hi</code> as \(v \ge lo \wedge v \le hi\).</p>
+  <pre><code>WITH amounts (id, amount) AS (
+    VALUES (1, 660000), (2, 715000), (3, 780000),
+           (4, 650000), (5, 9999999)
+),
+bands (rank, label, lo, hi) AS (
+    VALUES (3, 'bottom', 650000, 700000),
+           (2, 'middle', 700001, 730000),
+           (1, 'top',    730001, 9999999)
+)
+SELECT b.label, COUNT(*) AS n, SUM(a.amount) AS total
+FROM amounts a
+INNER JOIN bands b ON a.amount BETWEEN b.lo AND b.hi
+GROUP BY b.label
+ORDER BY b.rank;</code></pre>
+</div>
+<div class="example-box">
+  <p><strong>Worked trace:</strong> 660000 falls in bottom (650000 to 700000); 715000 in middle (700001 to 730000); 780000 in top; 650000 lands in bottom because the lower endpoint is included; 9999999 lands in top because the upper endpoint is included. <strong>Final answer: bottom — n = 2, total = 1,310,000; middle — n = 1, total = 715,000; top — n = 2, total = 10,779,999.</strong> Sense-check: \(2 + 1 + 2 = 5\) matches the five input rows, so the bands are disjoint and cover the whole input range with no double-counting and no drops.</p>
+</div>
+<div class="warning-box">
+  <p><strong>Pitfalls:</strong> inclusive endpoints mean two bands sharing a boundary (say 0–100 and 100–200) both match 100 and double-count it — use adjacent non-overlapping bounds such as 0–99 and 100–199. An amount outside every band is silently dropped by the inner join; add a catch-all band or use <code>LEFT JOIN</code> if outliers must appear. On PostgreSQL a <code>VALUES</code> list may sit directly in the CTE body as shown; Snowflake requires the row set to be wrapped — <code>WITH bands AS (SELECT * FROM (VALUES (3, 'bottom', 650000, 700000), ...) AS dr (rank, label, lo, hi))</code> — and caps a <code>VALUES</code> list at 200,000 rows, so this pattern is for small lookup sets only.</p>
+</div>
+
 <h2 id="25.3-combining-a-cte-with-a-table-total-revenue-per-director">25.3 Combining a CTE with a Table: Total Revenue per Director</h2>
 <div class="important-note">
   <p>Film-level money lives in one table and director names in another — how do you roll one up to the other without tangling the aggregation and the display logic in a single knot?</p>

@@ -232,6 +232,16 @@
 </div>
 <p>In words, the input image passes through a chain of convolution steps. Each step trades spatial detail for meaning. Early maps stay close to the image. Late maps stay close to the task. One example is telling a birthday scene from a wedding scene. Another is telling swimming from jogging. Both need object and scene cues more than edge cues.</p>
 <p>A concrete pass helps. Take an RGB frame of size 224 by 224 with 3 channels. Layer 1 learns about 64 edge filters. Each filter looks at a 7 by 7 patch. Its output marks where that edge sits. Layer 2 pools nearby replies and joins them into textures and corners. The spatial size falls to about 56 by 56. Layer 3 and layer 4 repeat the same pattern. Size falls to 28 by 28, then 14 by 14, then 7 by 7. Channel count grows from 64 to 256 to 512 to 1024 to 2048. By the end, each of the 2048 numbers pools over the whole frame. No number marks a single edge now. Each number marks how strongly some learned part was present.</p>
+<div class="key-concept">
+  <p><strong>Formal Definition — Receptive Field:</strong> The <em>receptive field</em> \(r\) of a unit is the size of the input region that produces that unit. Walking backward from one output unit (\(r_L = 1\)) through layers with kernel \(k_l\) and stride \(s_l\):</p>
+  <p>\[ r_{l-1} = s_l\, r_l + (k_l - s_l) \]</p>
+  <p>with the closed form</p>
+  <p>\[ r_0 = \sum_{l=1}^{L}\Big((k_l-1)\prod_{i=1}^{l-1} s_i\Big) + 1 \]</p>
+  <p>Stride enters, padding does not: a stride-\(s\) layer spreads every unit below it by \(s\) input positions, so early kernels are amplified by all later strides.</p>
+  <p><strong>Worked trace:</strong> five \(3\times3\) layers with strides \((1,1,2,1,1)\). Back from \(r=1\): \(1 \to 3 \to 5 \to 11 \to 13 \to 15\). Closed form: \(2+2+2+4+4+1 = 15\). The stride-2 layer alone lifts the field from 5 to 11, then two more \(3\times3\) layers add 2 each.</p>
+  <p><strong>Why depth builds meaning:</strong> measured on standard backbones, \(r_0\) is 195 for AlexNet, 212 for VGG-16, 315 for MobileNet-v1 and 483 for ResNet-50, all against a \(224\times224\) frame. Once \(r_0\) exceeds the frame, the last feature map already sees the whole scene, so pooling it to \(S_t \in \mathbb{R}^{2048}\) yields object-level meaning rather than a location map.</p>
+  <p><strong>Caveat:</strong> this is the theoretical field. The <em>effective</em> receptive field is smaller and peaked near the center, so a large \(r_0\) is necessary but not sufficient for whole-scene recognition.</p>
+</div>
 <div class="diagram-container my-6 text-center">
   <svg viewBox="0 0 640 320" class="diagram-svg" role="img" aria-label="Curve of meaning level against layer depth from input to output, flat near edges and textures, steep near parts and objects, bending at the last pooling step">
     <line x1="90" y1="270" x2="600" y2="270" stroke="currentColor" stroke-width="1.5" />
@@ -348,6 +358,14 @@
   <p>Here \(W_{xh}\) maps input to state. The symbol \(W_{hh}\) maps old state to new state. The symbol \(b_h\) is the state bias. The symbol \(W_{hy}\) maps state to output. The symbol \(b_y\) is the output bias. The symbol \(\tanh\) is a squash that keeps values in \([-1, 1]\). Shapes must line up. When \(x_t \in \mathbb{R}^{2048}\) and \(h_t \in \mathbb{R}^{512}\), then \(W_{xh} \in \mathbb{R}^{512 \times 2048}\) and \(W_{hh} \in \mathbb{R}^{512 \times 512}\).</p>
 </div>
 <p>Unroll three steps to see reuse. Start with \(h_0 = 0\). Step 1 reads \(x_1\) and \(h_0\) to make \(h_1\). Step 2 reads \(x_2\) and \(h_1\) to make \(h_2\). Step 3 reads \(x_3\) and \(h_2\) to make \(h_3\). Weights \(W_{xh}\), \(W_{hh}\), \(W_{hy}\) stay fixed. Only \(x\), \(h\), and \(y\) change with \(t\).</p>
+<div class="important-note">
+  <p><strong>Why plain states fade — gradient derivation:</strong> backpropagation through time differentiates the recurrence \(h_t = \tanh(W_{xh}x_t + W_{hh}h_{t-1} + b_h)\). Since \(\frac{d\tanh u}{du} = 1 - \tanh^2 u\), one step contributes the Jacobian</p>
+  <p>\[ \frac{\partial h_t}{\partial h_{t-1}} = \mathrm{diag}\big(1 - h_t^2\big)\, W_{hh} \]</p>
+  <p>Chaining \(T-1\) steps from frame 1 to frame \(T\):</p>
+  <p>\[ \frac{\partial h_T}{\partial h_1} = \prod_{t=2}^{T}\mathrm{diag}\big(1 - h_t^2\big)\, W_{hh} \]</p>
+  <p>Because \(\lvert 1 - h_t^2\rvert \le 1\), its norm is bounded by \(\gamma^{\,T-1}\) with \(\gamma = \lVert W_{hh}\rVert\). If \(\gamma < 1\) the gradient decays geometrically (vanishing); if \(\gamma > 1\) it grows (exploding). This is the mechanism behind the claim that plain links fade: a far frame cannot move the weights.</p>
+  <p><strong>Worked numbers:</strong> the hand trace above used \(W_{hh} = 0.5 I\), so each step scales the signal by at most \(0.5\); after 10 steps \(0.5^9 \approx 2\times10^{-3}\), and after 140 steps it is effectively zero. With \(\gamma = 0.9\) and the lecture's far-link example of frame 142 leaning on frame 3, \(0.9^{141} \approx 3.5\times10^{-7}\); with \(\gamma = 1.1\) the same chain gives \(1.1^{141} \approx 7\times10^{5}\). Both extremes break learning, which is exactly why gated cells are added.</p>
+</div>
 <div class="example-box">
   <p>Tiny trace with real numbers. Keep size 2 for hand math. Let \(W_{xh} = [[1, 0], [0, 1]]\), \(W_{hh} = [[0.5, 0], [0, 0.5]]\), \(b_h = [0, 0]\). Let \(x_1 = [1, 0]\), \(h_0 = [0, 0]\). Then \(W_{xh}x_1 = [1, 0]\). Add \(W_{hh}h_0 = [0, 0]\). Sum is \([1, 0]\). Apply \(\tanh\): \(h_1 = [0.762, 0]\). Next let \(x_2 = [0, 1]\). Then \(W_{xh}x_2 = [0, 1]\). Add \(W_{hh}h_1 = [0.381, 0]\). Sum is \([0.381, 1]\). Apply \(\tanh\): \(h_2 = [0.364, 0.762]\). <strong>Final states are \(h_1 = [0.762, 0]\) and \(h_2 = [0.364, 0.762]\).</strong> Sense-check: step 2 still carries a trace of step 1 through the 0.364 term. That carry is the memory.</p>
 </div>
@@ -375,6 +393,14 @@
   <p>Do not call time steps epochs. Steps index order inside one clip. Epochs count passes over the full set. Do not feed shuffled frames and expect order learning. Shuffle kills the signal the cell is built to use. Do not grow \(h_t\) without need. A 512-number state already holds much clip context.</p>
 </div>
 <p>LSTM and GRU keep the same two-in two-out shape. They add gates that guard the memory. Gates decide what to keep, what to drop, and what to write. That guard helps far links, such as frame 142 leaning on frame 3. Plain RNN links fade fast. Gated cells hold them longer.</p>
+<div class="key-concept">
+  <p><strong>Formal Definition — LSTM Cell:</strong> gates guard the memory by adding a separate cell state \(c_t\). With input \(x_t\), previous state \(h_{t-1}\) and sigmoid \(\sigma\):</p>
+  <p>\[ i_t = \sigma(W_i x_t + U_i h_{t-1} + b_i), \quad f_t = \sigma(W_f x_t + U_f h_{t-1} + b_f) \]</p>
+  <p>\[ g_t = \tanh(W_g x_t + U_g h_{t-1} + b_g), \quad o_t = \sigma(W_o x_t + U_o h_{t-1} + b_o) \]</p>
+  <p>\[ c_t = f_t \odot c_{t-1} + i_t \odot g_t, \qquad h_t = o_t \odot \tanh(c_t) \]</p>
+  <p>Here \(i_t\), \(f_t\), \(g_t\), \(o_t\) are the input, forget, cell and output gates. The cell state updates by <em>addition</em>, not by a repeated matrix product. When \(f_t \approx 1\) and \(i_t \approx 0\), \(c_t \approx c_{t-1}\), so the gradient passes across many steps without the geometric shrink derived above; when \(f_t \approx 0\), old memory is erased. The hidden state \(h_t\) is then a gated view of \(c_t\).</p>
+  <p><strong>Shape check against the demo:</strong> the four gate matrices are stacked, so with input \(2048\) and hidden \(512\) the input-to-hidden block is \((4\cdot512)\times 2048 = 2048\times2048\) (about \(4.19\)M weights), the hidden-to-hidden block is \(2048\times512\) (about \(1.05\)M), and biases add \(2\times(4\cdot512) = 4096\). One layer is roughly \(5.25\)M parameters, which is why the lecture's two-layer stack needs enough video data before it beats pooling.</p>
+</div>
 <div class="key-takeaway">
   <p>Recap: the RNN cell links ordered inputs by passing a learned state forward with shared weights. Next, attention adds a direct lookup that lets a late step pull from any early step.</p>
 </div>

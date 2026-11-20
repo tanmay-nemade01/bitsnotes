@@ -770,6 +770,92 @@ WHERE price BETWEEN 10 AND 25;</code></pre>
 <div class="key-concept">
   <p><strong>ORDER BY sorts the result, last in the pipeline.</strong> ORDER BY sits at the end of the query and sorts whatever rows survived WHERE. One column is enough; with several, the first listed column is the primary sort and each later column breaks ties among rows that are still equal. The default direction is ascending; DESC flips it. The "cheapest available book" pattern is <code>WHERE price > X ORDER BY price ASC</code> — filter first, then sort the survivors, then the top row is the answer.</p>
 </div>
+
+<h3 id="8.6.6-testing-for-null-is-null-is-not-null-and-three-valued-logic">8.6.6 Testing for NULL: IS NULL, IS NOT NULL, and Three-Valued Logic</h3>
+<p>Section 8.2.4 introduced NULL as the marker for "no value stored here," and section 8.4.3 showed that an omitted column becomes NULL. The unfinished business is how to <em>find</em> those rows with a WHERE clause. The obvious-looking condition does not work, and the reason is a third truth value.</p>
+<div class="key-concept">
+  <p><strong>Three-valued logic and the NULL test.</strong> A comparison against NULL does not return TRUE or FALSE — it returns <em>UNKNOWN</em>, the third value of SQL's three-valued logic. WHERE keeps a row only when the condition is TRUE, so a predicate evaluating to UNKNOWN discards the row exactly as FALSE does. This is why <code>salary = NULL</code> matches nothing, not even the rows whose salary really is NULL. The dedicated operators <code>IS NULL</code> and <code>IS NOT NULL</code> return TRUE/FALSE instead:</p>
+  <table>
+    <thead>
+      <tr>
+        <th>Row's salary</th>
+        <th>salary = NULL</th>
+        <th>salary &lt;&gt; NULL</th>
+        <th>salary IS NULL</th>
+        <th>salary IS NOT NULL</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>5000</td>
+        <td>UNKNOWN</td>
+        <td>UNKNOWN</td>
+        <td>FALSE</td>
+        <td>TRUE</td>
+      </tr>
+      <tr>
+        <td>NULL</td>
+        <td>UNKNOWN</td>
+        <td>UNKNOWN</td>
+        <td>TRUE</td>
+        <td>FALSE</td>
+      </tr>
+    </tbody>
+  </table>
+  <p>UNKNOWN propagates through the logical operators: \(TRUE \wedge UNKNOWN = UNKNOWN\), \(FALSE \wedge UNKNOWN = FALSE\), and \(UNKNOWN \vee TRUE = TRUE\). The practical rule: never pair \(=\) or \(\neq\) with NULL — use \(\text{IS NULL}\) or \(\text{IS NOT NULL}\).</p>
+</div>
+<div class="example-box">
+  <p><strong>Worked example — finding the customers with no salary.</strong> From section 8.2.4, <code>customers</code> allows NULL in <code>address</code> and <code>salary</code>:</p>
+  <pre><code>SELECT name FROM customers WHERE salary = NULL;      -- 0 rows: never TRUE
+SELECT name FROM customers WHERE salary IS NULL;      -- the missing-salary rows
+SELECT name FROM customers WHERE salary IS NOT NULL;  -- everyone with a salary</code></pre>
+  <p>NULL is also <em>not</em> 0 and <em>not</em> the empty string: <code>0 IS NULL</code> is FALSE and <code>'' IS NULL</code> is FALSE, so a NOT NULL column may legally hold 0 or an empty string. Sense-check: the two correct queries are complements — together they return every row of the table exactly once.</p>
+</div>
+
+<h3 id="8.6.7-pattern-matching-with-like-and-wildcards">8.6.7 Pattern Matching with LIKE and Wildcards</h3>
+<p>Equality answers "is this value exactly that value?" Many questions are looser: "which titles contain the word Database?" or "which authors have a four-letter name?" For those, SQL uses the <code>LIKE</code> comparison operator with two wildcard characters.</p>
+<div class="key-concept">
+  <p><strong>LIKE pattern syntax.</strong> <code>expr LIKE pattern</code> is TRUE when the string matches the pattern. <code>%</code> matches any sequence of characters, <em>including zero characters</em>; <code>_</code> matches exactly one character. <code>NOT LIKE</code> negates the test, and a literal wildcard is written with an escape character, e.g. <code>'ab\%cd%' ESCAPE '\'</code>. Under the default MySQL collation the match is case-insensitive — the case-insensitivity of section 8.2.7 applies here too.</p>
+  <table>
+    <thead>
+      <tr>
+        <th>Pattern</th>
+        <th>Matches</th>
+        <th>Does not match</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><code>'Database%'</code></td>
+        <td>any string starting with Database</td>
+        <td>Database occurring away from the start</td>
+      </tr>
+      <tr>
+        <td><code>'%Systems'</code></td>
+        <td>any string ending in Systems</td>
+        <td>Systems in the middle of a string</td>
+      </tr>
+      <tr>
+        <td><code>'%Essentials%'</code></td>
+        <td>any string containing Essentials</td>
+        <td>strings without that substring</td>
+      </tr>
+      <tr>
+        <td><code>'____'</code></td>
+        <td>any string of exactly four characters</td>
+        <td>shorter or longer strings</td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+<div class="example-box">
+  <p><strong>Worked example — LIKE on the book table.</strong> With the three books from section 8.4:</p>
+  <pre><code>SELECT title FROM book WHERE title LIKE 'Database%';             -- Database Systems
+SELECT author_name FROM book WHERE author_name LIKE '____';       -- Date (exactly 4 chars)
+SELECT title FROM book WHERE title LIKE '%SQL%';                  -- SQL Essentials
+SELECT title FROM book WHERE title NOT LIKE '%SQL%';              -- the other two titles</code></pre>
+  <p><code>'Database%'</code> matches <em>Database Systems</em> because the wildcard absorbs " Systems". Four underscores match exactly four characters, so only the author <em>Date</em> qualifies. <code>NOT LIKE</code> returns the complement. <strong>Pitfall from 8.6.6:</strong> when the searched column is NULL, <code>NOT LIKE</code> evaluates to UNKNOWN, so a NULL row is <em>not</em> returned — add <code>OR column IS NULL</code> if those rows are wanted. Sense-check: with no wildcards, <code>LIKE 'pattern'</code> behaves like <code>=</code>.</p>
+</div>
 <div class="key-takeaway">
   <p><strong>Every filtering tool is one clause.</strong> Comparison operators, IN, BETWEEN, YEAR(), and ORDER BY all bolt onto the same SELECT...FROM skeleton — and each is its own shorthand: IN for chains of OR, BETWEEN for closed intervals, YEAR() for dates, ORDER BY for sorting. These exact operators are the vocabulary of the worked queries in the next section.</p>
 </div>
@@ -1087,6 +1173,56 @@ WHERE basic &gt; (SELECT AVG(basic) FROM employee);</code></pre>
 </div>
 <div class="key-takeaway">
   <p><strong>A subquery is a living number.</strong> The nested greater-than-average pattern is the standard way to compare each row against a global figure, and the two runs show why the phrase "the average" is dangerous: the average is whatever the current data says it is. Subqueries recompute against current data, so re-run and re-verify after any update — the same lesson as the counting section, now with the whole query re-deriving its threshold.</p>
+</div>
+
+<h3 id="8.12.3-quantified-subqueries-any-all-and-exists">8.12.3 Quantified Subqueries: ANY, ALL, and EXISTS</h3>
+<p>Section 8.12.1 used a subquery returning a single number — a scalar. A subquery can also return a whole column of values, and then a comparison needs a quantifier to say what "greater than the subquery" means. This is the natural generalisation of the greater-than-average pattern.</p>
+<div class="key-concept">
+  <p><strong>Quantified comparison forms.</strong> For a subquery returning a column: <code>expr &lt;op&gt; ANY (subquery)</code> is TRUE if the comparison holds for at least one returned value; <code>expr &lt;op&gt; ALL (subquery)</code> is TRUE only if it holds for every returned value. <code>expr IN (subquery)</code> is exactly <code>= ANY</code>, and <code>NOT IN</code> is exactly <code>&lt;&gt; ALL</code>; <code>SOME</code> is an alias for <code>ANY</code>. Separately, <code>EXISTS (subquery)</code> is a Boolean that is TRUE if the subquery returns any row at all and FALSE if it is empty; <code>NOT EXISTS</code> negates it.</p>
+  <table>
+    <thead>
+      <tr>
+        <th>Form</th>
+        <th>Meaning</th>
+        <th>Equivalent</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><code>x &gt; ANY (Q)</code></td>
+        <td>x exceeds at least one value returned by Q</td>
+        <td>\(\exists v \in Q: x > v\)</td>
+      </tr>
+      <tr>
+        <td><code>x &gt; ALL (Q)</code></td>
+        <td>x exceeds every value returned by Q</td>
+        <td>\(\forall v \in Q: x > v\)</td>
+      </tr>
+      <tr>
+        <td><code>x IN (Q)</code></td>
+        <td>x equals one of the returned values</td>
+        <td><code>x = ANY (Q)</code></td>
+      </tr>
+      <tr>
+        <td><code>EXISTS (Q)</code></td>
+        <td>Q returns at least one row</td>
+        <td>SELECT list ignored; only row count matters</td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+<div class="example-box">
+  <p><strong>Worked example — quantified queries on the employee table.</strong> Compare each employee against department D1, then find employees who earn more than a colleague in their own department:</p>
+  <pre><code>SELECT name, basic FROM employee
+WHERE basic &gt; ALL (SELECT basic FROM employee WHERE department_id = 'D1');
+
+SELECT name, basic FROM employee
+WHERE basic &gt; ANY (SELECT basic FROM employee WHERE department_id = 'D1');
+
+SELECT name, department_id FROM employee e
+WHERE EXISTS (SELECT 1 FROM employee m
+              WHERE m.department_id = e.department_id AND m.basic &gt; e.basic);</code></pre>
+  <p>The <code>ALL</code> query keeps only employees beating the highest D1 basic; the <code>ANY</code> query keeps those beating the lowest D1 basic, so its result is a superset of the <code>ALL</code> result. The <code>EXISTS</code> query is <em>correlated</em>: the inner query refers to <code>e.department_id</code> and <code>e.basic</code> from the current outer row and is re-evaluated once per employee, keeping those who are not the top earner in their department. Sense-check: <code>IN</code> and <code>= ANY</code> are interchangeable, but <code>NOT IN</code> means <code>&lt;&gt; ALL</code>, not <code>&lt;&gt; ANY</code>.</p>
 </div>
 
 <h2 id="key-industry-applications">Key Industry Applications</h2>

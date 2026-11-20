@@ -191,6 +191,42 @@
   </ol>
   <p>In a cluster with one master and many workers, <em>wide</em> transformations such as <code>groupBy</code> and <code>join</code> need a <em>shuffle</em>: move data so that matching keys land on the same node. Network I/O is usually the dominant cost. Catalyst’s job is to shrink that cost — push filters before shuffles, drop unused columns early, and pick join strategies that avoid shipping huge tables when a small table can be broadcast instead.</p>
 </div>
+
+<div class="key-concept">
+  <p><strong>Execution hierarchy — from a physical plan to cluster work:</strong> The optimized plan is not run as one monolithic program. Spark decomposes it into a nested unit hierarchy, which is what the "executors run as RDD stages" line above actually means.</p>
+  <table>
+    <thead>
+      <tr>
+        <th>Unit</th>
+        <th>Definition</th>
+        <th>Role here</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>Application</td>
+        <td>One user program: a driver plus its executors, anchored by a single <code>SparkSession</code>.</td>
+        <td>The notebook or <code>spark-submit</code> job you launch.</td>
+      </tr>
+      <tr>
+        <td>Job</td>
+        <td>A parallel computation of multiple tasks, spawned by one <em>action</em> (<code>count</code>, <code>show</code>, <code>write</code>).</td>
+        <td>Each action on the DataFrame triggers a fresh job.</td>
+      </tr>
+      <tr>
+        <td>Stage</td>
+        <td>A set of mutually dependent tasks bounded by a shuffle/exchange — analogous to MapReduce's map and reduce phases.</td>
+        <td><code>groupBy</code> and <code>join</code> create stage boundaries.</td>
+      </tr>
+      <tr>
+        <td>Task</td>
+        <td>The smallest unit of work: sent to one executor, run on one partition of an RDD.</td>
+        <td># tasks equals # partitions in that stage.</td>
+      </tr>
+    </tbody>
+  </table>
+  <p>For a linear operator chain, every wide dependency opens a new stage, so a plan with \( w \) shuffle boundaries yields \( w + 1 \) stages — a <code>groupBy</code> followed by a <code>join</code> gives three stages. Narrow operators (<code>select</code>, <code>filter</code>, <code>withColumn</code>) are pipelined inside one stage, which is exactly why pushing a filter ahead of a shuffle pays off twice: fewer rows cross the network and the downstream stage starts smaller.</p>
+</div>
 <p>Starting in Spark 2.2+, Spark added a <em>Cost-Based Optimizer</em> (<em>CBO</em>). The CBO uses table and column statistics (row counts, cardinality, size) to estimate costs of alternative plans and pick a lower-cost one when rules alone are not enough.</p>
 <p>Because PySpark DataFrames and Scala/Java DataFrames both compile through the same Catalyst pipeline, <strong>query efficiency is unified across languages</strong>. For extreme object-allocation-heavy workloads, Scala/Java can still win on memory behavior because they stay on the JVM without a Python worker process — but the optimizer path itself is shared.</p>
 <div class="warning-box">
@@ -200,6 +236,60 @@
     <li><strong>Assumption (CBO):</strong> Useful statistics exist; without them, Spark falls back mainly to rule-based optimization and defaults (e.g., broadcast thresholds).</li>
     <li><strong>Breaks when:</strong> You force huge shuffles with poorly keyed joins, or you disable broadcast and join two giant tables with no selective filters.</li>
   </ul>
+</div>
+
+<div class="important-note">
+  <p><strong>Extension point — the PySpark UDF spectrum:</strong> When a transformation cannot be written with built-in column functions, Spark lets you register Python code. The three forms differ in the unit of data that crosses between the Python worker and the JVM, which determines how much serialization overhead you pay and how little Catalyst can see.</p>
+  <table>
+    <thead>
+      <tr>
+        <th>Form</th>
+        <th>Decorator / API</th>
+        <th>Input unit</th>
+        <th>Serialization</th>
+        <th>Output cardinality</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>Classic Python UDF</td>
+        <td><code>@udf(returnType)</code></td>
+        <td>One scalar value at a time</td>
+        <td>Pickle per row — highest SerDe overhead</td>
+        <td>One value per input row</td>
+      </tr>
+      <tr>
+        <td>Vectorized (Pandas) UDF</td>
+        <td><code>@pandas_udf(returnType)</code></td>
+        <td>A <code>pandas.Series</code> holding a whole batch/column</td>
+        <td>Arrow columnar batches — cost amortized over the batch</td>
+        <td>Same length as input (scalar mode)</td>
+      </tr>
+      <tr>
+        <td>Grouped Pandas UDF</td>
+        <td><code>df.groupBy(...).applyInPandas(fn, schema)</code></td>
+        <td>A <code>pandas.DataFrame</code> per group</td>
+        <td>Arrow batches per group; split-apply-combine</td>
+        <td>Any length, declared as a <code>StructType</code></td>
+      </tr>
+    </tbody>
+  </table>
+  <pre><code>from pyspark.sql.functions import col, udf, pandas_udf
+from pyspark.sql.types import DoubleType, StructType, StructField, StringType
+
+plus_10pct = udf(lambda v: v * 1.1, DoubleType())           # one row at a time
+vector_plus = pandas_udf(lambda s: s * 1.1, DoubleType())   # Series in, Series out
+
+result = df.withColumn("cost_v2", vector_plus(col("cost")))
+
+def summarize(pdf):
+    return pdf.groupby("country", as_index=False).agg(total=("cost", "sum"))
+
+out_schema = StructType([
+    StructField("country", StringType()),
+    StructField("total", DoubleType())])
+grouped = df.groupBy("country").applyInPandas(summarize, out_schema)</code></pre>
+  <p><strong>Why it matters here:</strong> all three remain <em>opaque</em> to Catalyst — the function body is a black box, so predicate pushdown and column pruning cannot look inside it. Prefer built-in expressions first; when Python is unavoidable, the Arrow-backed vectorized forms pay the cross-language cost once per batch rather than once per row, and Spark 2.3+ provides <code>pandas_udf</code> and grouped <code>applyInPandas</code> for exactly this reason.</p>
 </div>
 <div class="diagram-container my-6 text-center">
 <pre class="mermaid">
@@ -1048,6 +1138,11 @@ person.join(graduate_program, join_expr, "inner").explain()</code></pre>
 </div>
 <p><strong>Real-world domain connection:</strong> Nightly warehouse ETL joins billion-row fact tables to small store/currency dimensions with broadcast joins to cut shuffle — expanded in 10.8.2.</p>
 
+<div class="important-note">
+  <p><strong>Terminology — broadcast join vs. broadcast variable:</strong> The "broadcast" above is a <em>physical join strategy</em> — Catalyst ships a small table to every worker. It is distinct from a <strong>broadcast variable</strong>, one of Spark's two <em>shared variables</em>: a read-only value cached on each machine instead of being resent with every task. Create one with <code>sc.broadcast(value)</code>, read it with <code>.value</code>, and free it with <code>.unpersist()</code>.</p>
+  <p><strong>The other shared variable — accumulator:</strong> An accumulator is a variable tasks can only "add" to (an associative, commutative operation) and the driver reads back after the job — Spark's safe distributed replacement for a global counter. Ordinary closure variables are copied to each task and cannot be updated back at the driver.</p>
+</div>
+
 <h2 id="10.6-spark-sql-interoperability-and-in-memory-execution">10.6 Spark SQL Interoperability and In-Memory Execution</h2>
 <h3 id="10.6.1-spark-sql-architecture-and-workflow">10.6.1 Spark SQL Architecture and Workflow</h3>
 <div class="important-note">
@@ -1150,6 +1245,27 @@ Raw SQL Queries (spark.sql)     /</code></pre>
   <p><strong>Scope:</strong> Plan parity holds for relational work expressed in both APIs. Opaque UDFs, different caching, or different configuration can still change runtime.</p>
 </div>
 <p><strong>Real-world domain connection:</strong> Mixed teams put engineers on PySpark ETL, analysts on Spark SQL dashboards, and still share one optimized runtime — the multi-language story in 10.8.1.</p>
+
+<h3 id="10.6.4-dataframe-persistence-and-storage-levels">10.6.4 DataFrame Persistence and Storage Levels</h3>
+<div class="key-concept">
+  <p><strong>Why persist:</strong> Every action otherwise recomputes a DataFrame's full lineage from source. When an intermediate result is reused — iterative algorithms, repeated dashboard queries, multi-pass ETL — <code>df.cache()</code> / <code>df.persist(level)</code> keeps its partitions on the cluster so later actions read them from memory instead of recomputing.</p>
+  <p><strong>Lazy materialization:</strong> <code>cache()</code> only <em>marks</em> the frame; partitions are stored on the first action that runs and live only for the application's lifetime. The companion text notes it "marks the RDD with a flag indicating it should be cached when the Spark job is run," which lets iterative algorithms feed one iteration's result into the next without re-reading disk.</p>
+</div>
+<table>
+  <thead>
+    <tr><th>StorageLevel</th><th>Behavior</th></tr>
+  </thead>
+  <tbody>
+    <tr><td><code>MEMORY_ONLY</code> (default)</td><td>Deserialized objects in executor memory; non-fitting partitions recomputed on demand.</td></tr>
+    <tr><td><code>MEMORY_AND_DISK</code></td><td>Spill non-fitting partitions to disk instead of recomputing.</td></tr>
+    <tr><td><code>MEMORY_ONLY_SER</code> / <code>MEMORY_AND_DISK_SER</code></td><td>One serialized byte array per partition — more compact, more CPU to read.</td></tr>
+    <tr><td><code>DISK_ONLY</code></td><td>Store partitions only on disk.</td></tr>
+    <tr><td><code>MEMORY_ONLY_2</code>, <code>MEMORY_AND_DISK_2</code></td><td>Replicate each partition on two nodes for faster fault recovery.</td></tr>
+  </tbody>
+</table>
+<div class="warning-box">
+  <p><strong>Pitfall:</strong> Caching consumes executor memory and evicted partitions are silently recomputed — persist only reused intermediates and call <code>df.unpersist()</code> when done. In PySpark rows are always Pickle-serialized, so serialized vs deserialized levels make little practical difference.</p>
+</div>
 
 
 <h2 id="10.8-key-industry-applications">10.8 Key Industry Applications</h2>

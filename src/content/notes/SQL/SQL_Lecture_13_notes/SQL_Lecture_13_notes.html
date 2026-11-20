@@ -1103,6 +1103,41 @@ FROM movies;</code></pre>
   <p>\(\text{REPLACE}(s, old, new)\) returns \(s\) with every copy of \(old\) swapped for \(new\) as text. The scan runs left to right in one pass with no looping. An empty \(new\) deletes every hit. An empty \(old\) changes nothing. A NULL input on any side gives NULL. Matching is exact on case.</p>
 </div>
 <p>The same call exists in MySQL, Snowflake, Databricks, and SQL Server with the same name and the same all-hits behavior. The SQL Cookbook adds one learner-useful extra: TRANSLATE swaps letters one-for-one (a becomes x, b becomes y), while nested REPLACE calls remove several different letters where a system lacks TRANSLATE. MySQL has no TRANSLATE, so it stacks REPLACE calls instead.</p>
+
+<div class="key-concept">
+  <p><strong>Formal Definition — One-to-One Character Mapping:</strong> \(\text{TRANSLATE}(s, from, to)\) walks \(s\) one character at a time. Write the source alphabet as \(from = f_1 f_2 \cdots f_m\) and the target alphabet as \(to = t_1 t_2 \cdots t_k\). The mapping applied to each input character \(s_j\) is</p>
+  \[
+  s_j \mapsto
+  \begin{cases}
+  t_i & \text{if } s_j = f_i,\ i \le k \\
+  \varepsilon & \text{if } s_j = f_i,\ i > k \\
+  s_j & \text{otherwise}
+  \end{cases}
+  \]
+  <p>Here \(\varepsilon\) is the empty string, so a source character with no partner in a shorter \(to\) is deleted rather than left as it was. The pairing is strictly positional: the \(i\)-th character of \(from\) binds only to the \(i\)-th character of \(to\), never to a whole substring. A character absent from \(from\) passes through unchanged, and a NULL on any input gives NULL, as with the rest of the string family.</p>
+  <p><strong>Why it differs from REPLACE:</strong> \(\text{REPLACE}(s, old, new)\) hunts one whole substring and swaps every copy of it, so a single call can trade a many-character piece for a different many-character piece. TRANSLATE never matches more than one character at a time; its pairing is fixed by position. Reach for REPLACE when one named word or code must change, and for TRANSLATE when many different single characters must each be rewritten in the same pass.</p>
+</div>
+
+<div class="example-box">
+  <p><strong>Worked Trace 1 — the dropping rule:</strong> <code>SELECT TRANSLATE('12345', '143', 'ax');</code> pairs 1 with a, 4 with x, and 3 with nothing, because \(to\) holds only two characters. Scanning '12345': '1' becomes a, '2' is absent from \(from\) so it passes through, '3' is dropped, '4' becomes x, and '5' passes through. <strong>Result: 'a2x5'</strong>. Sense-check: the 3 vanishes instead of surviving, which is the one detail that separates TRANSLATE from a simple find-and-replace.</p>
+  <p><strong>Worked Trace 2 — isolating digits from mixed text:</strong> a packed value like 'SMITH800' can be split into its letters and its digits, one pass each, by folding a whole alphabet down to a single marker and then deleting that marker:</p>
+  <pre><code>SELECT REPLACE(TRANSLATE(LOWER('SMITH800'),
+                 'abcdefghijklmnopqrstuvwxyz',
+                 RPAD('z', 26, 'z')), 'z', '') AS digits;</code></pre>
+  <p><strong>Trace:</strong> LOWER keeps 'smith800'. The 26-letter source alphabet maps every letter to z, so TRANSLATE gives 'zzzzz800'. REPLACE deletes every z and leaves <strong>'800'</strong>, ready for a cast to INTEGER. The mirror call swaps the two alphabets: <code>TRANSLATE('SMITH800', '0123456789', '0000000000')</code> maps each digit to 0, giving 'SMITH000', and wrapping it in <code>REPLACE(..., '0', '')</code> returns <strong>'SMITH'</strong>. Both calls use the same trick with source and target exchanged.</p>
+  <table>
+    <thead>
+      <tr><th>Engine</th><th>Built-in form</th><th>Source characters with no target partner</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>PostgreSQL</td><td><code>TRANSLATE(s, from, to)</code></td><td>Deleted from the output</td></tr>
+      <tr><td>Snowflake</td><td><code>TRANSLATE(subject, source_alphabet, target_alphabet)</code></td><td>Omitted from the result</td></tr>
+      <tr><td>Databricks (Spark SQL)</td><td><code>translate(expr, from, to)</code></td><td>Removed from the result</td></tr>
+      <tr><td>MySQL</td><td>No built-in; stack nested <code>REPLACE</code> calls</td><td>Not applicable</td></tr>
+    </tbody>
+  </table>
+  <p><strong>Takeaway:</strong> every engine that provides TRANSLATE agrees on the dropping rule, so a query written in PostgreSQL carries the same meaning in Snowflake and Databricks. MySQL is the outlier: without TRANSLATE it must spell out one REPLACE per character, which is why the single-call form is worth knowing.</p>
+</div>
 <h3 id="13.11.2-worked-examples">13.11.2 Worked Examples</h3>
 <p>Start small:</p>
 <pre><code>SELECT REPLACE('ABC XYZ', 'X', '1');</code></pre>

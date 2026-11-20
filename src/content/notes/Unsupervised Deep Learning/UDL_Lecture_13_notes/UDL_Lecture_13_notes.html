@@ -472,6 +472,40 @@
   </tbody>
 </table>
 
+<h3 id="13.3.6-gan-inversion-editing-real-images-with-stylegan" class="subsection-title">13.3.6 GAN Inversion: Editing Real Images with StyleGAN</h3>
+<p>Style mixing in the previous subsection starts from two <em>synthesized</em> people. Editing a <em>real</em> photograph needs one extra step first: you must find the latent code that reproduces that photograph, because a GAN only maps latent-to-image, never image-to-latent. This reverse search is called <strong>GAN inversion</strong>. Formally, for a given real image \(x\) we look for a code \(w\) minimizing a reconstruction objective \(w^{*} = \arg\min_{w}\ \|G(w) - x\|\), and then edit \(w\) with the style controls from Section 13.3.2.</p>
+<p>Two families of methods solve this search:</p>
+<table>
+  <thead>
+    <tr>
+      <th>Family</th>
+      <th>How it finds the code</th>
+      <th>Strength</th>
+      <th>Limitation</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td>Encoder-based inversion</td>
+      <td>Train a separate network \(E\) that maps an image directly to a code, \(w = E(x)\).</td>
+      <td>Fast at test time - a single forward pass.</td>
+      <td>Needs paired training data and can lose fine detail.</td>
+    </tr>
+    <tr>
+      <td>Optimization-based inversion</td>
+      <td>Start from a random \(w\) and descend the reconstruction loss \(\|G(w)-x\|\) by gradient steps.</td>
+      <td>Per-image refinement, often a sharper reconstruction.</td>
+      <td>Slow - many iterations for every photograph.</td>
+    </tr>
+  </tbody>
+</table>
+<div class="important-note">
+  <p><strong>Why the extended style space matters.</strong> Inverting into the single shared \(w\) of Section 13.3.1 is under-powered: one 512-dimensional code has to drive every layer. Inverting instead into the <em>extended style space</em> \(W^{+}\) - a separate \(w\) code per generator block - gives the optimizer enough degrees of freedom to reconstruct hair, skin, and pose independently. A path-length regularizer on the generator additionally smooths the latent-to-image map, which makes this inversion considerably more reliable. This is the same space the style-mixing demonstrations manipulate, so an inverted real face becomes editable with exactly the coarse-to-fine controls already described.</p>
+</div>
+<div class="warning-box">
+  <p><strong>Pitfall - the distortion/editability trade-off.</strong> A code that reconstructs an out-of-domain face (makeup, headwear, unusual lighting) pixel-perfectly often lands in a region of latent space that no longer responds well to edit directions - the face is preserved but cannot be re-posed. <em>Pivotal tuning inversion</em> addresses this: it takes the inverted code as a pivot, briefly fine-tunes the generator weights around that neighborhood, and adds a locality term that keeps nearby identities intact. Reconstruction and editability are then both recovered, at the cost of a short per-image training run.</p>
+</div>
+
 <h2 id="13.4-diffusion-models-the-core-idea">13.4 Diffusion Models: The Core Idea</h2>
 <h3 id="13.4.1-ink-in-water-the-physical-picture">13.4.1 Ink in Water: The Physical Picture</h3>
 <p>Post-GAN, the technique making the biggest impact on high-quality generation is the <em>diffusion model</em>.</p>
@@ -565,6 +599,40 @@
 <p>\[ x_1 = \sqrt{1-\beta_0}\, x_0 + \sqrt{\beta_0}\,\epsilon_0 \]</p>
 <p>Then repeat with \(\beta_1\): scale by \(\sqrt{1-\beta_1}\), add new noise, and so on.</p>
 <p>The schedule matters. Use a small \(\beta_0\) at the start and increase the betas as time progresses - gentle perturbations early, heavy corruption late. Add noise enough times and the structure of the object in the image is completely destroyed, leaving standardized Gaussian noise.</p>
+<div class="key-concept">
+  <p><strong>Formal Definition - the noise schedule.</strong> The forward process above is fully specified by the sequence \(\beta_1,\ldots,\beta_T\), collectively called the <em>noise schedule</em>. Equivalently, since \(\bar{\alpha}_t = \prod_{s=1}^{t}(1-\beta_s)\), one may design \(\bar{\alpha}_t\) directly and recover \(\beta_t = 1 - \bar{\alpha}_t / \bar{\alpha}_{t-1}\). Two standard choices are:</p>
+  <p><strong>Linear schedule.</strong> Interpolate the variance uniformly in \(t\): \[ \beta_t = \beta_{\min} + \frac{t}{T}\left(\beta_{\max} - \beta_{\min}\right), \qquad \beta_{\min}=10^{-4},\ \beta_{\max}=0.02 \]</p>
+  <p><strong>Cosine schedule.</strong> Shape the cumulative product with a squared cosine so its drop is gentle at both ends: \[ \bar{\alpha}_t = \frac{f(t)}{f(0)},\qquad f(t) = \cos^{2}\!\left(\frac{t/T + s}{1+s}\cdot\frac{\pi}{2}\right),\qquad s \approx 0.008,\qquad \beta_t = 1 - \frac{\bar{\alpha}_t}{\bar{\alpha}_{t-1}}\ (\text{clipped at }0.999) \]</p>
+</div>
+<table>
+  <thead>
+    <tr>
+      <th>Property</th>
+      <th>Linear \(\beta_t\)</th>
+      <th>Cosine \(\bar{\alpha}_t\)</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td>Near \(t=0\)</td>
+      <td>Small but nonzero noise, so the first steps stay gentle.</td>
+      <td>The offset \(s\) keeps \(\beta_0\) from vanishing, so the first noise prediction stays learnable.</td>
+    </tr>
+    <tr>
+      <td>Middle of the chain</td>
+      <td>\(\bar{\alpha}_t\) falls steeply; image signal is destroyed early.</td>
+      <td>Nearly linear decline in \(\bar{\alpha}_t\); signal survives much longer.</td>
+    </tr>
+    <tr>
+      <td>Near \(t=T\)</td>
+      <td>Most late steps are already pure noise and waste capacity.</td>
+      <td>Flattens near zero, avoiding abrupt changes in noise level.</td>
+    </tr>
+  </tbody>
+</table>
+<div class="example-box">
+  <p><strong>Worked midpoint check (\(T=1000\)).</strong> Using \(\bar{\alpha}_t \approx \exp\!\left(-\sum_{s \le t}\beta_s\right)\): for the linear schedule \(\beta_{500}\approx 0.010\), so \(\sum_{s \le 500}\beta_s \approx 500\times(0.0001+0.010)/2 \approx 2.5\) and \(\bar{\alpha}_{500}\approx e^{-2.5}\approx 0.08\). For the cosine schedule, \(f(0.5)=\cos^{2}\!\left(\tfrac{0.508}{1.008}\cdot\tfrac{\pi}{2}\right)\approx 0.494\) while \(f(0)\approx 1\), giving \(\bar{\alpha}_{500}\approx 0.49\). The cosine chain therefore retains roughly six times more image signal at the halfway point, which is why it improves sample quality at the same step count.</p>
+</div>
 <p>Two structural facts. First, this is a <strong>Markov chain</strong>: the noise added at step \(t\) depends only on the state at \(t-1\) - "the noise here depends on what is here," nothing earlier. Second, training must learn the reverse conditionals: given \(x_T\), find \(p(x_{T-1} \mid x_T)\); given \(x_{T-1}\), find \(p(x_{T-2} \mid x_{T-1})\); all the way down to \(p(x_0 \mid x_1)\).</p>
 <h3 id="13.4.8-one-closed-form-jump-via-reparameterization">13.4.8 One Closed-Form Jump via Reparameterization</h3>
 <p>Something convenient hides in the forward process: you can express the state at any time directly in terms of \(x_0\), skipping the intermediate steps. Introduce the reparameterization \(\alpha_t = 1 - \beta_t\), so each step becomes:</p>

@@ -660,6 +660,51 @@
 </div>
 <p>Real-world: kernel PCA shows up wherever classes curve around each other — think of sensor layouts or embeddings where a straight boundary is hopeless but a curved one in the original space corresponds to a straight one after the kernel lift.</p>
 
+<h3 id="3.5.5-the-kernel-pca-pre-image-problem" class="subsection-title">3.5.5 The Kernel PCA Pre-Image Problem</h3>
+<p>Forward projection in kernel PCA is clean, but the return trip is not. A projected point lives in the reduced coordinates of feature space; asking "which input does this correspond to?" runs into a wall, because inverting the linear PCA step lands in the high-dimensional feature space, not in the original input space. This subsection makes that gap precise and gives the standard practical fix.</p>
+<div class="key-concept">
+  <p><strong>The pre-image problem.</strong> Let \(\Phi(X)\) collect the transformed points, let \(H = I - \mathbf{1}_D\) be the centering matrix, and write the centered Gram matrix as \(K' = H K H\). Reconstructing a projected point inside feature space produces the vector \(\phi(z) = \sum_{i=1}^{D} \alpha_i\,\phi(x_i)\). A true pre-image would be an input \(z\) satisfying</p>
+  <p>\[ z^{*} = \arg\min_{z}\ \left\lVert \phi(z) - \sum_{i=1}^{D} \alpha_i\,\phi(x_i) \right\rVert^{2} \]</p>
+  <p>For an RBF kernel \(\phi\) maps into a space with infinitely many dimensions, so this minimizer has no closed form and need not be representable at all in the original \(n\)-dimensional input space. That is why ordinary kernel PCA offers no reconstruction-error signal to optimize.</p>
+</div>
+<div class="important-note">
+  <p><strong>Mechanism — learn the inverse rather than solve for it.</strong> Turn reconstruction into regression: pair each low-dimensional representation \(y_i\) with its known original input \(x_i\), then fit a ridge map \(g(y)\) from reduced coordinates back to input space, with regularization strength \(\lambda\) (the hyperparameter named <code>alpha</code> in scikit-learn). The recovered \(\hat{x} = g(y)\) is the pre-image, and reconstruction error becomes the directly measurable \(\lVert x - \hat{x} \rVert^{2}\) in the original space. That supplies the unsupervised signal that plain kernel PCA lacks: pick the kernel and its width by minimizing pre-image error over a grid.</p>
+  <pre><code>kpca = KernelPCA(n_components=2, kernel="rbf", gamma=0.0433,
+                 fit_inverse_transform=True)
+X_reduced = kpca.fit_transform(X)
+X_preimage = kpca.inverse_transform(X_reduced)
+preimage_error = mean_squared_error(X, X_preimage)</code></pre>
+</div>
+<table>
+  <thead>
+    <tr>
+      <th>Aspect</th>
+      <th>Linear PCA</th>
+      <th>Kernel PCA</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td>Reconstruction in input space</td>
+      <td>Closed form: mean plus scaled components</td>
+      <td>No closed form; learned by ridge regression</td>
+    </tr>
+    <tr>
+      <td>Where the inverse lands</td>
+      <td>Already in the original \(n\)-dimensional space</td>
+      <td>In feature space; must be mapped back to a pre-image</td>
+    </tr>
+    <tr>
+      <td>Reconstruction error</td>
+      <td>Directly computable</td>
+      <td>Approximated by the pre-image error</td>
+    </tr>
+  </tbody>
+</table>
+<div class="warning-box">
+  <p><strong>Edge case — the linear kernel.</strong> With a linear kernel the feature map is essentially the identity, so scikit-learn recommends ordinary <code>PCA</code> whenever inversion is needed: because the kernel is centered, <code>KernelPCA.inverse_transform</code> does not reconstruct the data mean. Also note that <code>inverse_transform</code> only exists after <code>fit_inverse_transform=True</code>; by default there is no inverse at all.</p>
+</div>
+
 <h2 id="3.6-two-applications-of-pca-style-analysis">3.6 Two Applications of PCA-Style Analysis</h2>
 <div class="important-note">
   <p><strong>Hook:</strong> Can a machine discover that these 400 articles are about sports and those about food — without reading a single one? Both applications in this section answer yes, using nothing more exotic than a big matrix and PCA-style analysis.</p>
@@ -750,6 +795,59 @@
 </div>
 <div class="key-takeaway">
   <p><strong>Recap:</strong> PCA's three structural limits — forced orthogonality, unimodal assumptions, linear maps — each have a matching remedy: ICA for mixed sources, curvilinear methods for curved clouds. <strong>Bridge:</strong> the source-separation weakness deserves its own full treatment, and that is independent component analysis next.</p>
+</div>
+
+<h3 id="3.7.4-locally-linear-embedding" class="subsection-title">3.7.4 Locally Linear Embedding: A Concrete Manifold-Learning Remedy</h3>
+<p>Section 3.7.3 argued that a topology-preserving nonlinear projection can keep neighbors together where PCA slices through a coil. <strong>Locally Linear Embedding (LLE)</strong> makes that promise algorithmic: rather than projecting onto global axes, it reconstructs every point from its nearest neighbors and then seeks a low-dimensional layout in which those same local relationships survive. It is a manifold-learning method, so it does not rely on projection at all.</p>
+<div class="key-concept">
+  <p><strong>Step 1 — model the local geometry.</strong> For each point \(x^{(i)}\), keep only its \(k\) nearest neighbors and find weights expressing it as their linear combination:</p>
+  <p>\[ W = \arg\min_{W}\ \sum_{i=1}^{m} \left\lVert x^{(i)} - \sum_{j=1}^{m} w_{ij}\,x^{(j)} \right\rVert_2^2 \]</p>
+  <p>subject to \(w_{ij} = 0\) whenever \(x^{(j)}\) is not among the \(k\) nearest neighbors of \(x^{(i)}\), and \(\sum_{j} w_{ij} = 1\) for every \(i\). The resulting matrix \(W\) encodes the local linear structure of the cloud.</p>
+  <p><strong>Step 2 — preserve that geometry in \(d\) dimensions.</strong> Hold \(W\) fixed and solve for the images \(z^{(i)} \in \mathbb{R}^{d}\), with \(d < n\):</p>
+  <p>\[ Z = \arg\min_{Z}\ \sum_{i=1}^{m} \left\lVert z^{(i)} - \sum_{j=1}^{m} w_{ij}\,z^{(j)} \right\rVert_2^2 \]</p>
+  <p>The objectives look alike but run in opposite directions: step 1 fixes points and learns weights, step 2 fixes weights and learns points. With the trivial all-zero solution excluded by \(\sum_i z^{(i)} = 0\) and \(Z^{\top}Z = I\), step 2 reduces to taking eigenvectors of \(M = (I - W)^{\top}(I - W)\) associated with its smallest eigenvalues.</p>
+</div>
+<table>
+  <thead>
+    <tr>
+      <th>Property</th>
+      <th>PCA</th>
+      <th>LLE</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td>Geometry preserved</td>
+      <td>Global variance along orthogonal axes</td>
+      <td>Local neighbor reconstruction weights</td>
+    </tr>
+    <tr>
+      <td>Nature of the map</td>
+      <td>Linear projection, closed-form SVD</td>
+      <td>Nonlinear, two-stage constrained optimization</td>
+    </tr>
+    <tr>
+      <td>Curved manifolds</td>
+      <td>Slices through the coil; neighborhood order lost</td>
+      <td>Unrolls the coil; neighborhood order retained</td>
+    </tr>
+    <tr>
+      <td>Cost driver</td>
+      <td>\(O(mn^2 + n^3)\)</td>
+      <td>\(O(m\log m\,n\log k) + O(mnk^3) + O(dm^2)\)</td>
+    </tr>
+  </tbody>
+</table>
+<div class="important-note">
+  <p><strong>Mechanism in code.</strong> A single estimator performs both stages; <code>n_neighbors</code> is the \(k\) of step 1 and <code>n_components</code> is the \(d\) of step 2:</p>
+  <pre><code>from sklearn.manifold import LocallyLinearEmbedding
+lle = LocallyLinearEmbedding(n_components=2, n_neighbors=10)
+X_reduced = lle.fit_transform(X)
+error = lle.reconstruction_error_</code></pre>
+  <p>The estimator's four <code>method</code> variants — <code>standard</code>, <code>hessian</code>, <code>modified</code>, and <code>ltsa</code> — change how local weights are built while keeping the same neighborhood-preservation idea.</p>
+</div>
+<div class="warning-box">
+  <p><strong>Scope and failure modes.</strong> LLE preserves distances <em>locally</em>, not globally: on a Swiss roll the unrolled band is stretched on one side and squeezed on the other, so it is a visualization and manifold-modeling tool rather than a globally faithful metric embedding. The \(O(dm^2)\) embedding term makes it scale poorly to very large \(m\), and noise blurs the neighbor relations the method depends on — it works best on clean, well-sampled manifolds.</p>
 </div>
 
 <h2 id="3.8-independent-component-analysis">3.8 Independent Component Analysis</h2>

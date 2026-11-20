@@ -699,6 +699,25 @@ VALUES ('ABC', 'ABC', 'ABC');</code></pre>
     <li>Avoid arbitrary constraints like <code>VARCHAR(20)</code> for names or email addresses, as they frequently lead to production truncation errors during integration with third-party identity providers.</li>
   </ul>
 </div>
+<h3 id="6.2.8-binary-string-storage-raw-octets">6.2.8 Binary String Storage: Raw Octets and the bytea Type</h3>
+<p>While <code>CHAR</code>, <code>VARCHAR</code>, and <code>TEXT</code> store <em>character</em> strings interpreted through the database character set and collation, PostgreSQL also provides a distinct binary-string family: the <code>bytea</code> type. A binary string is a sequence of raw octets \(B = \langle b_1, \dots, b_n \rangle\) with \(b_i \in \{0, \dots, 255\}\), including the zero octet and other non-printable values that character types disallow.</p>
+<div class="key-concept">
+  <p><strong>Storage Model:</strong> <code>bytea</code> reuses the same variable-length (<code>varlena</code>) container described in Section 6.2.6, so the on-disk requirement is the raw payload plus a short 1-byte header or a standard 4-byte header: \[ S_{\text{bytea}}(n) = n + H, \qquad H = \begin{cases} 1 \text{ byte} & n \le 126 \\ 4 \text{ bytes} & n > 126 \end{cases} \] A 5-byte signature therefore occupies \(5 + 1 = 6\) bytes, while a 1 KB payload occupies \(1024 + 4 = 1028\) bytes before any TOAST compression.</p>
+  <p>Binary strings differ from character strings in two ways: they admit zero and non-printable octets, and comparisons operate on actual byte values rather than locale-dependent collation order: \[ B_1 < B_2 \iff \exists j \le n : b_{1,j} < b_{2,j} \ \wedge\ (\forall i < j,\ b_{1,i} = b_{2,i}) \]</p>
+</div>
+<div class="important-note">
+  <p><strong>I/O Formats:</strong> <code>bytea</code> accepts both the modern <em>hex</em> format (two hexadecimal digits per byte, introduced in PostgreSQL 9.0 and prefixed by <code>\x</code>) and the legacy <em>escape</em> format (non-printable octets written as three-digit octal escapes such as <code>\000</code>, with literal backslashes doubled). The <code>bytea_output</code> parameter selects the display representation and defaults to <code>hex</code>. The SQL standard's analogous <code>BLOB</code> (Binary Large Object) type uses a different input syntax but largely the same functions and operators.</p>
+</div>
+<div class="example-box">
+  <p><strong>Worked Example 6.2.4: Hashing and Inspecting a Binary Payload</strong></p>
+  <pre><code>-- SHA-256 returns a 32-byte bytea; encode/decode convert to and from text
+SELECT octet_length(sha256('abc'::bytea))             AS digest_bytes,  -- 32
+       bit_length('\xDEADBEEF'::bytea)                AS bits,          -- 32
+       encode(decode('DEADBEEF', 'hex'), 'base64')    AS encoded;       -- 3q2+7w==
+
+SELECT get_byte('\x1234567890'::bytea, 0) AS first_byte;  -- 18 (decimal)</code></pre>
+  <p><em>Sense-check:</em> <code>sha256()</code> yields a 32-byte <code>bytea</code>; <code>decode(..., 'hex')</code> converts hex text to raw bytes and <code>encode(..., 'base64')</code> renders those bytes as text. Unlike the 1-based array subscripts of Section 6.9, <code>get_byte()</code> numbers the first octet as index 0 because it addresses raw bytes rather than array elements.</p>
+</div>
 <div class="key-takeaway">
   <p><strong>Recap & Bridge:</strong> While character types manage arbitrary text, numeric data requires specialized representations to prevent rounding errors and optimize CPU arithmetic. Section 6.3 explores whole number types and auto-incrementing identity sequences.</p>
 </div>

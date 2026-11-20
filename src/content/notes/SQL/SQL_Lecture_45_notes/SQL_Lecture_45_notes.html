@@ -851,6 +851,53 @@ ORDER BY ordinal_position;</code></pre>
 <p>For example, adjusting the session time zone to Indian Standard Time (<code>IST</code>):</p>
 <pre><code>SELECT set_config('TimeZone', 'IST', false);</code></pre>
 <p>Similarly, administrators can adjust the session time zone to <code>Singapore</code> or UTC.</p>
+<div class="key-concept">
+  <p><strong>Beyond the Session: Configuration Persistence and the <code>pg_settings.context</code> Decision Rule</strong></p>
+  <p>The <code>set_config()</code> / <code>SET</code> mechanism shown above changes only the <em>current session</em>. To persist a parameter, an administrator must know where PostgreSQL stores settings and how a change is activated. Configuration sources are applied in a strict precedence order (lowest precedence first, later sources override earlier ones):</p>
+  <table>
+    <thead>
+      <tr>
+        <th>Source</th>
+        <th>Mechanism</th>
+        <th>Scope / Persistence</th>
+        <th>Activation</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><code>postgresql.conf</code></td>
+        <td>Edit the text file in the directory returned by <code>SHOW config_file;</code></td>
+        <td>Cluster-wide default (on disk)</td>
+        <td>Reload for <code>sighup</code> settings; restart for <code>postmaster</code> settings</td>
+      </tr>
+      <tr>
+        <td><code>postgresql.auto.conf</code></td>
+        <td><code>ALTER SYSTEM SET name = value;</code></td>
+        <td>Cluster-wide default (on disk); overrides <code>postgresql.conf</code></td>
+        <td>Same reload/restart rule as the file setting</td>
+      </tr>
+      <tr>
+        <td>Per-database / per-role</td>
+        <td><code>ALTER DATABASE ... SET</code> / <code>ALTER ROLE ... SET</code></td>
+        <td>Applied on every new session for that database or role</td>
+        <td>New sessions only</td>
+      </tr>
+      <tr>
+        <td>Session local</td>
+        <td><code>SET</code> / <code>set_config(..., false)</code></td>
+        <td>Current session until disconnect</td>
+        <td>Immediate</td>
+      </tr>
+    </tbody>
+  </table>
+  <p><strong>Deciding reload versus restart:</strong> The <code>pg_settings</code> view exposes a <code>context</code> column whose value governs how a change takes effect — <code>user</code> parameters are adjustable per session with <code>SET</code>, <code>sighup</code> parameters need only a configuration reload, and <code>postmaster</code> parameters require a full server restart. The <code>pending_restart</code> boolean flags values edited on disk that are not yet active:</p>
+  <pre><code>SELECT name, context, pending_restart
+FROM pg_settings
+WHERE name IN ('shared_buffers', 'work_mem', 'TimeZone');</code></pre>
+  <p><strong>Applying a file change without a restart:</strong> after editing a configuration file, validate it with the <code>pg_file_settings</code> view, then signal all backends to re-read their configuration:</p>
+  <pre><code>SELECT pg_reload_conf();  -- SIGHUP to the postmaster, propagated to every child process</code></pre>
+  <p>The shell equivalent is <code>pg_ctl reload -D &lt;data_directory&gt;</code>. Because the SIGHUP signal is propagated to every child process, existing sessions adopt new <code>sighup</code>-level values after they finish their currently executing statement, whereas <code>postmaster</code>-level changes remain dormant until the server restarts.</p>
+</div>
 <h3 id="45.6.2-built-in-server-file-access-and-directory-functions">45.6.2 Built-in Server File Access and Directory Functions</h3>
 <p>PostgreSQL includes built-in functions under <code>pg_catalog</code> that allow privileged roles to inspect and read files on the database server's filesystem:</p>
 <ol>

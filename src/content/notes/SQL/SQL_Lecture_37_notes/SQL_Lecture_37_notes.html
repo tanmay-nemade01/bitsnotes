@@ -1137,6 +1137,42 @@ DETAIL: SQL row ID data type does not match the return row ID data type.</code><
   </tbody>
 </table>
 <p>In Snowflake and Databricks, pivoting and unpivoting are complementary built-in primitives. In PostgreSQL, switching analytical perspectives requires deliberate manual query re-authoring in both the inner SQL text and the outer alias descriptor.</p>
+
+<div class="example-box">
+  <p><strong>Worked Example: Reverse Pivoting (UNPIVOT) — Turning Matrix Columns Back into Rows.</strong> Every transformation studied so far maps vertical tuples to a horizontal matrix. The inverse operation, <em>reverse pivoting</em> or <em>unpivoting</em>, restores a wide one-row-per-entity result to a narrow long relation with one row per (entity, category) pair. Given a pivoted rainfall matrix with columns <code>location, "2012", "2013", "2014"</code>, the goal is the long relation <code>(location, year, total_rain_days)</code>.</p>
+  <p><strong>PostgreSQL — extension-free via <code>CROSS JOIN LATERAL (VALUES ...)</code>:</strong> the <code>LATERAL</code> keyword lets a sub-<code>SELECT</code> in the <code>FROM</code> clause reference columns of <code>FROM</code> items that appear before it, so a one-row-per-category <code>VALUES</code> list can be joined against each wide row:</p>
+  <pre><code>SELECT w.location, c.year, c.total_rain_days
+FROM wide_rainfall w
+CROSS JOIN LATERAL (
+    VALUES ('2012', w."2012"::int),
+           ('2013', w."2013"::int),
+           ('2014', w."2014"::int)
+) AS c(year, total_rain_days)
+ORDER BY w.location, c.year;</code></pre>
+  <p>The Cartesian product emits one row per <code>VALUES</code> branch for each wide row; each branch reads a different column of the current left-hand row. The generic form from the reporting literature generalizes this to a denormalized aggregate view: cross join the wide relation with a table expression whose cardinality is at least the number of columns, then apply <code>CASE category WHEN ... THEN column END</code> to select one column per generated row.</p>
+  <p><strong>Native operators in other engines:</strong></p>
+  <pre><code>-- Snowflake
+SELECT * FROM wide_rainfall
+UNPIVOT (total_rain_days FOR year IN ("2012", "2013", "2014"))
+ORDER BY location, year;
+
+-- SQL Server (T-SQL)
+SELECT location, year, total_rain_days
+FROM wide_rainfall
+UNPIVOT (total_rain_days FOR year IN ([2012], [2013], [2014])) AS u;</code></pre>
+  <table>
+    <thead>
+      <tr><th>Aspect</th><th>PostgreSQL (LATERAL / VALUES)</th><th>Snowflake UNPIVOT</th><th>SQL Server UNPIVOT</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>Mechanism</td><td>Cartesian product of wide row and a <code>VALUES</code> list</td><td>Native relational operator in <code>FROM</code></td><td>Native relational operator in <code>FROM</code></td></tr>
+      <tr><td>NULL cells</td><td>Preserved as <code>NULL</code> long rows</td><td>Dropped unless <code>INCLUDE NULLS</code></td><td>Dropped from output</td></tr>
+      <tr><td>Name / value columns</td><td>Explicit aliases in <code>AS c(...)</code></td><td><code>FOR year</code> names; value column <code>total_rain_days</code></td><td><code>FOR year</code> names; value column <code>total_rain_days</code></td></tr>
+    </tbody>
+  </table>
+  <p><strong>Critical nuance:</strong> UNPIVOT is <em>not</em> a perfect inverse of PIVOT. PIVOT aggregates possibly many source rows into one cell, merging them; UNPIVOT cannot reconstruct rows that were collapsed by that aggregation, and NULL values in the input disappear from the output. Retain the pre-pivot detail relation whenever the long-format result must be lossless. Snowflake exposes this explicitly with <code>INCLUDE NULLS</code> versus the default <code>EXCLUDE NULLS</code>.</p>
+  <p><em>Sense-check:</em> Unpivoting the matrix row <code>(Dubai, 112, 16, 111)</code> yields <code>(Dubai, 2012, 112)</code>, <code>(Dubai, 2013, 16)</code>, <code>(Dubai, 2014, 111)</code> — one wide row becomes three long rows, and re-pivoting those three tuples reproduces the original cell values.</p>
+</div>
 <h3 id="37.6.5-assumptions-cardinality-asymmetry-and-scope">37.6.5 Assumptions, Cardinality Asymmetry, and Scope</h3>
 <div class="warning-box">
   <p><strong>Assumptions & Scope:</strong></p>

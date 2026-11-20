@@ -1441,6 +1441,44 @@ iris-deployment  2/2     2            2           45s</code></pre>
 <div class="key-concept">
   <p><strong>Traffic splitting:</strong> Within canary deployment, traffic routing is configured through Kubernetes Services. The same set of pods can receive different percentages of total traffic — for example, 5% of traffic goes to pods running the new version, and 95% goes to the old version. This is configured in the Service portion of the YAML manifest.</p>
 </div>
+<div class="important-note">
+  <p><strong>Mechanism — feature flags implement traffic splitting in code:</strong> Service-level weights are one way to split traffic; the complementary mechanism is a <em>feature flag</em> — a boolean parameter that selects between two control-flow paths inside a single application, so both variants can live in the same deployment without two separate Services.</p>
+  <pre><code>if (features.enabled(userId, "new_model_experiment5")) {
+  // new feature extraction; predict with new model
+} else {
+  // old feature extraction; predict with old model
+}
+// stable 10% cohort:
+function isEnabled(userId) { return (hash(userId) % 100) &lt; 10; }</code></pre>
+  <p><strong>Stable assignment:</strong> hashing the user id (rather than drawing a random number per request) keeps a user in the same variant across reloads — otherwise the same person would see inconsistent predictions. Cohorts can be stratified (e.g. 50% of beta users, 90% of developers, 0.1% of normal users), and a managed configuration service can flip a flag without redeploying or restarting the application.</p>
+  <table>
+    <thead>
+      <tr>
+        <th>Dimension</th>
+        <th>In-code feature flag</th>
+        <th>Service / load-balancer routing</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>Where the decision lives</td>
+        <td>Application control flow</td>
+        <td>Network / ingress layer</td>
+      </tr>
+      <tr>
+        <td>Change requires</td>
+        <td>Config value flip (no redeploy)</td>
+        <td>Manifest / routing rule update</td>
+      </tr>
+      <tr>
+        <td>Scope</td>
+        <td>Language-specific, tied to the app</td>
+        <td>Language-agnostic, any client</td>
+      </tr>
+    </tbody>
+  </table>
+  <p><strong>Hygiene:</strong> flags must be explicitly tracked, documented, and <strong>removed once the experiment ends</strong> — stale flags become permanent dead branches that accumulate complexity and can silently re-enable retired behaviour.</p>
+</div>
 <p><strong>A/B testing connection:</strong> Canary deployment is closely related to A/B testing. When you have two versions (A and B) and want to determine which performs better, you can use canary deployment to release each version to a subset of users and measure the results. The version with better metrics gets the full rollout. In day-to-day industry practice, canary and A/B testing are often used interchangeably, though there are subtle differences — canary focuses on safe rollout, while A/B testing focuses on measurement and comparison.</p>
 <div class="example-box">
   <p><strong>Worked example — canary deployment for an ML model:</strong></p>
@@ -1482,6 +1520,54 @@ iris-deployment  2/2     2            2           45s</code></pre>
 <p><strong>The switch is one-time:</strong> Users are redirected from one environment to the other in a single operation. It is not gradual like a rolling update.</p>
 <div class="warning-box">
   <p><strong>Pitfall — blue-green is not "better" than rolling update:</strong> Each strategy has its place. Blue-green is safest but most expensive. Rolling update is cheapest but causes temporary inconsistency. Canary is best for validating changes with real users. Choose based on your risk tolerance, budget, and consistency requirements.</p>
+</div>
+<h3 id="14.11.5-shadow-deployment-traffic-mirroring" class="subsection-title">14.11.5 Shadow Deployment (Traffic Mirroring)</h3>
+<div class="key-concept">
+  <p><strong>Formal Definition:</strong> A <em>shadow release</em> (traffic mirroring) runs the current and the candidate version in parallel, but returns <strong>only the current version's output to the user</strong>. Every incoming request is duplicated: one copy goes to the live (primary) service, the other to the shadow (candidate) service. The primary's response is returned to the client; the shadow's response is discarded, and only its telemetry — stability, latency, error rate, and agreement with the primary — is collected. Users are therefore <strong>never exposed</strong> to the candidate, making shadow deployment the only zero-user-risk strategy in this section.</p>
+  <p>In symbolic form, for a stream of \(N\) requests with mirror weight \(m\):</p>
+  \[ N_{\text{shadow}} = m \cdot N, \qquad \text{user response} = f_{\text{primary}}(r),\ \ f_{\text{shadow}}(r)\ \text{discarded} \]
+</div>
+<div class="example-box">
+  <p><strong>Worked trace — shadow-testing a new iris model:</strong></p>
+  <ol>
+    <li>Live service <code>iris-v1</code> serves 1,000 requests/s. New model <code>iris-v2</code> is deployed as a shadow service with mirror weight \(m = 1.0\).</li>
+    <li>Each request is copied: \(N_{\text{shadow}} = 1.0 \times 1000 = 1{,}000\) requests/s reach <code>iris-v2</code>; users still receive <code>iris-v1</code>'s predictions only.</li>
+    <li>Telemetry is compared over 24 hours: v2 error rate 0.2% vs v1 0.3%, p99 latency 95 ms vs 110 ms, prediction agreement 98.7%.</li>
+    <li>Because the shadow passed, it is promoted by a canary or blue-green rollout. Had it failed, no user would have been affected and the shadow would simply be deleted.</li>
+  </ol>
+</div>
+<table>
+  <thead>
+    <tr>
+      <th>Strategy</th>
+      <th>Who sees the new version?</th>
+      <th>User impact if it fails</th>
+      <th>Primary purpose</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td>Shadow (mirroring)</td>
+      <td>No one — telemetry only</td>
+      <td>Zero</td>
+      <td>Validate stability, latency, resource use</td>
+    </tr>
+    <tr>
+      <td>Canary</td>
+      <td>A growing subset (1% → 20% → 100%)</td>
+      <td>Limited to the subset</td>
+      <td>Safe progressive validation with real traffic</td>
+    </tr>
+    <tr>
+      <td>Blue-Green</td>
+      <td>Everyone, after an instant switch</td>
+      <td>All users, briefly</td>
+      <td>Instant rollback via environment switch</td>
+    </tr>
+  </tbody>
+</table>
+<div class="warning-box">
+  <p><strong>Pitfall — mirrored writes are duplicated:</strong> Traffic mirroring replays each request against both versions. This is safe for <strong>idempotent</strong> reads, but a mirrored write would be executed twice — once by the primary and once by the shadow — potentially corrupting data. Restrict mirroring to idempotent request types, or disable shadowing on write endpoints, before enabling a shadow service.</p>
 </div>
 <div class="key-takeaway">
   <p><strong>Recap — the four deployment strategies:</strong></p>

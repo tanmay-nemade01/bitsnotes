@@ -753,6 +753,20 @@ db.employees.find({ "age": 40 });
 // Select alphabets where _id is greater than 1 (\$gt operator)
 db.alphabets.find({ "_id": { "\$gt": 1 } });</code></pre>
 <p>The query document <code>{ "age": 40 }</code> means "match documents whose <code>age</code> field equals 40" — the SQL equivalent is <code>WHERE age = 40</code>. Comparison operators extend this: <code>\$gt</code> (greater than), <code>\$gte</code> (greater than or equal), <code>\$lt</code> (less than), <code>\$lte</code> (less than or equal), <code>\$ne</code> (not equal). The reference book shows the same pattern with <code>{StudRollNo: 'S101'}</code> for equality and <code>{Grade: 'VII', Hobbies: 'Ice Hockey'}</code> for combined conditions (implicit AND), plus <code>\$or</code> for OR conditions.</p>
+<div class="warning-box">
+  <p><strong>Pitfall — a null filter matches two different states.</strong> In an RDBMS, a null column and a missing column are distinct; in MongoDB the equality filter <code>{ "Location": null }</code> matches documents where the field is <em>explicitly null</em> <strong>and</strong> documents where the field is <em>absent entirely</em>. The reference book's <code>Students</code> collection makes this concrete: after setting <code>Location: null</code> on <code>_id</code> 3 and 4, <code>db.Students.find({ "Location": { \$eq: null } })</code> also returns the pre-existing document that never had a <code>Location</code> field at all — three results, not two.</p>
+  <p><strong>Three ways to ask a sharper question:</strong></p>
+  <table>
+    <thead><tr><th>Goal</th><th>Filter</th><th>Matches</th></tr></thead>
+    <tbody>
+      <tr><td>Explicit null <em>or</em> missing (default equality)</td><td><code>{ Location: null }</code></td><td>Both states</td></tr>
+      <tr><td>Missing field only</td><td><code>{ Location: { \$exists: false } }</code></td><td>Absent field only</td></tr>
+      <tr><td>Explicit null only (BSON type 10)</td><td><code>{ Location: { \$type: 10 } }</code></td><td><code>null</code> value only</td></tr>
+      <tr><td>Field exists and is non-null</td><td><code>{ Location: { \$ne: null } }</code></td><td>Present, non-null values</td></tr>
+    </tbody>
+  </table>
+  <p><strong>Removing the field altogether:</strong> <code>\$set: { Location: null }</code> leaves a field whose value is null; it does not delete the key. To remove the key, use <code>db.Students.update({ _id: 3 }, { \$unset: { Location: "" } })</code>. This distinction matters for the schema-flexibility promise in 9.1.1 — an "optional" field should normally be <code>\$unset</code>, not left as a null placeholder. <strong>Sense-check:</strong> if a null check returns more rows than expected, suspect missing fields before suspecting bad data.</p>
+</div>
 <p><strong>Field Projections (<code>SELECT</code> Clause Equivalents)</strong></p>
 <p>The second argument to <code>find()</code> specifies projection fields, controlling which document keys are returned:</p>
 <pre><code>// Project only 'name' and 'age', suppressing '_id'
@@ -877,7 +891,88 @@ db.employees.find(
     <li><strong>Using joins to paper over bad modeling.</strong> In section 9.1 we chose embedding to avoid joins; a <code>\$lookup</code> on every query is a signal the data model may need revisiting.</li>
   </ol>
 </div>
+<div class="example-box">
+  <p><strong>Worked example — a grouped aggregation pipeline (\$match → \$group → \$match).</strong> The reference book's <code>Customers</code> collection holds four account rows: <code>C123/500/S</code>, <code>C123/900/S</code>, <code>C111/1200/S</code>, and <code>C123/1500/C</code>. The task: keep only savings accounts (<code>AccType = "S"</code>), total each customer's balance, then show only totals above 1200 — the exact analogue of <code>SELECT ... WHERE ... GROUP BY ... HAVING ...</code> in 9.1.2's RDBMS world.</p>
+  <pre><code>db.Customers.aggregate([
+  { \$match: { "AccType": "S" } },
+  { \$group: { _id: "\$CustID", TotAccBal: { \$sum: "\$AccBal" } } },
+  { \$match: { "TotAccBal": { \$gt: 1200 } } }
+]);</code></pre>
+  <p>Trace the stream stage by stage:</p>
+  <ol>
+    <li><strong>\$match</strong> drops the <code>AccType: "C"</code> row (1500), leaving three rows: 500, 900, 1200. Placing it <em>first</em> shrinks the working set before the expensive grouping stage.</li>
+    <li><strong>\$group</strong> uses <code>_id: "\$CustID"</code> as the group key (the leading <code>\$</code> means "the value of this field"). It emits two documents: <code>{ _id: "C123", TotAccBal: 1400 }</code> (500 + 900) and <code>{ _id: "C111", TotAccBal: 1200 }</code>.</li>
+    <li><strong>The second \$match</strong> filters the <em>grouped</em> documents, keeping only <code>C123 / 1400</code>. A filter on an accumulated field is a SQL <code>HAVING</code> clause, not a <code>WHERE</code>.</li>
+  </ol>
+  <p><strong>Accumulator vocabulary (the <code>\$group</code> compute column):</strong></p>
+  <table>
+    <thead>
+      <tr><th>Accumulator</th><th>Result for group C123</th><th>SQL analogue</th></tr>
+    </thead>
+    <tbody>
+      <tr><td><code>\$sum: "\$AccBal"</code></td><td>1400</td><td><code>SUM()</code></td></tr>
+      <tr><td><code>\$avg: "\$AccBal"</code></td><td>700</td><td><code>AVG()</code></td></tr>
+      <tr><td><code>\$max: "\$AccBal"</code></td><td>900</td><td><code>MAX()</code></td></tr>
+      <tr><td><code>\$min: "\$AccBal"</code></td><td>500</td><td><code>MIN()</code></td></tr>
+    </tbody>
+  </table>
+  <p><strong>Sense-check:</strong> unlike <code>\$lookup</code>, which emits an array field, <code>\$group</code> emits <em>one document per distinct key</em> and does not order its output — add a <code>\$sort</code> stage if order matters. <code>\$group</code> is a blocking stage: it must see all input before emitting, so a leading <code>\$match</code> is both a correctness and a performance habit.</p>
+</div>
+
+<h3 id="9.3.6-indexes-explain-plans-and-covered-queries">9.3.6 Indexes, Explain Plans, and Covered Queries</h3>
+<p>Every query in 9.3.1–9.3.5 was treated as if MongoDB walked the collection looking for matches. <strong>Indexes</strong> are the structure that removes that full scan. They are a separate concern from CRUD syntax, but they explain why <code>find()</code> stays fast after a collection grows from hundreds to millions of documents.</p>
+<div class="key-concept">
+  <p><strong>Formal Definition:</strong> An <em>index</em> is a special data structure that stores a small, ordered subset of a collection's data — the value of a field (or set of fields) together with a pointer back to the matching document. MongoDB indexes use a <strong>B-tree</strong> layout, so equality matches and range scans become logarithmic instead of linear. Without an index, MongoDB must scan every document; with a suitable index, it limits the scan to the relevant keys.</p>
+  <p>Every collection already carries one: MongoDB creates a <strong>unique</strong> index on <code>_id</code> when the collection is created — this is the mechanism behind the duplicate-key error in 9.3.1. Additional indexes are created with <code>db.books.createIndex({ "Category": 1 })</code> (the older textbook form is <code>ensureIndex</code>); the default name is the field plus its direction, here <code>Category_1</code>, and <code>db.books.getIndexes()</code> lists both <code>_id_</code> and <code>Category_1</code>. <strong>Trade-off:</strong> indexes accelerate reads, but every insert and update must also maintain each index, so write-heavy collections pay for them.</p>
+</div>
+<div class="example-box">
+  <p><strong>Worked example — reading an explain plan.</strong> With an index on <code>Category</code>, force it with <code>hint()</code> and inspect the plan:</p>
+  <pre><code>db.books.find({ "Category": "web Mining" }).hint({ "Category": 1 }).explain()</code></pre>
+  <p>The plan shows an index scan (older servers print <code>BtreeCursor Category_1</code>; modern servers print the <code>IXSCAN</code> stage): two keys matched, and <code>nscannedobjects</code> / <code>totalDocsExamined</code> is 2 — the server fetched two full documents. Now project only the indexed field and suppress the identifier:</p>
+  <pre><code>db.books.find({ "Category": "web Mining" }, { "Category": 1, "_id": 0 })
+         .hint({ "Category": 1 }).explain()</code></pre>
+  <p>Because <code>Category</code> is the only projected field and <code>_id</code> is suppressed, the answer comes entirely from the index keys — a <strong>covered query</strong>. The plan flips to <code>indexonly: true</code> (an <code>IXSCAN</code> with no <code>FETCH</code> stage on modern servers) and document examinations drop to <code>0</code>.</p>
+  <p><strong>Sense-check:</strong> the index satisfied both the filter and the projection, so no collection document had to be read — the fastest read path available.</p>
+</div>
+
 <p><strong>Real-world domain connection:</strong> The CRUD vocabulary here is the same one used by every driver — <code>pymongo</code>'s <code>insert_one</code>/<code>find</code>/<code>update_one</code>/<code>delete_one</code> mirror these shell methods one-for-one. <code>\$lookup</code> powers denormalized read models in microservices, and the <code>insertOne</code>/<code>insertMany</code> distinction directly informs bulk-ingestion pipelines for log and sensor data (batch writes via <code>insertMany</code>, single control records via <code>insertOne</code>).</p>
+
+<h3 id="9.3.7-array-update-operators-and-positional-updates">9.3.7 Array Update Operators and Positional Updates</h3>
+<p>Section 9.3.3 introduced <code>\$set</code> as the field-level patch operator, but a document field can also hold an <em>array</em> — and arrays need their own mutation vocabulary. The reference book devotes a full section to update operations on array values (the <code>food</code> collection's <code>fruits</code> array). These operators matter because embedding a bounded array is the recommended modeling choice in 9.1.3: once a list is embedded, appending, deduplicating, and removing elements must happen <em>inside</em> one document without rewriting it whole.</p>
+<div class="key-concept">
+  <p><strong>Formal Definition:</strong> An <em>array update operator</em> is a field-update modifier that mutates the elements of an array-valued field in place. Unlike a plain <code>\$set</code> on the whole array (which overwrites it), these operators express intent — "append," "add if absent," "remove by value," "remove by position" — and MongoDB applies them atomically within the single document.</p>
+  <table>
+    <thead>
+      <tr>
+        <th>Operator</th>
+        <th>Effect on the target array</th>
+        <th>Typical use</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr><td><code>\$push</code></td><td>Appends a value; if the value is itself an array it is appended as <em>one</em> element unless paired with <code>\$each</code>.</td><td>Add a new log entry or tag.</td></tr>
+      <tr><td><code>\$addToSet</code></td><td>Appends only if the value is not already present (set semantics — no duplicates).</td><td>Unique tags, unique member IDs.</td></tr>
+      <tr><td><code>\$pop</code></td><td>Removes one end element: <code>1</code> = last, <code>-1</code> = first.</td><td>Fixed-size queue / bounded recent list.</td></tr>
+      <tr><td><code>\$pull</code></td><td>Removes <em>all</em> elements matching a condition, by value rather than position.</td><td>Delete every matching entry.</td></tr>
+      <tr><td><code>\$pullAll</code></td><td>Removes all elements equal to any value in a supplied list.</td><td>Bulk removal of known values.</td></tr>
+      <tr><td><code>\$</code> (positional)</td><td>Identifies the <em>first</em> array element matched by the query filter for a <code>\$set</code>.</td><td>Patch the element you just matched.</td></tr>
+    </tbody>
+  </table>
+</div>
+<div class="example-box">
+  <p><strong>Worked trace — mutating <code>fruits</code> in the <code>food</code> collection.</strong> Start with <code>{ "_id": 4, "fruits": ["banana", "grapes"] }</code>:</p>
+  <ol>
+    <li><code>db.food.update({ "_id": 4 }, { \$set: { "fruits.1": "apple" } })</code> → <code>["banana", "apple"]</code> — zero-based dot notation replaces an element by index.</li>
+    <li><code>db.food.update({ "_id": 4 }, { \$addToSet: { fruits: "orange" } })</code> → <code>["banana", "apple", "orange"]</code>; repeating it changes nothing (no duplicate).</li>
+    <li><code>db.food.update({ "_id": 4 }, { \$pop: { fruits: 1 } })</code> → <code>["banana", "apple"]</code>; with <code>-1</code> it removes the <em>first</em> element instead.</li>
+    <li><code>db.food.update({ "_id": 4 }, { \$pull: { fruits: "banana" } })</code> → <code>["apple"]</code> — removes by value, everywhere it occurs.</li>
+    <li><code>db.food.update({ fruits: "apple" }, { \$set: { "fruits.\$": "An apple" } })</code> → the positional <code>\$</code> patches the matched element without needing its index.</li>
+  </ol>
+  <p><strong>Sense-check:</strong> every operation touches one document and leaves the array's identity intact — contrast this with a bare <code>\$set: { fruits: [...] }</code>, which replaces the entire array and can clobber concurrent edits.</p>
+</div>
+<div class="warning-box">
+  <p><strong>Pitfall — removing by index has no direct operator.</strong> There is no "remove element at position <em>i</em>" primitive. The reference book's workaround is a two-step sequence: <code>\$unset: { "fruits.1": null }</code> turns the slot into <code>null</code>, then <code>\$pull: { fruits: null }</code> removes that hole entirely. Also note that <code>\$push</code> with an array value appends the array as <em>one</em> element unless you use <code>\$each</code> — the same "one vs. many" theme as <code>insertOne</code> vs <code>insertMany</code> in 9.3.1.</p>
+</div>
 
 <h2 id="9.4-distributed-consistency-cap-theorem-and-replication-mechanics">9.4 Distributed Consistency, CAP Theorem, and Replication Mechanics</h2>
 <div class="important-note">

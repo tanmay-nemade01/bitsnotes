@@ -440,6 +440,42 @@
 </div>
 <h3 id="3.4.3-privacy-data-stays-models-travel">3.4.3 Privacy: data stays, models travel</h3>
 <p>Because rows never move, sensitive sources can collaborate. Hospitals keep patient scans behind their own walls yet contribute heart or skin knowledge through weights. Banks keep account rows private yet contribute fraud patterns through weights. Factories keep vibration logs on the machines yet contribute fault patterns through weights. The shared model still benefits from all of them. That privacy property is a direct consequence of the two-aim setup, not an add-on: local fit never needs to export rows, and consensus only needs to import weights.</p>
+
+<div class="important-note">
+  <p><strong>Cryptographic extension — protect the updates, not just the rows.</strong> The privacy argument above keeps raw data on its node, but the weight vectors exchanged between caches are still plaintext to any relay or combiner that handles them. <em>Secure aggregation</em> is a cryptographic primitive that lets mutually distrusting parties compute the sum of their private values without revealing any individual value: the combiner learns only \(\sum_{i} x_i\), never \(x_i\) itself.</p>
+  <p>One construction uses pairwise cancellation masks. Neighbors \(i\) and \(j\) agree on a random vector \(s_{ij} = -s_{ji}\), and each broadcasts a masked update \(y_i = x_i + \sum_{j<i} s_{ij} - \sum_{j>i} s_{ji}\). Every mask appears once with each sign, so \(\sum_{i} y_i = \sum_{i} x_i\) and the blended model \(\bar{x} = \frac{1}{n}\sum_{i} x_i\) is recovered exactly while individual updates stay hidden. A different construction is additively homomorphic encryption: each participant encrypts its model, the combiner sums ciphertexts it cannot read, and the participants decrypt only the aggregate before dividing by the count.</p>
+  <table>
+    <thead>
+      <tr>
+        <th>Approach</th>
+        <th>What the combiner sees</th>
+        <th>Trust assumption</th>
+        <th>Cost</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>Plaintext weighted blend (3.6)</td>
+        <td>Every individual neighbor model</td>
+        <td>Combiner trusted with all updates</td>
+        <td>Only the blend itself</td>
+      </tr>
+      <tr>
+        <td>Pairwise-mask secure aggregation</td>
+        <td>Only the sum of masked updates</td>
+        <td>Pairwise secure channels; no trusted combiner</td>
+        <td>Extra communication for masks and key agreement</td>
+      </tr>
+      <tr>
+        <td>Additively homomorphic encryption</td>
+        <td>An encrypted sum it cannot read</td>
+        <td>No trusted combiner; clients hold the key</td>
+        <td>Heavy public-key operations on every weight</td>
+      </tr>
+    </tbody>
+  </table>
+  <p><strong>Boundary condition:</strong> masking protocols need enough peers to stay online to cancel the masks when a participant drops out — the canonical design tolerates up to about one third of participants failing; beyond that the round must be retried, and this is the price of hiding updates from the combiner.</p>
+</div>
 <div class="key-takeaway">
   <p><strong>Recap:</strong> Learn deeply at home, stay compatible with the group summary — local data plus consensus, with data staying put and models traveling. Next, the data itself splits into easy same-schema and hard mixed-schema cases, which decides how hard that twin job really is.</p>
 </div>
@@ -568,6 +604,47 @@
 </div>
 <p>There is no central whiteboard; there are \(n\) personal whiteboards that slowly agree.</p>
 <p>In short, alpha weights aggregation is personal: my cache, my alphas, my next model — and the fleet agrees by repeating that personal step.</p>
+
+<h3 id="3.6.4-byzantine-robust-aggregation">3.6.4 Byzantine-Robust Aggregation: When a Neighbor Lies</h3>
+<div class="warning-box">
+  <p><strong>Failure mode — the arithmetic mean has zero Byzantine tolerance.</strong> Sections 3.6.1 to 3.6.3 assume every cached neighbor is merely noisy or stale. A faulty or adversarial peer is different: because the blend \(x_{i,t+1} = \sum_{j \in N(i)} \alpha_{j} x_{j}\) is a <em>linear combination</em>, one peer with a large-magnitude vector can steer the result almost anywhere. The Krum result proves that no linear combination of worker-submitted vectors tolerates even a single Byzantine worker, so no choice of \(\alpha\) fixes this — trust weights presuppose honest peers.</p>
+</div>
+<div class="key-concept">
+  <p><strong>Formal definition:</strong> with \(n\) cached models of which at most \(f\) are Byzantine, an aggregation rule is <em>robust</em> if its output stays close to the honest mean. Robust mean estimators replace the mean's squared-distance minimizer with a distance-based estimator.</p>
+</div>
+<table>
+  <thead>
+    <tr>
+      <th>Estimator</th>
+      <th>Rule</th>
+      <th>Breakdown limit</th>
+      <th>Cost / trade-off</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td>Geometric median</td>
+      <td>\(\arg\min_{y}\sum_{j}\|y - x_{j}\|_{2}\)</td>
+      <td>Up to half the points adversarial</td>
+      <td>No closed form; Weiszfeld iteration is accurate but slow</td>
+    </tr>
+    <tr>
+      <td>Coordinate-wise median</td>
+      <td>\(\text{median}_{j}(x_{j,k})\) per coordinate \(k\)</td>
+      <td>Up to half the points adversarial</td>
+      <td>Direct \(O(nd)\) compute; weaker convergence guarantees</td>
+    </tr>
+    <tr>
+      <td>Krum</td>
+      <td>Keep the vector with the smallest sum of its \(n-f-2\) nearest \(L_2\) distances</td>
+      <td>Requires \(n > 2f + 2\)</td>
+      <td>Pairwise distances cost \(O(n^{2}d)\); returns an existing vector</td>
+    </tr>
+  </tbody>
+</table>
+<div class="example-box">
+  <p><strong>Worked trace — one liar among five neighbors.</strong> Honest cached models \(h_1=[1,1], h_2=[1,2], h_3=[2,1], h_4=[2,2]\); adversarial \(m=[100,100]\); set \(f=1\), so Krum sums the \(n-f-2 = 2\) smallest distances. The plain mean is \((1+1+2+2+100)/5 = 21.2\) in each coordinate, giving \([21.2, 21.2]\) — nowhere near the honest cluster. Krum scores: each \(h_i\) has two honest neighbors at distance \(1\), so \(\kappa_{h} = 1+1 = 2\); \(m\)'s two nearest distances are about \(138.6\) and \(139.3\), so \(\kappa_{m} \approx 277.9\). The minimum score selects an honest vector and \(m\) is rejected; the trimmed variant averages the \(n-f-2\) lowest-score vectors, recovering a vector back inside the honest cluster (for example \([1.5, 1.5]\) for a representative pair).</p>
+</div>
 <div class="key-takeaway">
   <p><strong>Recap:</strong> Blend cached neighbors with alphas that sum to one; big alpha means big pull, equal alphas mean plain averaging. Next, each device trains that blend on local batches with a two-part objective that refuses to drift.</p>
 </div>

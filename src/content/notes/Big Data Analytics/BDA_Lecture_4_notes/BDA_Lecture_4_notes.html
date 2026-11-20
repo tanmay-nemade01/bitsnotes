@@ -438,6 +438,12 @@
 <div class="important-note">
   <p><strong>Critical Design Principle:</strong> The client contacts DataNodes directly to retrieve data and is guided by the NameNode to the best DataNode for each block. This design allows HDFS to scale to a large number of concurrent clients because the data traffic is spread across all the DataNodes in the cluster. The NameNode only services block location requests (which are stored in memory, making them very efficient) and does not serve data — which would quickly become a bottleneck.</p>
 </div>
+<div class="important-note">
+  <p><strong>System Detail — Transparent Data Integrity (CRC-32C Checksums):</strong> HDFS transparently checksums all data it writes and, by default, verifies those checksums on every read. A separate checksum is generated for every <code>dfs.bytes-per-checksum</code> bytes of data (default 512 bytes). Because a CRC-32C checksum is only 4 bytes long, the storage overhead is less than 1%.</p>
+  <p><strong>Where verification happens:</strong> DataNodes verify data before storing it — both data received from a client and data received from other DataNodes during replication. In the write pipeline (client \(\to\) DN1 \(\to\) DN5 \(\to\) DN9), the <em>last</em> DataNode in the pipeline verifies the checksum. On reads, the client recomputes the checksum and compares it with the value stored at the DataNode; each DataNode keeps a persistent log of the last time each of its blocks was verified.</p>
+  <p><strong>Background healing:</strong> Each DataNode runs a <code>DataBlockScanner</code> background thread that periodically verifies all of its blocks to guard against physical-media "bit rot." If a client detects a corrupt block, it reports the bad block and its DataNode to the NameNode before throwing a <code>ChecksumException</code>. The NameNode marks that replica corrupt so no further clients are sent to it, schedules a fresh copy from a good replica to restore the replication factor, and then deletes the bad replica.</p>
+  <p><strong>Escape hatch:</strong> Verification can be disabled for inspection with the <code>-ignoreCrc</code> option of <code>-get</code>/<code>-copyToLocal</code> or by passing <code>false</code> to <code>setVerifyChecksum()</code>; <code>hadoop fs -checksum</code> reports a file's checksum values.</p>
+</div>
 <h3 id="4.1.5-hdfs-administrative-commands-and-shell-operations">4.1.5 HDFS Administrative Commands and Shell Operations</h3>
 <p>Interacting with HDFS from the command line interface (CLI) requires standard Hadoop utility tools:</p>
 <div class="key-concept">
@@ -745,6 +751,40 @@ Block blk_1073741827: len=4194304 repl=3 [10.0.0.2:9866, 10.0.1.6:9866, 10.0.1.7
     <li>Custom Record Readers: Developed for specialized data formats, such as audio MP3 files (parsing packet-by-packet) or raw image files (parsing pixel matrix blocks).</li>
   </ul>
 </div>
+<div class="key-concept">
+  <p><strong>Formal Definition — Input Split vs. HDFS Block:</strong> An <em>input split</em> is the byte-range unit of work that Hadoop hands to exactly one map task. The framework creates <strong>one map task per split</strong>, so \[ \text{numMapTasks} = |\text{splits}| \] and a single large file can therefore be processed by many parallel mappers even though it is one HDFS file. This is distinct from an HDFS <em>block</em> (the physical storage chunk, default \(B = 128\text{ MB}\)): blocks describe how bytes are stored; splits describe how bytes are handed to mappers.</p>
+  <p>Hadoop computes each split's byte length from three quantities — the file's block size \(B\), a configurable minimum \(\text{minSize}\) (<code>mapreduce.input.fileinputformat.split.minsize</code>, default 0), and a configurable maximum \(\text{maxSize}\) (default effectively unbounded):</p>
+  \[ \text{splitSize} = \max\bigl(\text{minSize},\ \min(\text{maxSize},\ B)\bigr) \]
+  <p><strong>Why split size normally equals block size:</strong> a split the size of one block is the largest unit guaranteed to live entirely on a single DataNode. If a split spanned two blocks, no single node would be guaranteed to hold both, so part of the split would have to be fetched across the network — forfeiting data locality.</p>
+  <p><strong>Worked sizing for a 1 GB file (\(B = 128\text{ MB}\)):</strong></p>
+  <table>
+    <thead>
+      <tr>
+        <th>Configuration</th>
+        <th>Effective splitSize</th>
+        <th>Number of splits / map tasks</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>Defaults (minSize = 0, maxSize unbounded)</td>
+        <td>\(128\text{ MB}\)</td>
+        <td>\(1024 / 128 = 8\)</td>
+      </tr>
+      <tr>
+        <td><code>split.minSize = 256 MB</code></td>
+        <td>\(\max(256, \min(\infty, 128)) = 256\text{ MB}\)</td>
+        <td>\(1024 / 256 = 4\) (more local work per mapper)</td>
+      </tr>
+      <tr>
+        <td><code>split.maxSize = 64 MB</code></td>
+        <td>\(\max(0, \min(64, 128)) = 64\text{ MB}\)</td>
+        <td>\(1024 / 64 = 16\) (finer load balancing)</td>
+      </tr>
+    </tbody>
+  </table>
+  <p><strong>Boundary nuance:</strong> a split is a <em>byte range</em>, whereas a <code>TextInputFormat</code> record is a <em>line</em> (key = byte position, value = line text). The RecordReader is therefore responsible for delivering whole records even at split edges; splits and record boundaries are not required to coincide.</p>
+</div>
 <div class="warning-box">
   <p><strong>Pitfalls:</strong></p>
   <ol>
@@ -963,6 +1003,71 @@ Block blk_1073741827: len=4194304 repl=3 [10.0.0.2:9866, 10.0.1.6:9866, 10.0.1.7
   <p><strong>Q:</strong> If a Combiner uses the exact same Java code logic as the Reducer, why is it listed as an optional component?</p>
   <p><strong>A:</strong> A Combiner is optional because the MapReduce framework does not guarantee it will run for every single record. If a node has ample RAM and low disk I/O, Hadoop may bypass the Combiner entirely. Therefore, pipeline correctness must never depend on whether a Combiner executes; Combiners must strictly serve as performance optimizations for associative and commutative operations. If your Combiner produces different results when skipped, your logic is wrong.</p>
 </div>
+<h3 id="4.3.6-compression-aware-mapreduce-codecs-splittability-and-shuffle-compression" class="subsection-title">4.3.6 Compression-Aware MapReduce: Codecs, Splittability, and Shuffle Compression</h3>
+<div class="important-note">
+  <p><strong>Why Compression Is a MapReduce Optimization Lever:</strong> File compression reduces storage space and speeds data transfer to/from disk and across the network — gains that multiply at multi-terabyte scale. But in MapReduce the payoff depends on a single property: whether the codec is <em>splittable</em>, meaning a reader can seek to an arbitrary byte offset and resume decoding without reading the whole stream from the beginning. A non-splittable codec can collapse a parallel job into a single mapper.</p>
+</div>
+<div class="key-concept">
+  <p><strong>Codec and Splittability Reference:</strong></p>
+  <table>
+    <thead>
+      <tr>
+        <th>Format</th>
+        <th>Hadoop CompressionCodec</th>
+        <th>Extension</th>
+        <th>Splittable?</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>DEFLATE (zlib)</td>
+        <td><code>DefaultCodec</code></td>
+        <td><code>.deflate</code></td>
+        <td>No</td>
+      </tr>
+      <tr>
+        <td>gzip</td>
+        <td><code>GzipCodec</code></td>
+        <td><code>.gz</code></td>
+        <td>No (DEFLATE blocks have no sync markers)</td>
+      </tr>
+      <tr>
+        <td>bzip2</td>
+        <td><code>BZip2Codec</code></td>
+        <td><code>.bz2</code></td>
+        <td>Yes — 48-bit approximation-of-pi marker between blocks</td>
+      </tr>
+      <tr>
+        <td>LZO</td>
+        <td><code>LzopCodec</code> (external library)</td>
+        <td><code>.lzo</code></td>
+        <td>No, unless indexed in a preprocessing step</td>
+      </tr>
+      <tr>
+        <td>LZ4</td>
+        <td><code>Lz4Codec</code></td>
+        <td><code>.lz4</code></td>
+        <td>No</td>
+      </tr>
+      <tr>
+        <td>Snappy</td>
+        <td><code>SnappyCodec</code></td>
+        <td><code>.snappy</code></td>
+        <td>No</td>
+      </tr>
+    </tbody>
+  </table>
+  <p>Hadoop infers the codec from the filename extension via <code>CompressionCodecFactory</code>. A codec declaring <code>SplittableCompressionCodec</code> is precisely one "capable to compress / de-compress a stream starting at any arbitrary position"; <code>FileInputFormat.isSplitable()</code> returns <code>false</code> for stream-compressed input, forcing one split per file.</p>
+</div>
+<div class="example-box">
+  <p><strong>Worked Scenario — 1 GB Input Under Two Codec Choices:</strong></p>
+  <p>An uncompressed 1 GB file at \(B = 128\text{ MB}\) occupies 8 HDFS blocks and yields 8 input splits → 8 map tasks, each reading a local block. A <strong>gzip</strong> file of the same 1 GB compressed size is still 8 HDFS blocks, but because gzip is non-splittable the framework creates <strong>1 split → 1 map task</strong> that must read all 8 blocks, most of them non-local; the job loses both parallelism and data locality. With <strong>bzip2</strong> (or indexed LZO), the 8 splits and 8 local maps are preserved.</p>
+  <p><strong>Map-output (shuffle) compression:</strong> intermediate map output is written to local disk and transferred to reducers, so a fast codec trades modest CPU for a much smaller shuffle volume:</p>
+  <pre><code>conf.setBoolean("mapreduce.map.output.compress", true);
+conf.set("mapreduce.map.output.compress.codec",
+         "org.apache.hadoop.io.compress.SnappyCodec");</code></pre>
+  <p><strong>Defaults and trade-offs:</strong> <code>mapreduce.map.output.compress = false</code> with default codec <code>DefaultCodec</code>; final job output is controlled separately by <code>mapreduce.output.fileoutputformat.compress</code> (also <code>false</code>). LZO/LZ4/Snappy are roughly an order of magnitude faster than gzip but compress less, while bzip2 compresses more effectively at the highest CPU cost — so fast codecs suit intermediate shuffle data and heavily-compressing codecs suit archival storage.</p>
+</div>
 <div class="key-takeaway">
   <p><strong>Recap + Bridge:</strong> The Combiner reduces network traffic by pre-aggregating Map output locally, but only for operations that are both commutative and associative. The classic trap: Average cannot use a naive Combiner (fix: emit sum/count tuples). The Partitioner controls which Reducer gets which keys via hash modulo. These two optimizations together make MapReduce practical at scale. Next, we look at the Java API that implements these concepts — the Mapper, Reducer, Driver, and Hadoop's custom serialization system.</p>
 </div>
@@ -1047,6 +1152,14 @@ Block blk_1073741827: len=4194304 repl=3 [10.0.0.2:9866, 10.0.1.6:9866, 10.0.1.7
     </tbody>
   </table>
   <p><strong>Important:</strong> All keys in MapReduce must implement <code>WritableComparable</code> (which extends both <code>Writable</code> and <code>Comparable</code>). Values only need to implement <code>Writable</code>. This is because keys are sorted during the Shuffle and Sort phase — they need to be comparable.</p>
+</div>
+<div class="important-note">
+  <p><strong>Mechanism — Binary Key Comparison Without Deserialization:</strong> Because keys are compared millions of times during the Shuffle and Sort phase, Hadoop accelerates this hot path with <code>RawComparator</code>, an interface in <code>org.apache.hadoop.io</code> that extends Java's <code>Comparator</code> with a method comparing two objects directly in their serialized byte form:</p>
+  <pre><code>public interface RawComparator&lt;T&gt; extends Comparator&lt;T&gt; {
+    int compare(byte[] b1, int s1, int l1, byte[] b2, int s2, int l2);
+}</code></pre>
+  <p>Here <code>b1[s1:s1+l1]</code> and <code>b2[s2:s2+l2]</code> denote the two serialized keys. Comparing these byte ranges directly avoids object creation and deserialization — for example, <code>IntWritable</code>'s raw comparator reads one integer from each byte array at its start offset and compares them immediately.</p>
+  <p><code>WritableComparator</code> is the general-purpose <code>RawComparator</code> implementation for <code>WritableComparable</code> classes: it supplies a default <code>compare()</code> that falls back to deserializing the objects, and it acts as a factory for registered comparators, e.g. <code>WritableComparator.get(IntWritable.class)</code>. This is the mechanism behind the "binary comparison" row in the table above — it is why numeric Writable keys sort far faster than <code>Text</code> keys of similar cardinality.</p>
 </div>
 <div class="warning-box">
   <p><strong>Pitfall:</strong> The <code>Text</code> class is NOT the same as Java <code>String</code>. <code>Text</code> uses UTF-8 encoding internally. A common mistake is to use <code>String</code> methods on a <code>Text</code> object — always call <code>.toString()</code> first to convert, then use String methods. Also, <code>Text</code> is mutable (you can call <code>.set()</code> to change its content), unlike <code>String</code> which is immutable.</p>

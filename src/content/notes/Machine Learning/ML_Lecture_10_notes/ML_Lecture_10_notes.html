@@ -1604,6 +1604,30 @@
 <li>\(\|D_k\| = \sqrt{\sum_{j} d_{kj}^2}\) — the Euclidean norm (magnitude, length) of vector \(D_k\)</li>
 </ul>
 <p>Because term frequencies are non-negative, cosine similarity for documents is always in \([0,1]\). \(1\) means identical word distribution (same direction), \(0\) means no shared words (perpendicular).</p>
+
+<div class="important-note">
+<p><strong>Formal Detail — TF-IDF Weighting.</strong> The pitfall note above calls for TF-IDF, but raw counts treat every term equally. Let \(n\) be the number of documents and \(\mathrm{df}(t)\) the number of documents containing term \(t\). The inverse document frequency down-weights terms that appear almost everywhere and up-weights discriminative rare terms:</p>
+<p>\[ \mathrm{idf}(t) = \ln\frac{n}{\mathrm{df}(t)}, \qquad \text{tf-idf}(t,d) = \text{tf}(t,d) \cdot \text{idf}(t) \]</p>
+<p>A smoothed variant adds one to numerator and denominator, \(\mathrm{idf}(t) = \ln\frac{1+n}{1+\mathrm{df}(t)} + 1\), which prevents division by zero for a term with \(\mathrm{df}(t)=0\). Each document vector is then \(L_2\)-normalized before cosine similarity is applied; for unit vectors, cosine reduces to a plain dot product.</p>
+<p><strong>Worked trace on the four-document matrix above</strong> (\(n=4\); natural logs):</p>
+<table>
+<thead><tr>
+<th>Term</th>
+<th>df(\(t\))</th>
+<th>idf = ln(4/df)</th>
+<th>Role</th>
+</tr></thead>
+<tbody>
+<tr><td>team, score, win, season, coach</td><td>2</td><td>0.693</td><td>Common in this corpus — weighted down</td></tr>
+<tr><td>play</td><td>3</td><td>0.288</td><td>In 3 of 4 documents — lowest weight</td></tr>
+<tr><td>championship</td><td>1</td><td>1.386</td><td>Only in D1 — highest weight</td></tr>
+<tr><td>draft</td><td>0</td><td>undefined (smoothed: 2.609)</td><td>Absent everywhere — smoothing handles it</td></tr>
+</tbody>
+</table>
+<p>Weighting D1 = \((5,0,3,2,0,0,2,0)\) gives \((3.466, 0, 2.079, 1.386, 0, 0, 2.773, 0)\) with norm \(\approx 5.092\). For the query "team win", \(Q=(1,0,0,1,0,0,0,0)\), \(\|Q\|=\sqrt{2}\):</p>
+<p>\[ \text{sim}_{\text{TF-IDF}}(Q, D_1) = \frac{3.466 + 1.386}{\sqrt{2} \times 5.092} \approx \frac{4.852}{7.200} \approx \mathbf{0.674} \]</p>
+<p>Compare the raw-count result \(0.764\): TF-IDF <em>lowered</em> the score because D1's rare term "championship" (weight 1.386) is absent from the query, while the shared terms "team" and "win" were down-weighted. Relevance ranking is driven by distinctive terms rather than by documents that merely repeat common words — the reason TF-IDF, not raw frequency, is the standard text representation for cosine similarity.</p>
+</div>
 </div>
 <div class="example-box">
 <p><strong>Worked example — D1 vs D2:</strong></p>
@@ -1724,6 +1748,29 @@
 <p><strong>Solution 1 — Attribute weighting (axis stretching).</strong> Multiply each dimension by a weight \(z_j\) before computing distance:</p>
 <p>\[ d(i, j) = \sqrt{\sum_{k=1}^{d} z_k \cdot (x_{ik} - x_{jk})^2} \]</p>
 <p>Stretch relevant axes (large \(z_k\)), shrink irrelevant axes (small \(z_k\)). The weights can be learned by cross-validation: try different weight vectors, pick the one that minimizes classification error on held-out data. This is equivalent to <em>metric learning</em> — learning a Mahalanobis-like distance tailored to your task.</p>
+
+<div class="key-concept">
+<p><strong>Formal Definition — Mahalanobis Distance.</strong> Axis stretching by hand ignores that features can also be <em>correlated</em>. The Mahalanobis distance replaces the identity matrix of Euclidean distance with the inverse covariance matrix \(\Sigma^{-1}\):</p>
+<p>\[ d_M(x, y) = \sqrt{(x - y)^{\mathsf{T}} \, \Sigma^{-1} \, (x - y)} \]</p>
+<p><strong>Matrix dimension check.</strong> With \(n\) features, \(\delta = (x-y)\) is an \(n \times 1\) column, \(\Sigma^{-1}\) is \(n \times n\), and \(\delta^{\mathsf{T}}\) is \(1 \times n\): \[ (1 \times n)(n \times n)(n \times 1) = 1 \times 1 \] — a scalar. Writing the quadratic form in row order, \(\delta \, \Sigma^{-1} \, \delta^{\mathsf{T}}\), is the same scalar; some texts omit the outer square root and report \(d_M^2\) instead. When features are uncorrelated and equally scaled, \(\Sigma = I\) and Mahalanobis collapses to ordinary Euclidean distance.</p>
+<table>
+<thead><tr>
+<th>Metric</th>
+<th>Accounts for scale?</th>
+<th>Accounts for correlation?</th>
+<th>Effective unit ball</th>
+</tr></thead>
+<tbody>
+<tr><td>Euclidean (\(L_2\))</td><td>No</td><td>No</td><td>Circle / hypersphere</td></tr>
+<tr><td>Standardized Euclidean</td><td>Yes (divide by \(\sigma_k\))</td><td>No</td><td>Axis-aligned ellipse</td></tr>
+<tr><td>Mahalanobis</td><td>Yes (via \(\Sigma^{-1}\))</td><td>Yes (decorrelates)</td><td>Rotated ellipse along data axes</td></tr>
+</tbody>
+</table>
+<p><strong>Worked trace — same Euclidean distance, different Mahalanobis distance.</strong> Let two features be positively correlated with unit variances: \(\Sigma = \begin{bmatrix} 1 & 0.6 \\ 0.6 & 1 \end{bmatrix}\), \(\det\Sigma = 1 - 0.36 = 0.64\), so \(\Sigma^{-1} = \frac{1}{0.64}\begin{bmatrix} 1 & -0.6 \\ -0.6 & 1 \end{bmatrix} = \begin{bmatrix} 1.5625 & -0.9375 \\ -0.9375 & 1.5625 \end{bmatrix}\). Compare \(p=(3,3)\) and \(q=(3,-3)\), both at Euclidean distance \(\sqrt{3^2 + 3^2} \approx 4.243\) from the origin.</p>
+<p>\[ \delta_p = (3,3): \quad \Sigma^{-1}\delta_p = (1.875,\, 1.875), \quad d_M^2 = 3(1.875) + 3(1.875) = 11.25, \quad d_M \approx \mathbf{3.354} \]</p>
+<p>\[ \delta_q = (3,-3): \quad \Sigma^{-1}\delta_q = (7.5,\, -7.5), \quad d_M^2 = 3(7.5) + (-3)(-7.5) = 45, \quad d_M \approx \mathbf{6.708} \]</p>
+<p>Interpretation: \(p\) lies along the high-variance correlation axis, so Mahalanobis treats it as <em>closer</em> than Euclidean does; \(q\) runs against the correlation, so it is penalized to twice the distance despite identical Euclidean separation. This is why Mahalanobis can rescue KNN when features are correlated — at the cost of estimating \(\Sigma^{-1}\), which is expensive and unstable when the number of features approaches the number of samples.</p>
+</div>
 <p><strong>Solution 2 — Feature selection.</strong> Eliminate irrelevant attributes entirely (\(z_k = 0\)). Methods include filter methods (correlation with target), wrapper methods (cross-validate feature subsets), and embedded methods (LASSO regularization). Moore and Lee (1994) developed efficient leave-one-out cross-validation for feature selection in KNN.</p>
 <p><strong>Solution 3 — Dimensionality reduction.</strong> Project data onto a lower-dimensional subspace using PCA, t-SNE, or autoencoders — keeping the dimensions that capture the most variance or structure. Then run KNN in the reduced space.</p>
 <p><strong>Solution 4. Use Manhattan distance.</strong> The \(L_1\) norm is less affected by the curse of dimensionality than the \(L_2\) norm. In high dimensions, Manhattan distances retain more contrast between near and far points. This is why Manhattan is preferred for high-dimensional data (Section 10.7.3).</p>

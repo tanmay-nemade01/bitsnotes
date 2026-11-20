@@ -384,6 +384,17 @@
 <li>Imbalanced classes with few samples: prior estimates become unreliable.</li>
 </ul>
 </div>
+
+<div class="example-box">
+<p>**Worked Failure Mode — When Correlated Attributes Flip the Prediction:** Section 13.1.7 notes that correlated features make Naive Bayes "double-count" evidence. Here is the textbook trace that proves the consequence, using binary attributes \(A, B\) and a binary class \(Y\) with equal priors \(P(Y=0) = P(Y=1) = 0.5\) (Tan, Steinbach & Kumar, Ch. 5).</p>
+<p>Assume the true class-conditionals are \(P(A=0 \mid Y=0) = 0.4\), \(P(A=1 \mid Y=0) = 0.6\), \(P(A=0 \mid Y=1) = 0.6\), \(P(A=1 \mid Y=1) = 0.4\), and that \(B\) has the same conditionals as \(A\). Suppose \(A\) and \(B\) are **perfectly correlated when \(Y=0\)** (so \(B\) never adds information there) but independent when \(Y=1\). Test record: \(A=0, B=0\).</p>
+<p>**Naive Bayes computation (independence assumed for both classes):**</p>
+<p>\[ \begin{aligned} P(A=0 \mid Y=0)\,P(B=0 \mid Y=0) &= 0.4 \times 0.4 = 0.16 \\ P(A=0 \mid Y=1)\,P(B=0 \mid Y=1) &= 0.6 \times 0.6 = 0.36 \end{aligned} \]</p>
+<p>Multiplying by the equal priors, \(0.16 \times 0.5 = 0.08\) versus \(0.36 \times 0.5 = 0.18\), so Naive Bayes predicts \(Y=1\).</p>
+<p>**The true joint probability:** Because \(A\) and \(B\) are perfectly correlated under \(Y=0\), \(P(A=0, B=0 \mid Y=0) = P(A=0 \mid Y=0) = 0.4\), not \(0.16\). Hence:</p>
+<p>\[ P(Y=0 \mid A=0, B=0) \propto 0.4 \times 0.5 = 0.20 \;>\; 0.18 \propto 0.36 \times 0.5 \]</p>
+<p>**Result:** The correct class is \(Y=0\), but Naive Bayes chose \(Y=1\). The duplicated evidence from \(B\) inflated the \(Y=1\) score by rewriting \(0.6\) as \(0.6 \times 0.6 = 0.36\). This is the "double-counting" failure from 13.1.7 made exact: the independence assumption distorts the posterior products, and with a close decision the argmax flips. Domingos & Pazzani (1997) show this is not inevitable — the classifier can remain optimal under zero-one loss even when dependence is large, because classification needs only the correct *ranking*, not calibrated probabilities. That is why correlated features usually damage *confidence estimates* more often than the predicted label.</p>
+</div>
 <h3 class="subsection-title">13.1.8 Visual Intuition</h3>
 <div class="diagram-container my-6 text-center">
   <svg viewBox="0 0 620 470" class="diagram-svg" role="img" aria-label="Scatter plot of two classes over features X1 and X2 running from 0 to 1, with the per-class one-dimensional distributions drawn along each axis and the resulting factorized decision boundary.">
@@ -1191,6 +1202,17 @@ flowchart LR
 <div class="warning-box">
 <p>**Key requirement for diversity to help:** Individual model errors must be at least partially *uncorrelated*. If all models make identical errors, the ensemble is useless regardless of how many learners you have.</p>
 <p>**Mathematical justification (from bias-variance):** For regression with \(L\) models having equal variance \(\sigma^2\) and pairwise error correlation \(\rho\): \[ \text{Var}(\text{ensemble}) = \rho\sigma^2 + \frac{1-\rho}{L}\sigma^2 \] When \(\rho = 1\) (perfectly correlated errors): variance = \(\sigma^2\) (no benefit). When \(\rho = 0\) (uncorrelated errors): variance = \(\sigma^2/L\) (linear reduction with \(L\)).</p>
+</div>
+
+<div class="key-concept">
+<p>**Deriving the Variance–Correlation Decomposition:** The formula quoted above is the general result; here is the algebra that produces it (Bishop, *Pattern Recognition and Machine Learning*, Ch. 14, eqs. 14.7–14.14). Write the \(m\)-th model's error as \(\epsilon_m(x) = y_m(x) - h(x)\), where \(h\) is the true regression function, and assume zero mean \(\mathbb{E}[\epsilon_m] = 0\), identical variance \(\operatorname{Var}(\epsilon_m) = \sigma^2\), and pairwise covariance \(\operatorname{Cov}(\epsilon_m, \epsilon_l) = \rho\sigma^2\) for \(m \neq l\).</p>
+<p>The ensemble (average) prediction is \(\bar{y}(x) = \frac{1}{L}\sum_{m=1}^{L} y_m(x)\), so its error is the average of the individual errors:</p>
+<p>\[ \bar{\epsilon}(x) = \frac{1}{L}\sum_{m=1}^{L} \epsilon_m(x) \]</p>
+<p>Expanding the variance of a sum into its \(L\) diagonal terms and \(L(L-1)\) off-diagonal cross terms:</p>
+<p>\[ \operatorname{Var}(\bar{\epsilon}) = \frac{1}{L^2}\left[\sum_{m=1}^{L}\operatorname{Var}(\epsilon_m) + \sum_{m \neq l}\operatorname{Cov}(\epsilon_m,\epsilon_l)\right] = \frac{1}{L^2}\left[L\sigma^2 + L(L-1)\rho\sigma^2\right] \]</p>
+<p>Dividing through by \(L^2\) and regrouping the \(\rho\) terms gives the stated decomposition:</p>
+<p>\[ \operatorname{Var}(\bar{\epsilon}) = \frac{\sigma^2}{L} + \frac{L-1}{L}\rho\sigma^2 = \rho\sigma^2 + \frac{1-\rho}{L}\sigma^2 \]</p>
+<p>**Consistency with the textbook:** At \(\rho = 0\) this collapses to \(\sigma^2/L\), i.e. Bishop's \(E_{COM} = \frac{1}{M}E_{AV}\) — averaging \(L\) independent models divides the error by \(L\). At \(\rho = 1\) it reduces to \(\sigma^2\), exactly the cost of one model — averaging identical errors buys nothing. Bishop's caveat is the practical point: "in practice, the errors are typically highly correlated, and the reduction in overall error is generally small," which is why diversity (Section 13.8.2), not merely the number of learners \(L\), controls the benefit. Note also that \(\frac{1-\rho}{L}\sigma^2 \to 0\) as \(L \to \infty\): no matter how large the ensemble, the best attainable variance is the irreducible floor \(\rho\sigma^2\).</p>
 </div>
 <h3 class="subsection-title">13.8.5 Pitfalls</h3>
 <div class="warning-box">

@@ -513,6 +513,26 @@ WITH NO DATA;</code></pre>
   <p>Think of the first as photocopying pages plus words, and the second as photocopying blank lined paper with the same margins. Column names and types carry across in both cases. Like <code>SELECT INTO</code>, this form copies names, types, and values, but not constraints, keys, indexes, or defaults.</p>
 </div>
 <p>How do the two copy forms compare? <code>SELECT INTO new_table FROM ...</code> and <code>CREATE TABLE new_table AS SELECT ...</code> do nearly the same job in PostgreSQL. <code>CREATE TABLE AS</code> is the more standard spelling across systems, and it alone offers extras such as <code>WITH NO DATA</code> and <code>IF NOT EXISTS</code>. For an empty framed copy on systems without <code>WITH NO DATA</code>, the portable trick from the SQL Cookbook is a condition that is never true: <code>CREATE TABLE jobs3 AS SELECT * FROM jobs WHERE 1 = 0;</code>. On SQL Server the matching empty-copy trick is <code>SELECT * INTO jobs3 FROM jobs WHERE 1 = 0;</code>. IBM Db2 offers a dedicated <code>CREATE TABLE ... LIKE</code> form for copying structure. And MySQL, which lacks <code>SELECT INTO</code> for tables, uses <code>CREATE TABLE ... AS SELECT ...</code> or <code>CREATE TABLE ... LIKE ...</code> for both jobs. Snowflake and Databricks use CTAS widely, with options such as <code>CREATE TABLE ... CLONE</code> (Snowflake zero-copy clone) going even further.</p>
+
+<div class="important-note">
+  <p><strong>PostgreSQL mechanism — structural clone with constraints:</strong> Both CTAS forms above deliberately drop keys, indexes, defaults, and identity settings. When the clone must keep them, PostgreSQL offers a third form that copies the <em>definition</em> rather than the rows: <code>CREATE TABLE new_table (LIKE source_table INCLUDING ALL);</code>. The new table starts empty and is fully decoupled from the source, so later source changes never propagate, but its column names, types, and not-null rules are reproduced along with every property named by the LIKE options.</p>
+  <pre><code>CREATE TABLE jobs3 (LIKE jobs INCLUDING ALL);</code></pre>
+  <p>Each <code>INCLUDING</code> choice opts into one property that CTAS leaves behind; without it, the matching <code>EXCLUDING</code> behavior is the default.</p>
+  <table>
+    <thead>
+      <tr><th>LIKE option</th><th>What is reproduced on the clone</th></tr>
+    </thead>
+    <tbody>
+      <tr><td><code>INCLUDING CONSTRAINTS</code></td><td>CHECK constraints; NOT NULL is copied regardless.</td></tr>
+      <tr><td><code>INCLUDING DEFAULTS</code></td><td>Default expressions on the copied columns.</td></tr>
+      <tr><td><code>INCLUDING INDEXES</code></td><td>Indexes, PRIMARY KEY, UNIQUE, and EXCLUDE constraints.</td></tr>
+      <tr><td><code>INCLUDING IDENTITY</code></td><td>Identity specifications, with a fresh sequence separate from the source.</td></tr>
+      <tr><td><code>INCLUDING GENERATED</code></td><td>Generation expressions and their chosen storage mode.</td></tr>
+      <tr><td><code>INCLUDING ALL</code></td><td>Abbreviation selecting every available option; individual <code>EXCLUDING</code> clauses may follow it.</td></tr>
+    </tbody>
+  </table>
+  <p><strong>Contrast:</strong> <code>CREATE TABLE AS SELECT</code> copies names, types, and rows but no constraints; <code>CREATE TABLE (LIKE ... INCLUDING ALL)</code> copies the full definition but no rows. For a sandbox that behaves like the original, create with LIKE, then load it with <code>INSERT INTO ... SELECT ...</code>.</p>
+</div>
 <div class="warning-box">
   <p><strong>Scope:</strong> <code>WITH NO DATA</code> copies the shape but runs the query without moving rows, so it is cheap even on huge tables. <strong>Assumption:</strong> the target name is free, and constraints must be re-added by hand afterward if the copy needs them.</p>
 </div>
@@ -618,6 +638,36 @@ CSV HEADER;</code></pre>
   <p class="text-xs text-slate-500 mt-2"><strong>Figure:</strong> Funnel from the raw CSV file through the five named columns and the DELIMITER ',' and CSV HEADER flags into 249 typed rows in countries_iso_code.</p>
 </div>
 <p>This two-stage create-then-copy flow is the normal way teams seed reference tables such as country codes. A data team downloads the vendor file, fits a lookup table to it once, and reloads the file on each vendor update.</p>
+
+<div class="example-box">
+  <p><strong>Advanced import patterns:</strong> The same create-then-load flow also supports filtering, staging, and error reading. Only the surrounding clauses change; the file, delimiter, and header flags stay as before.</p>
+  <p><strong>1. Filter rows while loading (PostgreSQL 12 and later).</strong> A <code>WHERE</code> clause on <code>COPY FROM</code> rejects file rows that fail the condition before they are inserted, so no staging table is needed:</p>
+  <pre><code>COPY supervisor_salaries (town, supervisor, salary)
+FROM 'supervisor_salaries.csv'
+WITH (FORMAT CSV, HEADER)
+WHERE town = 'New Brillig';</code></pre>
+  <p>Only the matching row lands, and the command reports <code>COPY 1</code> rather than the full file count. The condition reads the incoming row values but cannot use subqueries, system columns, or generated columns.</p>
+  <p><strong>2. Stage and enrich in a temporary table.</strong> When the file is missing a column, load it into a session-scoped clone, then insert with a literal filling the gap:</p>
+  <pre><code>CREATE TEMPORARY TABLE supervisor_stage
+  (LIKE supervisor_salaries INCLUDING ALL);
+COPY supervisor_stage (town, supervisor, salary)
+  FROM 'supervisor_salaries.csv' WITH (FORMAT CSV, HEADER);
+INSERT INTO supervisor_salaries (town, county, supervisor, salary)
+  SELECT town, 'Mills', supervisor, salary FROM supervisor_stage;
+DROP TABLE supervisor_stage;</code></pre>
+  <p>The literal <code>'Mills'</code> is a value, not a column name, so the missing <code>county</code> field is supplied on the way in. A temporary table disappears at session end; <code>DROP TABLE</code> clears it sooner when another file follows.</p>
+  <p><strong>3. Read load failures as alignment errors.</strong> Two messages from a real load show exactly which part of the contract broke:</p>
+  <table>
+    <thead>
+      <tr><th>Error</th><th>Meaning</th><th>Fix</th></tr>
+    </thead>
+    <tbody>
+      <tr><td><code>extra data after last expected column</code></td><td>A row holds more fields than the target column list</td><td>Check the delimiter and column count</td></tr>
+      <tr><td><code>invalid input syntax for type integer: "Anytown"</code></td><td>File columns are shifted against the table order</td><td>Name the columns explicitly in the COPY call</td></tr>
+    </tbody>
+  </table>
+  <p><strong>Sense-check:</strong> the filtered load reports fewer rows than the file holds, the staged load fills the missing column on every inserted row, and both error signatures point to column alignment rather than to the data itself.</p>
+</div>
 <h3 id="46.4.3-student-questions-and-answers">46.4.3 Student Questions and Answers</h3>
 <div class="important-note">
   <p><strong>Q:</strong> How does the loader know the first line is a header?</p>

@@ -301,6 +301,35 @@ spark = SparkSession.builder \
 </div>
 <h3 id="11.2.1-micro-batches-and-how-the-counts-roll-in">11.2.1 Micro-Batches and How the Counts Roll In</h3>
 <p>A <strong>micro-batch</strong> is the small chunk of stream data that Spark processes at each trigger. The stream is not one giant computation — it is a sequence of tiny computations, one per micro-batch. In the demo, one typed line equals one micro-batch.</p>
+<div class="important-note">
+  <p><strong>System detail — the two kinds of work inside a micro-batch.</strong> The demo treats one typed line as one micro-batch, but the engine runs every micro-batch as a small batch job containing two different kinds of computation. This is the deeper mechanism behind the rolling counts in this section.</p>
+  <table>
+    <thead>
+      <tr>
+        <th>Kind</th>
+        <th>Depends on prior state?</th>
+        <th>Example in the word count</th>
+        <th>Failure concern</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>Batch-local computation</td>
+        <td>No — computed purely within the batch</td>
+        <td>Splitting the line into tokens, repartitioning by word, counting occurrences inside this batch</td>
+        <td>None; rerunning the batch reproduces the same partial result</td>
+      </tr>
+      <tr>
+        <td>Stateful computation</td>
+        <td>Yes — updates state shared across all batches</td>
+        <td>Adding this batch's counts into the running per-word totals (the counts that climb from 1 to 2)</td>
+        <td>A retry must not add twice, so the state update must be idempotent — for example by recording the batch ID with the state</td>
+      </tr>
+    </tbody>
+  </table>
+  <p><strong>Replay is the enabling assumption.</strong> For an idempotent state update to recover from a failure, the engine must be able to reproduce the <em>same</em> batch — micro-batch processing relies on a stream source that can replay a batch exactly as it was first played. Kafka exposes the offsets read from each partition for each batch, so a failed batch can be re-emitted identically; such sources are called <em>transactional spouts</em>. The socket source in this demo offers no such replay, which is the deeper reason it is scaffolding for testing rather than a production input.</p>
+  <p><strong>The trade-off.</strong> Per-event latency is higher than in one-at-a-time processing because the engine pays a coordination overhead per batch and processes many tuples together — typically on the order of hundreds of milliseconds to seconds. Throughput is higher, because bookkeeping happens once per batch instead of once per tuple, so fewer resources are spent per event.</p>
+</div>
 <p>Here is the first micro-batch. In the netcat window you type:</p>
 <pre><code>Spark is good programming language</code></pre>
 <p>Press Enter. The application counts the words in this micro-batch: <em>Spark</em>, <em>is</em>, <em>good</em>, <em>programming</em>, <em>language</em> — five words, and each appears once, so each gets a count of 1.</p>
@@ -720,6 +749,16 @@ spark = SparkSession.builder \
   </ul>
 </div>
 <p>Why this matters for windows: when you group events into time windows, you must decide which timestamp the window reads. The events carry their own timestamps, so a window can be keyed to event time even when the records arrive late — and handling that late-ness is the job of the watermark.</p>
+<div class="key-concept">
+  <p><strong>Formal definition — the watermark as a window-finalization boundary.</strong> An event-time window can never know that it has seen every event belonging to it: a straggler buffered elsewhere may arrive after the window has been declared complete. Broadly there are two responses — ignore stragglers (and track how many are dropped), or recompute the window and publish a corrected value. A <em>low watermark</em> is the common compromise: a statement that no further messages with timestamp earlier than \(t\) are expected, which lets the engine treat a window as ready. With client-generated timestamps this remains a promise rather than a certainty, because buffered events older than the watermark can still appear later.</p>
+  <p><strong>The rule.</strong> With a late threshold \(\Delta\) and the maximum event time observed so far \(t_{\max}\), the watermark \(w\) is:</p>
+  \[
+  w = t_{\max} - \Delta
+  \]
+  <p>For a window ending at \(T\), the engine keeps its partial aggregate and accepts late events while \(w \leq T\); once \(w > T\), that window's state is evicted and later arrivals for it are dropped. A delay smaller than \(\Delta\) is <em>guaranteed</em> to be aggregated, while a delay larger than \(\Delta\) may or may not be — the guarantee is deliberately one-directional.</p>
+  <p><strong>Worked trace.</strong> Take 10-minute windows with a 5-minute slide and \(\Delta = 10\) minutes. When the engine observes an event at 12:14, \(w = 12{:}14 - 10 = 12{:}04\); the 12:00–12:10 window (\(T = 12{:}10\)) is still open because \(12{:}04 \leq 12{:}10\), so a late event timestamped 12:09 still updates it. After \(t_{\max}\) advances to 12:21, \(w = 12{:}11 > 12{:}10\), the state for 12:00–12:10 is cleared, and a 12:04 arrival is now too late and ignored.</p>
+  <p><strong>Link back to output modes.</strong> This is exactly what append mode needs: once a watermark tells the engine a row is final, it can append that row once and never revise it. Watermarking can evict state only in Append or Update mode — Complete mode must retain every aggregate to rewrite the full result each batch, so a watermark cannot shrink its state.</p>
+</div>
 <div class="key-takeaway">
   <p><strong>Recap + bridge.</strong> Event time is when the event happened; stream time is when its message reached the platform; the skew \(t_{\text{skew}} = t_{\text{stream}} - t_{\text{event}}\) is always positive, varies per event, and is why arrival order is not event order. Handoff: section 11.5 uses these two timelines to motivate windows — the finite slices that make an infinite stream computable — and the watermark that governs late events.</p>
 </div>

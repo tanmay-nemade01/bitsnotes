@@ -429,6 +429,9 @@
     <li><strong>Recovering from permanent failures</strong> → first detect whether there is a permanent failure, then use <strong>Merkle trees</strong> — hash trees that help detect failure and synchronize divergent replicas in the background. The idea: whatever data is on the node, we make hash functions out of the data and keep those hash values. If the replicas are not in sync, the hash values will change; if they differ for a longer period of time, we conclude there is a permanent failure.</li>
     <li><strong>Membership and failure detection</strong> → <strong>gossip-based membership protocols</strong>. In a large distributed system we need to track who the members are, and track failures; gossip-based protocols do that.</li>
   </ul>
+  <div class="important-note">
+    <p><strong>Mechanism — how gossip spreads cluster state:</strong> gossip is a peer-to-peer, decentralized protocol with no central registry, which preserves the symmetry the paper wanted. Each node runs the gossip task periodically (in Cassandra, roughly once per second): it updates its own heartbeat state, then exchanges state with a random peer, and the state it sends includes what it knows about <em>other</em> nodes too — not just itself. The information therefore diffuses through the cluster over successive exchanges, so each node eventually learns the membership and liveness picture. Entries carry version counters (a generation timestamp plus a logical clock), which let a node discard stale gossip without trusting wall-clock time — the same causal-order idea behind vector clocks.</p>
+  </div>
   <table>
     <thead>
       <tr>
@@ -500,6 +503,9 @@
   <div class="important-note">
     <p><strong>Q:</strong> How do we decide, by which factor, which node is the next suitable healthy node? <strong>A:</strong> That is a different problem — detecting whether a node has failed. The design has separate algorithms and protocols for failure handling: temporary failures and permanent failures are handled differently, and we will discuss those. For now, all the nodes in the circle are assumed healthy.</p>
   </div>
+  <div class="important-note">
+    <p><strong>How "healthy" is actually decided:</strong> the placement rule assumes a healthy node, but a real cluster decides liveness separately. Nodes exchange heartbeat state through gossip, and each node runs its own failure detector — Cassandra, for example, uses a variant of the <em>Phi Accrual</em> detector, which decides whether a peer is up or down from the heartbeats it has received rather than a single fixed timeout. When a node stops seeing an increasing heartbeat from a peer, it marks that peer down and stops routing reads to it (writes are redirected as hints); when heartbeats resume and a connection can be opened, the peer is marked available again. Gossip and the detector are complementary: gossip carries the state, the detector makes the up/down decision.</p>
+  </div>
   <p>The next question checks that the same mental model covers the copies as well as the original.</p>
   <div class="important-note">
     <p><strong>Q:</strong> Will replication work in the same fashion? <strong>A:</strong> Yes. The application stores a data item: apply the hash function, get a number, which tells you on which node the data must be stored. The replicas then go to the next two nodes in the clockwise direction.</p>
@@ -515,6 +521,9 @@
   </div>
   <div class="key-concept">
     <p><strong>Why this is "incremental" scalability:</strong> we need to detect load, introduce a new node, and the introduction of the new node results in the reorganization of the data. The reorganization is local — only the range owned by the new node and its neighbors changes — which is exactly why consistent hashing gives incremental scalability. With naive partitioning, adding the \(n+1\)-th node would mean rehashing and moving data across every partition; with a ring, a node addition touches only one range. (The session notes that real systems probably do not expose much about exactly how the thing works; this is one way to partition.)</p>
+  </div>
+  <div class="important-note">
+    <p><strong>Real-system detail — virtual nodes (vnodes):</strong> the single-token ring above is a teaching model; production Dynamo-style systems refine it. A physical node is assigned <em>multiple</em> tokens (virtual nodes) on the ring instead of one. Spreading a node across many small ranges keeps the ring balanced: a newly added node takes roughly equal slices of data from many neighbors, a decommissioned node gives its data back evenly, and if a node is unavailable its query load is spread across many other nodes rather than piling onto a single successor. Uneven token ranges otherwise mean uneven request load — the extreme case is a <em>hot spot</em>, where one partition carries disproportionate traffic while the rest idle. The trade is that more tokens per node create more ring neighbors, so more combinations of failures can affect a slice of the ring, and maintenance such as repair takes longer.</p>
   </div>
   <h3 id="6.6.4-lookup-linear-search">6.6.4 Lookup: Linear Search</h3>
   <p>After the data is organized, we must search it. The naive approach, which the paper considered too costly: <strong>linear search through successor links</strong>. Given a key, apply the hash function; it says "go to this node." If that node does not have the data, we keep following the <em>successor</em> link of the nodes — each node knows its next neighbor clockwise — and check each one until the object is found.</p>
@@ -559,12 +568,59 @@
   <div class="key-concept">
     <p><strong>The two names for this mechanism:</strong> this is the <strong>hinted handoff</strong> strategy — the copy is <em>handed off</em> to a stand-in node that holds it until the true owner returns, guided by a stored <em>hint</em> of who really owns it. The <em>sloppy quorum</em> terminology goes with it: the "quorum" of nodes that acknowledged the write was not the exact planned set (A, B, C) but a sloppy stand-in set (B, C, D) — the write still got its required number of confirmations, just from nodes that were willing. The advantage is exactly the one listed in the paper: <strong>high availability and durability guarantees</strong> even when some of the replicas are unavailable — the system never blocks a write because one copy holder is down.</p>
   </div>
+
+  <div class="important-note">
+    <p><strong>System detail — the coordinator and the anatomy of a stored hint:</strong> in a Dynamo-style ring the node that receives a client request is the <em>coordinator</em> — a temporary proxy, not a master. Any node can play the role, which is exactly why the ring is symmetric.</p>
+    <p>It writes its own local replica, fans the mutation out to the other replica holders, and counts acknowledgements. With \(N = 3\) and a write quorum of two, the coordinator answers as soon as any two replicas acknowledge — the client never learns which two, nor which one was missing.</p>
+    <p>When a target replica is down, the coordinator parks a <em>hint</em> on its own local disk instead of blocking the write. A hint is more than "the data":</p>
+    <table>
+      <thead>
+        <tr>
+          <th>Hint field</th>
+          <th>Purpose</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>Intended target replica</td>
+          <td>which node the deferred mutation ultimately belongs to</td>
+        </tr>
+        <tr>
+          <td>Original mutation timestamp</td>
+          <td>version metadata used to order this write against later ones</td>
+        </tr>
+        <tr>
+          <td>Serialized mutation (blob)</td>
+          <td>the actual write to replay when the owner returns</td>
+        </tr>
+      </tbody>
+    </table>
+    <p>Two consequences matter. Preserving the original timestamp makes replay <strong>idempotent</strong>: applying the hint twice, or after a newer write has landed, cannot overwrite a more recent value. And hints are kept only for a bounded window — three hours by default — so an owner that stays down longer loses its hints and must be repaired later by an anti-entropy sweep.</p>
+    <p><strong>Takeaway:</strong> the coordinator makes the ring symmetric (any node can serve any request), and the hint's timestamp makes deferred delivery safe. This is the concrete machinery behind sloppy quorum: availability now, reconciliation deferred, correctness preserved by version metadata rather than by blocking.</p>
+  </div>
+
   <h3 id="6.7.3-permanent-failures-merkle-trees">6.7.3 Permanent Failures: Merkle Trees</h3>
   <p>For permanent failures the first step is <strong>detection</strong>: we have to detect the permanent failure. The tool is <strong>Merkle trees</strong> — hash trees — used to tag down the subtrees where the replicas have gone out of sync. Instead of comparing data item by data item (which takes much longer), each replica holds a hash value of its data.</p>
   <div class="example-box">
     <p><strong>Worked example — finding the dead node without scanning everything.</strong> Say the data is replicated on A, B, and C. Each node hashes its local copy of every item, then builds a tree: leaves are item hashes, and each internal node is the hash of its children's hashes. If the hash value at C differs from the hash values at A and B, and it stays different for a longer period of time, we conclude C has permanently died. Then an action plan is needed: choose another node to hold the replica that was on C, so the replication factor stays intact — the garbled source phrase "application factor will melting" resolves to this: the <em>replication factor</em> is restored on the affected neighbors. <strong>Final answer:</strong> the top-level hash comparison says "someone is wrong," and the tree structure says exactly which subtree — without scanning all the data item by item.</p>
   </div>
   <p>The Merkle tree structure is what makes this efficient: the tree pins down <em>which subtree</em> is out of sync, so we do not scan all the data. Compare a Merkle-tree check with the brute-force alternative: checking whether two replicas agree by reading every item costs time proportional to the whole dataset; checking the tree's root hash answers "do they differ at all?" in one comparison, and descending the tree locates the divergent range in steps proportional to the depth of the tree.</p>
+
+  <div class="important-note">
+    <p><strong>Mechanism — replica divergence is repaired on three different paths:</strong> the Merkle-tree sweep described above is only one of them. A Dynamo-style store uses three complementary mechanisms, and conflating them is a common design error.</p>
+    <ul>
+      <li><strong>Read repair — foreground, opportunistic.</strong> When a read contacts several replicas, the coordinator takes one full read plus cheap <em>digest</em> (hash-only) reads from the others.
+        If the hashes disagree, the newest value — chosen by timestamp — is reconstructed and written back to the stale replicas before the answer returns.</li>
+      <li><strong>Why read repair is blocking.</strong> Rebuilding the up-to-date value happens before the response returns, which gives <em>monotonic quorum reads</em>: two successive quorum reads can never move backwards in time.
+        At read level ONE no digest reads are issued, so no mismatch can be detected — exactly why a ONE read may return stale data.</li>
+      <li><strong>Hinted handoff — write-time, best effort.</strong> This covers a briefly unavailable replica (&sect;6.7.2); the stand-in holds a hint and replays it when the owner returns.
+        It shortens the inconsistency window but is explicitly not a guarantee.</li>
+      <li><strong>Anti-entropy repair — background, authoritative.</strong> The operator-triggered Merkle-tree comparison above compares nodes over their common token ranges and streams the differences, catching divergence no read ever noticed —
+        missed writes, expired hints, disk corruption, expired tombstones. Because it scans whole ranges it is expensive and scheduled periodically (incremental every few days, full repair occasionally), never per request.</li>
+    </ul>
+    <p><strong>Takeaway:</strong> read repair fixes what a read happens to notice, hints cover short outages, and anti-entropy repair is the periodic sweep that guarantees convergence for cold data too.
+      Read repair is blocking, so it adds latency to exactly the tail &sect;6.7.5 warns about — one more reason the 99.9th-percentile target is hard.</p>
+  </div>
   <div class="warning-box">
     <p><strong>Pitfalls:</strong></p>
     <ul>

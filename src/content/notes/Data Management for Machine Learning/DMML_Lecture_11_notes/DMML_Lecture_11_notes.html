@@ -584,6 +584,55 @@
 </table>
 <h3 id="11.4.6-model-analysis-and-validation">11.4.6 Model Analysis and Validation</h3>
 <p>After the experiments you analyze and validate the model: in terms of accuracy, in terms of how strong and reliable it is, and how well it generalizes. We use statistical measures — check the metrics like accuracy, precision, use a confusion matrix, and find the F1 score. A confusion matrix is a table that compares predicted labels against true labels: true positives, true negatives, false positives, and false negatives. <em>Precision</em> asks "when the model said positive, was it right?"; <em>recall</em> asks "of all the real positives, how many did the model find?"; the F1 score is their combined single number. This model validation applies to different industries — for example, credit risk for a customer.</p>
+<div class="key-concept">
+  <p><strong>Formal Definition — an evaluation is a metric plus a distribution:</strong> An evaluation has two components that must be considered together — a <em>performance metric</em> (accuracy, precision, recall, area under the ROC curve) and a <em>data distribution</em> (the set of examples over which that metric is computed). Saying "this model has better accuracy" is incomplete without asking <em>on what distribution?</em> — the same metric measured on a different distribution answers a different question.</p>
+  <p><strong>Four common evaluation distributions:</strong> (1) <em>Held-out IID test data</em> — examples held out independently and identically distributed; the default because it matches the assumptions behind most supervised-learning guarantees, but it can be unrealistically optimistic. (2) <em>Progressive validation (backtesting)</em> — for time-ordered data, feed the examples to the model in their original order, score each one before training on it, so evaluation mimics deployment. (3) <em>Golden set</em> — a frozen point-in-time slice the model is never allowed to train on, kept to reveal changes or bugs over time. (4) <em>Stress-test distributions</em> — deliberately different from the training data (new regions, new conditions), exposing failures an IID split would hide.</p>
+  <p>Every metric in the validation checklist above therefore needs its distribution named — the metric alone is only half an evaluation.</p>
+</div>
+<div class="example-box">
+  <p><strong>Worked technique — sliced analysis (turning an IID test set into stress tests):</strong> Slicing means filtering the evaluation data by the value of one feature. Because any test set — even an independently and identically distributed one — can be sliced, the four evaluation distributions above need not be collected from scratch: you can carve targeted stress-test distributions out of the data you already hold. A credit-risk model that looks excellent on an aggregate can fail badly on one segment, and slicing is how you find that segment before deployment.</p>
+  <p><strong>Procedure:</strong> (1) pick a feature the business cares about (age band, region, product type); (2) partition the held-out test set into slices by that feature; (3) recompute <em>every</em> metric separately per slice, not just accuracy; (4) compare each slice's metric to the aggregate and investigate any large gap; (5) stop before slices become so small that the estimate is statistically meaningless. Production evaluation frameworks automate this by declaring slice specifications over chosen feature keys and reporting the metrics side by side.</p>
+  <table>
+    <thead>
+      <tr>
+        <th>Age slice</th>
+        <th>Records \(n_s\)</th>
+        <th>Accuracy \(a_s\)</th>
+        <th>Correct</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr><td>25–40</td><td>600</td><td>0.95</td><td>570</td></tr>
+      <tr><td>41–60</td><td>300</td><td>0.90</td><td>270</td></tr>
+      <tr><td>61+</td><td>100</td><td>0.60</td><td>60</td></tr>
+    </tbody>
+  </table>
+  <p><strong>Worked calculation:</strong> the aggregate is the record-weighted mean of the slice accuracies:</p>
+  <p>\[ \text{accuracy}_{\text{overall}} = \frac{\sum_s n_s a_s}{\sum_s n_s} = \frac{600(0.95) + 300(0.90) + 100(0.60)}{1000} = \frac{900}{1000} = 0.90 \]</p>
+  <p><strong>Final result and pitfall:</strong> the headline 0.90 accuracy is mathematically correct yet hides a 0.60 accuracy on the 61+ slice — a 30-point gap an aggregate score cannot reveal. Slicing exposes it. But do not slice so finely that a bucket holds only a handful of records: with \(n = 100\), a single record moves accuracy by 0.01, so the 0.60 estimate carries real uncertainty and should be confirmed with more data before it drives a decision.</p>
+</div>
+<div class="key-concept">
+  <p><strong>Formal Definition — probability calibration:</strong> A classifier is <em>calibrated</em> when its predicted probability can be read directly as a confidence level: among cases assigned probability \(p\), about a fraction \(p\) should truly be positive. A calibration curve (reliability diagram) makes this checkable — bucket cases by predicted score, compute the observed positive rate in each bucket, and plot observed rate against mean predicted probability. A perfectly calibrated model lies on the diagonal; a curve bowed below it over-predicts, one above it under-predicts.</p>
+  <p><strong>Scoring rule:</strong> the Brier score aggregates calibration and discriminative power into one proper score:</p>
+  <p>\[ \text{Brier} = \frac{1}{n}\sum_{i=1}^{n}\left(\hat{p}_i - y_i\right)^2 \]</p>
+  <p>where \(\hat{p}_i\) is the predicted probability and \(y_i \in \{0,1\}\) the true label; lower is better. It is a proper scoring rule, so it rewards honest probabilities — unlike accuracy, which ignores confidence entirely and can be satisfied by a model that is confidently wrong.</p>
+  <table>
+    <thead>
+      <tr>
+        <th>Score bucket</th>
+        <th>Mean predicted \(p\)</th>
+        <th>Observed positive rate</th>
+        <th>Gap</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr><td>0.0–0.2</td><td>0.15</td><td>0.22</td><td>+0.07 (under-predicts)</td></tr>
+      <tr><td>0.4–0.6</td><td>0.50</td><td>0.49</td><td>−0.01 (well calibrated)</td></tr>
+      <tr><td>0.8–1.0</td><td>0.90</td><td>0.72</td><td>−0.18 (over-predicts)</td></tr>
+    </tbody>
+  </table>
+  <p><strong>Reading the trace:</strong> the middle bucket is honest, but the model over-states high-confidence cases (0.90 predicted versus 0.72 observed) and under-states low ones — a sigmoid-shaped miscalibration typical of margin- and forest-based models. Crucially, calibration is <em>not</em> ranking: a monotone re-scaling can fix these gaps without changing ROC-AUC, so an excellent ROC curve says nothing about whether a "0.90" really means 90%. When probabilities feed a threshold or a risk decision, evaluate calibration on data held out from training, and apply a held-out calibration map (sigmoid or isotonic) if the diagram is distorted.</p>
+</div>
 <p>The six-step model validation checklist, walked through with a credit-risk example:</p>
 <ol>
   <li>Conceptual soundness — does this model make sense? Is the model conceptually sound?</li>

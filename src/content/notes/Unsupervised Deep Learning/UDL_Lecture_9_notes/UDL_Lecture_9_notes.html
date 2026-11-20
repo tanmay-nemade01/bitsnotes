@@ -450,6 +450,53 @@
 <h3 id="9.4.6-the-kl-term-as-the-vae-regularizer">9.4.6 The KL Term as the VAE Regularizer</h3>
 <p>Now place the tool inside the VAE. The quantity to control is the encoder's latent distribution, written \(q_\phi(z \mid x)\). Here \(x\) is the input, \(z\) is the latent, and \(\phi\) collects the parameters of the autoencoder's encoding side. The target is the normal Gaussian prior. The regularizing functional is:</p>
 <p>\[ D_{\mathrm{KL}}\bigl(q_\phi(z \mid x)\,\Vert\,\mathcal{N}(0, I)\bigr) \]</p>
+
+<div class="key-concept">
+  <p><strong>Closed-form evaluation of the VAE regularizer.</strong> Section 9.6.3 notes that Gaussians admit closed-form distances; here is that distance explicitly, so the KL term in the loss can be computed analytically rather than estimated by sampling. For \(q_\phi(z \mid x) = \mathcal{N}(\mu, \Sigma)\) and prior \(p(z) = \mathcal{N}(0, I)\) with latent dimension \(D_z\):</p>
+  <p>\[ D_{\mathrm{KL}}\bigl(\mathcal{N}(\mu, \Sigma) \,\|\, \mathcal{N}(0, I)\bigr) \;=\; \frac{1}{2}\Bigl(\operatorname{Tr}[\Sigma] + \mu^{\mathsf{T}}\mu - D_z - \log\det[\Sigma]\Bigr) \]</p>
+  <p>Under the diagonal-covariance assumption from Section 9.3.3, \(\Sigma = \operatorname{diag}(\sigma_1^2, \dots, \sigma_{D_z}^2)\), the trace becomes \(\sum_j \sigma_j^2\) and \(\log\det[\Sigma] = \sum_j \log \sigma_j^2\), so the expression separates into a sum over latent dimensions:</p>
+  <p>\[ D_{\mathrm{KL}} \;=\; \frac{1}{2}\sum_{j=1}^{D_z}\Bigl(\sigma_j^2 + \mu_j^2 - 1 - \log \sigma_j^2\Bigr) \]</p>
+  <p>Equivalently, the ELBO receives the negative of this quantity, \(-\frac{1}{2}\sum_j(1 + \log\sigma_j^2 - \mu_j^2 - \sigma_j^2)\) — the exact per-dimension form from the original variational derivation. Reading the terms: \(\mu_j^2\) and \(\sigma_j^2\) are pushed toward \(0\) and \(1\) respectively, which is precisely the "means to zero, variances to identity" pressure described in Section 9.3.3. At \(\mu = 0, \Sigma = I\) each summand is \(1 + 0 - 1 - 0 = 0\), so the regularizer vanishes exactly when the encoder matches the prior.</p>
+</div>
+
+<div class="example-box">
+  <p><strong>Worked computation of the KL regularizer.</strong> Take a three-dimensional latent (\(D_z = 3\)) with encoder output \(\mu = [0.5, -1.0, 0.0]\) and diagonal variances \(\sigma^2 = [0.25, 2.0, 1.0]\), i.e. \(\Sigma = \operatorname{diag}(0.25, 2.0, 1.0)\). Apply the per-dimension formula term by term:</p>
+  <table>
+    <thead>
+      <tr>
+        <th>\(j\)</th>
+        <th>\(\mu_j\)</th>
+        <th>\(\sigma_j^2\)</th>
+        <th>\(\log \sigma_j^2\)</th>
+        <th>\(\tfrac{1}{2}(\sigma_j^2 + \mu_j^2 - 1 - \log \sigma_j^2)\)</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>1</td>
+        <td>\(0.5\)</td>
+        <td>\(0.25\)</td>
+        <td>\(-1.386\)</td>
+        <td>\(\tfrac{1}{2}(0.25 + 0.25 - 1 + 1.386) = 0.443\)</td>
+      </tr>
+      <tr>
+        <td>2</td>
+        <td>\(-1.0\)</td>
+        <td>\(2.0\)</td>
+        <td>\(0.693\)</td>
+        <td>\(\tfrac{1}{2}(2.0 + 1.0 - 1 - 0.693) = 0.653\)</td>
+      </tr>
+      <tr>
+        <td>3</td>
+        <td>\(0.0\)</td>
+        <td>\(1.0\)</td>
+        <td>\(0\)</td>
+        <td>\(\tfrac{1}{2}(1.0 + 0 - 1 - 0) = 0\)</td>
+      </tr>
+    </tbody>
+  </table>
+  <p><strong>Final result:</strong> \(D_{\mathrm{KL}} = 0.443 + 0.653 + 0 = 1.096\) nats. Sense-check: every contribution is non-negative, as the KL proof in Section 9.4.5 requires; the third dimension already matches the prior (\(\mu_3 = 0, \sigma_3^2 = 1\)) and contributes exactly zero. The penalty grows both when the mean drifts from zero (dimension 2) and when the variance departs from one in either direction — dimension 1 is narrower than the prior, dimension 2 wider.</p>
+</div>
 <p>Training chooses and learns the parameters \(\phi\) so this divergence sinks toward zero. Driving it to zero keeps the latent space close to the normal Gaussian. Sample from that space and decode, and you get meaningful, semantically valid new data. That single term is the entire mechanism by which the VAE regularizes its code space.</p>
 <div class="important-note">
   <p><strong>Q:</strong> What is the way you compare two probability distributions? <strong>A:</strong> Use the KL divergence — and that answer, offered from the class itself, is exactly right. The Kullback-Leibler divergence quantifies how far one probability distribution sits from another, which is why it becomes the regularizing functional written above.</p>
@@ -680,6 +727,12 @@
 </div>
 <h3 id="9.8.3-capacity-constraint-interpretation-and-results">9.8.3 Capacity Constraint Interpretation and Results</h3>
 <p>The \(\beta\) weighting is also known as the <em>capacity constraint</em>: larger beta spends more of the model's capacity on structuring the latent space and less on pixel-perfect reconstruction. The name reads directly off the formula — the KL term caps how much information each code may carry about its input, and \(\beta\) sets how tightly the cap clamps.</p>
+
+<div class="warning-box">
+  <p><strong>Pitfall — posterior collapse at extreme KL pressure.</strong> Section 9.8.2 raises \(\beta\) to squeeze the KL term toward zero; taken to its limit, that pressure can produce the opposite of a useful code. In <em>posterior collapse</em> the encoder settles on emitting the prior itself for every input, \(q_\phi(z \mid x) \approx \mathcal{N}(0, I)\), so the KL term is driven to zero and the latent variable carries no information about \(x\). With a powerful decoder the model can then explain the data without ever consulting \(z\): the decoder ignores the encoder, little gradient signal passes between them, and the degenerate equilibrium is self-reinforcing — the "stable equilibrium with the KL cost term at zero" reported when VAEs are trained with strong autoregressive decoders.</p>
+  <p><strong>Why the equilibrium is stable.</strong> Once \(q_\phi(z \mid x)\) equals the prior, the reconstruction term no longer depends on \(x\) through \(z\), so the gradient reaching the encoder through the decoder vanishes; the KL gradient then has nothing to oppose and keeps the encoder pinned at the prior. This is a failure of optimization, not of the objective — the same ELBO has a better optimum with non-zero KL, but the optimizer never escapes the collapsed basin. The practical lesson is to monitor the KL contribution separately from the reconstruction contribution rather than watching only the total loss.</p>
+  <p><strong>Detection and mitigation.</strong> A KL term that drops to, or stays at, near zero from early in training — together with reconstructions that no longer respond to latent edits — signals collapse. The standard remedy is <em>KL annealing</em>: start the KL weight at zero so the encoder is free to encode information, then increase it gradually toward its full value of 1, letting the model learn to use \(z\) before being forced to regularize it. Weakening the decoder (for example, word dropout in sequence models) pushes in the same direction by making \(z\) necessary for accurate reconstruction.</p>
+</div>
 <p>The payoff shows in controlled edits:</p>
 <ul>
   <li>Skin color changes while expression, pose, and apparent age hold steady.</li>

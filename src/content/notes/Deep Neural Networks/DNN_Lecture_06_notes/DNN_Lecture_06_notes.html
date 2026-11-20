@@ -568,6 +568,37 @@ F1 = 2 \cdot \frac{\text{Precision} \cdot \text{Recall}}{\text{Precision} + \tex
 <p>Multi-class classification replaces the single sigmoid output with \(K\) softmax outputs that compete to sum to 1. The cross-entropy loss only penalizes the probability assigned to the correct class. Everything else — the forward pass, backpropagation, gradient descent loop — is identical to the binary case. The architecture is the only difference.</p>
 </div>
 
+<h3 id="6.2.11-numerically-stable-softmax" class="subsection-title">6.2.11 Numerically Stable Softmax and the Log-Sum-Exp Trick</h3>
+<div class="key-concept">
+<p><strong>Invariance under a constant shift:</strong> Adding the same scalar \(c\) to every logit leaves softmax unchanged, because the factor \(e^{c}\) cancels between numerator and denominator:</p>
+<p class="eqbox">
+\[
+\text{softmax}(\mathbf{Z} + c) = \frac{e^{Z_k + c}}{\sum_{j=1}^{K} e^{Z_j + c}} = \frac{e^{c}\,e^{Z_k}}{e^{c}\sum_{j=1}^{K} e^{Z_j}} = \text{softmax}(\mathbf{Z})
+\]
+</p>
+<p>Choose \(c = -m\) with \(m = \max_j Z_j\). This is always a valid choice and guarantees the largest exponent is exactly 0:</p>
+<p class="eqbox">
+\[
+\hat{y}_k = \frac{e^{Z_k - m}}{\sum_{j=1}^{K} e^{Z_j - m}}, \qquad m = \max_j Z_j
+\]
+</p>
+<p>Now every exponent satisfies \(Z_k - m \leq 0\), so each numerator lies in \((0, 1]\) and the denominator lies in \([1, K]\). No term can overflow, no matter how large the raw logits are.</p>
+</div>
+<div class="example-box">
+<p><strong>Worked calculation:</strong> take logits \(\mathbf{Z} = [1000,\, 1002,\, 999]\). Evaluating \(e^{1002}\) directly overflows single-precision floating point (finite range about \(10^{-38}\) to \(10^{38}\); \(e^{88.7}\) already saturates it). Subtract \(m = 1002\):</p>
+<p>\(\mathbf{Z} - m = [-2,\, 0,\, -3]\), so \(e^{\mathbf{Z}-m} = [0.135335,\, 1,\, 0.049787]\) and \(\sum_j e^{Z_j-m} = 1.185122\).</p>
+<p><strong>Final result:</strong> \(\hat{\mathbf{y}} = [0.114195,\, 0.843795,\, 0.042010]\). The probabilities still sum to 1, and the argument of the largest class wins — identical to the mathematical definition, but computable.</p>
+</div>
+<div class="warning-box">
+<p><strong>Pitfall — \(\log 0\) gives NaN:</strong> shifting fixes overflow, but a very negative logit can still underflow to \(e^{Z_k-m} \approx 0\), and the loss then asks for \(\log \hat{y}_k = \log 0\). Fuse softmax with cross-entropy instead: for a true class \(c\),</p>
+<p class="eqbox">
+\[
+\log \hat{y}_c = Z_c - m - \log\!\sum_{j=1}^{K} e^{Z_j - m}
+\]
+</p>
+<p>Pass the raw logits to the loss function, which evaluates this log-sum-exp form internally. Frameworks implement this directly (for example, `torch.nn.CrossEntropyLoss` expects unnormalized logits, and `log_softmax` documents that computing log(softmax(x)) in two separate steps is numerically unstable).</p>
+</div>
+
 <h2 class="section-title">6.3 Limitations of Linear Networks and the XOR Problem</h2>
 <p><strong>Symbol Registry</strong></p>
 <ul>
@@ -1033,6 +1064,34 @@ W_C \cdot A + W_B \cdot B + b_C
 </div>
 <div class="key-takeaway">
 <p>Backpropagation is the chain rule applied to neural networks. Starting from the loss, it walks backward through every layer, multiplying local derivatives. The result is the gradient of the loss with respect to every weight. Gradient descent then uses those gradients to update the weights. This single algorithm scales from simple perceptrons to networks with billions of parameters.</p>
+</div>
+
+<h3 id="6.6.5-gradient-checking-with-finite-differences" class="subsection-title">6.6.5 Gradient Checking with Finite Differences</h3>
+<div class="key-concept">
+<p><strong>Verifying a hand-written backward pass:</strong> the chain rule is easy to get subtly wrong (a transposed matrix, a missing activation derivative). An independent check perturbs one parameter at a time and measures the slope of the loss numerically, using the definition of the derivative itself:</p>
+<p class="eqbox">
+\[
+f'(w) = \lim_{\varepsilon \to 0} \frac{f(w+\varepsilon) - f(w)}{\varepsilon}
+\;\approx\;
+\frac{f(w+\varepsilon) - f(w-\varepsilon)}{2\varepsilon}
+\]
+</p>
+<p>The right-hand form is the <em>centered difference</em>. Its error is \(O(\varepsilon^2)\), versus \(O(\varepsilon)\) for the one-sided form, because the even-order terms of the two Taylor expansions cancel. Compare this numerical slope against the analytical gradient produced by backpropagation; agreement to a few significant digits is strong evidence the implementation is correct.</p>
+</div>
+<div class="example-box">
+<p><strong>Worked check:</strong> take the binary cross-entropy term for a single true positive, \(\ell(w) = -\log \sigma(w)\), at \(w = 0.5\). Backpropagation gives the analytical gradient \(\ell'(w) = \sigma(w) - 1 = -0.3775406688\).</p>
+<p>With a small perturbation \(\varepsilon = 10^{-4}\), evaluate the loss twice:</p>
+<p>\(\ell(0.5001) - \ell(0.4999) \approx -0.0000755081\), so</p>
+<p class="eqbox">
+\[
+\ell'(0.5) \approx \frac{\ell(0.5 + 10^{-4}) - \ell(0.5 - 10^{-4})}{2 \times 10^{-4}} = -0.3775406689
+\]
+</p>
+<p><strong>Result:</strong> absolute discrepancy \(\approx 9.6 \times 10^{-11}\), relative \(\approx 2.5 \times 10^{-10}\) — the two methods agree, so the gradient is correct.</p>
+</div>
+<div class="warning-box">
+<p><strong>Pitfall — choosing \(\varepsilon\):</strong> too small and the subtraction \(f(w+\varepsilon)-f(w-\varepsilon)\) is dominated by round-off (catastrophic cancellation); too large and the \(O(\varepsilon^2)\) truncation error grows. Use double precision, a perturbation around \(10^{-4}\) to \(10^{-6}\), and a relative rather than absolute tolerance.</p>
+<p><strong>Scope:</strong> check at points where the function is differentiable. With ReLU, a probe crossing \(z = 0\) sees a corner where the derivative is undefined, so a mismatch there need not indicate a bug. For a vector-valued function \(g: \mathbb{R}^m \to \mathbb{R}^n\), finite differencing every input/output pair costs \(mn\) evaluations; a cheaper test applies the check to the scalar \(u^\top g(\mathbf{v}x)\) with random projection vectors \(u, v\). Frameworks automate this check (`torch.autograd.gradcheck`, with default perturbation `eps=1e-06` and tolerances `atol=1e-05`, `rtol=0.001`).</p>
 </div>
 
 <h2 class="section-title">6.7 Vanishing and Exploding Gradients</h2>

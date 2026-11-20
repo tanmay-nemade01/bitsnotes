@@ -468,6 +468,73 @@ LANGUAGE SQL;</code></pre>
 </div>
 <p>In day-to-day work this pattern shows up wherever a team repeats a query: dashboards call <code>fn_api_*</code> names instead of pasting SQL, and data-quality jobs call audit functions on a schedule. Storefront counters, admin health pages, and account summaries all read more cleanly when the SQL lives in one named place.</p>
 
+<h3 class="subsection-title" id="32.1.5-function-attributes-strictness-and-null-propagation">32.1.5 Function Attributes: Strictness and NULL Propagation</h3>
+<div class="important-note">
+  <p><strong>Why this matters:</strong> a function can declare a parameter and still say nothing about what happens when that parameter arrives as <code>NULL</code>. The default behavior runs the body with the NULL bound, and an aggregate such as <code>COUNT(*)</code> can then return a confident but meaningless <strong>0</strong> instead of an honest "unknown".</p>
+</div>
+<div class="key-concept">
+  <p><strong>Formal definition:</strong> <code>RETURNS NULL ON NULL INPUT</code> (PostgreSQL short form <code>STRICT</code>) is a function attribute promising that if <em>any</em> argument is NULL, the engine returns NULL immediately and <strong>does not execute the body at all</strong>. The default, <code>CALLED ON NULL INPUT</code>, executes the body normally and leaves NULL-checking to the author. An argument omitted because it carries a <code>DEFAULT</code> takes the default expression, so it is not NULL merely by being omitted — it does not by itself trigger the short-circuit.</p>
+</div>
+<p>Of the attributes the property panel in 32.1.2 exposes, strictness is the one that changes observable answers rather than only planner estimates. It is also one of the few standardized clauses: the SQL standard defines <code>CALLED ON NULL INPUT</code> and <code>RETURNS NULL ON NULL INPUT</code>, while volatility, cost, and parallel-safety labels are PostgreSQL extensions. Writing the standard spelling keeps a SQL-language function close to portable SQL.</p>
+<div class="example-box">
+  <p><strong>Worked trace — the same body under two attribute settings.</strong> Take the per-customer order counter of 32.7, whose body ends in <code>COUNT(*)</code> with <code>WHERE customer_id = p_customerid</code>. Call it with a NULL id. The two variants differ only in one trailing clause:</p>
+  <pre><code>-- default: CALLED ON NULL INPUT (the body runs with p_customerid = NULL)
+CREATE OR REPLACE FUNCTION fn_api_customer_total_orders(p_customerid bpchar)
+RETURNS bigint AS
+$$
+  SELECT COUNT(*) FROM orders NATURAL JOIN customers
+  WHERE customer_id = p_customerid;
+$$
+LANGUAGE SQL CALLED ON NULL INPUT;
+
+-- strict variant: the body is skipped and the result is NULL
+CREATE OR REPLACE FUNCTION fn_api_customer_total_orders_strict(p_customerid bpchar)
+RETURNS bigint AS
+$$
+  SELECT COUNT(*) FROM orders NATURAL JOIN customers
+  WHERE customer_id = p_customerid;
+$$
+LANGUAGE SQL RETURNS NULL ON NULL INPUT;</code></pre>
+  <p>Step 1, under <code>CALLED ON NULL INPUT</code>: <code>p_customerid</code> is NULL, so <code>customer_id = NULL</code> is never true, the filtered set is empty, and <code>COUNT(*)</code> returns <strong>0</strong> — indistinguishable from a real customer with no orders. Step 2, under <code>RETURNS NULL ON NULL INPUT</code>: the engine sees a NULL argument, skips the body entirely, and returns <strong>NULL</strong>, which correctly means "no answer because no id was supplied". Step 3, with a real id such as <code>'VINET'</code>, both variants run the body and return <strong>5</strong>. The attribute changes only the NULL path.</p>
+</div>
+<table>
+  <thead>
+    <tr>
+      <th>Attribute clause in <code>CREATE FUNCTION</code></th>
+      <th>Assumed when omitted</th>
+      <th>Effect the engine applies</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><code>CALLED ON NULL INPUT</code> / <code>RETURNS NULL ON NULL INPUT</code> (<code>STRICT</code>)</td>
+      <td><code>CALLED ON NULL INPUT</code></td>
+      <td>Body runs with NULL bound, versus NULL returned with the body skipped entirely</td>
+    </tr>
+    <tr>
+      <td><code>IMMUTABLE</code> / <code>STABLE</code> / <code>VOLATILE</code></td>
+      <td><code>VOLATILE</code></td>
+      <td>With <code>IMMUTABLE</code>, calls whose arguments are all constants may be replaced by the computed value before execution; <code>VOLATILE</code> forbids that optimization</td>
+    </tr>
+    <tr>
+      <td><code>COST n</code> / <code>ROWS n</code></td>
+      <td><code>COST 100</code> for SQL functions; <code>ROWS 1000</code> for set-returning ones</td>
+      <td>Feed the planner an estimated per-call cost and row count so it can avoid repeated evaluation</td>
+    </tr>
+    <tr>
+      <td><code>PARALLEL UNSAFE</code> / <code>RESTRICTED</code> / <code>SAFE</code></td>
+      <td><code>PARALLEL UNSAFE</code></td>
+      <td>An unsafe function forces a serial plan; a safe one may run inside parallel workers</td>
+    </tr>
+  </tbody>
+</table>
+<div class="warning-box">
+  <p><strong>Pitfall — strictness is about arguments, not results.</strong> A function declared <code>RETURNS NULL ON NULL INPUT</code> is short-circuited only when an <em>input</em> is NULL; it can still return NULL from its own arithmetic (division by a zero divisor, for example). Conversely, do not add <code>STRICT</code> to a function that deliberately maps a NULL input to a meaningful value — the body would never get the chance. And because these labels are promises to the optimizer, marking a side-effecting function <code>IMMUTABLE</code> lets the planner fold its calls away.</p>
+</div>
+<div class="key-takeaway">
+  <p><strong>Takeaway:</strong> strictness decides whether the body ever sees a NULL; volatility, cost, and parallel labels decide how freely the planner may reorder or repeat the call. Declare them when the assumed default does not match the function's real behavior — otherwise the engine optimizes on a promise nobody made.</p>
+</div>
+
 <h2 class="section-title" id="32.2-dollar-quoting">32.2 Dollar Quoting</h2>
 <h3 class="subsection-title" id="32.2.1-the-escaping-problem">32.2.1 The Escaping Problem</h3>
 <div class="important-note">

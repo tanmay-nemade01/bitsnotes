@@ -634,6 +634,15 @@ F_1 = 2 \cdot \frac{0.80 \times 0.60}{0.80 + 0.60} = 2 \cdot \frac{0.48}{1.40} =
   </ol>
   <p>The result is \(k\) clusters, each defined by its centroid.</p>
 </div>
+<div class="key-concept">
+  <p><strong>Formal objective — what K-means actually minimizes:</strong> The four steps above are not a heuristic ritual; they are coordinate descent on a single loss function. For an assignment \(f : X \to \{1,\dots,k\}\) of points \(x_i\) to centroids \(c_j\), minimize the <em>inertia</em> (also called the within-cluster sum of squared errors, WSSSE):</p>
+  \[
+  L(X) = \sum_{i=1}^{n} d\bigl(x_i, c_{f(x_i)}\bigr)^2 = \sum_{j=1}^{k}\ \sum_{x_i \in C_j} \lVert x_i - c_j \rVert_2^{2}
+  \]
+  <p>The assign step lowers \(L\) by moving each point to its nearest centroid; the recompute step lowers it further because the mean \(\displaystyle c_j = \frac{1}{|C_j|}\sum_{x_i \in C_j} x_i\) is exactly the minimizer of \(\sum_{x_i \in C_j}\lVert x_i - c\rVert^2\). Each iteration is therefore monotone non-increasing, which is why the algorithm converges. The library attribute <code>inertia_</code> reports precisely this sum of squared distances.</p>
+  <p><strong>Choosing \(k\) — the elbow method:</strong> \(L\) cannot be used to compare different \(k\) values directly (it always falls as \(k\) grows, reaching \(0\) when \(k=n\)), so run K-means over a range of \(k\), plot \(L(k)\), and take the <em>elbow</em> — the point where the rate of decrease sharply flattens. Adding clusters past that knee yields only marginal error reduction while consuming interpretability and compute. Silhouette analysis (measuring how similar a point is to its own cluster versus the next nearest) is the complementary criterion when the curve has no clear knee.</p>
+  <p><strong>Security caveat:</strong> inertia is Euclidean and therefore scale-dependent — a feature measured in bytes will dominate one measured in seconds. Standardize each feature (e.g. \((x_{ij}-\mu_j)/\sigma_j\)) before clustering network flows, and remember that the absolute \(L\) from one \(k\) is not comparable to another; only the shape of the \(L(k)\) curve is meaningful.</p>
+</div>
 <p><strong>Applications in cybersecurity:</strong></p>
 <div class="example-box">
   <p><strong>Worked example — K-means for malware family identification:</strong> A security team receives 10,000 malware samples daily. They extract features (entropy, API calls, section counts) and run K-means with \(k = 50\) clusters. The clusters naturally group similar malware together: Cluster 12 contains ransomware variants, Cluster 7 contains trojans, and Cluster 31 contains a new variant with no existing signature. By examining Cluster 31, researchers discover a novel malware family before any antivirus product has a signature for it. They use the cluster to write a YARA rule and distribute it to their detection tools.</p>
@@ -754,6 +763,10 @@ F_1 = 2 \cdot \frac{0.80 \times 0.60}{0.80 + 0.60} = 2 \cdot \frac{0.48}{1.40} =
   </ol>
   <p>The result: you go from 50 features to 15 principal components, each of which is a weighted combination of the original 50 features.</p>
 </div>
+<div class="key-concept">
+  <p><strong>Formal construction:</strong> Center the \(n \times d\) data matrix \(X\) by subtracting each feature's mean, then form the covariance matrix \(C = \frac{1}{n-1}X^{\mathsf{T}}X\). Its eigenvectors satisfy \(C v_i = \lambda_i v_i\); sorting \(\lambda_1 \ge \lambda_2 \ge \dots \ge \lambda_d\) orders the principal directions by importance. Keeping the top \(k\) eigenvectors as the columns of \(V_k\) gives the compressed representation \(Z = X V_k\), and component \(i\) explains the fraction \(\lambda_i / \sum_j \lambda_j\) of total variance — choosing \(k\) so the cumulative fraction passes a target (e.g. 0.95) is the formal form of the "keep enough variance" rule above. Because the method follows variance, features should be on comparable scales before it is applied.</p>
+  <p><strong>Residual subspace as an anomaly signal:</strong> let \(Q = [v_1 \dots v_p]\) span the dominant ("normal") subspace of a traffic matrix. Any observation decomposes as \(y = QQ^{\mathsf{T}}y + (I - QQ^{\mathsf{T}})y\): the first term is its reconstruction from the dominant components, and the residual \(\tilde{y} = (I - QQ^{\mathsf{T}})y\) is what those components fail to explain. Normal traffic, which dominates the training data, has a small residual; a volume anomaly produces a large one. Thresholding the residual norm (a squared-prediction-error or Q-statistic) turns PCA from pure compression into network-wide anomaly detection that can localize the time, source, and destination of the event.</p>
+</div>
 <p>The professor's example: for a network flow application with 60 features, PCA can reduce them to 15 principal components that retain 95% of the variance. The downstream ML model runs 4x faster while maintaining detection accuracy.</p>
 <div class="example-box">
   <p><strong>Worked example — PCA on network flow data:</strong> A network intrusion detection system has 60 features per flow (duration, bytes sent, packets per second, etc.). PCA produces 15 principal components:</p>
@@ -812,6 +825,13 @@ F_1 = 2 \cdot \frac{0.80 \times 0.60}{0.80 + 0.60} = 2 \cdot \frac{0.48}{1.40} =
   </ol>
   <p>The intuition: anomalies are "few and different" — they get isolated quickly. Normal points are "many and similar" — they need more splits.</p>
 </div>
+<div class="key-concept">
+  <p><strong>Formal anomaly score:</strong> Raw path length cannot be compared directly across trees grown on subsamples of different sizes, so it is normalized by the average path length of an unsuccessful search in a tree of \(\psi\) points:</p>
+  <p>\[
+  c(\psi) = 2H(\psi - 1) - \frac{2(\psi - 1)}{\psi}, \qquad H(i) \approx \ln i + \gamma \;\; (\gamma \approx 0.5772)
+  \]</p>
+  <p>For a point \(x\), averaging over \(T\) trees gives \(s(x) = 2^{-\,E[h(x)]/c(\psi)}\), where \(E[h(x)]\) is its mean path length. Since \(E[h(x)] \le c(\psi)\), the score lies in \((0, 1]\): near \(1\) means normal, a value well below \(0.5\) means anomalous, and \(0.5\) is the natural boundary. Each tree is grown only to depth \(\lceil \log_2 \psi \rceil\), which is exactly why the normalization is defined this way. The <code>contamination</code> parameter then picks a threshold on these scores to produce the final inlier/outlier labels.</p>
+</div>
 <p><strong>Why it is perfect for security:</strong></p>
 <ul>
   <li><em>Linear time complexity</em> — approximately \(O(n)\), making it fast enough for millions of events per second.</li>
@@ -863,6 +883,9 @@ F_1 = 2 \cdot \frac{0.80 \times 0.60}{0.80 + 0.60} = 2 \cdot \frac{0.48}{1.40} =
   </ol>
   <p>The kernel trick allows the algorithm to find non-linear boundaries in the original feature space.</p>
 </div>
+<div class="warning-box">
+  <p><strong>Failure mode — novelty vs. outlier detection:</strong> A standard One-Class SVM has no robustness mechanism for contaminants in its own training set; it assumes the normal class is clean. If attacks are present while fitting, the learned frontier is pulled toward them and its accuracy degrades over time. It is therefore formally a <em>novelty detector</em> — train on thoroughly cleaned normal data, then score new observations — rather than an outlier detector that tolerates dirty training logs. The <code>nu</code> parameter encodes this: it is an upper bound on the fraction of training errors and a lower bound on the fraction of support vectors, in \((0, 1]\). With the default RBF kernel, too large a <code>gamma</code> lets individual training points dominate the boundary and overfits, so both parameters must be tuned to the expected contamination level.</p>
+</div>
 <p><strong>When to use One-Class SVM:</strong></p>
 <ul>
   <li>High-stakes detection where confidence scores matter — fraud detection, critical infrastructure protection.</li>
@@ -889,6 +912,21 @@ F_1 = 2 \cdot \frac{0.80 \times 0.60}{0.80 + 0.60} = 2 \cdot \frac{0.48}{1.40} =
     <li>If the point's density is much lower than its neighbors, it is an outlier.</li>
   </ol>
   <p>A point is anomalous <em>relative to its neighborhood</em> — not relative to the entire dataset.</p>
+</div>
+<div class="key-concept">
+  <p><strong>Formal LOF score:</strong> the "local density" above is made precise through the <em>reachability distance</em> of \(p\) to \(o\), which damps the effect of statistical fluctuations in dense neighborhoods:</p>
+  \[
+  \text{reach-dist}_k(p, o) = \max\{\,d_k(o),\; d(p,o)\,\}
+  \]
+  <p>where \(d(p,o)\) is the ordinary distance and \(d_k(o)\) is the distance from \(o\) to its \(k\)-th nearest neighbor. The <em>local reachability density</em> of \(p\) is the reciprocal of its mean reachability distance to its \(k\)-nearest neighbors \(N_k(p)\):</p>
+  \[
+  \text{lrd}_k(p) = \left(\frac{\sum_{o \in N_k(p)} \text{reach-dist}_k(p,o)}{|N_k(p)|}\right)^{-1}
+  \]
+  <p>The final score compares \(p\)'s density to that of its neighbors — exactly the ratio of the average neighbor density to the point's own density:</p>
+  \[
+  \text{LOF}_k(p) = \frac{\sum_{o \in N_k(p)} \dfrac{\text{lrd}_k(o)}{\text{lrd}_k(p)}}{|N_k(p)|}
+  \]
+  <p><strong>Interpretation:</strong> \(\text{LOF}_k(p) \approx 1\) means the point's density matches its neighbors (normal); \(\text{LOF}_k(p) \gg 1\) means its local density is far lower than that of its surroundings (outlier). Because every comparison is strictly local, a point in a sparse cluster is <em>not</em> penalized merely for living in a low-density region — this is precisely why LOF handles datasets with varying densities where a global threshold fails. The parameter \(k\) should exceed the minimum size of a meaningful cluster and stay below the maximum size of a plausible outlier group; a value near \(20\) is a common default, raised toward \(35\) or more when the outlier fraction is high.</p>
 </div>
 <div class="important-note">
   <p><strong>Key example — email anomaly detection:</strong> Normally, an employee receives 20–50 emails per day. An executive might regularly receive 150 emails due to external interactions. LOF correctly flags a regular employee suddenly receiving 150 emails (anomalous) while not flagging the executive (normal for their context). This is context-aware detection — the "normal" range depends on who you are.</p>
@@ -941,6 +979,20 @@ F_1 = 2 \cdot \frac{0.80 \times 0.60}{0.80 + 0.60} = 2 \cdot \frac{0.48}{1.40} =
 <p>By combining these, you can build a more robust detection pipeline that covers each algorithm's blind spots. For example, run isolation forest in real-time for fast screening, then run LOF on flagged events for deeper context-aware analysis.</p>
 <h3 id="7.6.6-eco-defender-iot-framework">7.6.6 Eco-Defender IoT Framework</h3>
 <p>The professor briefly mentioned the Eco-Defender IoT framework as a case study for deploying anomaly detection in IoT environments. IoT devices have limited compute and memory, so lightweight algorithms like isolation forest are preferred. The slides contain more details on operational deployment aspects.</p>
+
+<h3 id="7.6.7-mahalanobis-distance-and-robust-elliptic-envelope">7.6.7 Statistical Detection — Mahalanobis Distance and Robust Elliptic Envelope</h3>
+<p>The methods above are nonparametric: isolation forest, One-Class SVM and LOF make no commitment to a distributional form. A fourth family, largely omitted from the spoken lecture, instead <em>assumes the normal traffic follows a known distribution</em> and measures how far an observation deviates from its fitted centre. This is the parametric or statistical approach to anomaly detection.</p>
+<div class="key-concept">
+  <p><strong>Formal definition — Mahalanobis distance:</strong> for inliers drawn from a Gaussian with location \(\mu\) and covariance \(\Sigma\), the squared distance of an observation \(x\) from the mode is</p>
+  \[
+  d_{(\mu,\Sigma)}^{2}(x) = (x - \mu)^{\mathsf{T}}\,\Sigma^{-1}\,(x - \mu)
+  \]
+  <p>Unlike Euclidean distance, the inverse covariance \(\Sigma^{-1}\) <em>whitens</em> the space: it rescales each axis by its variance and rotates away feature correlations, so a deviation is judged relative to the natural spread of the traffic rather than in raw units. Under the Gaussian assumption this squared distance follows a \(\chi^{2}\) distribution with \(d\) degrees of freedom, giving a principled threshold \(d_{(\mu,\Sigma)}^{2}(x) > \chi^{2}_{d,\,1-\alpha}\) for a chosen significance \(\alpha\). A login or flow whose feature vector lies far outside the fitted ellipsoid is flagged.</p>
+  <p><strong>Robust fitting — the Minimum Covariance Determinant estimator:</strong> plugging in the ordinary maximum-likelihood estimates \(\hat\mu,\hat\Sigma\) is self-defeating in security, because the very attacks we want to detect inflate the variance and drag the centre toward themselves (masking). The MCD estimator instead searches for the \(h \approx (n+d+1)/2\) observations whose empirical covariance has the smallest determinant, then estimates location and covariance from that "pure" subset. It tolerates contamination up to roughly \((n-d-1)/2\) outliers. Scikit-learn's <code>EllipticEnvelope</code> uses exactly this idea: it fits a robust ellipse to the central mode of the training data and derives outlyingness from the resulting Mahalanobis distances, so points outside the central mode are ignored during fitting rather than distorting it.</p>
+</div>
+<div class="warning-box">
+  <p><strong>Pitfall — when the parametric assumption breaks:</strong> the Gaussian/elliptic-envelope model works well only for low-dimensional, unimodal data whose "normal" behaviour is genuinely well described by an ellipse (features such as CPU load or process start time with the time dimension removed). On non-Gaussian or high-dimensional traffic the fitted envelope is a poor summary, and a point that is ordinary in aggregate can still be anomalous at the time it occurs — a midnight login with midday-typical features will be missed. Use these detectors as a fast, highly interpretable baseline, not as a replacement for the nonparametric detectors above when traffic is heterogeneous.</p>
+</div>
 <div class="key-takeaway">
   <p><strong>Recap:</strong> Isolation forest is fast and scales well — use it for real-time detection. One-Class SVM gives confidence scores — use it when accuracy matters more than speed. LOF is context-aware — use it when the same value is normal for one entity but anomalous for another. Hybrid approaches combine strengths.</p>
 </div>

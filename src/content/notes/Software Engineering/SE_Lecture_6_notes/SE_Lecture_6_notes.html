@@ -516,6 +516,18 @@
 <h3 id="6.4.5-the-interrupt-driven-model">6.4.5 The interrupt-driven model</h3>
 <p>Real-time systems that require externally generated events to be handled very quickly must be event-driven. Consider a real-time system controlling the safety systems in a car. It must detect a possible crash and inflate an airbag before the driver's head would hit the steering wheel. Providing that rapid response requires interrupt-driven control.</p>
 <p>There are a known number of interrupt types, each a class of external events with a specific handler defined for it. Each type of interrupt is associated with a memory location where its event handler's address is stored. When an interrupt of a particular type is received, a hardware switch causes the control to be transferred immediately to its event handler. The interrupt handler may then start or stop other processes in the system in response to the event signaled by the interrupt. In the car example, the crash interrupt invokes a process that inflates the airbag immediately, before the driver's head can move toward the steering wheel.</p>
+
+<div class="important-note">
+  <p><strong>System detail — what the hardware jump actually runs:</strong> The "memory location holding the handler's address" is one slot in a <em>vector table</em>: it holds a jump to a short, fast <strong>interrupt service routine (ISR)</strong>, not the whole handler. In real-time systems practice the one-line "hardware switch" expands into a five-step sequence:</p>
+  <ol>
+    <li><strong>Transfer:</strong> the interrupt mechanism transfers control to the predetermined memory location and jumps to the ISR.</li>
+    <li><strong>Mask:</strong> the ISR disables further interrupts so it cannot be interrupted itself while it works.</li>
+    <li><strong>Identify:</strong> it discovers the cause of the interrupt — when several event types share one line, an argument or status register tells it which stimulus fired.</li>
+    <li><strong>Dispatch:</strong> it starts, at high priority, the process that handles the stimulus; in high-speed data acquisition it may instead copy the data into a buffer for later processing.</li>
+    <li><strong>Restore:</strong> interrupts are enabled again and control returns to the operating system, which resumes the interrupted task.</li>
+  </ol>
+  <p>A real RTOS implements this shape directly: an IDT or vector table associates each interrupt source with an ISR, masking uses an IRQ lock, a shared ISR reads its argument to learn which event was signaled, and time-consuming work is <em>offloaded to a thread</em> so the ISR stays short. This is precisely why the interrupt path is fast yet expensive in design effort — every exceptional event needs a vector slot, a short ISR, and a handler process behind it.</p>
+</div>
 <div class="example-box">
   <p><strong>Worked example — the automotive airbag system.</strong> The car's safety system must react to a collision faster than the human body can move.</p>
   <p>The timing chain:</p>
@@ -538,6 +550,26 @@
 </ul>
 <div class="warning-box">
   <p><strong>Pitfall:</strong> beginners assume the fast response is free. In reality every new exceptional event adds a handler, a hardware interrupt assignment, and a new set of timing interactions — the fast path is bought with complexity, and that complexity is exactly what makes validation so hard.</p>
+</div>
+
+<div class="example-box">
+  <p><strong>Worked calculation — budgeting interrupt latency into a task's execution time.</strong> The interrupt path's speed has to be paid for in CPU time and analysis. Two timing quantities matter: <em>interrupt latency</em> — the delay from the interrupt request to the start of the ISR — and <em>context-switching time</em>, the cost of halting one task and handing the CPU to another. A real-time design procedure fixes a periodic task's execution time as instruction time plus input/output time plus interrupt latency.</p>
+  <p>The interrupt timing chain is: interrupt occurs → save the current task's state → decode the interrupt → initiate the action and run it → save the interrupt action's state → restore the interrupted task's state → resume the interrupted task. Only the middle segment is the handler's own work; the rest is overhead.</p>
+  <p>Consider a periodic task running 20 times per second. Its longest path is estimated at 3,600 high-level-language statements, with a measured 5:1 expansion to assembly instructions, an average instruction time of 225 ns, 0.55 ms of input/output, and a measured interrupt latency of 0.02 ms.</p>
+  \[
+  N_{\text{instr}} = 5 \times 3600 = 18{,}000
+  \]
+  \[
+  t_{\text{instr}} = 18{,}000 \times 225\,\text{ns} = 4.05\,\text{ms}
+  \]
+  \[
+  t_{\text{exec}} = 4.05 + 0.55 + 0.02 = 4.62\,\text{ms}
+  \]
+  \[
+  \text{CPU load} = 4.62 \times 20 = 92.4\,\text{ms per second} = 9.24\%
+  \]
+  <p>A prudent designer adds a 20% cushion for omissions: \( 92.4 \times 1.20 \approx 110.9 \) ms per second, about \( 11.1\% \) of the CPU.</p>
+  <p><strong>Final answer:</strong> the 0.02 ms interrupt latency looks negligible beside 4.05 ms of instruction time, yet at 20 Hz it still contributes \( 20 \times 0.02 = 0.4 \) ms per second, and the whole task consumes roughly 9–11% of the processor. <strong>Sense-check:</strong> the arithmetic is small because the interrupt overhead is only a few percent here; for a high-frequency or tight-deadline system the same latency term can dominate, which is exactly why the fast path must be engineered and validated rather than assumed free.</p>
 </div>
 <h3 id="6.4.7-interrupt-mapping-and-its-limits">6.4.7 Interrupt mapping and its limits</h3>
 <p>The hardware limit can sometimes be worked around by mapping several types of events onto a single interrupt. The handler then works out which event has occurred and invokes the corresponding process. Instead of needing a separate hardware interrupt for each event type, the system groups several related events under one interrupt number and lets the handler disambiguate them.</p>

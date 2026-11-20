@@ -295,6 +295,43 @@ GROUP BY column_1;</code></pre>
 </div>
 <p>Line by line: the SELECT list names one bare grouping column plus one aggregate call; FROM picks the table; GROUP BY repeats the bare column so the engine knows how to cut the rows. Any bare column in SELECT that is missing from GROUP BY fails with the message that the column must appear in the GROUP BY clause or sit inside an aggregate function.</p>
 <p>Across databases this shape is the same, with small extras worth knowing. MySQL enforces the bare-column rule strictly when its ONLY_FULL_GROUP_BY mode is on (the default in modern versions) and rejects loose queries. PostgreSQL is strict too, but it excuses extra bare columns that are functionally dependent on the grouping key — grouping by a primary key lets you select other columns of that same table. Snowflake and Databricks accept the standard shape and additionally offer GROUP BY ALL, which groups by every non-aggregate SELECT item automatically. The common core never changes: bare columns must be grouped, aggregates compute per group.</p>
+
+<div class="important-note">
+  <p><strong>Cross-Engine Detail — What GROUP BY May Name:</strong> Grouping elements are not limited to bare input columns. PostgreSQL accepts an input column name, an output column name (a SELECT alias), a column position, or any expression built from input columns. The SQL standard and strict engines such as SQL Server require the expression itself in GROUP BY; PostgreSQL and MySQL additionally accept the output alias, which is why a query that works in one engine can fail in another.</p>
+  <pre><code>-- Portable: repeat the expression in GROUP BY
+SELECT CASE WHEN movie_length &gt;= 120 THEN 'long' ELSE 'short' END AS length_band,
+       COUNT(*) AS films
+FROM movies
+GROUP BY CASE WHEN movie_length &gt;= 120 THEN 'long' ELSE 'short' END;</code></pre>
+  <p>Grouping by a computed expression buckets rows by the <em>result</em> of the expression: every film of length 120 or more lands in the long band, every shorter film in the short band, and the two bands become the groups. Writing <code>GROUP BY length_band</code> instead is accepted in PostgreSQL and MySQL but rejected by standard-strict engines, because the alias does not exist until the SELECT station — two stations after GROUP BY in the 16.3 chain. The portable fix is to repeat the whole expression, or to compute it first in a derived table in the FROM clause.</p>
+  <table>
+    <thead>
+      <tr>
+        <th>Engine</th>
+        <th>SELECT alias in GROUP BY</th>
+        <th>Behavior to remember</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>PostgreSQL</td>
+        <td>Accepted</td>
+        <td>A name matching both an input column and an output alias resolves to the <em>input</em> column; ORDER BY resolves to the output alias instead.</td>
+      </tr>
+      <tr>
+        <td>MySQL</td>
+        <td>Accepted</td>
+        <td>A quoted string alias such as <code>GROUP BY 'a'</code> groups by the literal text, not the column — use identifier quoting such as <code>`a`</code>.</td>
+      </tr>
+      <tr>
+        <td>SQL Server (standard-strict)</td>
+        <td>Rejected</td>
+        <td>Repeat the full expression in both SELECT and GROUP BY, or project the calculation from a derived table.</td>
+      </tr>
+    </tbody>
+  </table>
+  <p><strong>Pitfall — Silent Name Resolution:</strong> PostgreSQL's asymmetry is easy to miss. If the table has a column named <code>length_band</code> and the SELECT list also aliases an expression as <code>length_band</code>, <code>GROUP BY length_band</code> quietly groups by the table column while <code>ORDER BY length_band</code> sorts by the computed alias. Repeating the expression in GROUP BY removes the ambiguity entirely, which is another reason to prefer the portable form.</p>
+</div>
 <div class="warning-box">
   <p><strong>Pitfalls:</strong> Writing the aggregate without GROUP BY gives one grand total and no groups — correct syntax, wrong question. Adding the bare column without the GROUP BY line fails outright. And naming a literal function called AGGREGATE_FUNCTION fails too, since it is only a stand-in name in these notes.</p>
 </div>

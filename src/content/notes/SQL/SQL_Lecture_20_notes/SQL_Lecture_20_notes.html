@@ -564,6 +564,60 @@
     </tr>
   </tbody>
 </table>
+<div class="key-concept">
+  <p><strong>Formalize: reading a range back apart.</strong> Constructing a range packs \(l\) and \(u\) into one value; the range function family unpacks them again. \(lower(R)\) and \(upper(R)\) return the two endpoints, either of which is <code>NULL</code> when the span is empty or unbounded on that side; \(isempty(R)\) tests whether the span holds nothing; and \(lower\_inc(R)\), \(upper\_inc(R)\) report whether each endpoint is closed. Those inclusive-boundary readers return <code>false</code> for an empty range. Range placement also has a vocabulary beyond <code>&lt;</code> and <code>&gt;</code>: \(A \ll B\) asks whether \(A\) lies strictly left of \(B\), \(A \gg B\) strictly right, and the operator <code>-|-</code> asks whether the two are adjacent — touching at an edge with no gap and no overlap. The set operators <code>+</code>, <code>*</code>, <code>-</code> return union, intersection, and difference. PostgreSQL orders ranges by lower bound first and compares upper bounds only on a tie.</p>
+</div>
+<table>
+  <thead>
+    <tr>
+      <th>Reader / operator</th>
+      <th>Question it answers</th>
+      <th>Example call</th>
+      <th>Result</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><code>lower(R)</code></td>
+      <td>lower endpoint</td>
+      <td><code>lower(numrange(1.1, 2.2))</code></td>
+      <td><code>1.1</code></td>
+    </tr>
+    <tr>
+      <td><code>upper(R)</code></td>
+      <td>upper endpoint</td>
+      <td><code>upper(numrange(1.1, 2.2))</code></td>
+      <td><code>2.2</code></td>
+    </tr>
+    <tr>
+      <td><code>lower_inc(R)</code> / <code>upper_inc(R)</code></td>
+      <td>closed or open end?</td>
+      <td><code>lower_inc(numrange(1.1, 2.2))</code></td>
+      <td><code>true</code>; upper is <code>false</code></td>
+    </tr>
+    <tr>
+      <td><code>&lt;&lt;</code> / <code>&gt;&gt;</code></td>
+      <td>strictly left / right</td>
+      <td><code>int8range(1,10) &lt;&lt; int8range(100,110)</code></td>
+      <td><code>true</code></td>
+    </tr>
+    <tr>
+      <td><code>-|-</code></td>
+      <td>adjacent, no gap</td>
+      <td><code>numrange(1.1,2.2) -|- numrange(2.2,3.3)</code></td>
+      <td><code>true</code></td>
+    </tr>
+    <tr>
+      <td><code>+</code> / <code>*</code> / <code>-</code></td>
+      <td>union / intersection / difference</td>
+      <td><code>int8range(5,15) * int8range(10,20)</code></td>
+      <td><code>[10,15)</code></td>
+    </tr>
+  </tbody>
+</table>
+<div class="example-box">
+  <p><strong>Worked trace.</strong> Take \(R = \text{numrange}(1.1, 2.2)\) with the default close-open bounds. Then \(lower(R) = 1.1\) and \(upper(R) = 2.2\); combined with \(lower\_inc(R) = true\) and \(upper\_inc(R) = false\), those two scalars rebuild the display \([1.1, 2.2)\) exactly. Compare \(S = \text{numrange}(2.2, 3.3)\): <code>R &lt;&lt; S</code> is <code>false</code> because R ends where S begins, while <code>R -|- S</code> is <code>true</code> because the shared edge leaves neither a gap nor an overlap. Union works when spans touch or overlap — <code>numrange(5,15) + numrange(10,20)</code> returns <code>[5,20)</code> — but fails on two disjoint spans, since a single range cannot hold two separated pieces; that limitation is why multiranges exist for split spans.</p>
+</div>
 <div class="warning-box">
   <p><strong>Scope:</strong> Range types with bound flags are a PostgreSQL specialty. MySQL has no range type — use <code>BETWEEN</code> or two columns. Snowflake has no range type either — its <code>:daterange</code> is only a Snowsight dashboard filter, not a stored value. Databricks and Spark SQL express the same span with two timestamp columns plus a <code>BETWEEN</code> check.</p>
 </div>
@@ -593,6 +647,11 @@
   <p><strong>Recap:</strong> A range stores \(l\) and \(u\) plus one open-or-closed choice per side; close-open is the default. Bounds feed the contains checks in 20.4 and 20.5.</p>
 </div>
 <p>Hotel booking systems store each stay as a date range so checkout day stays free for the next guest. Subscription billing stores each plan as a timestamp range plus an interval for the same reason. Both belong to validity modeling, where spans rather than single dates carry the business fact.</p>
+<div class="important-note">
+  <p><strong>System detail — enforce non-overlap with an exclusion constraint.</strong> A <code>CHECK</code> sees only the row being written, so it cannot stop two different rows from claiming overlapping spans. PostgreSQL closes that gap with a GiST-backed exclusion rule: <code>CREATE TABLE rates (currency text, validity daterange, rate numeric, EXCLUDE USING gist (currency WITH =, validity WITH &amp;&amp;));</code>. Read the clause as "reject any row whose currency compares equal to an existing currency <em>and</em> whose validity overlaps that row's validity" — the <code>&amp;&amp;</code> test is the same overlap operator from 20.5, now promoted to an index-backed integrity rule. The rule passes as soon as any one operator slot returns false or <code>NULL</code>, and adding it automatically creates the GiST index that enforces it.</p>
+  <p><strong>Worked rejection.</strong> Insert <code>('Euro', daterange('2017-05-02', '2017-05-03', '[)'), 1.2546)</code>, then attempt a second Euro row covering <code>daterange('2017-05-02', '2017-05-04', '[)')</code>. The second insert fails: the currency clause compares equal and the two close-open spans share days, so the overlap slot is true as well. A row for a different currency, or a gap-only span, passes because one slot then returns false. The <code>'[)'</code> flag does real work here — back-to-back spans such as <code>[2017-05-02, 2017-05-03)</code> and <code>[2017-05-03, 2017-05-04)</code> touch without overlapping, so consecutive validity periods coexist.</p>
+  <p><strong>Scope:</strong> GiST does not index ordinary scalar columns by default, so the <code>btree_gist</code> extension must be installed once before the <code>=</code> clause on <code>currency</code> is usable. The whole mechanism is PostgreSQL-specific: MySQL, Snowflake, and Databricks have no stored range type and no GiST exclusion constraints, so the same non-overlap rule must live in application logic or a generated date-interval check.</p>
+</div>
 <h3 id="20.2.2-worked-examples">20.2.2 Worked examples</h3>
 <div class="example-box">
   <p><strong>Worked examples.</strong> Example 1: default integer range. Run <code>SELECT int4range(1, 6);</code> with no bound flags. No third argument means the default close-open display applies. The system renders <strong>\([1, 6)\)</strong>, closed below and open above, because close-open is the default behavior. Sense-check: 1 belongs, 6 does not, integers 1 through 5 are inside.</p>
@@ -631,6 +690,12 @@ flowchart LR
   <p><strong>Recap:</strong> <code>ARRAY[...]</code> builds the array; inference guesses the type; casts override it. Constructor-built arrays feed every operator and function from 20.4 through 20.11.</p>
 </div>
 <p>Order-entry systems build <code>ARRAY</code> literals for line-item batches before inserting them. Analytics loaders build date arrays from <code>current_date</code> arithmetic for rolling windows. Both sit inside data staging, where quick literal arrays carry test and batch values into tables.</p>
+<div class="key-concept">
+  <p><strong>Formalize: aggregation as an array constructor.</strong> The <code>ARRAY[...]</code> literal packs values written in the statement; <code>array_agg</code> packs values drawn from <em>rows</em>. For an input set \(S = \{v_1, \dots, v_k\}\), \(\text{array\_agg}(S) = [v_1, \dots, v_k]\), where slot order follows the input order unless an <code>ORDER BY</code> is placed inside the call, as in <code>array_agg(x ORDER BY x)</code>. The aggregate keeps <code>NULL</code> values as real slots, and over an empty input it returns <code>NULL</code> rather than an empty array — use <code>coalesce(array_agg(x), '{}'::int[])</code> when a caller requires an array in every case. Feeding it arrays instead of scalars concatenates them into one array of higher dimension, the aggregate twin of the array-array join in 20.6.</p>
+</div>
+<div class="example-box">
+  <p><strong>Worked build.</strong> From teacher rows, <code>SELECT name, array_agg(phone ORDER BY phone) FROM teachers GROUP BY name;</code> returns one typed <code>text[]</code> per name with that teacher's phones sorted inside the slots. Adding DISTINCT inside the call, <code>array_agg(DISTINCT phone ORDER BY phone)</code>, drops repeated numbers before packing — the same dedup goal as 20.17, applied before the array is stored rather than after it is unpacked. Snowflake exposes <code>array_agg()</code> for this shape as well; Databricks uses <code>collect_list</code> and MySQL uses <code>JSON_ARRAYAGG</code>, since those engines have no native array type.</p>
+</div>
 <h3 id="20.3.2-worked-examples">20.3.2 Worked examples</h3>
 <div class="example-box">
   <p><strong>Worked examples.</strong> Example 1: plain integers. Run <code>SELECT ARRAY[1, 2, 3, 4];</code> with no type tag. The system reads 1, 2, 3, 4 as integers and returns an <strong>integer array</strong>. Sense-check: four whole numbers with no decimals infer to integer.</p>

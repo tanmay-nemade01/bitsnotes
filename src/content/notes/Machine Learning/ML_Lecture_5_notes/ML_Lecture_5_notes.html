@@ -388,6 +388,57 @@
 <p><strong>Recap.</strong> Gradient descent iteratively updates parameters by stepping downhill on the cost surface. Each step uses the average gradient across ALL training examples (batch). The learning rate controls step size. Simultaneous update is mandatory. After enough iterations, the parameters converge to values that minimize prediction error. <strong>Bridge:</strong> The example above uses ALL three patients per update. That makes it <em>batch</em> gradient descent. Section 5.3 shows two faster (but noisier) alternatives.</p>
 </div>
 <p><strong>Real-World & Domain Connection.</strong> Gradient descent powers virtually every modern ML training loop. From linear regression to deep neural networks with billions of parameters. The coronary heart disease example is deliberately small (3 patients) to make the arithmetic traceable by hand, which is exactly what exam problems will ask for. In practice, libraries like scikit-learn's <code>SGDRegressor</code> and deep learning frameworks (PyTorch, TensorFlow) implement highly optimized variants. The core idea — take a step downhill — remains the same whether you have 3 data points or 300 million. The math from this section appears verbatim in the standard optimization reference (Tan et al., AppE), which defines gradient descent as \(x := x - \lambda \nabla f(x)\) — identical to our update rule with \(\lambda\) (their notation for learning rate) playing the role of \(\alpha\).</p>
+
+<div class="key-concept">
+<p><strong>Beyond First Order — Newton's Method and the Hessian.</strong> Gradient descent uses only the slope \(\nabla J\); a second-order alternative also uses the curvature \(H = \nabla^2 J\) (the <em>Hessian</em>) to choose both direction and step size. Approximating \(J(\theta)\) by a second-order Taylor expansion around the current point and setting its derivative to zero gives:</p>
+<p>\[ J(\theta) \approx J(\theta_t) + \nabla J(\theta_t)^\top (\theta - \theta_t) + \tfrac{1}{2}(\theta - \theta_t)^\top H (\theta - \theta_t) \]</p>
+<p>\[ \theta_{t+1} = \theta_t - H^{-1}\nabla J(\theta_t) \]</p>
+<p>In practice one never forms \(H^{-1}\). Solve the linear system \(H z = -\nabla J(\theta_t)\) for \(z\), then set \(\theta_{t+1} = \theta_t + z\). There is no learning rate: the curvature matrix scales each coordinate automatically, so poorly scaled contours no longer force the zigzag described in the pitfalls above.</p>
+<p><strong>Why this is not a new topic — it is the same cost.</strong> For the MSE cost of this section, \(\nabla J(\theta) = \frac{1}{N}X^\top(X\theta - y)\) and \(H = \frac{1}{N}X^\top X\). Substituting into the Newton update gives:</p>
+<p>\[ \theta_1 = (X^\top X)^{-1}X^\top y \]</p>
+<p>which is exactly the closed-form normal-equation solution mentioned in the "Purpose" block. Newton's method reaches it in <strong>one iteration</strong>, because a quadratic cost is its own Taylor approximation. Gradient descent instead approaches it gradually — that is why we needed \(T\) iterations.</p>
+<p><strong>Trade-offs at a glance:</strong></p>
+<table>
+  <thead><tr>
+    <th>Property</th>
+    <th>Gradient Descent</th>
+    <th>Newton's Method</th>
+  </tr></thead>
+  <tbody>
+    <tr>
+      <td>Information used</td>
+      <td>First derivative \(\nabla J\) only</td>
+      <td>Gradient and Hessian \(\nabla^2 J\)</td>
+    </tr>
+    <tr>
+      <td>Update rule</td>
+      <td>\(\theta - \alpha\nabla J\)</td>
+      <td>\(\theta - H^{-1}\nabla J\)</td>
+    </tr>
+    <tr>
+      <td>Step size</td>
+      <td>Manual \(\alpha\), needs tuning</td>
+      <td>None — curvature-scaled</td>
+    </tr>
+    <tr>
+      <td>Convergence near optimum</td>
+      <td>Linear</td>
+      <td>Quadratic</td>
+    </tr>
+    <tr>
+      <td>Cost / memory per step</td>
+      <td>\(O(Nd)\), stores a gradient</td>
+      <td>\(O(Nd^2 + d^3)\), stores \(H \in \mathbb{R}^{d\times d}\)</td>
+    </tr>
+    <tr>
+      <td>When it fails</td>
+      <td>Too-large \(\alpha\) diverges</td>
+      <td>Singular or indefinite \(H\); unreliable far from the minimum</td>
+    </tr>
+  </tbody>
+</table>
+<p><strong>Pitfall:</strong> The \(O(d^2)\) Hessian memory makes exact Newton impractical when \(d\) is in the thousands — the very setting where gradient descent shines. Second-order ideas survive in cheaper approximations: quasi-Newton methods such as L-BFGS and Hessian-based logistic-regression solvers (e.g. <code>solver='newton-cholesky'</code>) use the same curvature principle without paying the full \(d \times d\) cost in every setting.</p>
+</div>
 <hr>
 <h3 class="subsection-title">5.2.2 Symbol Registry</h3>
 <table>
@@ -1792,6 +1843,19 @@ predictions = sgd_reg.predict(X_scaled)
 <p>Taking the negative log (and dividing by \(m\) for scaling) gives the log loss:</p>
 <p>\[ J(\theta) = -\frac{1}{m} \log L(\theta) = -\frac{1}{m} \sum_{i=1}^{m} \left[ y^{(i)} \log(h_\theta(x^{(i)})) + (1 - y^{(i)}) \log(1 - h_\theta(x^{(i)})) \right] \]</p>
 <p>The log-likelihood for logistic regression is <strong>concave</strong> in \(\theta\) (proved by showing the Hessian is negative semidefinite). Therefore, the negative log-likelihood (log loss) is <strong>convex</strong>. A bowl shape with a single global minimum. Gradient descent is guaranteed to find it.</p>
+</div>
+
+<div class="key-concept">
+<p><strong>In-Place Derivation — the Hessian Behind the Convexity Claim.</strong> The block above states that the cost is convex; here is the computation proving it. Write \(h_i = \sigma(\theta^\top x^{(i)})\), let \(X \in \mathbb{R}^{m \times (d+1)}\) be the design matrix, and let \(h, y \in \mathbb{R}^m\) collect all predictions and labels.</p>
+<p><strong>Step 1 — gradient.</strong> Using \(\sigma'(z) = \sigma(z)\big(1-\sigma(z)\big)\), the derivative of one example's log loss is:</p>
+<p>\[ \frac{\partial}{\partial \theta}\left[-y_i\log h_i - (1-y_i)\log(1-h_i)\right] = -\frac{y_i}{h_i}h_i(1-h_i)x^{(i)} + \frac{1-y_i}{1-h_i}h_i(1-h_i)x^{(i)} = (h_i - y_i)x^{(i)} \]</p>
+<p>\[ \nabla_\theta J(\theta) = \frac{1}{m}\sum_{i=1}^{m}(h_i - y_i)x^{(i)} = \frac{1}{m}X^\top(h - y) \]</p>
+<p><strong>Step 2 — Hessian.</strong> Differentiating once more, with \(\partial h_i / \partial \theta = h_i(1-h_i)x^{(i)}\):</p>
+<p>\[ H = \nabla^2_\theta J(\theta) = \frac{1}{m}\sum_{i=1}^{m} h_i(1-h_i)\, x^{(i)}(x^{(i)})^\top = \frac{1}{m}X^\top R X, \qquad R = \operatorname{diag}\!\left(h_1(1-h_1), \ldots, h_m(1-h_m)\right) \]</p>
+<p><strong>Step 3 — positive semidefiniteness.</strong> For any vector \(v \in \mathbb{R}^{d+1}\):</p>
+<p>\[ v^\top H v = \frac{1}{m}\sum_{i=1}^{m} h_i(1-h_i)\left(v^\top x^{(i)}\right)^2 \geq 0 \]</p>
+<p>The sigmoid guarantees \(0 < h_i < 1\), so every weight \(h_i(1-h_i)\) is strictly positive and every \(\left(v^\top x^{(i)}\right)^2\) is non-negative. Hence \(H \succeq 0\) <em>at every point</em> \(\theta\), not just at the optimum — which is precisely the definition of a convex function. If \(X\) has full column rank the inequality is strict for \(v \neq 0\), so \(H \succ 0\) and the minimiser is unique. This is the bowl that the "guaranteed global minimum" claim rests on.</p>
+<p><strong>Reading the curvature weights.</strong> The factor \(h_i(1-h_i)\) is largest at \(h_i = 0.5\) (uncertain examples) and tends to zero as \(h_i \to 0\) or \(h_i \to 1\) (confident examples). Training therefore concentrates curvature on the points near the decision boundary. This same diagonal weighting matrix \(R\) is what makes Newton's method for logistic regression an <em>iteratively reweighted least squares</em> procedure.</p>
 </div>
 <div class="important-note">
 <p><strong>Q:</strong> Should we use log base 10 or natural log?</p>

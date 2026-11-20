@@ -798,6 +798,42 @@
 <h3 id="3.8.2-locality-of-reference-move-the-task-to-the-data">3.8.2 Locality of Reference: Move the Task to the Data</h3>
 <p>The important design rule when dividing a problem in a distributed system: <em>divide the problem in a way that the computation task can run on the local data</em>. This is the concept of <em>locality of reference</em> (LOR) from earlier: we try to move the task to the data, because moving the data around is a quite costly thing. Each node's memory is its own, exchanges go through message passing, so the computation should be scheduled where its data already lives.</p>
 <p>Think of a library. To answer a question, you do not haul every book into a central reading room and then search them — you walk to the shelf where the relevant book lives and read it there. Moving the book is expensive and risks damage; walking (moving the reader) is cheap. In a cluster, the "books" are data chunks on disks, and the "readers" are computation tasks: schedule the task on the node that already holds the chunk, and the network stays quiet. This is why Hadoop later assigns a map task to the very node that stores its input split — the data never moves; only the code moves.</p>
+
+<div class="important-note">
+  <p><strong>System Detail — "move the task to the data" has three tiers, not one.</strong> The ideal just described is <em>node-local</em> execution: the map task runs on a node that already holds a replica of its input block, so no data crosses the network. That ideal is a preference, not a guarantee. When every node holding a replica is busy, the scheduler relaxes the constraint in two steps rather than shipping the split to an arbitrary node:</p>
+  <table>
+    <thead>
+      <tr>
+        <th>Tier</th>
+        <th>Where the task runs</th>
+        <th>Network cost</th>
+        <th>When it is chosen</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>Data-local (node-local)</td>
+        <td>A node holding a replica of the input split's block</td>
+        <td>None — the split is read from the local disk</td>
+        <td>First choice, when a replica node has a free map slot</td>
+      </tr>
+      <tr>
+        <td>Rack-local</td>
+        <td>A node in the same rack as one of the block's replicas</td>
+        <td>Intra-rack transfer (a switch hop)</td>
+        <td>Replica nodes all busy; wait briefly, then relax to the rack</td>
+      </tr>
+      <tr>
+        <td>Off-rack</td>
+        <td>A node in a different rack</td>
+        <td>Inter-rack transfer — the most expensive tier</td>
+        <td>Last resort, when neither of the above is available</td>
+      </tr>
+    </tbody>
+  </table>
+  <p><strong>Why the split size equals the block size.</strong> A split that fits inside one HDFS block can be guaranteed to live wholly on a single node, so a data-local map reads no network bytes. A split spanning two blocks would rarely find both blocks on one node, forcing part of it across the network — which is why the default input split is one block (128 MB in current HDFS). Finer splits improve load balancing, but below one block the locality guarantee and the per-task setup overhead outweigh the benefit.</p>
+  <p><strong>Reduce tasks are the exception.</strong> A reducer's input is the output of <em>every</em> mapper, so no single node holds it; the sorted map outputs must be fetched across the network and merged at the reducer. Locality is therefore optimized only for the map side — the one planned network pass is the shuffle of Section 3.10.2.</p>
+</div>
 <h3 id="3.8.3-the-conquer-step-combining-results">3.8.3 The Conquer Step: Combining Results</h3>
 <p>The <em>conquer</em> step states that we have to combine the results from the different processes or nodes. In some cases the combining may be as simple as just collecting the results and giving them to the end user — as in the search examples, where merging means collecting the results at low cost. In other cases it may involve logic. Keeping the combination simple makes the processing more and more efficient.</p>
 <p>In the quick sort example, if you ultimately append the output of all your processes, you get your sorted list — the combine step is nearly free. But sometimes the merge is <em>sequential</em>, and that hurts. K-means clustering is the example the discussion sets up for this: the <em>reduce</em> step in k-means is not as simple as in quick sort or the parallel linear search — it is not straightforward, and if the combine is going to be sequential, it hampers the performance of the distributed system.</p>
@@ -840,6 +876,12 @@
   </ul>
   <p>A mapper's output is \((k, v)\) pairs; a reducer's output is \((k, \text{result})\) pairs — the same shape, different content. That uniformity is what lets the framework chain them.</p>
 </div>
+
+<div class="important-note">
+  <p><strong>Hadoop detail — the combiner (local reducer).</strong> Between map and shuffle, Hadoop offers an optional <em>combiner</em>: a function, often the reducer class itself, that the framework runs on one mapper's output <em>before</em> that output is shipped across the network. Its result is not the final answer — it becomes the input to the real reducer. Because it is only an optimization, Hadoop gives no guarantee of how many times it is called for a given record (zero, once, or many); the final answer must be identical either way.</p>
+  <p><strong>Worked example — when a combiner is legal.</strong> Two map tasks process readings \((0, 20, 10)\) and \((25, 15)\). A <code>max</code> combiner is safe: \(\max(0, 20, 10, 25, 15) = \max(\max(0, 20, 10), \max(25, 15)) = \max(20, 25) = 25\), the same answer the reducer reaches on the full list. A <code>mean</code> combiner is <em>not</em>: \(\mathrm{mean}(0, 20, 10, 25, 15) = 14\), but \(\mathrm{mean}(\mathrm{mean}(0, 20, 10), \mathrm{mean}(25, 15)) = \mathrm{mean}(10, 20) = 15\). Only <em>commutative and associative</em> (distributive) aggregations — sum, count, max, min — are legal as combiners; an average must be expressed as a sum paired with a count instead.</p>
+  <p><strong>Why it matters here:</strong> the combiner shrinks the intermediate data before the shuffle, cutting exactly the network traffic that the slowest-node bottleneck of Section 3.4.3 and the shuffle pass of Section 3.10.2 are built around. It is a map-side application of the "combine cheaply, combine early" rule that runs through this lecture.</p>
+</div>
 <h3 id="3.9.3-worked-example-one-sentence-word-by-word">3.9.3 Worked Example: One Sentence, Word by Word</h3>
 <div class="example-box">
   <p><strong>Worked example — a tokenized sentence, word by word.</strong> The example sentence is a sequence of single tokens — the tokens themselves are the data:</p>
@@ -872,6 +914,14 @@
     <li><strong>What <em>is</em> possible:</strong> use fewer than seven reducers, and let one reducer handle the values of more than one key — one reducer counts two keys' lists, another reducer counts another two, and so on. One reducer counting more than one key list is fine; splitting one unique key across reducers is not.</li>
   </ul>
   <p><em>Sense-check:</em> "hadoop" appears in tokens 3, 5, and 8 — three occurrences, all 1s. Whether they land in the same reducer directly or after a combine, the sum must come out 3, and it can only come out 3 if all three values for "hadoop" meet in one place. Split "hadoop" across two reducers and you get \(1+1\) and \(1\) — two partial counts with no reducer knowing the total. The one-key-one-reducer rule is what makes the count correct.</p>
+</div>
+
+<div class="key-concept">
+  <p><strong>The mechanism behind the one-key-one-reducer rule.</strong> The rule above is not left to chance — the framework enforces it with a <em>partitioner</em> step that runs on each map output before the shuffle. There is exactly one partition per reduce task, and every intermediate key is routed to one partition, hence to one reducer. The default is <code>HashPartitioner</code>, which derives the partition from a hash of the key:</p>
+  <p>\[ \text{partition}(k) = \operatorname{hash}(k) \bmod R \]</p>
+  <p>where \(R\) is the number of reduce tasks for the job. Because the hash is a deterministic function of the key alone, every emission of the same key — from every mapper — yields the same integer in \([0, R-1]\) and lands in the same reducer's partition. That is precisely why "hadoop"'s three 1s meet in one place: identical key, identical hash, identical partition, so grouping at the reducer sees the complete value list.</p>
+  <p><strong>What the programmer controls.</strong> The partitioner is a plug-in point: a custom partitioner can be supplied when hashing the raw key is wrong for the application. The number of reducers \(R\) is set independently of the input size — the input size governs the number of <em>maps</em> (one per input split), while \(R\) governs the number of output partitions. Setting \(R = 0\) is legal: with no reduction required, map outputs go straight to the file system and the shuffle is skipped entirely.</p>
+  <p><strong>Pitfall — hash skew.</strong> Modular hashing balances partitions only when keys are roughly uniform. If a few hot keys dominate the data, their single partition overloads one reducer while others sit idle — the same slowest-worker bottleneck of Section 3.4.3, now at the reducer stage. A custom partitioner is the escape hatch; the correctness rule never changes, because all copies of a key must still be reunited before the final count.</p>
 </div>
 <h3 id="3.9.5-a-third-view-key-value-pairs-and-group-by">3.9.5 A Third View: Key-Value Pairs and GROUP BY</h3>
 <p>There is a third way to look at the MapReduce steps, adapted from Jeff Ullman's course slides — a good reference to look at. The input to map is a set of key-value pairs: say a document ID as the key and the document content as the value. Four documents: doc 1 = "welcome to hadoop", doc 2 = "class hadoop", doc 3 = "is good", doc 4 = "hadoop is".</p>

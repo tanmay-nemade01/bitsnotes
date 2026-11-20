@@ -334,6 +334,50 @@
   <p>The same record ages through three homes: active first, then repository, then archive.</p>
 </div>
 <p>Why three tiers instead of one giant store? Each tier answers a different need. The active database must serve fast, frequent reads and writes for doctors and nurses, so it lives on fast storage. Old records, by contrast, are rarely touched; they can sit on cheap, slow storage because the cost of keeping every record on the fastest tier would be enormous. And the archive is not just about cost — it is about <em>law</em>: medical records, financial records, and government records all have retention periods set by regulation, so the archive exists to satisfy compliance.</p>
+
+<div class="key-concept">
+  <p><strong>Formal framing: data temperature and the storage lifecycle.</strong> The textbook vocabulary for the hospital's three homes is <em>hot</em>, <em>warm</em>, and <em>cold</em> data — buckets defined by how often data is accessed, not by what it contains. Newer data is queried more often, so it starts hot and cools as it ages. Two questions govern the choice: "how important is this data to downstream users, and how often do they need it?" (the <em>storage lifecycle</em>) and "how long should we keep it?" (<em>data retention</em>). The active database, repository, and archive of the hospital model are exactly hot, warm, and cold storage in this sense.</p>
+  <table>
+    <thead>
+      <tr>
+        <th>Temperature</th>
+        <th>Typical access</th>
+        <th>Underlying medium</th>
+        <th>Storage cost</th>
+        <th>Retrieval cost / latency</th>
+        <th>Cloud class example</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>Hot (active)</td>
+        <td>Instant, frequent (many times per month)</td>
+        <td>Memory, SSD</td>
+        <td>Highest</td>
+        <td>Low; milliseconds</td>
+        <td>S3 Standard; Cloud Storage Standard</td>
+      </tr>
+      <tr>
+        <td>Warm (repository)</td>
+        <td>Semi-regular (about once a month)</td>
+        <td>Object storage, infrequent-access tier</td>
+        <td>Lower</td>
+        <td>Per-GB retrieval fee; milliseconds</td>
+        <td>S3 Standard-IA; Cloud Storage Nearline</td>
+      </tr>
+      <tr>
+        <td>Cold (archive)</td>
+        <td>Rare, regulatory (at most once a year)</td>
+        <td>HDD, tape, archival object storage</td>
+        <td>Lowest</td>
+        <td>Highest; minutes-to-hours restore</td>
+        <td>S3 Glacier Deep Archive; Cloud Storage Archive</td>
+      </tr>
+    </tbody>
+  </table>
+  <p><strong>The cost inversion.</strong> Storage price falls from hot to cold, but retrieval price rises — the archive is cheap to keep and expensive to read, so a cost calculation must include both terms. For \(T\) terabytes stored for a year with \(r\) full retrievals, total cost is \(C = T \cdot c_{\text{store}} + r \cdot T \cdot c_{\text{retrieve}}\), where \(c_{\text{store}}\) is cost per TB-year and \(c_{\text{retrieve}}\) cost per TB read. With illustrative round numbers (not a vendor quote) — warm at 23 units per TB-year and 10 units per TB retrieved, cold at 5 units per TB-year and 20 units per TB retrieved — one warm TB read 12 times in a year costs \(23 + 12 \times 10 = 143\) units, while the same TB in cold storage costs \(5 + 12 \times 20 = 245\) units. Cold wins only when reads are rare: at \(r = 0\), cold's 5 units undercut warm's 23.</p>
+  <p><strong>Mechanics — lifecycle policies and spillover.</strong> Tiering is configuration, not manual copying: a <em>lifecycle policy</em> is a set of rules that transitions objects between classes on a schedule (for example, Standard → Standard-IA after 30 days → archival after a year), and automatic-classification features move objects when access patterns change. The archive's legally required retention period is enforced by the same policy that sets the tier, so a record cannot be deleted early — the "set by regulation" rule from the hospital model becomes an executable configuration. Note the spillover direction: hot data in memory is finite and spills to disk or object storage as new data arrives, so cooling is a continuous process, not a one-time move.</p>
+</div>
 <div class="example-box">
   <p><strong>Worked example: one patient record, three homes.</strong> A patient named A is admitted to a hospital on 3 January.</p>
   <ol>
@@ -751,6 +795,16 @@
   <p><strong>Pitfall: expecting small input changes to stay small.</strong> A customer ID that changes format, an age column that starts arriving as text, a date format that flips — each one is "small" until it reaches a stage that cannot parse it. The hours of rework do not come from the change itself; they come from hunting the change through every stage. And the contamination is worse than rework, as the professor's image makes vivid: if some poison flows into a spot in the water, it can affect the entire pipeline; you may have to build a new data pipeline rather than repair it. That is why a data quality check belongs at every stage, every time — not just at the start and the end.</p>
 </div>
 <p>The poison image is the section's most important mental model: a corrupted input at one stage does not stay there. It spreads. The only defenses are checks at every stage and a pipeline designed so a bad spot can be caught and removed before it contaminates the flow.</p>
+
+<div class="example-box">
+  <p><strong>Worked diagnostic: detecting an out-of-order day statistically.</strong> Section 6.5.1 describes a pipeline that expects about 100 transactions a day and then delivers 150 or 180. The phrase "about 100" is the clue: real counts fluctuate, so a single fixed threshold is brittle. A more honest question is not "is today exactly 100?" but "is today's count inside the range that history predicts?"</p>
+  <p>For each past day \(d\), record the daily row count \(c_d\). The <em>z-score</em> of the latest count is the number of standard deviations it sits from the historical mean:</p>
+  \[
+  z = \frac{c_{\text{today}} - \mu_c}{\sigma_c},\qquad \mu_c = \text{mean of daily counts},\quad \sigma_c = \text{standard deviation of daily counts}
+  \]
+  <p>Use the absolute value \(|z|\): a count that is too <em>low</em> is as suspicious as one that is too high, so this is a <em>two-tailed</em> test looking under both sides of the normal curve. For a 90% confidence band the critical value is \(1.645\); if \(|z| \ge 1.645\), flag the day and inspect the pipeline. With history giving \(\mu_c = 100\) and \(\sigma_c = 10\), the lecture's 150-transaction day gives \(z = (150-100)/10 = 5.0\) and the 180 day gives \(8.0\) — both far past the threshold. A routine 110 day gives \(z = 1.0\) and passes, while a suspiciously low 80 gives \(|z| = 2.0\) and also fails.</p>
+  <p><strong>Sense-check:</strong> this converts the vague observation "150 looks wrong" into a reproducible test derived from the pipeline's own history, and it works for any constant interval — hourly, daily, or weekly. The historical window still needs judgment: if the data had a systematic shift a year ago, that older history should be excluded or the baseline itself is wrong. Catching the anomaly here, before transformation and load, is exactly the "check at every stage" defense the poison analogy calls for.</p>
+</div>
 <h3 id="6.5.2-unplanned-changes-and-hidden-breakage">6.5.2 Unplanned Changes and Hidden Breakage</h3>
 <p>Three more failure patterns were read and explained, and each one names a real operational cost:</p>
 <div class="key-concept">

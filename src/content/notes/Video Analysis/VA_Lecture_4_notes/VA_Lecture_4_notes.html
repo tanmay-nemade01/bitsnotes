@@ -340,6 +340,14 @@
   </ul>
 </div>
 <p>Because the noise term \(N(x, y)\) is strictly <em>additive</em>, its statistical distribution remains completely independent of the underlying scene luminance \(I(x, y)\). A deep shadow pixel and a bright specular highlight pixel experience identical expected variance in noise displacement. The visual consequence is a uniform, high-frequency spatial grain spread evenly across the entire image canvas.</p>
+
+<div class="important-note">
+  <p><strong>Sensor Detail — The Full Noise Taxonomy:</strong> The additive, signal-independent Gaussian model is only one corner of a broader classification. Textbook noise models vary along three independent axes: additive versus multiplicative, white versus colored, and signal-dependent versus signal-independent. A source is <em>white</em> when its samples are mutually uncorrelated (i.i.d. is a stronger condition); CCD read and quantization noise are conventionally modeled as white, Gaussian, and signal-independent, whereas photon noise and film grain are <em>signal-dependent</em>.</p>
+  <p><strong>Physical Sources:</strong> At the sensor, the observed pixel accumulates fixed-pattern noise, dark-current noise, shot noise, amplifier (read) noise, and quantization noise. At low light, when only a handful of photons are collected, a Poisson model is more appropriate than a Gaussian one: a pixel collecting \(N\) photoelectrons has count variance \(N\), so the shot-noise standard deviation grows as \(\sqrt{N}\) and the signal-to-noise ratio is \(\text{SNR} = N/\sqrt{N} = \sqrt{N}\).</p>
+  \[ \operatorname{Var}(N_{\text{shot}}) = N, \qquad \sigma_{\text{shot}} = \sqrt{N}, \qquad \text{SNR}_{\text{shot}} = \sqrt{N} \]
+  <p>Unlike additive Gaussian grain, whose absolute variance is constant across the frame, photon shot noise grows with brightness in absolute terms while its <em>relative</em> fluctuation shrinks as \(1/\sqrt{N}\). A dim pixel with \(N = 25\) electrons has \(\sigma = 5\) and \(\text{SNR} = 5\) (\(\approx 14\text{ dB}\)); a bright pixel with \(N = 2500\) has \(\sigma = 50\) yet still \(\text{SNR} = 50\) (\(\approx 34\text{ dB}\)). This is why low-light frames look grainier: read noise dominates until a longer exposure lifts the photon count into the <em>photon-noise-limited</em> regime.</p>
+  <p><strong>Practical Consequence:</strong> Noise variance is estimated from a flat, untextured image patch (ideal variance zero there), and grain becomes visible around \(\text{SNR} \approx 30\text{ dB}\). Because shot-noise variance tracks signal intensity, one global Gaussian \(\sigma\) cannot describe the whole frame — a variance-stabilizing transform or a per-intensity noise-level function is needed before linear filtering.</p>
+</div>
 <h3 id="4.2.2-salt-and-pepper-noise" class="subsection-title">4.2.2 Salt-and-pepper noise</h3>
 <p><em>Salt-and-pepper noise</em> (also classified as bipolar impulse noise or data drop-out noise) manifests as isolated, extreme pixel outliers scattered sparsely across the frame. Pixels affected by this noise model take on either the minimum or maximum allowable values in the dynamic range—appearing visually as black pepper grains or white salt specks.</p>
 <p>Unlike Gaussian noise, which originates from physical analog sensor thermodynamics, salt-and-pepper noise typically originates during analog-to-digital conversion (ADC bit errors), memory buffer hardware corruption, or packet transmission drops across lossy networks.</p>
@@ -646,6 +654,47 @@
   <p><strong>4-to-1 Multiplexed Row Grouping Formulation:</strong> Under a 4-to-1 interlacing partition, the complete vertical raster is decomposed into four modular row groups A through D: \[ \begin{aligned} \text{Group A} &= \{1, 5, 9, 13, \dots\} = \{r \in \mathbb{N} \mid r \equiv 1 \pmod 4\} \\ \text{Group B} &= \{2, 6, 10, 14, \dots\} = \{r \in \mathbb{N} \mid r \equiv 2 \pmod 4\} \\ \text{Group C} &= \{3, 7, 11, 15, \dots\} = \{r \in \mathbb{N} \mid r \equiv 3 \pmod 4\} \\ \text{Group D} &= \{4, 8, 12, 16, \dots\} = \{r \in \mathbb{N} \mid r \equiv 0 \pmod 4\} \end{aligned} \] where \(r\) designates the 1-based vertical row index from the top of the frame raster.</p>
 </div>
 <p>Each row group is encoded and transmitted across independent channels. At the receiver, all four fields are recombined. If the physical scene is perfectly stationary, the interlaced weave reconstitutes the original progressive frame with full fidelity. However, if a subject moves horizontally during the field exposure interval, odd rows capture the object at position \(x(t_0)\) while even rows capture it at \(x(t_0 + \Delta t)\). Recombining them produces the <em>comb effect</em> (also called mouse teeth or feathering)—a jagged saw-tooth boundary where alternating scan lines mismatch horizontally.</p>
+
+<div class="important-note">
+  <p><strong>System Detail — De-interlacing Method Families:</strong> Recombining fields is not a single operation. Textbook reconstruction is classified by where the missing lines come from, and each family makes a different resolution-versus-motion trade-off:</p>
+  <table>
+    <thead>
+      <tr>
+        <th>Family</th>
+        <th>Missing-line source</th>
+        <th>Strength</th>
+        <th>Failure mode</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>Intra-field ("bob")</td>
+        <td>Within the same field, by line repetition or vertical averaging of adjacent lines.</td>
+        <td>No motion artifacts; no combing.</td>
+        <td>Loses vertical resolution; repetition jagged edges, averaging blurs horizontal edges; static objects can "bob."</td>
+      </tr>
+      <tr>
+        <td>Inter-field ("weave")</td>
+        <td>Copied from the other field of the same frame.</td>
+        <td>Full vertical resolution in stationary regions.</td>
+        <td>Line-crawling / combing on fast motion, because the two fields were sampled at different times.</td>
+      </tr>
+      <tr>
+        <td>Motion-adaptive (hybrid)</td>
+        <td>Switches or blends weave and bob via a motion detector (e.g., a three-point median filter, or a bob-and-weave filter weighted by a motion function \(\alpha, \beta, \gamma\)).</td>
+        <td>Keeps static detail while suppressing combing on moving targets.</td>
+        <td>Breaks under global camera motion or fast objects; switching errors create visible artifacts.</td>
+      </tr>
+      <tr>
+        <td>Motion-compensated (MC)</td>
+        <td>Filtering along estimated motion trajectories using field insertion or temporal recursion.</td>
+        <td>Can recover aliased spatio-temporal detail, free from combing.</td>
+        <td>Sensitive to inaccurate motion vectors, occlusions, and "critical velocities"; judder (line crawling) and error propagation.</td>
+      </tr>
+    </tbody>
+  </table>
+  <p>Stage 1 of the restoration chain draws from these families: a motion-adaptive bob-and-weave switch is the common default, escalating to global- or general-motion compensation when camera shake or fast targets overwhelm a simple adaptive switch.</p>
+</div>
 <h3 id="4.6.2-aliasing-and-temporal-noise" class="subsection-title">4.6.2 Aliasing and temporal noise</h3>
 <p>Visual defects in video extend beyond individual spatial frames into the temporal dimension:</p>
 <div class="key-concept">

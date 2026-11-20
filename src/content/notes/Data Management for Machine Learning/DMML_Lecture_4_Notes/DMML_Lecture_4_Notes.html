@@ -457,6 +457,16 @@
 <div class="warning-box">
   <p><strong>Scope — when each schema wins.</strong> The star schema wins when query speed matters more than storage: most dashboards and BI tools are built for star-shaped data. The snowflake schema wins when a dimension is genuinely large and repeated everywhere, and when you want to avoid maintaining the same descriptive data in many places — but every extra table is an extra join in every query. A rule of thumb: start with the star schema, and normalize only the dimensions that actually bloat. And remember the fundamental <em>assumption</em>: both schemas presume you know the questions in advance — they are built for analysis of known business events, not for exploring arbitrary raw data.</p>
 </div>
+
+<div class="key-concept">
+  <p><strong>Dimension detail — slowly changing dimensions (SCD).</strong> A star-schema dimension is not static: a customer moves, a product is recategorized. <em>Dimensional (Kimball) modeling</em> defines how a fact-and-dimension design records such a change instead of silently losing the old value.</p>
+  <ul>
+    <li><strong>Type 1 (overwrite):</strong> update the dimension row in place, replacing the old attribute value — history is lost. Appropriate when the old value carries no analytical meaning (a spelling fix).</li>
+    <li><strong>Type 2 (add a history row):</strong> leave the original row, mark it expired, and insert a new row for the same business key carrying <code>ValidFrom</code> / <code>Expired</code> dates. Each fact then joins to whichever version was current on the transaction date.</li>
+  </ul>
+  <p><strong>Worked illustration.</strong> Customer 100 (Jane) has country <code>USA</code> valid from 2019-05-01, then moves to <code>UK</code> on 2020-06-20. Type 2 keeps two rows — USA with <code>Expired = 2020-06-20</code>, and UK with <code>ValidFrom = 2020-06-20</code> and a far-future expiry for the still-current row. An order on 2020-07-12 joins to the UK row, while an earlier order joins to the USA row — so the warehouse can answer "revenue by country <em>at the time of the order</em>" without rewriting history.</p>
+</div>
+
 <p>A <strong>data mart</strong> is a focused subset of a warehouse. In practice: while building a warehouse at a US financial services firm, 10,000 mutual funds were modeled in one warehouse, but for convenience a data mart was built for just 100 funds. The data model stays identical, every query still works — the mart simply filters the data and loads the subset. Data marts give teams a smaller, faster slice without changing the model.</p>
 <div class="example-box">
   <p><strong>Worked example — one warehouse, many marts.</strong> A warehouse models 10,000 mutual funds in a single star schema (one fund fact table, dimension tables for fund, time, manager). The analytics team cares about only 100 of those funds. Build a data mart by running the same load process with a filter: <code>WHERE fund_id IN (the 100 funds)</code>. The mart is a subset — same table structure, same queries, same joins — but only 1 percent of the rows. Sense-check: a query that scanned 10,000 funds now scans 100; the result is identical for the team's universe, but faster and smaller.</p>
@@ -490,6 +500,45 @@
 <div class="key-concept">
   <p><strong>What the lakehouse adds.</strong> Think of the lake as raw ingredients in a warehouse-sized storeroom; the lakehouse is the inventory system bolted onto it. It keeps the object-storage base of the lake (the raw files still live in cheap object storage) and adds the warehouse's control structures on top: a metadata catalog that knows what every table is, a governance layer that decides who can read and write, and — the big addition — <strong>ACID</strong> properties the way OLTP systems do: <em>atomicity</em> (a write either fully lands or fully does not), <em>consistency</em> (a transaction moves the data from one valid state to another), <em>durability</em> (once committed, the write survives failures), and <em>isolation</em> (concurrent readers and writers do not corrupt each other). In a plain lake, two people writing the same table at the same time can silently overwrite each other; ACID on the lakehouse stops that.</p>
 </div>
+
+<div class="important-note">
+  <p><strong>Storage detail — what "object storage" actually means.</strong> The lakehouse keeps its data in cheap object storage, so it helps to know how that differs from the other two cloud storage families. There are three types of cloud storage — object, file, and block — each ideal for a different workload.</p>
+</div>
+<table>
+  <thead>
+    <tr>
+      <th>Family</th>
+      <th>Organized as</th>
+      <th>Access pattern</th>
+      <th>Scale / latency</th>
+      <th>Typical use here</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td>File storage</td>
+      <td>Hierarchy of directories and folders (SMB, NFS)</td>
+      <td>Shared file access by path</td>
+      <td>Hierarchy and pathing impose scaling limits</td>
+      <td>Home directories, shared content repositories</td>
+    </tr>
+    <tr>
+      <td>Block storage</td>
+      <td>Fixed-size blocks presented as a raw device (SAN, EBS)</td>
+      <td>Random read/write at low latency</td>
+      <td>Ultra-low latency, provisioned per host</td>
+      <td>Databases, VM boot volumes</td>
+    </tr>
+    <tr>
+      <td>Object storage</td>
+      <td>Flat bucket of objects, each with metadata and a unique identifier</td>
+      <td>Retrieve by identifier through APIs</td>
+      <td>Near-infinite scale, higher latency than block</td>
+      <td>Data lakes, lakehouse base, archives, ML data</td>
+    </tr>
+  </tbody>
+</table>
+<p><strong>Why the lakehouse picks object storage:</strong> objects carry their own metadata and live in a flat namespace, so the store scales to billions of objects and petabytes without the pathing limits of a filesystem — the reason object storage is the foundation of data lakes. The lakehouse then supplies the table format, catalog, and ACID transactions on top, so engines can treat a subset of those objects as governed tables.</p>
 <p>Real-world: <strong>Databricks</strong> introduced the data lakehouse as a convergence between data warehouses and data lakes. It incorporates the control, data management, and data structures of a warehouse while still housing data in object storage and supporting a variety of queries and transformations. It also supports <strong>ACID</strong> properties the way OLTP systems do — so concurrent readers and writers do not corrupt each other. The lakehouse's key advantage is interoperability: because the data stays as open files in object storage, many engines (Spark, SQL engines, machine-learning tools) can connect to the same data, instead of being locked into one proprietary warehouse format. Much of the lakehouse's data may still be raw or unstructured — the lakehouse does not force everything into tables; it makes tabular, governed views available <em>where they add value</em>.</p>
 <div class="warning-box">
   <p><strong>Scope — what the lakehouse assumes.</strong> ACID and governance are only as good as the metadata layer: the lakehouse works when every table is registered, versioned, and documented, which is a team habit, not a product feature. It is also a young, fast-moving technology — treat vendor claims about "unlimited scale" with the same scrutiny you would give any new system. And the lakehouse does not remove the need for data quality work; it only makes that work safer to do concurrently.</p>
@@ -788,6 +837,16 @@
   <p><strong>Formalize — blocks, nodes, and the NameNode.</strong> HDFS breaks a large file into <em>blocks</em> — chunks of data of a few hundred megabytes. Each block lives on one disk of one machine (a <em>data node</em>) in the cluster. The <em>block size</em> and the <em>replication factor</em> (default 3) are the two numbers that govern the whole layout: a 1 GB file at a 128 MB block size becomes 8 blocks, and at replication factor 3 the cluster stores 24 block copies. The <strong>name node</strong> is the master node: it keeps track of all the data nodes, and it knows where every piece of data lives — a detailed catalog of which node holds which block. The name node holds the metadata (directories, filenames, block locations); the data nodes hold the actual bytes.</p>
 </div>
 <p>Why replicate at all? Big data systems often run on <em>commodity</em> machines rather than proprietary hardware, and commodity hardware fails — so you cannot depend on one hardware unit; you need redundancy, and that is why you replicate. When a disk or node fails, the replication factor for some blocks falls below 3, and the NameNode detects it and instructs other nodes to make new copies until the factor is back to 3. The failure is repaired by the system itself, not by a human. Because three copies exist on different machines, the probability of losing data stays very low — a <em>correlated</em> failure (say, the whole data center going down) is what actually threatens it.</p>
+
+<div class="key-concept">
+  <p><strong>Formalize — read consistency in a replicated store.</strong> Replication answers "will the bytes survive a disk failure?" A separate question is "which version will a read return while copies are still catching up?" In a distributed store it takes time to propagate a write to every node, so the system must choose a <em>consistency model</em>. This is a different use of the word <em>consistency</em> from the C in ACID (4.3.1): ACID consistency means a transaction moves data from one valid state to another, while read consistency means every replica returns the same, most recent value.</p>
+  <ul>
+    <li><strong>Strong consistency:</strong> a write is propagated with consensus before it is acknowledged, and every subsequent read returns the latest committed value — read-after-write. The cost is higher latency and reduced availability when nodes or links fail.</li>
+    <li><strong>Eventual consistency:</strong> a write is acknowledged locally and copies converge later; a read made in the meantime may return a stale value, but repeated reads eventually return the latest one. The payoff is low latency and horizontal scale — the textbook notes that scaling out across many nodes is often the price paid for eventual consistency.</li>
+    <li><strong>BASE</strong> (<em>basically available, soft state, eventual consistency</em>) names the eventually consistent counterpart of ACID: best-effort availability, a fuzzy in-flight state, and convergence instead of immediate agreement.</li>
+  </ul>
+  <p><strong>Where the choice is made.</strong> The storage engine sets the default, configuration parameters adjust it, and many systems let a single query pick. Amazon DynamoDB, for example, offers both <code>eventually consistent</code> (the default, cheaper) and <code>strongly consistent</code> reads through its <code>ConsistentRead</code> parameter — a strongly consistent read reflects all prior successful writes. An HDFS-style analytics store mostly serves immutable, append-once files, so stale reads during replication are less of a concern there; for a mutable table such as a feature store (4.9.3), the same choice decides whether training and serving see the same feature values.</p>
+</div>
 <h3 id="4.7.2-worked-example-five-blocks-across-a-five-node-cluster">4.7.2 Worked example: five blocks across a five-node cluster</h3>
 <div class="example-box">
   <p><strong>Worked example — five blocks, five nodes, three copies each.</strong> A data set is split into five blocks: block one through block five. It enters what looks like one big data system, but underneath it is a five-node cluster (Hadoop, AWS, or Azure — same idea). The nodes are physically spread out: node A may be in Mumbai, node B in Bengaluru, node C in Chennai, and so on. With the default three-fold replication, every block is copied to exactly three different nodes, and the copies are scattered so that no two copies of a block share one failure zone. For example:</p>

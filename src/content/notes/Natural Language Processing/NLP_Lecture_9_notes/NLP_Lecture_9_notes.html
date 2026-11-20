@@ -504,6 +504,20 @@
 <p>For rules: suppose you have 300 training sentences. If all 300 sentences follow the rule \(S \to NP\;VP\), its probability is \(300/300 = 1\). Another rule, appearing 300 times in the corpus with 116 of those times applicable, gets \(116/300\). The specific rule behind the 116 count is not named in the lecture — the point is the method, and the method is the same counting rule you use on exam problems:</p>
 <p>\[ P(A \to \beta) = \frac{\text{Count}(A \to \beta)}{\text{Count}(A)} \]</p>
 <p>where the numerator counts how often the expansion \(A \to \beta\) appears in the treebank, and the denominator counts how often the left-hand symbol \(A\) is expanded in any way. This is the standard maximum-likelihood estimate from a labeled corpus — count, then normalize.</p>
+<div class="key-concept">
+  <p><strong>Extension — the inside–outside algorithm: counting when the trees are not given.</strong> The formula above assumes every sentence in the corpus already has a gold parse tree, so the rules to count are known. For raw, unannotated text that assumption fails: a sentence has many legal trees, and we do not know which parse to count the rules in. The <em>inside–outside algorithm</em> (Baker, 1979) solves this chicken-and-egg problem by iterating: start with equal (or seed) rule probabilities, parse the sentence, weight each possible parse by its probability, re-count the rules, and repeat until the estimates converge. It is the context-free analogue of forward–backward for HMMs, and a special case of the EM (expectation–maximization) algorithm.</p>
+  <p>For a span \((i,j)\) of the input, define two probabilities:</p>
+  <ul>
+    <li><em>Inside</em> \(\beta_{ij}(A) = P(A \Rightarrow^{*} w_{i+1}\ldots w_j)\) — the probability that nonterminal \(A\) generates exactly the words inside the span.</li>
+    <li><em>Outside</em> \(\alpha_{ij}(A) = P(w_1\ldots w_i\,A\,w_{j+1}\ldots w_n \Rightarrow^{*} S)\) — the probability of deriving the whole sentence from the start symbol with \(A\) covering that span.</li>
+  </ul>
+  <p>The probability that a particular binary rule with its split point \(k\) was used for that span, given the observed sentence \(w\), is</p>
+  <p>\[P(A \to B\,C,\ i,k,j \mid w) = \frac{\alpha_{ij}(A)\,P(A \to B\,C)\,\beta_{ik}(B)\,\beta_{kj}(C)}{P(w)}\]</p>
+  <p><strong>E-step:</strong> sum these quantities over all splits to get an <em>expected count</em> \(c(A \to B\,C)\) for every rule. <strong>M-step:</strong> normalize them exactly as in the treebank formula:</p>
+  <p>\[P^{\prime}(A \to \beta) = \frac{c(A \to \beta)}{\sum_{\gamma} c(A \to \gamma)}\]</p>
+  <p>Note that the recurrence <em>sums</em> over all parses (it uses \(P(S)\), the sentence probability of §9.6.4) rather than taking the max of the Viterbi-style argmax of §9.6.5. Each iteration costs \(O(n^{3}|G|)\) per sentence, so it is far heavier than a single CKY parse; in practice it is used to bootstrap or refine grammars, and grammar induction purely by this method is difficult.</p>
+</div>
+
 <p>Even at phrasal level there can be choices: the phrase "a flower wilted" has three possible interconnections, three possible rules that could apply. Looking at the probability values, you filter out whichever has the argmax probability — that will be the correct parse for this phrase in your domain. Typically this is done at sentence level, but it works at phrasal level too. The probabilities come from the corpus of your domain or application, so whichever parse tree gets more probability in your domain is the more correct one for your domain — that is the intuition behind the probabilistic parse tree.</p>
 <h3 id="9.6.3-mathematical-formulation">9.6.3 Mathematical Formulation</h3>
 <p>Don't get overwhelmed by symbols — as the story goes, a PhD guide once told a nervous student: it is all about symbols; once you know the symbols, you know the language, and these formulations are pretty simple.</p>
@@ -580,8 +594,38 @@
   <li>Single non-terminal on the right-hand side (a unit production): a rule like \(NP \to Nominal\) is a unary rule, not allowed in CNF. Substitute the target's expansion directly — if \(Nominal \to Noun\;PP\), rewrite the rule as \(NP \to Noun\;PP\). If the target itself has several expansions, repeat the substitution for each of them.</li>
   <li>More than two non-terminals: combine them — a rule with three non-terminals \(A \to B\;C\;D\) becomes \(A \to B\;X\) plus \(X \to C\;D\) via a newly added rule, leaving only two non-terminals per right-hand side.</li>
 </ul>
+
+<div class="key-concept">
+  <p><strong>Precondition — a CNF grammar must be ε-free.</strong> The two permitted rule shapes \(A \to B\;C\) and \(A \to a\) cannot express the empty string, so strictly a grammar is in Chomsky normal form only when it has no ε-productions \(A \to \varepsilon\) (some presentations allow the single exception \(S \to \varepsilon\) when the language itself contains the empty string, which CKY handles as a special case). The three conversions above therefore assume an already ε-free grammar; ε-removal is done first.</p>
+  <p>A nonterminal is <em>nullable</em> if it can derive the empty string: \(A \Rightarrow^{*} \varepsilon\). Compute the nullable set by fixed-point iteration — seed it with every \(A\) that has a rule \(A \to \varepsilon\), then add \(A\) whenever some rule \(A \to X_1\ldots X_m\) has every \(X_i\) already nullable. Then:</p>
+  <ol>
+    <li>Delete every \(A \to \varepsilon\) (except the permitted \(S \to \varepsilon\)).</li>
+    <li>For every rule \(A \to \alpha B \beta\) with \(B\) nullable, add \(A \to \alpha \beta\), repeating until no nullable symbol survives on a right-hand side.</li>
+  </ol>
+  <p><strong>Worked derivation:</strong> take \(S \to NP\;VP \mid \varepsilon\), \(NP \to Det\;N \mid \varepsilon\), \(VP \to V\;NP\). The nullable set is \(\{S, NP\}\). Removing \(NP \to \varepsilon\) adds one alternative to the sentence rule, \(S \to VP\); removing \(S \to \varepsilon\) leaves \(S \to NP\;VP \mid VP\), \(NP \to Det\;N\), \(VP \to V\;NP\). The ε-free grammar generates the same nonempty strings, and only now do the terminal, unit-production, and binarization conversions apply.</p>
+  <p><strong>Why CKY needs this:</strong> the chart in §9.7.4 combines exactly two child cells per binary rule; an ε-production would need a rule with no children and no cell to split, so it must be removed before the chart is filled.</p>
+</div>
+
 <h3 id="9.7.3-why-cnf">9.7.3 Why CNF?</h3>
 <p>Converting everything into CNF optimises the algorithm: all the rules in your parsing are of a standard format, which makes processing easier. Computationally, it becomes faster if all rules are in CNF — that is the reason for the conversion: to reduce the time complexity. A probabilistic CKY is then just chart parsing with a probability associated with every rule.</p>
+
+<div class="important-note">
+  <p><strong>Extension — Earley parsing: a top-down chart parser for unrestricted CFGs.</strong> CKY buys its simple two-cell recurrence by requiring CNF. The Earley algorithm (Earley, 1970) keeps the same chart-and-dot machinery but accepts an <em>arbitrary</em> CFG — no CNF conversion, and no difficulty with left-recursive rules. A chart state is a dotted rule plus two indices, written \(A \to \alpha \cdot \beta,\ [i,j]\): the grammar rule, how far the dot has advanced, the input position where the constituent begins, and the position of the dot. A sentence of length \(n\) is accepted exactly when a state \(S \to \gamma \cdot,\ [0,n]\) appears in the final chart set.</p>
+  <p>The parser sweeps left to right through the \(n+1\) chart sets; for each state exactly one operator applies, and a new state is appended only if it is not already present — states are never removed and the parser never backtracks:</p>
+  <table>
+    <thead>
+      <tr><th>Operator</th><th>Trigger</th><th>Action</th><th>Written to</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>PREDICTOR</td><td>dot before a nonterminal \(B\) that is not a part-of-speech tag</td><td>add \(B \to \cdot \gamma\) for every grammar rule \(B \to \gamma\)</td><td>current chart set \(j\)</td></tr>
+      <tr><td>SCANNER</td><td>dot before a part-of-speech category matching word \(w_j\)</td><td>add \(POS \to w_j \cdot\), advancing the dot over the predicted tag</td><td>next chart set \(j+1\)</td></tr>
+      <tr><td>COMPLETER</td><td>dot at the end of \(B \to \gamma \cdot,\ [j,k]\)</td><td>advance every waiting \(A \to \alpha \cdot B \beta,\ [i,j]\) to \(A \to \alpha B \cdot \beta,\ [i,k]\)</td><td>current chart set \(k\)</td></tr>
+    </tbody>
+  </table>
+  <p><strong>Worked trace — "Book that flight" (textbook example).</strong> Seeded with \((S \to \cdot S, [0,0])\), PREDICTOR expands \(S \to \cdot VP\) into the five alternative \(VP\) expansions; SCANNER matches "book" only as a verb, because no predicted state expects a noun at that position — the noun sense never enters the chart, which is the top-down help with part-of-speech ambiguity that CKY lacks. When the object NP completes at \([1,3]\), COMPLETER wakes the waiting states \(VP \to Verb \cdot NP,\ [0,1]\) and advances them to \(VP \to Verb\;NP \cdot,\ [0,3]\). Each subtree is stored once and shared by every parse that needs it.</p>
+  <p><strong>Trade-off:</strong> Earley takes \(O(n^{3})\) time for an arbitrary grammar, \(O(n^{2})\) for an unambiguous grammar, and linear time for a large class of grammars; CKY is simpler and faster when the grammar can be put into CNF. Both are recognizers in their basic form and return all parses of an ambiguous sentence — CKY trades grammar restrictions for a simpler recurrence, Earley trades extra work for freedom from CNF.</p>
+</div>
+
 <h3 id="9.7.4-worked-example-the-flight-includes-a-meal">9.7.4 Worked Example: "the flight includes a meal"</h3>
 <p>This easier walkthrough of bottom-up chart parsing — the same algorithm, now with probability values — follows the textbook explanation in Jurafsky and Martin, and the arcs representation appears in the James Allen book (both openly available; the Jurafsky and Martin latest edition is available online as a PDF).</p>
 <p>Sentence: "the flight includes a meal". Mark the positions — here starting from 0: 0, 1, 2, 3, 4, 5. The chart will fill only the upper triangle (a pyramid, as Jurafsky draws it): all the rules lie in the upper triangle portion and there is nothing in the lower one, because English forms words and sentences from left to right, so all combinations sit on the right-hand side.</p>

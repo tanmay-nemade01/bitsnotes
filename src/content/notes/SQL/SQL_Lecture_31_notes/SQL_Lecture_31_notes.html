@@ -532,6 +532,62 @@
     </tr>
   </tbody>
 </table>
+<div class="key-concept">
+  <p><strong>Formal Foundation: SQL Isolation Levels and the Anomaly Spectrum.</strong> The lost update traced above is one member of a formally defined family of concurrency phenomena. The SQL standard defines four isolation levels, ranked from weakest to strongest, and characterizes each by which of four phenomena it must prohibit:</p>
+  <ul>
+    <li><em>Dirty read:</em> a transaction reads data written by a concurrent, still-uncommitted transaction.</li>
+    <li><em>Non-repeatable read:</em> a transaction re-reads a row it previously read and finds it modified by a transaction that committed in between.</li>
+    <li><em>Phantom read:</em> re-executing a predicate query returns a different set of rows because a concurrent transaction inserted or deleted matching rows.</li>
+    <li><em>Serialization anomaly:</em> the committed outcome of a group of transactions is inconsistent with every possible one-at-a-time (serial) ordering of them.</li>
+  </ul>
+  <table>
+    <thead>
+      <tr>
+        <th>Isolation Level</th>
+        <th>Dirty Read</th>
+        <th>Non-repeatable Read</th>
+        <th>Phantom Read</th>
+        <th>Serialization Anomaly</th>
+        <th>PostgreSQL Implementation</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>Read Uncommitted</td>
+        <td>Allowed by standard</td>
+        <td>Possible</td>
+        <td>Possible</td>
+        <td>Possible</td>
+        <td>Behaves identically to Read Committed; PostgreSQL's MVCC never exposes uncommitted rows.</td>
+      </tr>
+      <tr>
+        <td>Read Committed (default)</td>
+        <td>Not possible</td>
+        <td>Possible</td>
+        <td>Possible</td>
+        <td>Possible</td>
+        <td>A fresh snapshot is taken per statement; an <code>UPDATE</code> re-fetches the current committed row version.</td>
+      </tr>
+      <tr>
+        <td>Repeatable Read</td>
+        <td>Not possible</td>
+        <td>Not possible</td>
+        <td>Allowed by standard</td>
+        <td>Possible</td>
+        <td>One snapshot spans the whole transaction (Snapshot Isolation); PostgreSQL also forbids phantoms. A conflicting row update aborts with <code>ERROR: could not serialize access due to concurrent update</code>.</td>
+      </tr>
+      <tr>
+        <td>Serializable</td>
+        <td>Not possible</td>
+        <td>Not possible</td>
+        <td>Not possible</td>
+        <td>Not possible</td>
+        <td>Serializable Snapshot Isolation (SSI): predicate locks appear as <code>SIReadLock</code> in <code>pg_locks</code>, and a detected read/write dependency cycle aborts one transaction with SQLSTATE <code>40001</code>.</td>
+      </tr>
+    </tbody>
+  </table>
+  <p><strong>Consequence for server-side design:</strong> the atomic <code>UPDATE ... SET col = col + delta</code> in this section stays correct even at the default Read Committed level because the engine re-evaluates the predicate against the updated row version. A serializable outcome additionally requires that the committed interleaving be equivalent to some serial order, \( \text{out}(T_1 \parallel T_2) \equiv \text{out}(T_{\pi(1)}; T_{\pi(2)}) \) for some permutation \( \pi \). Read-only transactions never sustain serialization conflicts, but any workload requiring true serializability must retry on SQLSTATE \( 40001 \) — one more reason a single in-engine statement is both faster and safer than a long client-side read-modify-write loop.</p>
+</div>
 <h3 id="31.2.4-set-based-column-operations-vs-row-iteration">31.2.4 Set-Based Column Operations vs Row Iteration</h3>
 <p>To preserve database performance and transactional integrity, software architects must adhere to two implementation rules:</p>
 <ol>
@@ -986,6 +1042,44 @@ END;
     <li><strong>PL/pgSQL Function (The Robot):</strong> A PL/pgSQL routine is an autonomous procedural worker. It needs an operational staging area (<code>BEGIN ... END;</code>) to declare internal scratch variables, test condition branches (<code>IF / ELSE</code>), loop over cursors, and explicitly return an output signal.</li>
   </ul>
   <p><em>Where the analogy breaks:</em> Even though PL/pgSQL introduces procedural scoping, PostgreSQL optimizes its queries by caching prepared execution plans (via the Server Programming Interface, SPI) after the first execution.</p>
+</div>
+<div class="important-note">
+  <p><strong>Function Attribute — NULL-Input Semantics (<code>STRICT</code>):</strong> Beyond argument modes, the <code>CREATE FUNCTION</code> grammar declares whether a function is invoked when an argument is <code>NULL</code>. Under the default <code>CALLED ON NULL INPUT</code>, the body executes and the author must test for nulls explicitly (as the <code>my_max</code> routine in Section 31.4.4 does with <code>IF a IS NULL</code>). Under <code>RETURNS NULL ON NULL INPUT</code> (equivalently <code>STRICT</code>), the engine short-circuits: the body is <em>not executed at all</em>, and a <code>NULL</code> result is assumed automatically.</p>
+  <p>Applying this to the discount calculation of Section 31.5.3 with \( P_{\text{orig}} = 100.0 \) and \( r_{\text{disc}} = 0.15 \):</p>
+  <table>
+    <thead>
+      <tr>
+        <th>Invocation</th>
+        <th>CALLED ON NULL INPUT (default)</th>
+        <th>RETURNS NULL ON NULL INPUT / STRICT</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><code>compute_discount(100.0, 0.15)</code></td>
+        <td>Body runs \(\to 85.0\)</td>
+        <td>Body runs \(\to 85.0\)</td>
+      </tr>
+      <tr>
+        <td><code>compute_discount(NULL, 0.15)</code></td>
+        <td>Body runs; unguarded arithmetic with a null operand yields <code>NULL</code></td>
+        <td>Body skipped; <code>NULL</code> returned immediately</td>
+      </tr>
+      <tr>
+        <td><code>compute_discount(100.0, NULL)</code></td>
+        <td>Body runs; \( 1.0 - \text{NULL} = \text{NULL} \) propagates a null result</td>
+        <td>Body skipped; <code>NULL</code> returned immediately</td>
+      </tr>
+    </tbody>
+  </table>
+  <pre><code>CREATE OR REPLACE FUNCTION compute_discount_strict(
+    original_price double precision,
+    discount_rate double precision)
+RETURNS double precision
+LANGUAGE sql IMMUTABLE
+RETURNS NULL ON NULL INPUT
+AS $$ SELECT original_price * (1.0 - discount_rate); $$;</code></pre>
+  <p><strong>Sense-check:</strong> <code>STRICT</code> is a declarative replacement for scattered <code>IF arg IS NULL</code> guards, and it lets the planner skip evaluation entirely for null-bearing rows (relevant to the per-row function-cost model of Section 31.4.3). One subtlety: for a <code>STRICT</code> function with a <code>VARIADIC</code> argument, strictness tests whether the whole variadic array is <code>NULL</code>, not whether any individual element is.</p>
 </div>
 <h3 id="31.5.2-return-types-and-result-signatures">31.5.2 Return Types and Result Signatures</h3>
 <p>The <code>RETURNS</code> keyword defines the data type of the result produced by the function. PostgreSQL supports a wide spectrum of signatures:</p>

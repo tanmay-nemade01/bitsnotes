@@ -224,6 +224,39 @@
 <p>A developer can eliminate reliance on implicit conversion rules by specifying an explicit type prefix directly in the query:</p>
 <pre><code>SELECT * FROM movies WHERE movie_id = integer '1';</code></pre>
 <p>In this syntax, the type name <code>integer</code> immediately precedes the string literal <code>'1'</code>, instructing PostgreSQL to treat the literal as an explicit integer constant before running the equality comparison. You can also explicitly convert the column side, such as writing <code>WHERE char movie_id = '1'</code>, though converting columns directly carries serious indexing penalties.</p>
+
+<div class="key-concept">
+  <p><strong>Catalog-Level Cast Contexts — Why <code>pg_cast</code> Is More Than a Yes/No Flag:</strong> Every registered coercion path in PostgreSQL carries a <em>cast context</em> that decides exactly when the engine may apply it without an explicit request. The three contexts form a strict permission hierarchy:</p>
+  <table>
+    <thead>
+      <tr>
+        <th>Cast context</th>
+        <th>When the engine may invoke it</th>
+        <th>Representative path</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><code>explicit</code> (default)</td>
+        <td>Only when the developer writes <code>CAST(x AS type)</code> or <code>x::type</code></td>
+        <td><code>text → integer</code>, <code>double precision → integer</code></td>
+      </tr>
+      <tr>
+        <td><code>assignment</code></td>
+        <td>Explicit requests, plus implicit use when storing a value into a column of the target type</td>
+        <td><code>integer → text</code> on <code>INSERT</code>/<code>UPDATE</code> into a <code>varchar</code> column</td>
+      </tr>
+      <tr>
+        <td><code>implicit</code></td>
+        <td>Any context, including operator and function resolution inside an expression</td>
+        <td><code>smallint → integer</code>, <code>integer → numeric</code></td>
+      </tr>
+    </tbody>
+  </table>
+  <p><strong>Worked resolution trace:</strong> Consider <code>SELECT 2 + 4.0;</code>. The parser initially tags the constants as <code>integer</code> and <code>numeric</code>. No <code>integer + numeric</code> operator exists in the catalogs, but <code>numeric + numeric</code> does. Because the <code>integer → numeric</code> path is marked <em>implicit</em>, the parser rewrites the expression as <code>CAST(2 AS numeric) + 4.0</code> and succeeds. The reverse <code>numeric → integer</code> path is deliberately <em>not</em> implicit; if both directions were implicit, the parser would face two equally valid interpretations and reject the query as ambiguous. This one-way asymmetry is the catalog-level rule that makes mixed numeric/integer arithmetic resolve predictably.</p>
+  <p><strong>Binary coercibility and tie-breaking:</strong> Two types that share an internal representation (for example <code>text</code> and <code>varchar</code>) are <em>binary coercible</em>, so the conversion is performed "for free" without invoking any function. When several implicit paths still compete, PostgreSQL falls back on type categories and <em>preferred types</em> (for example <code>text</code> within the string category) to select the winner.</p>
+  <p><em>Design rule:</em> information-preserving casts within one type category are safe to mark implicit, lossy casts such as <code>double precision → integer</code> are assignment-only, and cross-category casts such as <code>text → int4</code> are kept explicit-only. Automatic casts <em>to</em> string types are assignment casts, while automatic casts <em>from</em> string types are explicit-only — which is precisely why an unadorned comparison of an <code>integer</code> column against a real <code>text</code> value fails, while a quoted unknown literal is resolved by context.</p>
+</div>
 <h3 id="8.1.2-mathematical-formulation-of-type-mapping">8.1.2 Mathematical Formulation of Type Mapping</h3>
 <p>Relational type conversion maps values from a source domain to a target domain through a deterministic transformation function.</p>
 <div class="key-concept">
@@ -387,6 +420,22 @@ flowchart TD
 <p>In addition to standard ANSI <code>CAST</code>, PostgreSQL provides a concise shorthand double colon operator (<code>::</code>):</p>
 <pre><code>expression::target_data_type</code></pre>
 <p>The expression <code>'10'::integer</code> is functionally identical to <code>CAST('10' AS integer)</code>. While the double colon shorthand is faster to type and ubiquitous in PostgreSQL codebases, it is not part of the core ANSI SQL standard.</p>
+
+<div class="example-box">
+  <p><strong>Worked Conversion Semantics: Accommodation, Rounding, and Length Coercion</strong> A <code>CAST</code> succeeds only when the target type can accommodate the source value. When it can, the engine applies a target-specific normalization rather than a byte-for-byte reinterpretation:</p>
+  <pre><code>SELECT CAST(9.6 AS integer) AS to_int,        -- 10 (rounded, not truncated)
+       CAST(9.6 AS text)    AS to_text,       -- '9.6' (no rounding)
+       CAST('2020-01-01 10:20:24'::timestamp
+            AS varchar(10)) AS to_varchar;    -- '2020-01-01'</code></pre>
+  <ul>
+    <li><strong>Numeric → integer:</strong> PostgreSQL <em>rounds</em> to the nearest whole number, with ties away from zero, so <code>CAST(9.6 AS integer) = 10</code> and <code>CAST(9.4 AS integer) = 9</code>. This differs from languages such as C or Java, where an implicit conversion to an integer truncates toward zero.</li>
+    <li><strong>Numeric → text:</strong> no rounding occurs. <code>CAST(9.6 AS text)</code> preserves every digit as <code>'9.6'</code>, because character types can represent the decimal expansion exactly — the text target accommodates the source without loss.</li>
+    <li><strong>Timestamp → <code>varchar(n)</code>:</strong> the value is first rendered to its canonical text form and then shortened to <code>n</code> characters. With <code>varchar(10)</code>, only the ISO date segment <code>'2020-01-01'</code> survives and the time portion is discarded by length coercion.</li>
+    <li><strong>Failure case:</strong> <code>CAST('10a' AS integer)</code> cannot be accommodated. The integer input function rejects the non-digit token and the statement aborts with <code>invalid input syntax for type integer</code>.</li>
+  </ul>
+  <p><strong>Formal view:</strong> a cast applies a target-specific normalization map \(g_T : T_{\text{source}} \to T_{\text{target}}\) where \(g_T(x)\) may be a nearest-integer rounding (numeric → integer), a length-limiting projection (timestamp → <code>varchar(n)</code>), or a digit-preserving expansion (numeric → text). The map is defined only for inputs the target type's input function accepts; outside that domain the conversion enters the error state \(\bot\) described in Section 8.1.2.</p>
+  <p><em>Portability note:</em> PostgreSQL rounds on numeric-to-integer casts, whereas MySQL's <code>CAST(... AS SIGNED)</code> and Snowflake/Databricks <code>TRY_CAST</code> families apply their own coercion rules, so cross-engine migrations should verify fractional-value behavior explicitly.</p>
+</div>
 <div class="key-concept">
   <p><strong>Cross-Database Comparison of Casting Syntax and Capabilities:</strong></p>
   <ul>

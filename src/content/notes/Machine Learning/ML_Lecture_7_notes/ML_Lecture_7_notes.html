@@ -1088,6 +1088,40 @@
 
       <div class="key-concept">
         <p>
+          <strong>Beyond Gradient Descent — Newton-Raphson and IRLS.</strong> Gradient descent takes a fixed-size step \(\alpha\) along the gradient; a second-order method uses the local curvature of \(J\) to choose both direction and step size. Stack the \(N\) examples into the design matrix \(\Phi \in \mathbb{R}^{N \times M}\) (row \(n\) is \(\boldsymbol{\phi}_n^\top\)), the targets into \(\mathbf{t}\), and define \(R = \operatorname{diag}(y_n(1-y_n))\). The gradient and Hessian of the cross-entropy error are [Bishop §4.3.3, Eq. 4.96–4.98]:
+        </p>
+        <p>
+          \[
+          \nabla E = \Phi^\top(\mathbf{y} - \mathbf{t}), \qquad H = \nabla\nabla E = \Phi^\top R \Phi = \sum_{n=1}^{N} y_n(1-y_n)\,\boldsymbol{\phi}_n\boldsymbol{\phi}_n^\top
+          \]
+        </p>
+        <p>
+          <strong>Why the minimum is unique (convexity proof).</strong> For any vector \(\mathbf{u}\): \(\mathbf{u}^\top H \mathbf{u} = \sum_n y_n(1-y_n)(\mathbf{u}^\top\boldsymbol{\phi}_n)^2 > 0\), since the sigmoid guarantees \(0 < y_n < 1\). Thus \(H\) is positive definite everywhere, \(E\) is strictly convex, and the stationary point is the unique global minimum — the rigorous basis for the "convex" claim in Section 1.
+        </p>
+        <p>
+          The Newton-Raphson update \(\mathbf{w}_{\text{new}} = \mathbf{w}_{\text{old}} - H^{-1}\nabla E\) rearranges into <em>iteratively reweighted least squares</em> (IRLS) [Bishop Eq. 4.99–4.103]:
+        </p>
+        <p>
+          \[
+          \mathbf{w}_{\text{new}} = (\Phi^\top R \Phi)^{-1}\Phi^\top R\,\mathbf{z}, \qquad \mathbf{z} = \Phi\mathbf{w}_{\text{old}} - R^{-1}(\mathbf{y} - \mathbf{t})
+          \]
+        </p>
+        <p>
+          This is a weighted least-squares normal equation whose weights \(R_{nn} = y_n(1-y_n)\) equal the Bernoulli variance \(\operatorname{var}[t_n]\); \(\mathbf{z}\) is an <em>effective target</em> from locally linearizing the sigmoid. Each pass recomputes \(R\), so IRLS is Newton's method written as repeated weighted least squares.
+        </p>
+        <table>
+          <thead><tr><th>Aspect</th><th>Gradient Descent</th><th>Newton / IRLS</th></tr></thead>
+          <tbody>
+            <tr><td>Step</td><td>\(\mathbf{w} - \alpha\nabla E\)</td><td>\(\mathbf{w} - H^{-1}\nabla E\)</td></tr>
+            <tr><td>Learning rate</td><td>Must be tuned</td><td>None (curvature sets it)</td></tr>
+            <tr><td>Convergence / cost</td><td>Many steps, \(O(NM)\) each</td><td>Few steps, \(O(NM+M^3)\) (invert \(H\))</td></tr>
+            <tr><td>scikit-learn</td><td><code>sag</code>/<code>saga</code></td><td><code>newton-cg</code>, <code>newton-cholesky</code>; default <code>lbfgs</code> is quasi-Newton</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="key-concept">
+        <p>
           <strong>Steps — One Iteration of Batch Gradient Descent.</strong>
         </p>
 
@@ -1465,6 +1499,26 @@
           (multicollinearity), the odds ratio for CGPA "holding IQ constant" becomes less reliable. The number \(e^{0.3}
           = 1.35\) still comes out of the math, but its real-world interpretation as "the isolated effect of CGPA" is
           weakened.
+        </p>
+      </div>
+
+      <div class="key-concept">
+        <p>
+          <strong>How certain is an odds ratio? Fisher information and Wald intervals.</strong> Section 4 reads a coefficient \(\theta_j\) through \(e^{\theta_j}\), but a point estimate alone hides sampling uncertainty. At the maximum-likelihood solution the curvature of the log-likelihood is the <em>Fisher information</em> \(I(\hat{\mathbf{w}}) = -\mathbb{E}[\nabla\nabla \ell] = \Phi^\top R \Phi\) — numerically the same Hessian \(H\) used by Newton/IRLS. Under the large-sample (Laplace) approximation the covariance of the estimate is its inverse, \(\operatorname{Cov}(\hat{\mathbf{w}}) \approx I(\hat{\mathbf{w}})^{-1} = (\Phi^\top R \Phi)^{-1}\) [Bishop §4.4, Eq. 4.143].
+        </p>
+        <p>
+          \[
+          \operatorname{SE}(\hat{w}_j) = \sqrt{\big[I(\hat{\mathbf{w}})^{-1}\big]_{jj}}, \qquad z_j = \frac{\hat{w}_j}{\operatorname{SE}(\hat{w}_j)}, \qquad \mathrm{CI}_{0.95}(w_j) = \hat{w}_j \pm 1.96\,\operatorname{SE}(\hat{w}_j)
+          \]
+        </p>
+        <p>
+          Because the exponential is monotonic, exponentiating the weight interval gives a valid interval for the <em>odds ratio</em> directly: \(\mathrm{CI}_{0.95}(e^{w_j}) = \big(e^{\hat{w}_j - 1.96\,\mathrm{SE}},\, e^{\hat{w}_j + 1.96\,\mathrm{SE}}\big)\).
+        </p>
+        <p>
+          <strong>Worked calculation.</strong> For the CGPA coefficient \(\hat{w}_1 = 0.30\) with \(\operatorname{SE} = 0.15\): \(z = 0.30/0.15 = 2.0\) (significant at 5%). The weight interval is \(0.30 \pm 1.96(0.15) = [0.006,\, 0.594]\), and the odds-ratio interval is \([e^{0.006}, e^{0.594}] \approx [1.01,\, 1.81]\) — "each extra CGPA point multiplies the odds by about 1.35, with a 95% interval from 1.01 to 1.81."
+        </p>
+        <p>
+          <strong>Caveat:</strong> these intervals assume an unpenalized MLE and large \(N\); L1/L2 shrinkage biases \(\hat{\mathbf{w}}\), so naive standard errors no longer apply. scikit-learn does not report them, whereas <code>statsmodels</code> exposes <code>information()</code> (Fisher information) and Wald p-values for unpenalized fits.
         </p>
       </div>
 

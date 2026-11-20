@@ -878,6 +878,11 @@
   </tbody>
 </table>
 <p>When to pick which: tightly synced streams with training data — early; heterogeneous streams with missing pieces — late; production multimodal stacks — hybrid.</p>
+
+<div class="key-concept">
+  <p><strong>Formalize — merging ranked lists in late fusion:</strong> Late fusion must combine positions, not raw scores, because a frame similarity and a caption similarity live on incomparable scales. Let \(R\) be the set of streams and \(\mathrm{rank}_r(d)\) the position of item \(d\) in stream \(r\), with 1 the top. The <em>Borda count</em> sums the positions, \(B(d) = \sum_{r \in R} \mathrm{rank}_r(d)\), and ranks by the smallest total — the same idea as summing merit-order votes, and extensible to a weighted form when one stream is trusted more. <em>Reciprocal rank fusion (RRF)</em> instead emphasises top positions with \[ \mathrm{RRF}(d) = \sum_{r \in R} \frac{1}{k + \mathrm{rank}_r(d)} \] where an item missing from a stream contributes 0 and \(k\) is a rank constant (production defaults such as \(k = 60\) dampen the top-position emphasis; a small \(k\) sharpens it). A hit at rank 1 earns \(1/(k+1)\) while rank 2 earns \(1/(k+2)\), so RRF rewards agreement near the top yet tolerates a stream that omits the item entirely.</p>
+  <p><strong>Worked trace:</strong> Three streams rank four shots. Frames: \(A, B, C, D\); audio: \(B, A, D, C\); captions: \(C, B, A, D\). With \(k = 1\): \(A = 0.50 + 0.33 + 0.25 = 1.08\); \(B = 0.33 + 0.50 + 0.33 = 1.16\); \(C = 0.25 + 0.20 + 0.50 = 0.95\); \(D = 0.20 + 0.25 + 0.20 = 0.65\). <strong>Fused order is \(B, A, C, D\).</strong> Borda summed ranks give \(A = 6\), \(B = 5\), \(C = 8\), \(D = 11\) — the same winner, but RRF weighs a top-of-list agreement more heavily and absorbs a missing stream as a zero term rather than penalising it with a large rank. Sense-check: merging positions keeps a visual rank and a text rank on one scale, which merging raw scores cannot do.</p>
+</div>
 <div class="example-box">
   <p><strong>Worked example — early vs late:</strong> A cooking clip query "sizzling pan close-up with host saying salt". Early fusion concatenates the sizzle-audio vector with the pan-frame vector and scores the joint pattern — top hit shows both together. Late fusion scores sizzle-only (top: any sizzling clip) and pan-only (top: any pan shot) then averages ranks — the clip with both still wins but by margin fusion rather than joint pattern. <strong>Both return the right clip; early is sharper when streams align, late is safer when one stream drops.</strong> Sense-check: joint features see co-occurrence; merged scores see agreement.</p>
 </div>
@@ -1436,6 +1441,46 @@
 <h3 id="16.13.3-conversational-search-and-grounded-answers" class="subsection-title">16.13.3 Conversational search and grounded answers</h3>
 <p><em>Conversational retrieval</em> — multi-turn search that keeps history — differs from one-shot search where each query stands alone. A first question asks who is the CEO of a firm. A follow-up asks how old is he. He resolves to that CEO from history with no restating. A laptop request that returns three options followed by which of these has the longest battery stays within those three. Rewriting with context happens behind the scenes — the engine expands "he" and "these" before retrieval.</p>
 <p>A chat-style pipeline has four stages: prompt understanding, retrieval, reasoning, and answer generation. The retriever fetches top passages with dense or BM25 methods. The language model reads question plus passages and drafts the reply. A <em>grounded response</em> — an answer where each claim traces to retrieved evidence — is the goal. <em>Ungrounded generation</em> — text without tied evidence — is where hallucination grows. That is why high-stakes flows keep the retrieved list alongside the prose.</p>
+
+<div class="key-concept">
+  <p><strong>Formalize — scoring groundedness:</strong> Calling an answer "grounded" needs a measure, otherwise confident hallucination is indistinguishable from faithful prose. Let \(C\) be the retrieved context and \(q\) the original query. <em>Faithfulness</em> splits the answer into atomic claims and takes the share that can be inferred from \(C\): \[ \mathrm{Faithfulness} = \frac{|\text{claims supported by } C|}{|\text{claims in answer}|} \] so two supported claims out of two score 1.00 while one out of three scores 0.33; its complement is the <em>hallucination rate</em>, \(1 - \mathrm{Faithfulness}\). <em>Coverage</em> runs the other way — the share of relevant context claims that the answer actually includes. <em>Answer relevancy</em> avoids a direct human check by generating \(N\) questions from the answer and averaging their embedding cosine similarity to the query: \[ \mathrm{AnswerRelevancy} = \frac{1}{N}\sum_{i=1}^{N} \frac{E_{g_i}\cdot E_q}{\|E_{g_i}\|\,\|E_q\|} \] where \(E_{g_i}\) is the embedding of generated question \(i\) and \(E_q\) of the original query. These scores are commonly assigned by an LLM judge, so their reliability tracks the judge itself. They ask what precision and recall cannot: not whether the right documents were listed, but whether the prose stayed inside them.</p>
+</div>
+<table>
+  <thead>
+    <tr>
+      <th>Metric</th>
+      <th>Question it answers</th>
+      <th>Basis</th>
+      <th>Failure it catches</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td>Faithfulness</td>
+      <td>Are the answer's claims supported by the retrieved context?</td>
+      <td>Supported claims / total claims</td>
+      <td>Hallucinated facts added by the generator</td>
+    </tr>
+    <tr>
+      <td>Hallucination rate</td>
+      <td>How much of the answer is unsupported?</td>
+      <td>1 − Faithfulness</td>
+      <td>Confident but source-free sentences</td>
+    </tr>
+    <tr>
+      <td>Coverage</td>
+      <td>Did the answer use the relevant claims that were available?</td>
+      <td>Relevant context claims included / total relevant claims</td>
+      <td>Important retrieved evidence silently dropped</td>
+    </tr>
+    <tr>
+      <td>Answer relevancy</td>
+      <td>Does the answer actually address the query?</td>
+      <td>Mean cosine of regenerated-question embeddings to query</td>
+      <td>Fluent, faithful, but off-topic prose</td>
+    </tr>
+  </tbody>
+</table>
 <div class="example-box">
   <p><strong>Worked example — pronoun resolution:</strong> Turn 1: "Who is the CEO of Firm X?" retrieves profile chunk naming Ana Rao; answer "Ana Rao". Turn 2: "How old is he?" — naive retrieval searches "how old is he" and fails. Context-aware rewrite produces "How old is Ana Rao (CEO of Firm X)?" which retrieves the bio chunk stating age 52. <strong>History-aware rewrite returns 52; history-blind returns noise.</strong> Sense-check: pronouns carry no retrieval signal, so expansion to the named entity is mandatory before search.</p>
 </div>

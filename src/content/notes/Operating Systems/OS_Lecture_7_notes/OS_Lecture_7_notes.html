@@ -612,6 +612,41 @@ remainder section   ← do all the work that touches nothing shared</code></pre>
     <li>Beyond two processes, and wherever the hardware cases are very critical or complicated for the developers of the application programs to handle, we have to go for a different type of synchronization approach — hardware instructions. First we check whether it is a uniprocessor or a multiprocessor system: the answer decides which hardware approach can work.</li>
   </ul>
 </div>
+<div class="important-note">
+  <p><strong>System Detail — why "atomic load/store" is not enough:</strong> The caution above is a real hardware failure mode, not a historical curiosity. Three effects defeat the textbook assumption: the compiler may reorder independent statements, a CPU may issue loads and stores out of program order, and every core has a <em>store buffer</em> that holds a write before it drains to the shared cache. Consider Peterson's two writes: P0 executes <code>flag[0] = true; turn = 1;</code> but both stores sit in P0's store buffer, while P1 executes <code>flag[1] = true; turn = 0;</code> into its own buffer. Each process then reads the other's flag from shared memory and still sees <code>false</code>, because the other's store has not drained yet. Both therefore find the entry condition false and both enter — exactly the failure the software proof ruled out.</p>
+  <p><strong>Formal definition.</strong> A memory barrier \(B\) imposes a partial order on memory operations: for any operation \(o_1\) issued before \(B\) and any operation \(o_2\) issued after \(B\) in program order, every other CPU that can observe \(o_2\) must already be able to observe \(o_1\), written \(o_1 \prec_{\text{obs}} o_2\). The barrier constrains both the compiler (no reordering across the point) and the processor (pending operations are committed before later ones are issued).</p>
+  <table>
+    <thead>
+      <tr>
+        <th>Barrier</th>
+        <th>Ordering enforced</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><code>barrier()</code></td>
+        <td>Compiler only — stops loads and stores from being reordered across the point</td>
+      </tr>
+      <tr>
+        <td><code>rmb()</code></td>
+        <td>Read barrier — no loads reorder across it</td>
+      </tr>
+      <tr>
+        <td><code>wmb()</code></td>
+        <td>Write barrier — no stores reorder across it</td>
+      </tr>
+      <tr>
+        <td><code>mb()</code></td>
+        <td>Full barrier — neither loads nor stores reorder across it</td>
+      </tr>
+      <tr>
+        <td><code>smp_rmb()</code>, <code>smp_wmb()</code>, <code>smp_mb()</code></td>
+        <td>SMP variants: the corresponding full barrier on a multiprocessor, but only a compiler barrier on a uniprocessor</td>
+      </tr>
+    </tbody>
+  </table>
+  <p><strong>Consequence.</strong> Barriers work in pairs — the write barrier on the publishing CPU must be matched by a read or address-dependency barrier on the observing CPU, or the order is not guaranteed to be seen. This is precisely why the hardware instructions of Section 7.5 work: atomic read-modify-write operations are defined with acquire/release (or stronger) memory semantics, so the lock supplies the ordering that a plain software flag cannot. Peterson's solution remains the canonical teaching algorithm; real multiprocessor code relies on these barriers and atomic instructions instead.</p>
+</div>
 <p><strong>Recap + bridge:</strong> Peterson's solution proves that mutual exclusion, progress, and bounded waiting can be achieved in pure software — with two flags and one turn — but only for two processes and only under an atomicity assumption modern hardware may not honor. So the next step is to ask the hardware for help: atomic instructions that the CPU guarantees, starting with disabling interrupts, then test-and-set and swap.</p>
 
 <h2 id="7.5-hardware-based-solutions">7.5 Hardware-Based Solutions</h2>

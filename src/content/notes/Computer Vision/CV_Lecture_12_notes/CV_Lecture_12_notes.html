@@ -322,6 +322,25 @@
 <h3 id="12.2.1-convolutional-feature-extraction-and-spatial-reduction">12.2.1 Convolutional Feature Extraction and Spatial Reduction</h3>
 <p>When an input image passes through successive convolutional stages, two operations drive spatial reduction: unpadded (valid) convolutions and spatial pooling. Consider an input feature tensor \(\mathbf{X} \in \mathbb{R}^{H \times W \times C_{\text{in}}}\), where \(H\) is height, \(W\) is width, and \(C_{\text{in}}\) is the number of input channels.</p>
 <p>A convolutional layer applies \(C_{\text{out}}\) learnable kernels, each of size \(K \times K \times C_{\text{in}}\), paired with a learnable bias vector \(\mathbf{b} \in \mathbb{R}^{C_{\text{out}}}\). At each candidate location, the kernel computes an element-wise dot product across all \(C_{\text{in}}\) channels, sums the products with the scalar bias, and applies a non-linear activation (such as ReLU). The kernel then shifts across the grid by a predefined stride step \(S\). Zero-padding \(P\) adds artificial border pixels around the perimeter to regulate the spatial dimensions of the resulting feature map.</p>
+<div class="important-note">
+  <p><strong>Architectural Detail — Dilated (À-Trous) Convolution:</strong> Beyond padding and stride, a convolution kernel also has a <em>dilation rate</em> \(r\) that inserts \(r - 1\) skipped rows and columns between its taps. A \(3 \times 3\) kernel with \(r = 2\) therefore samples a \(5 \times 5\) footprint using only 9 weights, giving an effective kernel span \(K_{\text{eff}} = (K - 1) \cdot r + 1\); this is also called <em>à trous</em> ("with holes") convolution.</p>
+  <p><strong>Why it matters here:</strong> Downsampling enlarges the receptive field by shrinking the grid, which destroys spatial detail. Dilated convolution enlarges the receptive field <em>without</em> reducing \(H\) or \(W\) or adding parameters, letting a dense predictor aggregate multi-scale context at full resolution — the mechanism used by atrous-convolution segmentation networks. The trade-off is potential gridding/aliasing when the dilation rate is held constant across layers.</p>
+</div>
+<div class="example-box">
+  <p><strong>Formal Derivation: Receptive Field Growth Through a Convolutional Stack</strong></p>
+  <p>A single \(K \times K\) filter sees only a local patch, so a deep stack must compound its span. The <em>receptive field</em> of a unit is the region of the input image that can influence it. Let \(r_l\) be the receptive-field width measured at layer \(l\), \(k_l\) the kernel size, and \(s_l\) the stride of that layer; with \(r_L = 1\) at the output, walking backward gives \[ r_{l-1} = s_l \cdot r_l + (k_l - s_l) \] because each unit at layer \(l\) gathers \(k_l\) units at layer \(l-1\) whose positions are separated by \(s_l\).</p>
+  <p>Unrolling this first-order recurrence with variable coefficients yields the closed form at the input: \[ r_0 = \sum_{l=1}^{L}\left((k_l - 1)\prod_{i=1}^{l-1} s_i\right) + 1 \] Notice that padding is absent: it shifts where the region is centered but never changes its size.</p>
+  <p><strong>Worked trace:</strong> For a four-stage encoder with \(k_1 = 3, s_1 = 1\); \(k_2 = 3, s_2 = 2\); \(k_3 = 3, s_3 = 2\); \(k_4 = 3, s_4 = 2\):</p>
+  <ul>
+    <li>\(r_4 = 1\)</li>
+    <li>\(r_3 = s_4 r_4 + (k_4 - s_4) = 2(1) + (3 - 2) = 3\)</li>
+    <li>\(r_2 = s_3 r_3 + (k_3 - s_3) = 2(3) + 1 = 7\)</li>
+    <li>\(r_1 = s_2 r_2 + (k_2 - s_2) = 2(7) + 1 = 15\)</li>
+    <li>\(r_0 = s_1 r_1 + (k_1 - s_1) = 1(15) + (3 - 1) = \mathbf{17}\)</li>
+  </ul>
+  <p>Closed-form check: \((3-1)(1) + (3-1)(1) + (3-1)(2) + (3-1)(4) + 1 = 2 + 2 + 4 + 8 + 1 = 17\), in exact agreement.</p>
+  <p><strong>Sense-check:</strong> A stride in an early layer is multiplied into every later layer's contribution (the \(\prod_{i=1}^{l-1} s_i\) factor), so early downsampling dominates the final receptive field. This is why the downsampling decisions of this section determine how much global context the bottleneck can ever see.</p>
+</div>
 <h3 id="12.2.2-mathematical-formulation-of-output-dimensions">12.2.2 Mathematical Formulation of Output Dimensions</h3>
 <p>The spatial dimensions of the resulting feature tensor depend on the interaction between input size, kernel size, padding, and stride.</p>
 <div class="key-concept">
@@ -480,6 +499,9 @@
   <li><strong>Strided Convolutions (\(S \ge 2\))</strong>: Advances by two or more pixels, skipping intermediate locations. This contracts spatial area by a factor of \(S^2\) in a single layer, reducing inference latency from milliseconds to nanoseconds.</li>
 </ul>
 <p>Edge architectures such as MobileNet and Single Shot MultiBox Detector (SSD) replace heavy max pooling operations with strided depthwise separable convolutions. In embedded tasks like automated retail checkout or pedestrian presence detection, localizing an object's general centroid suffices, making the spatial-accuracy trade-off acceptable.</p>
+<div class="important-note">
+  <p><strong>Architectural Detail — Depthwise Separable Convolution:</strong> The "depthwise separable" convolutions used by these edge models factor a dense convolution into two stages. A <em>depthwise</em> convolution sets the group count equal to the input channel count (\(G = C_{\text{in}}\)), convolving each input channel independently with its own \(K \times K\) kernel and performing no cross-channel mixing. A following \(1 \times 1\) <em>pointwise</em> convolution (Section 12.2.4) then mixes the channels. The parameter count drops from \(K^2 C_{\text{in}} C_{\text{out}}\) to \(K^2 C_{\text{in}} + C_{\text{in}} C_{\text{out}}\), which is why this factorization underpins low-latency mobile detectors.</p>
+</div>
 <p>Downsampling enables networks to capture semantic abstractions, but semantic segmentation requires predictions at the original image resolution.</p>
 <div class="key-takeaway">
   <p><strong>Recap & Bridge:</strong> Downsampling through valid convolutions, max pooling, and strided operations compresses spatial dimensions to expand receptive fields and lower computational cost. However, because semantic segmentation requires full-resolution pixel maps, decoders must invert this spatial reduction. In Section 12.3, we explore upsampling techniques, unpooling mechanisms, and parameterized transpose convolutions.</p>
@@ -531,6 +553,13 @@
   <li>In downsampling convolution, stride \(S\) appears in the denominator (\(\div S\)), contracting spatial size, and padding \(2P\) is added (\(+ 2P\)).</li>
   <li>In transpose convolution, stride \(S\) acts as a linear multiplier (\(\times S\)), expanding spatial size, while padding \(2P\) is subtracted (\(- 2P\)) because it trims border margins from the expanded footprint.</li>
 </ul>
+<div class="key-concept">
+  <p><strong>Formal Basis: Transposed Convolution Is a Sparse Matrix Transpose</strong></p>
+  <p>Flatten an input feature map into \(\mathbf{x}\) and the output into \(\mathbf{y}\). A convolution with kernel \(\mathbf{w}\) is the sparse linear map \(\mathbf{y} = \mathbf{C}\mathbf{x}\), where \(\mathbf{C}\) is the <em>unrolled</em> convolution matrix: each row holds the kernel's weights at one placement and zeros elsewhere, so the same weights recur at shifted column offsets. Backpropagating through this layer multiplies the upstream gradient by \(\mathbf{C}^{\top}\).</p>
+  <p>Transposed convolution adopts that transpose as its <em>forward</em> operator, \(\mathbf{y}' = \mathbf{C}^{\top}\mathbf{x}'\), with backward operator \((\mathbf{C}^{\top})^{\top} = \mathbf{C}\). The kernel \(\mathbf{w}\) therefore defines both maps; only which pass is called "forward" distinguishes a convolution from a transposed convolution.</p>
+  <p><strong>Concrete trace (\(4 \times 4 \to 2 \times 2\), \(K = 3, S = 1, P = 0\)):</strong> Flattening gives \(\mathbf{x} \in \mathbb{R}^{16}\) and \(\mathbf{y} \in \mathbb{R}^{4}\), hence \(\mathbf{C} \in \mathbb{R}^{4 \times 16}\) (four rows of nine non-zero kernel entries) and \(\mathbf{C}^{\top} \in \mathbb{R}^{16 \times 4}\), which restores the \(4 \times 4\) grid. Applying the associated transposed-convolution dimension rule \[ o' = i' + (K - 1) - 2P \] with \(i' = 2\) gives \(o' = 2 + 2 - 0 = 4\), matching the original input extent.</p>
+  <p><strong>Sense-check:</strong> Shape recovery is not value recovery. Since \(\mathbf{C}^{\top}\mathbf{C} \neq \mathbf{I}\) for an over-complete sliding-window operator, the transpose cannot undo the information discarded by the forward convolution — the precise reason this operation is not a true deconvolution.</p>
+</div>
 <h3 id="12.3.4-worked-derivation-determining-stride-and-padding-for-transpose-convolutions">12.3.4 Worked Derivation: Determining Stride and Padding for Transpose Convolutions</h3>
 <div class="example-box">
   <p><strong>Worked Example: Solving for Stride and Padding to Expand \(3 \times 3\) to \(5 \times 5\)</strong></p>

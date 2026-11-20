@@ -699,6 +699,49 @@
 <h3 id="10.10.3-putting-both-scores-together">10.10.3 Putting Both Scores Together</h3>
 <p>The working evaluation protocol: generate a batch of images while varying the random vector \( z \); collect them; pass them through Inception v3; compute FID — which should be low — and also compute the Inception Score — which should be high. A good generative model shows both signatures simultaneously.</p>
 <p>Why insist on joint reading? Evidence from stress tests: take a good generated image and add increasing levels of noise and blur. As disturbance grows, the Inception Score barely changes, but the FID climbs steeply — the two scores disagree, and FID is the one telling the truth. Other cases invert it: an image can post a high IS while also carrying a high FID, and a side-by-side look shows it is worse than an alternative with low FID. Images of genuinely good quality are reliably indicated by the pair: high inception score together with low FID. Together they certify that results have significant variety and resemble the training-image classes effectively.</p>
+<div class="key-concept">
+  <p><strong>Extending evaluation — separating realism from coverage:</strong> Both scores above compress two different questions into one number. The <em>k-nearest-neighbour (k-NN) precision and recall</em> metric keeps them apart by building an explicit, non-parametric estimate of the real and generated data manifolds in a pretrained classifier's feature space, instead of summarising each cloud by a single Gaussian as FID does.</p>
+  <p>Embed equal-sized sets of real and generated samples as feature vectors \( \Phi_r \) and \( \Phi_g \) (the reference implementation uses \( 5\times 10^4 \) images per set and VGG-16 fc2 activations). Around every \( \phi' \in \Phi \), draw a hypersphere reaching its \( k \)-th nearest neighbour within the same set (\( k = 3 \) is the robust default). The union approximates the manifold, and membership of a query point is decided by</p>
+  \[
+  f(\phi,\Phi)=\begin{cases}1, & \lVert \phi-\phi' \rVert_2 \le \lVert \phi'-\mathrm{NN}_k(\phi',\Phi) \rVert_2 \text{ for some } \phi'\in\Phi \\ 0, & \text{otherwise,}\end{cases}
+  \]
+  <p>where \( \mathrm{NN}_k(\phi',\Phi) \) is the \( k \)-th nearest vector of \( \phi' \) in \( \Phi \). Swapping which set supplies the points and which supplies the manifold gives the two scores:</p>
+  \[
+  \mathrm{precision}(\Phi_r,\Phi_g)=\frac{1}{|\Phi_g|}\sum_{\phi_g\in\Phi_g} f(\phi_g,\Phi_r), \qquad \mathrm{recall}(\Phi_r,\Phi_g)=\frac{1}{|\Phi_r|}\sum_{\phi_r\in\Phi_r} f(\phi_r,\Phi_g).
+  \]
+  <p>Precision is the fraction of generated features landing on the <em>real</em> manifold ("are the fakes realistic?"); recall is the fraction of real features landing on the <em>generated</em> manifold ("can the model reproduce the training data?"). Both lie in \( [0,1] \) and, unlike FID, higher is better for each.</p>
+  <table>
+    <thead>
+      <tr>
+        <th>Metric</th>
+        <th>Signal</th>
+        <th>Consults real data?</th>
+        <th>Quality vs. coverage</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>Inception Score</td>
+        <td>classifier confidence &times; marginal class variety</td>
+        <td>No</td>
+        <td>conflated; blind to real-data diversity</td>
+      </tr>
+      <tr>
+        <td>FID</td>
+        <td>mean/covariance match of feature clouds</td>
+        <td>Yes</td>
+        <td>conflated into a single distance</td>
+      </tr>
+      <tr>
+        <td>k-NN precision / recall</td>
+        <td>fraction of fakes on real manifold / reals on fake manifold</td>
+        <td>Yes</td>
+        <td>separated into two axes</td>
+      </tr>
+    </tbody>
+  </table>
+  <p><strong>Diagnostic payoff:</strong> consider a generator that memorises one perfect exemplar per class — every fake sits squarely on the real manifold, so precision is high, yet almost no real training features fall inside the tiny generated manifold, so recall collapses; IS praises it and FID can look respectable because its feature cloud lies near the real one. A generator that spreads samples broadly but blurrily shows the reverse pattern. Reading the pair exposes the failure that a single IS/FID number hides — the same blind spot discussed above.</p>
+</div>
 <h3 id="10.10.4-student-questions-and-answers">10.10.4 Student Questions and Answers</h3>
 <div class="important-note">
   <p><strong>Q:</strong> For the noisy/blurred image case, shouldn't the inception score have risen? We saw it stay more or less unchanged as for the cleaner images — is that expected? <strong>A:</strong> Yes, it can happen — though it is not desired. Neither score is foolproof. That is exactly why the inception score alone is not enough: use both the inception score and the FID score and read them together. In most cases the pair matches perceptual evaluation by a human, but they are not perfect measurements.</p>

@@ -379,6 +379,35 @@
 </div>
 <p>A single table with 60 million product rows cannot be scanned end to end for every ad hoc filter such as product name starting with A. Partitioning gives each filter a chance to touch only the matching slice. Administrative work gets the same win: one slice can be vacuumed, reindexed, backed up, or dropped while the rest stay online, and cold slices can live on cheaper storage while hot slices stay on fast disks.</p>
 <p>Partitioning in this lecture is <em>horizontal partitioning</em>: entire rows go to exactly one slice based on a <em>partition key</em> (the column whose values decide which slice holds each row) plus a <em>partitioning function</em> (the rule applied to the key, such as a date range, a value list, or a hash). Every slice shares the same columns and types; the data subsets never overlap.</p>
+
+<div class="important-note">
+  <p><strong>Beyond the horizontal spine — vertical partitioning:</strong> The companion textbook names a second strategy that this lecture deliberately sets aside: <em>vertical partitioning</em> splits a wide table by <em>columns</em> into several narrow tables holding the same rows, instead of splitting by rows as range, list, and hash do. PostgreSQL has no declarative <code>PARTITION BY COLUMN</code>; you build it by hand with a shared primary key that rejoins the halves one-to-one.</p>
+  <table>
+    <thead>
+      <tr><th>Axis</th><th>Horizontal (this lecture)</th><th>Vertical (companion strategy)</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>What is split</td><td>Rows into slices; every slice keeps all columns</td><td>Columns into narrow tables; every table keeps the same rows</td></tr>
+      <tr><td>Key</td><td>Partition key routes each row to one slice</td><td>Shared primary key rejoins the halves 1:1</td></tr>
+      <tr><td>Pruning</td><td>Planner drops slices by comparing bounds</td><td>No slice bounds; a query reads only the narrow table it needs</td></tr>
+      <tr><td>Best for</td><td>Time/region filtered reads and slice-sized retention</td><td>Hot narrow columns apart from cold wide ones; sensitive fields isolated</td></tr>
+    </tbody>
+  </table>
+  <pre><code>-- Hand-built vertical split (no declarative syntax)
+CREATE TABLE product_core (
+  product_id INTEGER PRIMARY KEY,
+  name TEXT,
+  price NUMERIC(9,2)
+);
+CREATE TABLE product_detail (
+  product_id INTEGER PRIMARY KEY REFERENCES product_core(product_id),
+  description TEXT,
+  stock_count INTEGER
+);
+-- A product-page read touches only the narrow core table.
+SELECT name, price FROM product_core WHERE product_id = 42;</code></pre>
+  <p><strong>Trade-off:</strong> vertical partitioning cuts I/O for hot narrow reads and lets slow-moving columns be cached, but reconstructing a full row requires a join across the halves, so it answers a different problem than the row-slice pruning developed below.</p>
+</div>
 <div class="key-concept">
   <p>A partitioned table is a virtual routing layer. The master name holds the definition and the routing rules; the slices hold the rows and carry their own physical indexes. Users query the master name exactly as before, and the optimizer decides which slices to visit.</p>
 </div>
@@ -836,6 +865,27 @@ SELECT * FROM employees_list WHERE country_code = 'US';</code></pre>
   <p>Explain now scans all tables such as EU plus US and then filters, a pure sequential pass over every slice. Turn pruning back on and the same query prunes to US again. <strong>Final answer: same query, one slice with pruning on, all slices with pruning off.</strong> Sense-check by toggling the switch and re-running <code>EXPLAIN</code> without changing the query.</p>
 </div>
 <p>Two pruning killers beyond the switch: a filter on the wrong column (country filter on a hash-by-id table scans everything), and an unstable expression the planner cannot evaluate at plan time (a volatile function around the key hides the value, so keep key filters plain and put the key first among <code>AND</code> conditions). Snowflake micro-partition skipping and Delta Lake file skipping obey the same rule: a selective <code>WHERE</code> on a well-clustered column prunes files; a filter on an unrelated column reads everything.</p>
+
+<div class="important-note">
+  <p><strong>Plan-time versus execution-time pruning:</strong> The switch demo above shows pruning decided while the plan is built. Pruning can also happen <em>during execution</em>, when the key value is not known until the query runs — for example a bind parameter of a prepared statement, a value obtained from a subquery, or a parameterized value on the inner side of a nested-loop join. That is why a simple parameterized key filter can still reach one slice, while a non-immutable expression such as <code>CURRENT_TIMESTAMP</code> cannot be folded at plan time.</p>
+  <pre><code>EXPLAIN ANALYZE
+SELECT e.*
+FROM employees_list e
+WHERE e.country_code = (SELECT country_code FROM hot_codes LIMIT 1);</code></pre>
+  <p><strong>Reading the evidence:</strong> a plan pruned at initialization reports <code>Subplans Removed: N</code> in <code>EXPLAIN</code> — those branches never appear in the plan, yet are still locked at the start of execution. A plan pruned later keeps its branches visible in <code>EXPLAIN ANALYZE</code> but marks them <code>(never executed)</code>, or shows a differing <code>loops</code> count when the runtime key changes on each iteration.</p>
+  <table>
+    <thead>
+      <tr><th>Filter shape</th><th>When pruned</th><th>What EXPLAIN shows</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>Literal key filter</td><td>Planning time</td><td>Only the matching slice branch</td></tr>
+      <tr><td>Prepared-statement parameter known at startup</td><td>Plan initialization</td><td><code>Subplans Removed: N</code></td></tr>
+      <tr><td>Subquery or nested-loop parameter</td><td>During execution</td><td><code>(never executed)</code> branches or varying <code>loops</code></td></tr>
+      <tr><td>Volatile function wrapping the key</td><td>Not pruned</td><td>Every slice scanned</td></tr>
+    </tbody>
+  </table>
+  <p><strong>Practical rule:</strong> keep the key filter plain and stable, prefer a bound parameter over wrapping the key in a function, and use <code>EXPLAIN (ANALYZE)</code> to confirm whether a fast plan was pruned at plan time or run time.</p>
+</div>
 
 <h2 id="30.13-choosing-a-partition-key">30.13 Choosing a Partition Key</h2>
 <h3 id="30.13.1-review-raw-data-first">30.13.1 Review Raw Data First</h3>

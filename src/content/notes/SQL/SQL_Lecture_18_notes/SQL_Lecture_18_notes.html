@@ -483,6 +483,28 @@ SELECT first_name, last_name FROM actors;</code></pre>
   <p>A name matching on first name alone would flood the answer with false cousins; the walkthrough's two-column match is what keeps Bruce Lee and Terry Jones meaningful. Always match on the fullest natural key available — fewer columns means more accidental collisions.</p>
 </div>
 
+<h3 id="18.3.4-multiset-semantics-and-the-all-variants" class="subsection-title">18.3.4 Multiset Semantics and the ALL Variants</h3>
+<p>The operator definitions above speak of <em>sets</em>, yet the worked examples keep meeting repeated rows — laptop twice, actor_id 10 three times. SQL resolves this with a deliberate default inversion: plain UNION, INTERSECT, and EXCEPT all end in DISTINCT behavior even though a bare SELECT defaults to ALL. Appending ALL after any of the three operators switches the result to <em>bag</em> (multiset) semantics, where multiplicity is preserved rather than collapsed.</p>
+<div class="key-concept">
+  <p>Let \(m_R(t)\) be the number of copies of row \(t\) in a multiset \(R\). The three ALL operators are defined pointwise over multiplicities:</p>
+  <p>\[ m_{A \cup_{\mathrm{ALL}} B}(t) = m_A(t) + m_B(t) \]</p>
+  <p>\[ m_{A \cap_{\mathrm{ALL}} B}(t) = \min\!\big(m_A(t),\, m_B(t)\big) \]</p>
+  <p>\[ m_{A \setminus_{\mathrm{ALL}} B}(t) = \max\!\big(m_A(t) - m_B(t),\, 0\big) \]</p>
+  <p>The plain (DISTINCT) forms instead force \(m_R(t) \in \{0,1\}\): a row is present or absent, and its copy count is discarded. Set union, intersection, and difference are therefore the 0/1 projections of these bag operations.</p>
+</div>
+<div class="example-box">
+  <p><strong>Worked calculation — duplicate cancellation.</strong> Let \(A = \{10,10,10,11,12\}\) and \(B = \{10,10\}\), so \(m_A(10)=3\) and \(m_B(10)=2\). Plain <code>A EXCEPT B</code> removes every copy of 10 and reports <strong>{11, 12}</strong>. <code>A EXCEPT ALL B</code> computes \(\max(3-2,0)=1\), leaving <strong>{10, 11, 12}</strong> — one surviving copy, not zero and not three. The same inputs give <code>A INTERSECT ALL B</code> \(=\) <strong>{10, 10}</strong> with \(\min(3,2)=2\), and <code>A UNION ALL B</code> a five-copy run of 10 with \(3+2=5\). Sense-check: each ALL count is a pure arithmetic function of the two input multiplicities, so no row identity or ordering is consulted.</p>
+</div>
+<div class="important-note">
+  <p><strong>Engine support:</strong> the reference text records INTERSECT ALL and EXCEPT ALL as ANSI-standard operators implemented, at the time of writing, only by IBM DB2. PostgreSQL's documented SELECT grammar admits ALL after any of the three set operators — <code>[ UNION | INTERSECT | EXCEPT ] [ ALL | DISTINCT ]</code> — so the multiplicity rules above are directly executable there: PostgreSQL states that a row with \(m\) left copies and \(n\) right copies appears \(\min(m,n)\) times under INTERSECT ALL and \(\max(m-n,0)\) times under EXCEPT ALL. Where an engine offers only the DISTINCT forms, the bag effect must be reconstructed with window-function row numbering or a COUNT-based join — never by assuming the plain operator keeps duplicates.</p>
+</div>
+<div class="warning-box">
+  <p><strong>Pitfall — ALL is not a harmless optimization:</strong> switching a plain EXCEPT to EXCEPT ALL changes the answer's cardinality, and any downstream COUNT, AVG, or EXISTS test reads that changed multiplicity. Conversely, substituting plain EXCEPT for EXCEPT ALL silently drops legitimate repeated rows (a 10 that genuinely occurred three times in the feed collapses to one, or vanishes entirely). Choose the variant from the question's meaning — "which values are absent" wants DISTINCT, "how many occurrences remain" wants ALL — and keep the choice explicit rather than relying on a default that differs between SELECT and its set operators.</p>
+</div>
+<div class="key-takeaway">
+  <p><strong>Takeaway:</strong> set operators default to DISTINCT while SELECT defaults to ALL, and the ALL variants are bag operations with pointwise multiplicity \(m_A+m_B\), \(\min(m_A,m_B)\), and \(\max(m_A-m_B,0)\). Those formulas explain exactly why plain EXCEPT erased every copy of 10 while EXCEPT ALL kept one.</p>
+</div>
+
 <h2 id="18.4-except-with-tables">18.4 EXCEPT with Tables</h2>
 <h3 id="18.4.1-meaning-conditions-and-syntax">18.4.1 Meaning, Conditions, and Syntax</h3>
 <p>If INTERSECT keeps the overlap, EXCEPT keeps the remainder: "what is in list one but missing from list two." An <em>EXCEPT</em> (a set operator that returns rows of the first query that do not appear in the second) answers exactly that one-sided question — stock in this warehouse but not that one, records in yesterday's feed but missing today.</p>
@@ -567,6 +589,41 @@ WHERE gender = 'F';</code></pre>
 </div>
 <div class="warning-box">
   <p>The failure mode to memorize: an untested filter on side two. A misspelled literal (\(gender =\) 'Female' instead of 'F') returns zero rows, and subtracting zero rows returns the whole directors table — a plausible-looking but entirely wrong answer. Building and testing side two alone is the guardrail.</p>
+</div>
+
+<h3 id="18.4.4-set-operator-precedence-and-chaining" class="subsection-title">18.4.4 Set Operator Precedence and Chaining</h3>
+<p>Every trace so far combined exactly two queries. A compound query may chain three or more, and once the operators differ the order of evaluation becomes part of the question's meaning — the same three SELECTs can return six rows or seven depending only on where UNION ALL is placed.</p>
+<div class="key-concept">
+  <p>Chaining obeys two rules. Operators of the same kind associate to the left: <code>A UNION B UNION C</code> is <code>(A UNION B) UNION C</code>. Across kinds, INTERSECT binds more tightly than UNION and EXCEPT, while EXCEPT binds at the same level as UNION — so <code>A UNION B INTERSECT C</code> is read as \(A \cup (B \cap C)\), not \((A \cup B) \cap C\). Parentheses override both rules, and their placement is the only reliable way to express a non-default grouping.</p>
+</div>
+<pre><code>-- default: left to right, then deduped by the trailing UNION
+SELECT first_name, last_name FROM directors
+UNION ALL
+SELECT first_name, last_name FROM actors
+UNION
+SELECT first_name, last_name FROM crew;
+
+-- INTERSECT binds tighter, so actors are intersected with crew first
+SELECT first_name, last_name FROM directors
+UNION
+SELECT first_name, last_name FROM actors
+INTERSECT
+SELECT first_name, last_name FROM crew;
+
+-- parentheses force the intended grouping explicitly
+SELECT first_name, last_name FROM directors
+UNION
+(SELECT first_name, last_name FROM actors
+ EXCEPT
+ SELECT first_name, last_name FROM crew);</code></pre>
+<div class="example-box">
+  <p><strong>Worked trace — six rows versus seven.</strong> Let \(A = \{\text{Jennifer Davis}\}\), \(B = \{\text{Mary Tandy}, \text{Mena Temple}\}\), and \(C = \{\text{Jennifer Davis}, \text{Judy Dean}, \text{Jodie Degeneres}, \text{Julianne Dench}\}\). Chaining \(A \cup_{\text{ALL}} B \cup C\) groups left: \(A \cup_{\text{ALL}} B\) holds 3 rows, and the final UNION dedupes again against \(C\)'s 4 rows, sharing one name, for <strong>6 distinct rows</strong>. Reversing to \(A \cup B \cup_{\text{ALL}} C\) first dedupes \(A \cup B\) to 3 rows, then UNION ALL appends all 4 rows of \(C\) without deduping, for <strong>7 rows — Jennifer Davis appears twice</strong>. Sense-check: the only difference is which operator gets applied last, and the duplicate count records it exactly.</p>
+</div>
+<div class="warning-box">
+  <p><strong>Pitfall — assuming associativity:</strong> with ALL in the chain, \((A \cup_{\text{ALL}} B) \setminus C\) and \(A \cup_{\text{ALL}} (B \setminus C)\) answer different questions: the first collapses duplicates on the EXCEPT pass, the second preserves A's copies. Do not trust a chain's visual left-to-right reading when INTERSECT is present either — its tighter binding silently regroups the operands. Parenthesize every non-default grouping, and keep the trailing ORDER BY outside all branches so it sorts the final result.</p>
+</div>
+<div class="key-takeaway">
+  <p><strong>Takeaway:</strong> same-operator chains run left to right; INTERSECT outranks UNION and EXCEPT, which share a level; parentheses are the portable way to force any other grouping. The six-versus-seven trace is the compact proof that operator order is semantics, not style.</p>
 </div>
 
 

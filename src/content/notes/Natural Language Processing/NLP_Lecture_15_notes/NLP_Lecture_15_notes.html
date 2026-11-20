@@ -454,6 +454,23 @@
 </div>
 <p>For complex question-answering pipelines, the realization stage may also include named entity recognition (to ensure key entities are properly represented), regex-based guardrails (increasingly important in agentic AI systems to prevent unintended actions such as agents modifying databases), and rule-based coreference resolution.</p>
 
+<h3 id="15.3.4-discourse-aware-content-selection-rhetorical-structure-theory">15.3.4 Discourse-Aware Content Selection: Rhetorical Structure Theory</h3>
+<p>Saliency-based selection (§15.4) and centrality-based selection (§15.5) both treat a document as a <em>bag of sentences</em> — they ignore how those sentences connect into a discourse. <em>Rhetorical Structure Theory (RST)</em> supplies a discourse-aware alternative: a text is parsed into a tree of elementary discourse units linked by <em>coherence relations</em> (Justification, Elaboration, Contrast, Concession, Evidence, and so on). Each relation has a <strong>nucleus</strong> — the central unit carrying the main point — and a <strong>satellite</strong> — a supporting unit that only makes sense relative to its nucleus.</p>
+<div class="key-concept">
+  <p><strong>Recursive salience rule:</strong> Because nuclei carry the main point, the salient units of a discourse tree are defined recursively. <em>Base case:</em> the salient unit of a leaf node is the leaf itself. <em>Recursive case:</em> the salient units of an internal node are the union of the salient units of its <em>immediate nuclear children</em>. Ranking each unit by the height of the nodes for which it is a nucleus gives a partial ordering of importance. For the Mars-weather passage this yields \(2 &gt; 8 &gt; 3 &gt; 1,4,5,7 &gt; 6\), so unit 2 is the most salient unit of the whole text and is extracted first.</p>
+  <figure class="visual-intuition">
+    <pre class="mermaid">
+graph TD
+  ROOT["Root: units 1–8"] -->|nucleus| INNER["Node: units 1–6"]
+  ROOT -->|satellite| U8["Unit 8: most Martian weather involves dust / CO2"]
+  INNER -->|nucleus| U2["Unit 2: Mars experiences frigid weather conditions"]
+  INNER -->|satellite| U1["Unit 1: distant orbit and slim atmospheric blanket"]
+    </pre>
+    <figcaption><strong>Figure 15.1:</strong> RST discourse tree for the Mars-weather passage. Nuclear (bold) links lead to the units that survive summarization; satellite links lead to supporting context.</figcaption>
+  </figure>
+  <p><strong>Worked selection:</strong> In the pair "With its distant orbit and slim atmospheric blanket, Mars experiences frigid weather conditions", the two units are joined by a <em>JUSTIFICATION</em> relation: unit 1 is the satellite and unit 2 is the nucleus. A length-1 summary therefore selects unit 2 — the claim — and drops its justification. Applying the recursion bottom-up over the full tree produces the ranking above with no TF-IDF weighting at all. The trade-off is that a discourse parser must first be run over the input, which is far more expensive than computing word saliency.</p>
+</div>
+
 <h2 id="15.4-unsupervised-content-selection-tf-idf-approach">15.4 Unsupervised Content Selection: TF-IDF Approach</h2>
 <div class="important-note">
   <p>The first unsupervised approach to content selection uses TF-IDF (Term Frequency–Inverse Document Frequency) to score and rank sentences. This method requires no labeled training data — it works purely from the statistical properties of the words in the document and the corpus. The intuition is simple: sentences that contain many words that are frequent in this document but rare elsewhere are likely to be the most informative.</p>
@@ -578,6 +595,26 @@
   </ul>
 </div>
 <p>Despite these limitations, TF-IDF remains popular for content selection due to its simplicity, interpretability, zero training cost, and surprisingly competitive performance. It is often the first baseline to try before moving to more complex methods.</p>
+
+<h3 id="15.4.4-log-likelihood-ratio-topic-signatures-and-centroid-selection">15.4.4 Log-Likelihood Ratio Topic Signatures and Centroid-Based Selection</h3>
+<div class="key-concept">
+  <p><strong>Formal definition — topic signature:</strong> Rather than weighting every word continuously as TF-IDF does, a <em>topic signature</em> is the set of words whose saliency exceeds a threshold \(\theta\). The strongest saliency measure is the <em>log-likelihood ratio</em> (LLR) \(\lambda(w)\): the ratio of the probability of observing \(w\) in both the input document and a background corpus assuming equal probabilities, to the probability assuming different probabilities. Because \(-2\log\lambda\) is asymptotically \(\chi^2\)-distributed with one degree of freedom, a word is significantly more frequent in the input than in the background at \(\alpha = 0.001\) when \(-2\log(\lambda(w)) &gt; 10.8\); the summarization rule rounds this cutoff to 10:</p>
+  <p>\[ \text{weight}(w_i) = \mathbf{1}\big[\, -2\log(\lambda(w_i)) &gt; 10 \,\big] \in \{0,1\} \]</p>
+  <p>A sentence is scored by the average weight of its words:</p>
+  <p>\[ \text{weight}(s_i) = \frac{\sum_{w \in s_i} \text{weight}(w)}{|\{w \mid w \in s_i\}|} \]</p>
+  <p>Sentences are ranked by this score and the highest-ranked ones are extracted. The family is called <em>centroid-based summarization</em>: the signature terms together form a pseudo-sentence — the "centroid" of the document — and sentences closest to that centroid are selected.</p>
+  <p><strong>Worked LLR trace:</strong> For "patients received diagnosis", suppose \(-2\log\lambda\) equals 12.4 for <em>patients</em>, 2.1 for <em>received</em>, and 15.0 for <em>diagnosis</em>. Thresholding at 10 gives weights \(1, 0, 1\), so \(\text{weight}(s) = (1+0+1)/3 \approx 0.67\). For "the report was short" the values are 0.2, 4.3, 0.1, 1.8 — all below 10 — giving \(\text{weight}(s) = 0\). The first sentence outranks the second even though both are short: LLR rewards terms that are statistically characteristic of the input, not merely frequent.</p>
+  <table>
+    <thead>
+      <tr><th>Method</th><th>Word weight</th><th>Sentence score</th><th>Selection signal</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>TF-IDF saliency (§15.4.1)</td><td>\(\text{tf}_{i,j}\times\text{idf}_i\), continuous</td><td>Sum of word weights</td><td>Frequent locally, rare globally</td></tr>
+      <tr><td>LLR topic signature</td><td>Binary \(1/0\) via \(\chi^2\) threshold</td><td>Average of binary weights</td><td>Statistically surprising vs. background</td></tr>
+      <tr><td>Centroid view</td><td>Signature acts as pseudo-sentence</td><td>Closeness to the centroid</td><td>Representativeness of the document</td></tr>
+    </tbody>
+  </table>
+</div>
 
 <h2 id="15.5-unsupervised-content-selection-graph-based-approach-pagerank">15.5 Unsupervised Content Selection: Graph-Based Approach (PageRank)</h2>
 <div class="important-note">
@@ -968,6 +1005,24 @@
   <li><strong>Thematic clustering with transitions:</strong> Group sentences by subtopic, order the groups logically, and add transitional phrases between groups.</li>
   <li><strong>Learned ordering models:</strong> Train a model on multi-document summaries with known orderings to learn the patterns.</li>
 </ul>
+
+<h3 id="15.8.3-entity-grid-coherence-ordering-and-complexity">15.8.3 Entity-Grid Coherence Ordering and Computational Complexity</h3>
+<div class="key-concept">
+  <p><strong>Entity grid:</strong> Coherence-based ordering scores a <em>permutation</em> of the selected sentences by local cohesion. One concrete representation is the <em>entity grid</em>: rows are sentences, columns are discourse entities, and each cell records that entity's grammatical role in that sentence — \(S\) (subject), \(O\) (object), \(X\) (oblique/other mention), or \(-\) (absent). A probabilistic transition model trained on well-formed summaries learns which role sequences are natural: new entities tend to be introduced in oblique or object position and promoted to subject only later.</p>
+  <table>
+    <thead>
+      <tr><th>Sentence</th><th>Department</th><th>Microsoft</th><th>Netscape</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>1. The Justice Department is conducting an anti-trust trial against Microsoft Corp.</td><td>\(S\)</td><td>\(X\)</td><td>\(-\)</td></tr>
+      <tr><td>2. The case resolves around evidence of Microsoft pressuring Netscape.</td><td>\(-\)</td><td>\(S\)</td><td>\(O\)</td></tr>
+      <tr><td>3. Microsoft is accused of trying to buy into markets.</td><td>\(-\)</td><td>\(O\)</td><td>\(-\)</td></tr>
+      <tr><td>4. Microsoft claims its tactics are commonplace.</td><td>\(-\)</td><td>\(S\)</td><td>\(-\)</td></tr>
+    </tbody>
+  </table>
+  <p><strong>Worked ordering decision:</strong> For <em>Microsoft</em> the role sequence is \(X \rightarrow S \rightarrow O \rightarrow S\). A model assigning high probability to that transition prefers sentence 1 before sentence 2, because the entity is introduced obliquely and only then promoted to subject; reversing them gives the less natural \(S \rightarrow S \rightarrow O \rightarrow X\). A purely lexical alternative ranks orderings by the average tf-idf cosine distance between neighbouring sentences and chooses the permutation that minimizes it.</p>
+  <p><strong>Complexity — why heuristics are used:</strong> Optimizing <em>all</em> local pairwise coherence scores at once is intractable: finding the best ordering given pairwise distances is equivalent to Cyclic Ordering and the Traveling Salesman Problem, and is therefore NP-complete. Practical systems rely on greedy or approximation methods instead of searching all \(K!\) permutations — the same quality-versus-cost compromise seen in MMR's greedy selection (§15.7).</p>
+</div>
 
 <h2 id="15.9-neural-text-summarization">15.9 Neural Text Summarization</h2>
 <div class="important-note">

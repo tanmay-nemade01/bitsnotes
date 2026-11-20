@@ -872,6 +872,43 @@ flowchart TB
   <li><strong>User interface modification</strong> — when the user clicks on the search engine and types wheat flour, does the next pane update with the published wheat flour items? The UI must actually change as the user interacts — the pane updating with the search results is the visible proof that the request-response loop reached the user's screen.</li>
 </ol>
 <p>All of this is the user monitoring goal. Note the echo of the earlier metrics: the first item is the latency formula of Section 16.4 applied at the user level — \(L = t_{\text{end}} - t_{\text{start}}\), with the start being the user's click and the end being the user's screen update.</p>
+
+<div class="example-box">
+  <p><strong>Open standard — Apdex (Application Performance Index):</strong> The companion text lists Apdex among the monitoring tools as an open standard for reporting and comparing application performance by turning measurements into insight about user satisfaction. The standard itself converts many measurements into a single score on a zero-to-one scale. It answers a question raw latency \(L = t_{\text{end}} - t_{\text{start}}\) cannot: <em>what fraction of users are actually satisfied?</em></p>
+  <p><strong>The three performance zones</strong> — with \(T\) the target response time a user considers satisfactory and \(F\) the frustration threshold:</p>
+  <table>
+    <thead>
+      <tr>
+        <th>Zone</th>
+        <th>Response time</th>
+        <th>Credit in the score</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>Satisfied</td>
+        <td>\(0 \le t \le T\)</td>
+        <td>Full (1.00)</td>
+      </tr>
+      <tr>
+        <td>Tolerating</td>
+        <td>\(T &lt; t \le F = 4T\)</td>
+        <td>Half (0.50)</td>
+      </tr>
+      <tr>
+        <td>Frustrated</td>
+        <td>\(t &gt; F = 4T\)</td>
+        <td>None (0.00)</td>
+      </tr>
+    </tbody>
+  </table>
+  <p>The specification fixes \(F = 4T\): a one-second target means any response slower than four seconds counts as frustrated. Only the satisfied and tolerating counts receive credit, but every sample — including frustrated ones — stays in the denominator.</p>
+  <p>\[ \mathrm{Apdex}_T = \frac{S + \tfrac{1}{2}T_{\text{count}}}{N} \]</p>
+  <p>where \(S\) is the satisfied count, \(T_{\text{count}}\) the tolerating count, and \(N\) the total number of samples in the reporting group.</p>
+  <p><strong>Worked calculation:</strong> over 1,000 search requests with \(T = 1\) s, suppose 700 completed within 1 s, 200 took between 1 s and 4 s, and 100 exceeded 4 s. Then \(S = 700\), \(T_{\text{count}} = 200\), \(N = 1{,}000\):</p>
+  <p>\[ \mathrm{Apdex}_1 = \frac{700 + \tfrac{1}{2}\times 200}{1{,}000} = \frac{800}{1{,}000} = 0.80 \]</p>
+  <p><strong>Sense-check:</strong> an average latency can still look acceptable while a tenth of users are frustrated — Apdex exposes that tail as a 0.80 score. Converting every tolerating sample to satisfied lifts the score to 0.90, and only an all-satisfied sample set reaches the optimal 1.00. The half-credit for tolerating responses is what makes the index fall quickly as performance degrades, which is exactly the user-experience signal the three raw observations of this section are meant to capture.</p>
+</div>
 <div class="warning-box">
   <p><strong>Scope — what the three observations can and cannot tell you:</strong></p>
   <ul>
@@ -1227,6 +1264,42 @@ flowchart TB
   <li>Strictly above 85 percent: an <strong>alarm</strong> fires — the threshold for required action has been crossed.</li>
 </ul>
 <p>The boundary convention is a configuration choice; what matters is the ladder: the alert threshold is set <em>below</em> the alarm threshold so that operators are informed first and ordered to act second. Once the alarm is there, the operator has to deep-dive and look into the problem to minimize the CPU utilization, to bring the value back to normal.</p>
+
+<div class="important-note">
+  <p><strong>Beyond the threshold — alert fatigue and the four correction rules:</strong> A threshold ladder is necessary but not sufficient. The companion text warns that in a system with many metrics, suppressing spurious alarms while still raising an alarm for every real issue are conflicting goals; a flood of notifications produces <em>alert fatigue</em>, where operators begin ignoring or disabling alerts — including the genuine ones. Google's SRE guidance is equally direct: a page that fires too often gets skimmed or ignored, and every page should be actionable. The lesson for this section is that an alarm's <em>quality</em> matters as much as its threshold.</p>
+  <table>
+    <thead>
+      <tr>
+        <th>Rule</th>
+        <th>What it means</th>
+        <th>Concrete mechanism</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>Add context</td>
+        <td>Suppress notifications that are expected during a known activity</td>
+        <td>Silence host-health alarms while that physical machine is being replaced, then re-enable them</td>
+      </tr>
+      <tr>
+        <td>Dead-man's switch</td>
+        <td>Alarm when an <em>expected</em> event fails to occur, not only when something happens</td>
+        <td>A watchdog heartbeat that must arrive every minute; its absence proves the monitoring pipeline itself died</td>
+      </tr>
+      <tr>
+        <td>Aggregate duplicates</td>
+        <td>One notification for many alerts describing the same incident</td>
+        <td>Group by cluster and alert name — Prometheus Alertmanager collapses hundreds of same-cause alerts into a single notification</td>
+      </tr>
+      <tr>
+        <td>Severity and urgency</td>
+        <td>Route by how fast a human must respond</td>
+        <td>Page (act now), email alert (look soon), ticket (track) — the three notification classes in Google SRE</td>
+      </tr>
+    </tbody>
+  </table>
+  <p><strong>Worked sense-check:</strong> a network partition leaves 200 service instances unable to reach the database. Without grouping, 200 pages arrive and the team stops reading them; with grouping, operators get one page naming the affected cluster. During a planned host replacement, a context silence holds back the host-health alarms, while a dead-man's heartbeat alarm still fires if monitoring itself stops reporting. The alarm set is smaller but strictly more informative — fewer pages, better coverage.</p>
+</div>
 <div class="example-box">
   <p><strong>Worked example — sophisticated threshold combinations (the Saturday/Friday rule):</strong> Thresholds can combine values <em>and</em> context. Suppose percentage monitoring of a file system is combined with CPU utilization on a peak day.</p>
   <ul>
@@ -1438,6 +1511,37 @@ flowchart TB
 <h3 id="16.12.5-the-elk-architecture-how-the-pieces-connect">16.12.5 The ELK Architecture: How the Pieces Connect</h3>
 <p>The architecture: Logstash can collect data from any kind of device — wire data, log files, metrics, Windows events — and those are passed and transformed to Elasticsearch. You can even think of shipping data to Elasticsearch without Logstash; Elasticsearch can search all these kinds of data. But to give a proper shape to your data, transform it, pre-process it, and minimize the data size, people use Logstash to transform the data into a particular format and then store it into the stash.</p>
 <p>Quick review of the flow: logs — whether from wired data, routers, databases, or any other files — are collected by Logstash, pre-processed, and stored in one particular format into Elasticsearch. By using Elasticsearch you can search for particular data, and that data can be visualized with Kibana. That is how ELK works.</p>
+
+<div class="important-note">
+  <p><strong>Architectural extension — the unified log behind ELK and Kafka:</strong> The companion text observes that because monitoring data now serves both system health and business/user insight, many organizations converge on one log-and-metrics-centric publish–subscribe backbone shared by the monitoring system and the application itself. Three consequences follow that the basic source → Logstash → Elasticsearch → Kibana flow does not make obvious on its own:</p>
+  <table>
+    <thead>
+      <tr>
+        <th>Concern</th>
+        <th>Point-to-point collection</th>
+        <th>Unified log (publish–subscribe)</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>Coupling</td>
+        <td>Each consumer needs its own feed from each source</td>
+        <td>Publishers and subscribers are independent of one another — Kafka's producers and consumers are mutually agnostic by design</td>
+      </tr>
+      <tr>
+        <td>Correlation</td>
+        <td>Data is joined according to where it came from</td>
+        <td>Any source can be correlated with any other on shared attributes such as the timestamp, not its origin</td>
+      </tr>
+      <tr>
+        <td>Retention and replay</td>
+        <td>Events are consumed and discarded</td>
+        <td>Events are kept for a configured retention period and can be re-read, so a new subscriber can replay history</td>
+      </tr>
+    </tbody>
+  </table>
+  <p><strong>Why it matters here:</strong> the boundary the professor draws around Kafka — good for basic event monitoring, not a full monitoring system — concerns the <em>monitoring application</em> layer (thresholds, dashboards, diagnosis), not the log substrate. Kafka supplies collection, durable storage, and dissemination; Elasticsearch and Kibana supply search and visualization. Once application and user events share the same log as system metrics, the line between "the monitoring system" and "the system being monitored" blurs: one stored stream feeds health alarms, user-reaction analysis, and business insight alike.</p>
+</div>
 <div class="diagram-container my-6 text-center">
   <pre class="mermaid">
 flowchart LR

@@ -647,6 +647,34 @@
   </table>
   <p><strong>When to pick which:</strong> if your workload is "analyze a huge historical dataset and produce a summary," use Hive; if your workload is "serve or update one record per request for live users," use an OLTP database. Real systems often run both side by side — an OLTP database handles the live web traffic, and Hive analyzes the accumulated history each night.</p>
 </div>
+
+<div class="important-note">
+  <p><strong>Modern nuance — opt-in ACID tables (Hive 0.13+/0.14+):</strong> Sections 7.2.1 and 7.5.2 stress that Hive is an OLAP engine, not an OLTP database. That remains true, but since Hive 0.13 the engine can provide row-level ACID semantics on specially configured <em>transactional tables</em>. This is a warehouse feature for slow-changing dimensions, data restatements, and streaming ingest — not a license to run live point-update workloads: every operation is auto-commit (<code>BEGIN</code>/<code>COMMIT</code>/<code>ROLLBACK</code> are not supported), only snapshot isolation is offered, and each change is still processed as a background job.</p>
+  <p><strong>Mechanism — immutable base files plus delta files:</strong> HDFS has no in-place file update and gives no read consistency while a writer appends. A transactional table therefore keeps its rows in immutable <code>base_*</code> directories; each <code>INSERT</code>, <code>UPDATE</code>, or <code>DELETE</code> is written as a new <code>delta_*</code> directory. At read time the reader merges base and deltas and applies the changes on the fly, so concurrent readers observe one consistent snapshot.</p>
+  <pre><code>/user/hive/warehouse/t/
+  base_0000022/                        bucket_00000   &lt;-- immutable base rows
+  delta_0000023_0000023_0000/          bucket_00000   &lt;-- transaction 23
+  delta_0000024_0000024_0000/          bucket_00000   &lt;-- transaction 24</code></pre>
+  <p><strong>Required configuration (client + metastore):</strong></p>
+  <pre><code>SET hive.support.concurrency = true;
+SET hive.enforce.bucketing = true;          -- required before Hive 2.0
+SET hive.exec.dynamic.partition.mode = nonstrict;
+SET hive.txn.manager = org.apache.hadoop.hive.ql.lockmgr.DbTxnManager;
+-- Metastore side: hive.compactor.initiator.on = true;
+--                hive.compactor.cleaner.on = true;
+--                hive.compactor.worker.threads &gt; 0</code></pre>
+  <p>The table itself must be <code>STORED AS ORC</code>, bucketed (<code>CLUSTERED BY (id) INTO 2 BUCKETS</code>), and tagged with <code>TBLPROPERTIES ("transactional"="true")</code>. External tables cannot be ACID tables because their files are outside the compactor's control — the same ownership boundary that Section 7.9 draws for <code>DROP TABLE</code>.</p>
+  <table>
+    <thead>
+      <tr><th>Compaction</th><th>Inputs</th><th>Output</th><th>Default trigger</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>Minor</td><td>A set of delta files</td><td>One delta file per bucket</td><td><code>hive.compactor.delta.num.threshold</code> (10 deltas)</td></tr>
+      <tr><td>Major</td><td>Base file + one or more deltas</td><td>A new base file per bucket</td><td><code>hive.compactor.delta.pct.threshold</code> (0.1 = 10% of base size)</td></tr>
+    </tbody>
+  </table>
+  <p><strong>Pitfalls:</strong> <code>LOAD DATA</code> is not supported on transactional tables — bulk-load a staging external table first, then <code>INSERT</code>; only ORC is supported; an ACID table cannot be converted back to a non-ACID one; and compaction is performed by metastore background workers, so a large <code>hive.compactor.check.interval</code> delays cleanup. Inspect the machinery with <code>SHOW TRANSACTIONS</code>, <code>SHOW LOCKS</code>, and <code>SHOW COMPACTIONS</code>.</p>
+</div>
 <div class="key-takeaway">
   <p><strong>Recap + bridge:</strong> One query = one six-step journey through driver, metastore, optimizer, YARN, and HDFS — and every job pays 15–30 s of YARN startup, which is why Hive is OLAP-only. Next we zoom into the metastore itself, the schema brain that makes step 2 possible.</p>
 </div>
@@ -1090,6 +1118,40 @@ ROW FORMAT DELIMITED
   LINES TERMINATED BY '\n'
 STORED AS TEXTFILE;</code></pre>
 <p>Reading the clauses: <code>ROW FORMAT DELIMITED ... FIELDS TERMINATED BY ','</code> tells Hive that each line is a row and commas separate fields; <code>LINES TERMINATED BY '\n'</code> says rows end at newlines; <code>STORED AS TEXTFILE</code> stores the table as plain text (not a binary format). Because the table is <em>managed</em>, Hive will own both the metadata and the data files under <code>/user/hive/warehouse/bds.db/emp/</code>.</p>
+
+<div class="key-concept">
+  <p><strong>Beyond <code>TEXTFILE</code> — the two dimensions of Hive table storage:</strong> On-disk representation is controlled by two independent clauses. The <strong>row format</strong> is defined by a <em>SerDe</em> (Serializer/Deserializer): on reads it deserializes file bytes into Hive's internal row objects, and on writes (<code>INSERT</code> or CTAS) it serializes them back out. The <strong>file format</strong> (<code>STORED AS</code>) chooses the container encoding. <code>TEXTFILE</code> is the default — one row per line with control-character delimiters (fields by Ctrl-A <code>\001</code>, collection items by Ctrl-B <code>\002</code>, map keys by Ctrl-C <code>\003</code>) — verbose but readable by other tools.</p>
+  <table>
+    <thead>
+      <tr><th><code>STORED AS</code></th><th>Layout</th><th>Distinguishing property</th></tr>
+    </thead>
+    <tbody>
+      <tr><td><code>TEXTFILE</code></td><td>Row (text)</td><td>Default; one row per line, human-readable</td></tr>
+      <tr><td><code>SEQUENCEFILE</code></td><td>Row (binary)</td><td>Splittable, compressible binary key-value pairs</td></tr>
+      <tr><td><code>AVRO</code></td><td>Row (binary)</td><td>Schema evolution; multiple language bindings</td></tr>
+      <tr><td><code>RCFILE</code></td><td>Column</td><td>Record Columnar File: rows grouped, then stored column-wise</td></tr>
+      <tr><td><code>ORC</code></td><td>Column</td><td>Column-level metadata; ACID transactions and CBO support</td></tr>
+      <tr><td><code>PARQUET</code></td><td>Column</td><td>Columnar binary format (native since Hive 0.13)</td></tr>
+    </tbody>
+  </table>
+  <p><strong>Selection rule:</strong> column-oriented formats (RCFile, ORC, Parquet) win when a query touches only a few columns of a wide table; row-oriented formats (SequenceFile, Avro) suit queries needing many columns of one row at once. Changing the <code>STORED AS</code> clause changes only the encoding — the bytes still live in HDFS.</p>
+</div>
+
+<div class="example-box">
+  <p><strong>Worked example — parsing fixed-width records with a custom SerDe.</strong> The default <code>LazySimpleSerDe</code> described above needs a delimiter that never appears inside a field. When the source is fixed-width — e.g. a weather-station file whose first six characters are a USAF id, the next five a WBAN id, then a 29-character name — declare <code>RegexSerDe</code> and let capturing groups define the columns:</p>
+  <pre><code>CREATE TABLE stations (usaf STRING, wban STRING, name STRING)
+ROW FORMAT SERDE 'org.apache.hadoop.hive.serde2.RegexSerDe'
+WITH SERDEPROPERTIES (
+  "input.regex" = "(\\d{6}) (\\d{5}) (.{29}) .*"
+)
+STORED AS TEXTFILE;
+
+LOAD DATA LOCAL INPATH '/data/stations-fixed-width.txt'
+INTO TABLE stations;</code></pre>
+  <p><code>input.regex</code> uses Java regular-expression syntax: the three parenthesized capturing groups map, in order, to <code>usaf</code>, <code>wban</code>, and <code>name</code> (a six-digit id, a five-digit id, and a 29-character field); the trailing <code>.*</code> discards the rest of each line. A row <code>010000 99999 BOGUS NORWAY …</code> therefore yields <code>010000 | 99999 | BOGUS NORWAY</code>. Parenthesized regex constructs you do not want to become columns must be non-capturing, e.g. <code>(?:ab)+</code>.</p>
+  <p><strong>Two easily missed facts:</strong> (1) <code>LOAD DATA</code> is a pure filesystem copy/move and does <em>not</em> invoke the SerDe — deserialization happens on <code>SELECT</code>, so a malformed line is only detected at query time; (2) SerDe class and property names are case-sensitive, and with a custom SerDe Hive may query the SerDe itself to derive the column list. RegexSerDe is convenient for ingestion but inefficient for general storage, so convert the parsed rows into a binary columnar format with CTAS:</p>
+  <pre><code>CREATE TABLE stations_orc STORED AS ORC AS SELECT * FROM stations;</code></pre>
+</div>
 <h3 id="7.10.2-single-row-direct-insertion-overhead">7.10.2 Single-Row Direct Insertion Overhead</h3>
 <p>Data can be added directly via standard SQL insert statements:</p>
 <pre><code>INSERT INTO TABLE emp VALUES (5, 'ram', 50);</code></pre>
@@ -1175,6 +1237,16 @@ Tracking URL: http://localhost:8088/proxy/application_1722345678901_0061/</code>
   <li><strong>Behavior:</strong> Launches a full MapReduce / Tez job across YARN containers.</li>
   <li><strong>Reason:</strong> Mappers must parse individual data splits, compute local partial counts/sums, shuffle intermediate values over the network, and Reducers must combine partial aggregations into a single final scalar output. That map-shuffle-reduce pipeline <em>requires</em> a distributed job.</li>
 </ul>
+
+<h3 id="7.10.5-hive-views-logical-virtual-tables">7.10.5 Hive Views (Logical Virtual Tables)</h3>
+<div class="key-concept">
+  <p><strong>A view is a stored query, not stored data:</strong> A view is a "virtual table" defined by a <code>SELECT</code> statement. It has a name and columns and can be queried like a table, but it owns <em>no data files of its own</em> — only its definition is registered in the metastore. When a query references the view, Hive evaluates that definition to produce rows, and the optimizer can push an outer filter into the view instead of materializing it.</p>
+  <pre><code>CREATE VIEW valid_records AS
+SELECT * FROM emp WHERE rank &lt; 100;
+SELECT * FROM valid_records LIMIT 4;
+DROP VIEW valid_records;</code></pre>
+  <p><strong>Read-only by design:</strong> a view cannot be the target of <code>LOAD</code>, <code>INSERT</code>, or <code>ALTER</code> — it is a window onto base tables. Its column schema is frozen at creation, so later base-table changes are not reflected automatically. <code>DESCRIBE EXTENDED view_name</code> shows the stored definition, and views appear in <code>SHOW TABLES</code>. (Hive 3.0+ also offers materialized views, whose result rows <em>are</em> physically stored so the optimizer can reuse them.)</p>
+</div>
 <div class="key-takeaway">
   <p><strong>Recap + bridge:</strong> Create tables with <code>CREATE TABLE</code> (managed by default), and populate them <em>in bulk</em> with <code>LOAD DATA</code> (a fast file operation) rather than row-by-row <code>INSERT</code> (one job + one tiny file per row). Even <code>SELECT *</code> streams without a job, while aggregations do need one. Next, we see the two big performance tools that make large-table queries fast: partitioning and bucketing.</p>
 </div>

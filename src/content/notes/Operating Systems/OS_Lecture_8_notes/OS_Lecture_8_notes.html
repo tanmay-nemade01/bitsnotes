@@ -392,6 +392,22 @@ counter = register2</code></pre>
   <p><strong>Sense-check:</strong> after P0 enters and leaves, P1 is guaranteed the next entry — no third process can cut in, because there are only two processes.</p>
 </div>
 <p>Peterson's solution works in principle, but it rests on the assumption that writes to <code>flag</code> and <code>turn</code> happen immediately and in order. Modern processors reorder instructions and cache writes, so without hardware guarantees Peterson's solution may fail in practice — the professor's point that the software solution could not satisfy the hardware constraints. The course takes the next step: hardware that offers locking directly.</p>
+
+<div class="important-note">
+  <p><strong>Beyond Two Processes: Lamport's Bakery Algorithm.</strong> Peterson's solution is limited to two processes. To generalize the software approach to \(n\) processes, Lamport's bakery algorithm gives each process a numbered ticket on arrival and serves tickets in order — the same rule a bakery uses. Each process \(i\) owns two shared arrays: <code>choosing[i]</code> (true while it is drawing its ticket) and <code>number[i]</code> (its ticket, 0 meaning "not competing").</p>
+  <pre><code>choosing[i] = true;
+number[i] = 1 + max(number[0..n-1]);
+choosing[i] = false;
+for (j = 0; j &lt; n; j++) {
+    while (choosing[j]);                       // wait until j's ticket is stable
+    while (number[j] != 0 &amp;&amp;
+           (number[j], j) \lt (number[i], i));  // smaller ticket, or tie → smaller id
+}
+// critical section
+number[i] = 0;</code></pre>
+  <p><strong>Why it works.</strong> Tickets are drawn one at a time because a process sets <code>choosing[i]</code> first; anyone who sees <code>choosing[j]</code> true waits until that ticket is fully written — the extra guard the simpler two-variable schemes lack. The tuple comparison \( (a,b) \lt (c,d) \iff (a \lt c) \lor (a = c \wedge b \lt d) \) breaks ties by process id, so two processes can never both conclude it is their turn. Mutual exclusion follows because the process holding the smallest non-zero ticket is the only one whose wait loops all terminate; bounded waiting follows because ticket values only increase, so after process \(i\) takes ticket \(t\), at most \(n-1\) other processes can draw a ticket smaller than \(t\) before \(i\) enters — the \(n-1\) turns lower bound for \(n\)-process mutual exclusion.</p>
+  <p><strong>Cost and historical context.</strong> Ticket values are unbounded (they grow with every entry), and the proof only assumes a read that overlaps a single-writer write returns some value that was written — weaker than atomic reads. Dekker solved the two-process case, Dijkstra the \(n\)-process case without a wait bound, Knuth reduced the bound to \(2n\) turns, and Lamport's 1974 bakery algorithm reached \(n-1\) turns with a simpler program. It is chiefly of theoretical interest: the hardware atomics of the next subsection buy the same guarantee far more cheaply.</p>
+</div>
 <h3 id="8.5.2-hardware-support-locks-and-atomic-instructions">8.5.2 Hardware Support: Locks and Atomic Instructions</h3>
 <p>For hardware-based support, the approach differs between a uniprocessor and a multiprocessor. In both cases we need a special atomic instruction.</p>
 <ul>
@@ -425,6 +441,27 @@ lock = false;                // release: let someone else in</code></pre>
   <p><strong>Sense-check:</strong> the instructions give mutual exclusion, but the simple lock version above does not give bounded waiting — a fast process can win the lock again and again while a slow one spins. The hardware answer for that is a ticket-based TestAndSet scheme that hands the lock to waiting processes in a cyclic order.</p>
 </div>
 <p>This hardware approach mainly serves the hardware cases where the software solution fails, especially for multiprocessor systems where more than one instruction stream can interleave at the hardware level.</p>
+
+<div class="important-note">
+  <p><strong>A Third Atomic Primitive: Compare-and-Swap.</strong> Besides TestAndSet and Swap, nearly every modern processor provides <em>compare-and-swap</em> (CAS), also called compare-and-exchange. It reads a memory word, compares it with an expected value, and writes a new value only on a match — the whole read-compare-write is one atomic action:</p>
+  <pre><code>int compare_and_swap(int *word, int testval, int newval) {
+    oldval = *word;
+    if (oldval == testval) *word = newval;   // conditional write
+    return oldval;                            // success ⇔ oldval == testval
+}</code></pre>
+  <p>A mutual-exclusion lock is built by spinning until the word is seen free — <code>while (compare_and_swap(bolt, 0, 1) == 1) ;</code> — then entering the critical section and resetting <code>bolt = 0</code> on exit. The same primitive implements the short <code>flag</code> lock around a semaphore's <code>count</code>: acquire with <code>while (compare_and_swap(s.flag, 0, 1) == 1) ;</code> and release with <code>s.flag = 0</code>. This is how a counting semaphore stays correct on a multiprocessor where disabling interrupts is not enough.</p>
+  <table>
+    <thead>
+      <tr><th>Primitive</th><th>Atomic action</th><th>Distinguishing feature</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>TestAndSet</td><td>read the word and set it true</td><td>unconditional write; returns the old value</td></tr>
+      <tr><td>Swap</td><td>exchange the word with a local key</td><td>unconditional exchange of two words</td></tr>
+      <tr><td>Compare-and-swap</td><td>write only if the word equals the expected value</td><td>conditional write — the basis of lock-free algorithms</td></tr>
+    </tbody>
+  </table>
+  <p><strong>System detail:</strong> CAS exists on essentially every processor family (x86 <code>CMPXCHG</code>, ARM, and others) and is exposed as <code>InterlockedCompareExchange</code> on Windows and <code>compare_exchange</code> in C++. The interlocked operation is a full memory barrier: the destination is compared with the comparand, the exchange value is stored only when they are equal, and otherwise no operation is performed. Unlike TestAndSet, a failed CAS simply reports that the word changed, so a thread can retry instead of parking — which is why conditional atomic writes underpin non-blocking (lock-free) data structures.</p>
+</div>
 <div class="warning-box">
   <p><strong>Pitfalls in this section:</strong></p>
   <ul>
@@ -764,6 +801,23 @@ lock = false;                // release: let someone else in</code></pre>
   </ul>
 </div>
 <p>Real-world: in some systems the kernel itself solves this problem by providing <strong>reader-writer locks</strong> — a lock acquired in either <em>read mode</em> (many holders allowed) or <em>write mode</em> (exclusive). Databases and file systems use exactly this pattern: many users may read a table concurrently, but a write locks out everyone else.</p>
+
+<div class="important-note">
+  <p><strong>Lock-Free Readers: Read-Copy-Update (RCU).</strong> Reader-writer locks still make readers take a shared lock and force writers to wait for every reader to leave. RCU, integrated into the Linux kernel in 2002, removes the reader lock almost entirely and is optimized for <em>read-mostly</em> data — routing tables, the virtual file system, and the network subsystem are typical users. The updater never modifies data in place: it copies the object, changes the copy, and atomically publishes a pointer to the new version with <code>rcu_assign_pointer()</code>. Because aligned pointer writes are atomic, a reader observes either the old object or the new one, never a half-updated one.</p>
+  <p>The update is split into two phases: <strong>removal</strong> — publish the new pointer while readers may still be using the old object — and <strong>reclamation</strong> — free the old object only after a <em>grace period</em> has passed. <code>synchronize_rcu()</code> blocks until every reader that was active during removal has left its read-side critical section; the callback form <code>call_rcu()</code> does the same without blocking the writer. Readers bracket access with <code>rcu_read_lock()</code>/<code>rcu_read_unlock()</code> and fetch pointers only through <code>rcu_dereference()</code>.</p>
+  <table>
+    <thead>
+      <tr><th>Aspect</th><th>Reader-writer lock (this section)</th><th>RCU</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>Reader overhead</td><td>acquire/release a shared lock</td><td>near zero — no lock on the read path</td></tr>
+      <tr><td>Writer mechanism</td><td>exclusive lock; waits for readers to leave</td><td>copy + atomic pointer publish, then deferred reclaim</td></tr>
+      <tr><td>Readers during a write</td><td>excluded</td><td>allowed — old version survives until the grace period ends</td></tr>
+      <tr><td>Best-fit workload</td><td>balanced reads and writes</td><td>reads frequent, writes rare</td></tr>
+    </tbody>
+  </table>
+  <p><strong>Caveats:</strong> a reader may not block inside an RCU read-side critical section; the grace-period cost is paid by the writer, not the readers; and RCU protects readers from an updater but does <em>not</em> serialize two concurrent updaters — those still need a lock or semaphore. The common use of RCU is directly analogous to reader-writer locking: read-side locking is replaced by <code>rcu_read_lock()</code>/<code>rcu_read_unlock()</code>, and reclamation is deferred by <code>synchronize_rcu()</code>. This is the practical escape from the starvation trade-off above when reads overwhelmingly dominate writes.</p>
+</div>
 <div class="key-takeaway">
   <p><strong>Recap:</strong> the reader-writer solution lets many readers in together by having the first reader take the writer lock and the last reader release it; the writer side is a plain lock. The cost is built-in: whichever side gets priority, the other side can starve. Next, the dining philosophers problem — where the resource allocation is the whole point, and deadlock is the trap.</p>
 </div>

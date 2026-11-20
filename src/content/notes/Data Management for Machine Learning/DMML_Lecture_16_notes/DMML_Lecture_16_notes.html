@@ -491,6 +491,21 @@
   </tbody>
 </table>
 <p>When to pick which: use CRISP-DM language for business-heavy answers, SEMMA for tool-pipeline answers, and KDD for research-style answers. All three agree on one rule: allow the return path.</p>
+<div class="warning-box">
+  <p><strong>Pitfall — When the model creates its own training data:</strong> in the return arrow described above, influence runs both ways. A model trained on clean history changes what gets shown, collected, and labelled next, so the next training set is a consequence of yesterday's predictions. Weather prediction is a clean case: a sunny forecast does not change the weather. A recommender is not. If it only shows brown wool products, it receives clicks only for brown wool products and never learns that an unshown product might be preferred. The loop can spiral: high scores drive broad exposure, stock sells out, purchases vanish, the model overcorrects, and unrelated items degrade — until a rollback and a purge of the abnormal data restore it.</p>
+  <p><strong>Two concrete mechanisms:</strong> (1) <em>Position bias</em> — an item placed first is clicked more, so the training data convinces the model that rank one is intrinsically better; the standard fix is to include a positional feature while training and neutralise it at serving time. (2) <em>Explore versus exploit</em> — a recommender that only exploits what it already ranks highly never samples unseen items, so a contextual-bandit formulation deliberately randomises a fraction of choices to gather feedback on alternatives, trading some short-term relevance for long-term learning.</p>
+</div>
+<figure class="visual-intuition">
+  <pre class="mermaid">
+flowchart LR
+  M[Model prediction] --> S[Serve and rank]
+  S --> U[User sees only shown items]
+  U --> D[(New labelled data)]
+  D --> T[Retrain]
+  T --> M
+  </pre>
+  <figcaption><strong>Figure:</strong> Implicit feedback loop — the model's own serving decisions determine the data available for the next training run, so unexplored items never enter the log.</figcaption>
+</figure>
 <h3 id="16.3.4-lineage-tracking" class="subsection-title">16.3.4 Lineage Tracking</h3>
 <p><em>Lineage</em> (the full journey of data from start to end: source, moves, hands that touched it, often 5 to 20 hops) is the full journey of data from start to end. A <em>lineage tracker</em> (the log that records pedigree: source, moves, and hands that touched data, often auto-captured per run) records that journey. It shows where data came from. It shows where it moved. It shows who changed it. It shows who aggregated it. It shows where shape changed. In database terms this is full auditing.</p>
 <div class="key-concept">
@@ -678,6 +693,30 @@
 </div>
 <h3 id="16.5.5-metrics-settings-visualization-and-debugging" class="subsection-title">16.5.5 Metrics, Settings, Visualization, and Debugging</h3>
 <p>Score models with more than one number. Accuracy is share correct. Precision is share true among predicted true. Absolute error is gap size per row. Root mean square error punishes large gaps more. A confusion matrix splits right and wrong by class. Pick metrics that fit the goal. A trading model and a care model do not share the same cost of error. Take numbers: 90 correct of 100 gives accuracy \(90 / 100 = 0.90\). If 80 rows are predicted true and 60 are truly true, precision is \(60 / 80 = 0.75\).</p>
+<div class="key-concept">
+  <p><strong>Formal Definition — Evaluation = Metric + Distribution:</strong> An evaluation is not a bare number; it is the pair \(E = (m, \mathcal{D})\), where \(m\) is a performance metric and \(\mathcal{D}\) is the data distribution it is computed over. "This model is more accurate" is incomplete until the distribution is named, because a score quantifies performance only on the population that produced it. The same model can score well on a random holdout yet fail on snowy-road images or an unseen region, which is why fairness failures are often traced to an under-specified evaluation distribution rather than to the metric itself.</p>
+</div>
+<p>Several evaluation distributions are used in practice, each answering a different question:</p>
+<table>
+  <thead>
+    <tr>
+      <th>Distribution</th>
+      <th>How it is built</th>
+      <th>Question it answers</th>
+      <th>Main caveat</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr><td>IID held-out test</td><td>Random sample from one source, each row independent</td><td>Expected performance on the same population</td><td>Can leak "future" facts in time-ordered data and hide rare slices</td></tr>
+    <tr><td>Progressive validation (backtesting)</td><td>Replay rows in arrival order; score each row, then train on it</td><td>What the model would have done at each past moment</td><td>Awkward for models needing many passes; compare models over identical time ranges</td></tr>
+    <tr><td>Stress-test distribution</td><td>Assemble data from regions, conditions, or groups absent in training</td><td>Does the model survive covariate shift or training–serving skew?</td><td>Must be built deliberately; an IID set will not reveal the gap</td></tr>
+    <tr><td>Sliced analysis</td><td>Filter any test set by a feature value, such as one age band</td><td>Which subgroup lifts or drags the aggregate score?</td><td>Slice too finely and the sample is too small to mean anything statistically</td></tr>
+    <tr><td>Counterfactual testing</td><td>Alter an input — background, city, pronoun — and rescore</td><td>Would the decision change if an irrelevant attribute changed?</td><td>May need synthetic examples; best for proving a change does <em>not</em> move the prediction</td></tr>
+  </tbody>
+</table>
+<div class="important-note">
+  <p><strong>Operational rule:</strong> report every headline metric together with the distribution it was measured on, and pair aggregate scores with sliced analysis on safety- and fairness-critical attributes. Use a time-aware scheme — progressive validation or a forward-in-time split — whenever rows carry a time order: a random shuffle of time-indexed data inflates validation scores because training rows sit artificially close to test rows. Guard the sealed golden holdout alongside these so a sudden quality drop is still visible.</p>
+</div>
 <p>Tune <em>hyperparameters</em> (settings set before training, such as epoch count of 50, hidden layer count of 3, learning rate of 0.01, and error target of 0.001), meaning settings set before training. Examples are epoch count, hidden layer count, learning rate, and error target. <em>Learning rate</em>, written \(\eta\) (the step size per update, such as 0.01), is the step size per update:</p>
 <p>\[\theta_{new} = \theta_{old} - \eta \times g\]</p>
 <p>where \(\theta_{old}\) is the current weight, \(g\) is the gradient direction for that step, \(\eta\) is the learning rate step size, and \(\theta_{new}\) is the updated weight. The session point was: learning rate and error rate guide tuning alongside epochs and layers. Small steps learn slow and steady. Large steps learn fast but can overshoot. Take numbers: if \(\theta_{old} = 0.80\), \(\eta = 0.10\), and \(g = 0.50\), then \(\theta_{new} = 0.80 - 0.10 \times 0.50 = 0.75\).</p>
@@ -779,6 +818,10 @@
   <p>Indicator is what is measured. Objective is what is wanted. Agreement is what is promised. One number each keeps the promise testable: SLI measured fact, SLO target, SLA promise.</p>
 </div>
 <p>Picture a speedometer (SLI), a speed-limit sign (SLO), and a delivery contract (SLA). The takeaway: the dial shows now, the sign sets the aim, and the contract sets the penalty for missing it.</p>
+<div class="important-note">
+  <p><strong>System Detail — SLOs in an ML context:</strong> An SLO is only useful if it is scoped to the right system. Split objectives across <em>serving</em> (endpoint error rate, latency, throughput), <em>training</em> (examples per second, plus a completion target such as 95% of runs finishing inside a time bound), and the <em>application</em> (successful model calls and shown recommendations as the app sees them, which need not match the serving team's own error rate).</p>
+  <p>None of those examples measure model quality, so add SLOs tied to the <em>business purpose</em> — click-through on ranked results, or an end-to-end revenue SLO measured over longer windows and sliced by geography or customer type. Because a model's quality can decay from subtle data or world changes, ML SLOs should also cover the data (distribution and freshness) and fold in quality or confidence thresholds: unlike a 200/500 up-or-down endpoint, a classifier returns confidences across a range. This makes the SLO a control loop — measure the indicator, compare it to the target, act on the gap — and that same gap decides whether effort goes to new features or to reliability.</p>
+</div>
 <h3 id="16.7.3-model-and-language-model-observability" class="subsection-title">16.7.3 Model and Language Model Observability</h3>
 <p>Model monitoring tracks scores, metadata, and store use for governance. It watches training versus live gaps. It triggers automation to retrain, re-evaluate, and redeploy. That loop links back to schedulers and registries. PSI, KL drift scores, golden-set checks, and canary metrics from the companion guides all feed this loop: when input mix or output quality moves past its SLO, the alarm fires and the retraining path takes over.</p>
 <p>Language model stacks add three more watch items. <em>Vector drift</em> (shift in embedding vectors when data or model changes, such as mean cosine shift 0.12) is shift in embedding vectors when data or model changes. <em>Prompt drift</em> (shift in output when prompts or context change, such as win rate down 8 points after a template edit) is shift in output when prompts or context change. <em>Full traces</em> (linked chain from user input through prompt text, retrieved chunks, augmented context, to final output) link each answer back through user input, prompt text, retrieved chunks, augmented context, and final output. That chain shows where a bad answer started. Retrieval plus augmentation plus generation must be traced as one path. Vector drift from embeddings, prompt and context drift, and end-to-end traces from input to prompt to retrieval to augmentation to output pinpoint whether the fault sits in data, model, prompt, or retrieved context.</p>
@@ -789,6 +832,10 @@
   <p>Three traps: watching only accuracy while embeddings drift silently, editing prompts without version tags so drift has no baseline, and logging outputs without inputs and retrieved chunks so traces dead-end. Version prompts, store embeddings, and trace the full input-to-output path.</p>
 </div>
 <p>Embedding stores, prompt logs, retrieval traces, and drift dashboards are now routine in language model products. That is the industry anchor for this stage.</p>
+<div class="important-note">
+  <p><strong>System Detail — From alert to incident response:</strong> An alert is useful only when someone can act on it. Continuous-ML guidance recommends a service-level agreement on how fast an alert must be answered, a pager rotation so the right person sees it, a documented <em>playbook</em> any team member can run, and an escalation path for deeper action. Because data defects can take time to surface downstream, simple canary metrics that watch input-distribution changes are preferred over waiting for model outputs to move.</p>
+  <p><strong>The five immediate ML crisis responses</strong> are: <em>stop training</em> (halt training and new model pushes with a "big red button"), <em>fall back</em> (serve a simple model, lookup table, or median predictor temporarily), <em>roll back</em> (revert the binary or the model to a known-good checkpoint), <em>remove bad data</em> (purge corrupt or unrepresentative records before training resumes), and <em>roll through</em> (resume training on atypical data and let the model recover as the external event ends). ML incidents are also often first noticed by end users and involve a broader set of teams than ordinary outages, so declaring the incident early and naming a single incident commander keep these responses coordinated.</p>
+</div>
 <div class="key-takeaway">
   <p><strong>Recap:</strong> data pipes need flow and quality eyes, services need SLI, SLO, and SLA numbers, and language stacks add vector drift, prompt drift, and full traces. <strong>Bridge:</strong> the appendices now compress these rules into exam lines and industry anchors.</p>
 </div>

@@ -669,6 +669,47 @@ Cursor View (Movable Pointer p):
 <div class="warning-box">
   <p><strong>Scope & Assumptions:</strong> A cursor's result set is evaluated according to the transaction isolation level of the host session. In Read Committed isolation, opening a cursor takes a snapshot of the committed data at the exact moment of the <code>OPEN</code> call. Rows modified after the <code>OPEN</code> statement will not be seen during subsequent <code>FETCH</code> commands of that active cursor instance.</p>
 </div>
+
+<div class="key-concept">
+  <p><strong>Formal Definition — Implicit vs Explicit Cursor Control:</strong> All relational servers use cursors, and the server opens a cursor for every SQL statement it executes. When the engine performs <code>DECLARE</code>, <code>OPEN</code>, <code>FETCH</code>, and <code>CLOSE</code> on the programmer's behalf, the cursor is <em>implicit</em>; when the programmer writes all four commands, it is <em>explicit</em>. Both realize the identical four-state lifecycle \(\text{DECLARE} \to \text{OPEN} \to \text{FETCH} \to \text{CLOSE}\) — only the ownership of each transition changes.</p>
+  <table>
+    <thead>
+      <tr>
+        <th>Lifecycle Step</th>
+        <th>Implicit Cursor (server-managed)</th>
+        <th>Explicit Cursor (programmer-managed)</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>Declare</td>
+        <td>Created automatically when the query statement is submitted.</td>
+        <td><code>DECLARE c CURSOR FOR SELECT ...;</code> binds an identifier to the query.</td>
+      </tr>
+      <tr>
+        <td>Open</td>
+        <td>Performed internally before the single row is read.</td>
+        <td><code>OPEN c;</code> must be issued before any fetch.</td>
+      </tr>
+      <tr>
+        <td>Fetch</td>
+        <td>One automatic row retrieval per statement or loop iteration.</td>
+        <td>One <code>FETCH c INTO v;</code> per row with explicit status checks.</td>
+      </tr>
+      <tr>
+        <td>Close</td>
+        <td>Performed automatically at statement or loop completion.</td>
+        <td><code>CLOSE c;</code> is required to release the portal.</td>
+      </tr>
+      <tr>
+        <td>Control &amp; risk</td>
+        <td>Minimal code; no pointer control and no resource-leak risk.</td>
+        <td>Full pointer and termination control; omitting <code>CLOSE</code> leaks server memory.</td>
+      </tr>
+    </tbody>
+  </table>
+  <p><strong>Worked contrast (Snowflake Scripting):</strong> A single-row lookup may be left to the server — <code>SELECT price INTO v_price FROM invoices WHERE id = 1;</code> — which declares, opens, fetches, and closes behind the scenes. The explicit equivalent needs four statements: <code>LET c1 CURSOR FOR SELECT price FROM invoices WHERE id = 1; OPEN c1; FETCH c1 INTO v_price; CLOSE c1;</code>. The explicit form is justified when the result holds multiple rows, needs a custom termination condition, or must be navigated with directional fetches.</p>
+</div>
 <h3 id="36.3.4-visualizing-the-lifecycle-state-machine">36.3.4 Visualizing the Lifecycle State Machine</h3>
 <p>The state transition flow below maps the legal and illegal operations across the cursor lifecycle:</p>
 <pre><code>                  +--------------------------------+
@@ -1243,6 +1284,31 @@ Tuples: [Start] [Film1] [Film2] [Film3] ... [Film51][Film52][Film53] [End]
     <li><strong>Missing SCROLL on Backward Navigation:</strong> Using <code>FETCH PRIOR</code> in a loop when the cursor header omitted the <code>SCROLL</code> keyword.</li>
     <li><strong>Reading Variables After Invalidation:</strong> Using target variables without checking <code>FOUND</code> when the cursor has stepped past the final row (\(p = n+1\)).</li>
   </ol>
+</div>
+
+<div class="warning-box">
+  <p><strong>Pitfall — Redundant FETCH Inside a Cursor-Based FOR Loop:</strong> A cursor-based <code>FOR &lt;row_variable&gt; IN &lt;cursor&gt; DO ... END FOR</code> loop implicitly performs <code>OPEN</code>, <code>FETCH</code>, and <code>CLOSE</code>; the engine advances the internal row pointer once per iteration. Adding an explicit <code>FETCH</code> in the body advances the pointer a second time, so only every other row reaches the program.</p>
+  <pre><code>-- Result set: five invoice prices 11.11, 22.22, 33.33, 44.44, 55.55
+FOR rec IN c1 DO
+  FETCH c1 INTO v_price;        -- redundant: the loop already fetched a row
+  total := total + v_price;
+END FOR;</code></pre>
+  <table>
+    <thead>
+      <tr>
+        <th>Iteration</th>
+        <th>Row delivered to <code>rec</code> (implicit)</th>
+        <th>Row read by explicit <code>FETCH</code></th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr><td>1</td><td>11.11</td><td>22.22</td></tr>
+      <tr><td>2</td><td>33.33</td><td>44.44</td></tr>
+      <tr><td>3</td><td>55.55</td><td>past end \(\to\) NULL</td></tr>
+    </tbody>
+  </table>
+  <p><strong>Result:</strong> the accumulator uses 22.22 and 44.44, while 11.11, 33.33 and 55.55 are silently discarded; adding the past-the-end <code>NULL</code> then makes the whole total <code>NULL</code> under SQL three-valued arithmetic. With an even row count the final fetch merely returns NULL without raising an error, so the defect can pass unnoticed.</p>
+  <p><strong>Fix:</strong> remove the redundant <code>FETCH</code> and read fields from the row variable directly (<code>total := total + rec.price;</code>), or drop the <code>FOR</code> loop and drive an explicit cursor with <code>OPEN</code>/<code>FETCH</code>/<code>CLOSE</code> and an explicit end-of-set guard.</p>
 </div>
 <p>Understanding directional movement allows developers to position the cursor at arbitrary records, setting up row-specific mutations.</p>
 <div class="key-takeaway">

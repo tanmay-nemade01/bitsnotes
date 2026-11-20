@@ -607,6 +607,14 @@
 </div>
 <p>Entries of the map look like \(x_1 = a_1 z_1\) and \(x_2 = a_2 z_1 + a_3 z_2\): each output mixes latent coordinates linearly. Pushing Gaussian data through this affine transformation yields a much more complex density for \(x\) — described in class as being like a mixture of Gaussians. One clarification keeps the picture precise: a single Gaussian pushed through one affine map remains exactly a single Gaussian, but its shape changes in the ways that matter — the covariance becomes \(AA^{\top}\), so previously independent coordinates become correlated and the cloud tilts, stretches, and rotates instead of staying round. The genuinely mixture-like densities appear once such maps stack, or once the base is not a lone Gaussian; the class description points at that richer end result. The multiplication by \(A\) supplies scaling and rotation, while the addition of \(b\) supplies translation — three geometric motions, one formula.</p>
 <p>The Jacobian of the transformation \(z = A^{-1}(x-b)\) is the constant matrix \(A^{-1}\) — every partial derivative \(\partial z_i / \partial x_j\) is just the corresponding entry of \(A^{-1}\), independent of where you evaluate it — and the log-likelihood calculation involves the determinant of \(A\). You had better be able to evaluate \(\det(A)\) easily, or the whole system cannot be trained. A numerical taste: for \(A = \begin{bmatrix} 2 & 0 \\ 0 & 3 \end{bmatrix}\), \(\det(A) = 6\), so this map inflates areas six-fold and every density value it produces carries the correction factor \(1/6\) in the normalizing direction.</p>
+
+<div class="important-note">
+  <p><strong>Making a general affine flow cheap: LU parameterization.</strong> A dense \(A \in \mathbb{R}^{n\times n}\) costs \(O(n^3)\) to invert and to take the determinant of, which is prohibitive at image scale. The fix, used inside Glow's invertible 1×1 convolutions, is to parameterize the matrix directly by its LU factorization rather than learning its raw entries:</p>
+  <p>\[ A = P\,L\,(U + \mathrm{diag}(s)), \]</p>
+  <p>where \(P\) is a fixed permutation matrix, \(L\) is lower triangular with ones on the diagonal, \(U\) is upper triangular with zeros on the diagonal, and \(s\) is a vector supplying the missing diagonal entries. The log-determinant then collapses to a sum of logs,</p>
+  <p>\[ \log|\det A| = \sum_{i=1}^{n} \log|s_i|, \]</p>
+  <p>and inversion runs in \(O(n^2)\) by triangular back-substitution. This is the concrete answer to "structure the matrix so the determinant is cheap": instead of restricting \(A\) to a diagonal or triangular form and losing mixing power, every factor stays learnable and the full matrix remains expressive. A general linear map still sends a Gaussian to a Gaussian, so it remains a normalizing <em>component</em> rather than a stand-alone model — but as a component it now scales to hundreds of channels.</p>
+</div>
 <p>Affine flows alone share the fate of linear maps everywhere: no matter how you stretch, rotate, and translate a Gaussian cloud, it stays a Gaussian cloud. They are indispensable as <em>components</em> — normalizing layers inside bigger stacks — but they cannot carve a Gaussian into a face by themselves.</p>
 <h3 id="8.6.2-element-wise-flows-and-why-mixing-matters">8.6.2 Element-wise Flows and Why Mixing Matters</h3>
 <p>Element-wise flows are much simpler: coordinate \(x_1\) maps only to \(z_1\), \(x_2\) only to \(z_2\), and so on. Each dimension passes through its own invertible nonlinearity, with no cross-talk anywhere. The Jacobian \(J = \partial z/\partial x\) is simply diagonal — all off-diagonal partials vanish because coordinate \(i\) never feels coordinate \(j\) — and you may apply any valid invertible mapping independently per coordinate. Its determinant is just the product of the diagonal entries, so even a deep stack of element-wise layers costs only per-coordinate multiplications.</p>
@@ -752,6 +760,39 @@
     <li>Additive coupling preserves volume; affine coupling does not. Attributing RealNVP-style expansion to NICE-style layers mispredicts every determinant you compute afterwards.</li>
     <li>A 1×1 convolution is not a spatial filter — its "kernel" spans channels, not neighbours. It mixes feature maps at one position at a time.</li>
   </ul>
+</div>
+
+<h3 id="8.6.7-residual-flows-irevnet-and-iresnet" class="subsection-title">8.6.7 Residual Flows: iRevNet and iResNet</h3>
+<p>Coupling and autoregressive layers force a triangular Jacobian by copying or masking part of the input. Residual flows ask a different question: can an ordinary ResNet block — \(h' = h + F(h)\) — be made invertible without any split at all? The answer is yes, and two constructions deliver it. Both sit outside the coupling family, so they broaden the design space instead of repeating it.</p>
+<div class="key-concept">
+  <p><strong>iRevNet — inversion by reversing a two-stage residual.</strong> Split the input as \(h = [h_1, h_2]\) and apply two ordinary (not necessarily invertible) functions \(F_1, F_2\):</p>
+  <p>\[ h_1' = h_1 + F_1(h_2), \qquad h_2' = h_2 + F_2(h_1'). \]</p>
+  <p>Because the second stage reads the already-updated \(h_1'\), the pair is inverted by running the stages backwards and turning each addition into a subtraction:</p>
+  <p>\[ h_2 = h_2' - F_2(h_1'), \qquad h_1 = h_1' - F_1(h_2). \]</p>
+  <p>The inverse costs one forward pass of each \(F_i\), with no matrix inversion and no constraint on the \(F_i\) themselves. The catch is the determinant: for general \(F_i\) the Jacobian \(I + \partial F/\partial h\) has no closed-form determinant, so iRevNet is chiefly a memory-saving device — invertibility removes the need to cache activations during backpropagation, cutting a \(K\)-layer network's activation memory from \(O(K)\) to \(O(1)\).</p>
+</div>
+<div class="key-concept">
+  <p><strong>iResNet — inversion by contraction, with an estimated log-determinant.</strong> Drop the split entirely and use a single residual block \(h' = h + F(h)\). If \(F\) is a <em>contraction</em> — \(\mathrm{dist}(F(u),F(v)) &lt; \beta\,\mathrm{dist}(u,v)\) for some \(0 &lt; \beta &lt; 1\) — the Banach fixed-point theorem guarantees a unique solution, found by iterating</p>
+  <p>\[ h^{(k+1)} = h' - F\big(h^{(k)}\big). \]</p>
+  <p>Enforcing the Lipschitz bound \(\|F\|_{\mathrm{Lip}} &lt; 1\) — in practice by spectral normalization or weight clipping of each layer — makes the inverse computable to any desired accuracy by this iteration.</p>
+</div>
+<div class="important-note">
+  <p><strong>Log-determinant without a determinant.</strong> The residual Jacobian is \(J = I + J_F\) with \(J_F = \partial F/\partial h\), and the identity \(\log|\det A| = \mathrm{tr}(\log A)\) together with the power-series expansion</p>
+  <p>\[ \log|\det(I + J_F)| = \sum_{k=1}^{\infty} \frac{(-1)^{k-1}}{k}\,\mathrm{tr}\!\left(J_F^{\,k}\right) \]</p>
+  <p>turns the determinant into a sum of traces. Computing those traces exactly is still expensive, so Hutchinson's estimator substitutes an unbiased stochastic estimate using random vectors \(\epsilon \sim \mathcal{N}(0, I)\):</p>
+  <p>\[ \mathrm{tr}(A) = \mathbb{E}_{\epsilon}\!\left[\epsilon^{\top} A \epsilon\right] \approx \frac{1}{S}\sum_{s=1}^{S} \epsilon_s^{\top} A \epsilon_s. \]</p>
+  <p>A truncated series plus a handful of \(\epsilon\) draws gives a tractable, differentiable log-determinant — the piece that lets a ResNet be trained by maximum likelihood. Unlike the coupling layers above, every coordinate may interact with every other one inside a single block; the price is an iterative inverse and a stochastic determinant estimate instead of exact closed-form arithmetic.</p>
+</div>
+
+<h3 id="8.6.8-multi-scale-flows" class="subsection-title">8.6.8 Multi-Scale Flows</h3>
+<p>A normalizing flow must keep \(\dim z = \dim x\), yet natural images are highly redundant — far fewer underlying factors than pixels. Pushing every coordinate through every layer wastes computation on dimensions that could already have been discharged. Multi-scale flows (the architecture used by RealNVP and Glow) factor the latent into blocks \(z = [z_1, z_2, \ldots, z_N]\) and introduce them gradually rather than all at once.</p>
+<div class="key-concept">
+  <p><strong>Construction.</strong> In the generative direction, a small first block \(z_1\) passes through a reversible stack at its own, small resolution. Partway through, \(z_2\) is appended and the two are combined; the stack grows until its width matches the data, and an injected block then flows through the remaining layers rather than being processed at full resolution from the start. In the normalizing direction the network begins at the full data dimension, and each time an injection point is reached the corresponding block is <em>split off</em> and scored directly against the base density:</p>
+  <p>\[ \log p_X(x) = \sum_{n=1}^{N} \log p_Z(z_n) \;+\; \sum_{\text{layers } k} \log\left|\det J_k\right|, \]</p>
+  <p>where the second sum runs only over the layers each block actually traversed. The early-exit path is what saves compute: high-resolution detail is handled by a shallow prefix, while low-resolution structure receives the deep stack.</p>
+</div>
+<div class="important-note">
+  <p><strong>Why it matters for images.</strong> Glow's full recipe is exactly this idea combined with the 1×1 convolutions of Section 8.6.6: each flow step is actnorm → invertible 1×1 convolution → affine coupling, and a sequence of such steps is wrapped in a multi-scale skeleton with \(L\) levels. Periodically the spatial resolution is halved by folding each \(2\times2\) patch into four times as many channels, and a slice of channels is removed into \(z\). A 256×256 image can then be scored and sampled efficiently — most computation happens on compressed feature maps, yet the latent stays full-dimensional because every removed slice is still scored. Together with dequantization (Section 8.7), this is the architecture behind the high-fidelity face generation and interpolation described earlier.</p>
 </div>
 <p>Real-world anchor: the coupling-layer recipe powers production-grade image systems — GLOW-family models generate high-fidelity faces, audio variants (WaveGlOW-style speech synthesis) reuse the same invertible blocks on spectrograms, and the interpolation trick behind celebrity-morph demos is now standard footage in media-editing pipelines.</p>
 <div class="key-takeaway">

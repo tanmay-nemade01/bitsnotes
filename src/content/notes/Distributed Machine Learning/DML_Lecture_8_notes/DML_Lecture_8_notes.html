@@ -673,6 +673,30 @@
       <p>\[ M_{\text{agg}} = \sum_{i=1}^{K} \frac{n_{i}}{N} M_{i}, \qquad N = \sum_{i=1}^{K} n_{i} \]</p>
       <p>If every shard has the same \(n_{i}\), this collapses to the lecture mean. <em>Federated SGD</em> (FedSGD) is the gradient analog: average gradients instead of weights. The classroom four-worker step is FedSGD with equal shard sizes. Unequal zones (a huge US-East log and a tiny APAC log) need the \(n_{i}/N\) weights, or the tiny zone punches above its data.</p>
       <p>FedAvg is the ideal case: shards look like the same distribution (IID), workers have similar speed, and no worker is adversarial. Real federated systems break those conditions, which is why later aggregators exist (median-based mixers, proximal terms, personalization). For this lecture, keep the simple mean, and remember that it is a baseline.</p>
+
+      <div class="important-note">
+        <p><strong>Robust aggregation when a worker cannot be trusted.</strong> The plain mean above is a linear combination of worker vectors, so a single faulty or adversarial worker can move the aggregate without bound. A robust mean estimator replaces that linear rule so a bounded number of bad shards cannot drag the model anywhere.</p>
+        <p><strong>Geometric median.</strong> The arithmetic mean minimizes summed <em>squared</em> distances; the geometric median minimizes summed distances:</p>
+        <p>\[ m^{\star} = \arg\min_{m} \sum_{i=1}^{K} \| m - v_{i} \|_{2}, \qquad \bar{v} = \arg\min_{m} \sum_{i=1}^{K} \| m - v_{i} \|_{2}^{2} \]</p>
+        <p>The distance objective resists outliers: an adversarial vector can force an arbitrary aggregate only when at least half the workers are adversarial. With no closed form, Weiszfeld's iteration reweights each vector by the inverse of its distance to the current estimate:</p>
+        <p>\[ m^{(t+1)} = \frac{\sum_{i=1}^{K} v_{i} / \| m^{(t)} - v_{i} \|_{2}}{\sum_{i=1}^{K} 1 / \| m^{(t)} - v_{i} \|_{2}} \]</p>
+        <p><strong>Coordinate-wise median.</strong> Taking the median of coordinate \(j\), \(v_{\text{agg},j} = \mathrm{med}(v_{1j}, \ldots, v_{Kj})\), is direct and far cheaper, but gives up the geometric median's convergence guarantee.</p>
+        <p><strong>Krum.</strong> Score each vector by its distance to the \(K - f - 2\) nearest neighbors (\(f\) = assumed faulty workers), then keep the lowest-scoring vector or average the lowest-scoring ones:</p>
+        <p>\[ \kappa(i) = \sum_{j \in \mathcal{N}_{K-f-2}(i)} \| v_{i} - v_{j} \|_{2}, \qquad v_{\text{agg}} = v_{\arg\min_{i} \kappa(i)} \]</p>
+        <p>Both Krum variants converge at rates comparable to honest FedAvg when \(2f + 2 < K\), i.e. fewer than half the workers are faulty.</p>
+        <table>
+          <thead>
+            <tr><th>Aggregator</th><th>Objective / score</th><th>Compute</th><th>Robustness limit</th></tr>
+          </thead>
+          <tbody>
+            <tr><td>Arithmetic mean (8.4.2)</td><td>\(\min \sum \|m - v_i\|_2^2\)</td><td>One average</td><td>None: one bad vector moves it</td></tr>
+            <tr><td>Geometric median</td><td>\(\min \sum \|m - v_i\|_2\)</td><td>Iterative (Weiszfeld)</td><td>Breaks only at half faulty</td></tr>
+            <tr><td>Coordinate-wise median</td><td>Per-coordinate median</td><td>Direct, cheap</td><td>Similar resistance, weaker theory</td></tr>
+            <tr><td>Krum / trimmed Krum</td><td>Sum of \(K-f-2\) nearest distances</td><td>Pairwise \(O(K^2)\)</td><td>Converges when \(2f + 2 < K\)</td></tr>
+          </tbody>
+        </table>
+        <p><strong>When it matters:</strong> these rules buy safety against corrupted shards at the price of extra computation and an explicit fault bound. On a trusted GPU cluster the simple mean of Section 8.4.2 stays the right baseline.</p>
+      </div>
       <p>Real-world: a paper from IIT Bombay on federated asynchronous simultaneous training is flagged as the next reading. The spoken short name sits in the FedAvg / Fed-async family (the audio sounds like “fed asked”). The matching published title is FedAST: Federated Asynchronous Simultaneous Training — a buffered asynchronous aggregator for training several models at once on a shared client pool, so a slow client on a large model does not stall every task. Keep the lecture’s reading pointer; treat FedAST as the standard short name for that method.</p>
       <div class="warning-box">
         <p><strong>Scope:</strong> Equal-weight averaging assumes equal shard sizes and a completed barrier. <strong>Assumption:</strong> every worker used the same \(w_{t}\). If one worker trained on an older \(w\), you are no longer in synchronous SGD; that is staleness (Section 8.5). If you average <em>models</em> that each took many local steps, you are closer to FedAvg than to one-step FedSGD. Both are valid, but they are not the same numerical object as \(\bar{g} = -6.25\) above.</p>

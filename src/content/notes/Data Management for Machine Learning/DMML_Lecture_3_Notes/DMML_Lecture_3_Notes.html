@@ -730,6 +730,10 @@
 <h3 id="3.10.4-non-volatile-time-variant-read-only">3.10.4 Non-Volatile, Time-Variant, Read-Only</h3>
 <p><strong>Non-volatile</strong> means it does not change. <strong>Volatile</strong> means it is changing. Once data enters the warehouse, it is never removed. Regular, real-time, and transaction systems let you insert, change, update, delete, and replace — all kinds of things. The warehouse is different: load, extract, transform, load — then read-only access is given. You never "edit history" in a warehouse; you add new snapshots.</p>
 <p><strong>Time-variant:</strong> you want the data from old to now, with the timing — the data carries its time dimension. Every warehouse record knows <em>when</em> it was true, so you can ask "what did sales look like last quarter?" and get the state as it was then, not as it is now.</p>
+<div class="key-concept">
+  <p><strong>How a dimension remembers its past — Slowly Changing Dimension (Type II):</strong> the time-variant promise needs a concrete mechanism when a <em>dimension</em> attribute itself changes — a customer moves country, a product changes category. A <strong>Type II SCD</strong> never overwrites the old row: it expires the current row and inserts a <em>new</em> row for the same business key, each carrying the date range over which that version was valid. Joining a fact to the SCD on both the key and the event date (<code>OrderDate BETWEEN ValidFrom AND Expired</code>) attributes each fact to the version of the dimension that was true <em>at the time of the event</em>. (Type I, by contrast, simply overwrites the attribute and loses the history.)</p>
+  <p><strong>Worked trace:</strong> customer 100 (Jane) lived in <code>USA</code> from <code>2019-05-01</code> to <code>2020-06-20</code>, then in <code>UK</code> from <code>2020-06-20</code> to a far-future expiry <code>2199-12-31</code>. An order on <code>2020-06-09</code> joins to the USA row; an order on <code>2020-07-12</code> joins to the UK row — the same customer, correctly located at each point in history. This is the "add a new snapshot, never edit history" rule applied to a dimension attribute.</p>
+</div>
 <p>There is also a classic list of <strong>12 rules of data warehousing</strong> (from Bill Inmon) worth reading on this topic — the four-part definition here is the compressed version of those rules.</p>
 <h3 id="3.10.5-data-warehouse-architecture">3.10.5 Data Warehouse Architecture</h3>
 <p>The typical architecture: lots of operational data comes from multiple sources; you select, extract, transform, and integrate, and build the data warehouse and the metadata. From the warehouse you create subsets of data, which are the data marts. From the marts you use APIs, AWS calls, web service calls — and you build your reporting systems on top.</p>
@@ -783,6 +787,31 @@
 <div class="key-concept">
   <p><strong>The shape of a query:</strong> every analysis in a warehouse is a join between the two: slice the fact table by a dimension's categories ("sales by product category") or filter by a dimension's attributes ("sales for customers in Chennai"). That is why the number and structure of dimensions decide how fast and how flexible the warehouse is.</p>
 </div>
+
+<div class="key-concept">
+  <p><strong>Formal Definition — Grain (Granularity):</strong> the <em>grain</em> of a data model is the level of detail it stores — formally, the combination of columns at which records in the table are unique. A model with one row per <code>order_date</code> per <code>order_country</code> is at <em>daily, by-country grain</em>; a model keyed by a full <code>timestamp</code> is at <em>event grain</em>. In Kimball's four-step design sequence — select the business process, <em>declare the grain</em>, identify the dimensions, identify the facts — the grain is settled before any dimension or fact is chosen, because every fact must be stated at that grain.</p>
+  <p><strong>The governing rule:</strong> pick the granularity of the smallest unit the business actually requires — but no finer. Finer grain can always be rolled <em>up</em> by aggregation (daily rows sum into monthly totals), whereas coarse grain can never be disaggregated (a monthly total cannot be split back into individual days). Grain is therefore an irreversible information-loss decision: too coarse destroys detail you cannot recover later, while too fine wastes storage and query time on detail nobody asks for.</p>
+  <table>
+    <thead>
+      <tr><th>Grain chosen</th><th>One row represents</th><th>Can answer</th><th>Cannot answer</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>Event (timestamp)</td><td>A single order event</td><td>Anything, incl. hour-of-day</td><td>—</td></tr>
+      <tr><td>Daily (correct here)</td><td>All orders for a country on a date</td><td>Orders/day; revenue/month by country</td><td>Which hour an order landed</td></tr>
+      <tr><td>Monthly</td><td>All orders for a country in a month</td><td>Monthly revenue by country</td><td>Any daily or hourly question</td></tr>
+    </tbody>
+  </table>
+  <p><strong>Worked trace (the orders model):</strong> the requirements are "revenue by country by month" and "orders per day." The measures are <code>total_revenue</code> and <code>order_count</code>; the attributes are <code>order_country</code> and <code>order_date</code>; the finest unit required is a day, so the grain is daily:</p>
+  <pre><code>CREATE TABLE order_summary_daily (
+  order_date date, order_country varchar(10), total_revenue numeric, order_count int
+);
+SELECT CAST(o.OrderDate AS date) AS order_date, c.CustomerCountry AS order_country,
+       SUM(o.OrderTotal) AS total_revenue, COUNT(o.OrderId) AS order_count
+FROM Orders o JOIN Customers c ON c.CustomerId = o.CustomerId
+GROUP BY CAST(o.OrderDate AS date), c.CustomerCountry;</code></pre>
+  <p>Because the stored grain is daily, the monthly question is answered by rolling up — <code>SELECT order_country, SUM(total_revenue) FROM order_summary_daily GROUP BY order_country</code> — with no loss. Had the table been built at monthly grain merely to save rows, the daily question would be unanswerable without reprocessing the source. That asymmetry is why the daily grain is the right choice.</p>
+</div>
+
 <h3 id="3.11.2-the-star-schema">3.11.2 The Star Schema</h3>
 <p>The star schema places the fact table at the center, with dimension tables attached around it. The example: dimensions <strong>city, product, period, and customer</strong>; facts <strong>price, amount, sales amount, and units</strong> — a product-sales fact table. (The session audio transcribed the facts as "pages, amount, sales amount and units"; price is the natural reading for a product-sales fact table, and that is the form used here.)</p>
 <pre><code>              city (dimension)
