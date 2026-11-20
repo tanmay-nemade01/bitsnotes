@@ -304,6 +304,17 @@
 </tbody>
 </table>
 
+<div class="important-note">
+<h4 class="subsubsection-title">Physical Clustering — Complementary Layout Technique</h4>
+<p><strong>Mechanism:</strong> Beyond the four primary techniques above, <em>clustering</em> co-locates rows that are frequently retrieved together into the same physical storage blocks. For a fact table whose analytical queries repeatedly request all line items of one order or one customer, storing those related rows contiguously means a single block read satisfies many rows that would otherwise be scattered across the heap and require many random I/Os. Database systems implement this by physically reordering the table according to a chosen index.</p>
+<pre><code class="language-sql">
+CREATE INDEX idx_sales_order ON sales_fact (order_id);
+CLUSTER sales_fact USING idx_sales_order;
+</code></pre>
+<p><strong>Worked I/O estimate:</strong> If the \(M = 50\) line items of one order are spread over \(50\) separate heap blocks, retrieving them costs \(50\) random reads. After clustering by <code>order_id</code>, those rows occupy roughly \(2\) contiguous blocks — about a \(25\times\) reduction in block reads for that access pattern.</p>
+<p><strong>Pitfall — clustering decays with writes:</strong> Clustering is a one-time physical reorganization; subsequent inserts and updates are <em>not</em> kept in index order automatically, so the benefit erodes as the table changes. Maintaining it requires periodic re-clustering during ETL maintenance windows, and the operation takes an exclusive lock on the table, so it must be scheduled outside BI query hours. It is therefore valuable for stable, scan-heavy historical fact tables and of little use for volatile tables.</p>
+</div>
+
 <p>These strategies operate synergistically. For example, a database administrator (DBA) may horizontally partition a materialized view by fiscal year and build bitmap indexes on the underlying low-cardinality dimension keys.</p>
 <h3 class="subsection-title">8.1.3 Hardware and Architectural Trade-offs</h3>
 
@@ -313,6 +324,18 @@
 <li><strong>Read Latency vs. ETL Maintenance Overhead:</strong> Pre-computed objects speed up analytical reporting reads, but every DML write operation (insert, update) on underlying base tables requires updating dependent pre-computed structures. This adds CPU and I/O load during ETL maintenance windows.</li>
 <li><strong>Flexibility vs. Optimization Depth:</strong> Highly specialized pre-calculated aggregates deliver instantaneous answers for predictable, recurring queries (such as monthly executive dashboards), but offer zero utility for unpredictable, granular ad-hoc queries searching for individual line-item anomalies.</li>
 </ul>
+
+<div class="important-note">
+<h4 class="subsubsection-title">Mitigating the ETL Index-Maintenance Penalty</h4>
+<p><strong>Mechanism:</strong> The read-latency versus ETL-maintenance trade-off above also applies to indexes: every base-table write pays the cost of writing a corresponding index entry. During bulk ETL this dominates load time. The standard mitigation is to <em>drop</em> secondary indexes before the load, load the rows with a bulk loader, and then <em>rebuild</em> the indexes in a single pass over the completed data — creating an index on pre-existing rows is substantially cheaper than maintaining it incrementally row by row.</p>
+<pre><code class="language-sql">
+DROP INDEX idx_sales_region;
+-- bulk load of N rows into sales_fact ...
+CREATE INDEX idx_sales_region ON sales_fact (store_region);
+</code></pre>
+<p><strong>Worked cost model:</strong> Let \(c_i\) be the per-row cost of inserting one index entry during the load and \(c_b\) the per-row cost of a bulk index build, with \(c_b \ll c_i\). For \(N\) newly loaded rows and \(k\) secondary indexes, in-place maintenance costs \(N \cdot k \cdot c_i\). Dropping and rebuilding over the resulting \(N + E\) rows (where \(E\) is pre-existing rows) costs \((N + E) \cdot k \cdot c_b\). The rebuild path wins whenever \(N \cdot c_i > (N + E) \cdot c_b\).</p>
+<p><strong>Trade-offs:</strong> While indexes are absent, other users lose indexed access paths and any uniqueness constraint those indexes enforced goes unverified, so the window must be confined to a scheduled ETL batch. A staged policy — initially indexing only primary and foreign keys, then adding further indexes after monitoring real query patterns — avoids paying maintenance cost for indexes that are never used.</p>
+</div>
 
 <div class="example-box">
 <h4 class="subsubsection-title">Worked Example: Performance SLA & Scanning Cost Calculation</h4>
@@ -917,6 +940,21 @@ INCLUDING NEW VALUES;
 </tr>
 </tbody>
 </table>
+
+<div class="important-note">
+<h4 class="subsubsection-title">Covering Indexes and Index-Only Scans</h4>
+<p><strong>Mechanism:</strong> In a conventional index scan the DBMS reads the index entry and then performs a second I/O to fetch the corresponding data row from the table's physical heap. When a query repeatedly requests only a small set of columns, <em>covering</em> the query by appending those payload columns to the index lets the engine return every required value directly from the index structure, eliminating the heap fetch entirely. Enterprise DBMSs expose this as an <code>INCLUDE</code> clause on a B-tree index, where the included columns are stored as payload but are not part of the search key, so they affect neither uniqueness nor key ordering.</p>
+<pre><code class="language-sql">
+CREATE INDEX idx_sales_region_cover
+ON sales_fact (store_region) INCLUDE (product_category, sales_amount);
+</code></pre>
+<p><strong>Worked I/O comparison:</strong> Suppose an analyst query filters on <code>store_region</code> and returns <code>product_category</code> and <code>sales_amount</code> for \(M = 200{,}000\) matching rows.</p>
+<ul>
+<li><strong>Ordinary key-only index:</strong> one index-leaf read plus one heap-row read per match → \(2M = 400{,}000\) physical I/Os.</li>
+<li><strong>Covering index:</strong> all three columns come from the index entry → \(M = 200{,}000\) physical I/Os, a \(2\times\) reduction.</li>
+</ul>
+<p><strong>Precondition:</strong> the benefit only materializes when the underlying rows are rarely modified — if the table's pages are not marked "all visible" to the query snapshot, the engine must still visit the heap to check row visibility and the index-only advantage disappears. This is why the technique suits read-mostly analytical fact tables maintained in batch ETL windows rather than volatile OLTP tables.</p>
+</div>
 
 <h3 class="subsection-title">8.4.2 Structure and Representation of Bitmap Index Vectors</h3>
 

@@ -665,6 +665,37 @@ flowchart LR
   <p>Think of numbers in a hat, the professor's analogy for the random sketch subset minimum. Five numbered slips in class stand for millions of shingles in real documents. Shake the hat (apply the random permutation), draw the ordering, and keep the smallest number drawn for each document. The sketch is a cleverly chosen random subset, not a hand picked set, and the minimum of that subset is kept. Full hand sorting of millions is not the practical path; one random ordering plus its minimum per round does the same job, because the minimum of a random ordering is itself a uniform draw from the union.</p>
 </div>
 <p>A numerical spot-check confirms the logic. If two documents share 1 shingle out of a 4 shingle union, Jaccard is 0.25, so about 50 of 200 permutation rounds should agree. If they share 3 out of 4, about 150 of 200 rounds should agree. The lecture's 60 to 70 matches out of 200 signals a Jaccard near 0.3 to 0.35, a moderate overlap rather than a near copy at a 0.7 threshold.</p>
+
+<div class="important-note">
+  <p><strong>Why 200 rounds, and how precise is the estimate?</strong> The agreement share over \(k\) permutations is a sample estimate, not an exact Jaccard value. Let \(M\) be the number of rounds in which the two minima match. Each permutation makes every shingle in the union equally likely to come first, and a match occurs exactly when that first union element lies in the intersection, so each round is an independent Bernoulli trial with success probability \(J\):</p>
+  <p>\[M \sim \mathrm{Binomial}(k, J), \qquad \hat{J} = \frac{M}{k}, \qquad \mathrm{Var}(\hat{J}) = \frac{J(1-J)}{k}\]</p>
+  <p>The estimator is unbiased, and its standard error falls only as \(1/\sqrt{k}\). Applying the normal-approximation interval \(\hat{J} \pm 1.96\sqrt{\hat{J}(1-\hat{J})/k}\) to the lecture's own counts gives:</p>
+  <table>
+    <thead>
+      <tr>
+        <th>Agreements \(M\)</th>
+        <th>\(\hat{J}\)</th>
+        <th>Standard error</th>
+        <th>Approx. 95% interval</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>60 of 200</td>
+        <td>0.30</td>
+        <td>0.032</td>
+        <td>0.24 to 0.36</td>
+      </tr>
+      <tr>
+        <td>70 of 200</td>
+        <td>0.35</td>
+        <td>0.034</td>
+        <td>0.28 to 0.42</td>
+      </tr>
+    </tbody>
+  </table>
+  <p><strong>Consequence for a threshold call:</strong> at the lecture's 0.7 near-duplicate cut, both intervals sit well below the cut, so the "not a near copy" verdict is safe. But when \(\hat{J}\) lands close to the cut, a 100-round sketch can straddle it: each fourfold increase in the permutation count halves the standard error, which is the practical reason the textbook prescribes about 200 rounds and why implementations expose the permutation count as an accuracy knob.</p>
+</div>
 <div class="warning-box">
   <p><strong>Scope:</strong> Sketch estimates track syntactic shingle overlap only; paraphrased copies still slip through. <strong>Assumption:</strong> Both documents use the same hash function and the same permutation in each round. Mixing hashes or permutations between documents voids the comparison.</p>
 </div>
@@ -739,6 +770,45 @@ flowchart LR
 <p>\[s(D_{1}) - s(D_{3})\]</p>
 <p>\[s(D_{2}) - s(D_{3})\]</p>
 <p>A positive difference means the first page should display above the second. The class values gave positive gaps from D1 over D2 and D3, and from D2 over D3, so final order is <strong>D1 first, D2 next, D3 last</strong>. The reverse subtraction changes sign but not inference. D3 minus D1 is about minus 2.9 when D1 scores 3.9, which still says D1 is higher than D3. Pointwise gives absolute labels while pairwise gives pairwise wins that then order the list. Real systems replace plain subtraction with richer math such as probability estimates, but the comparison thought stays the same.</p>
+
+<div class="example-box">
+  <p><strong>Algorithmic mechanism — from score gaps to a trainable pairwise loss:</strong> Plain subtraction orders a fixed shortlist, but it gives a learning algorithm no smooth objective to minimize. The pairwise learner named later in this section turns each score gap into a probability and optimizes a cross-entropy loss. Using the scores already computed here, \(s(D_{1}) = 3.9\), \(s(D_{2}) = 2.2\), and \(s(D_{3}) = 1.0\), define the gap \(s = s_i - s_j\) for an ordered pair \((i,j)\):</p>
+  <p>\[P(i \succ j) = \sigma(s) = \frac{1}{1 + e^{-(s_i - s_j)}}\]</p>
+  <p>The training label supplies a target probability \(\bar{P}\): 1 when \(i\) is strictly better than \(j\), 0.5 when the two tie, and 0 when \(i\) is worse. Cross-entropy between target and prediction is:</p>
+  <p>\[L_{ij} = -\bar{P}\log P - (1 - \bar{P})\log(1 - P) = -\bar{P}s + \log(1 + e^{s})\]</p>
+  <p>For a strict label \(\bar{P} = 1\) this reduces to the logistic loss \(L_{ij} = \log(1 + e^{-s})\), with gradient \(\partial L/\partial \theta = (P - \bar{P})(\partial s_i/\partial \theta - \partial s_j/\partial \theta)\) for model parameters \(\theta\). The factor \(P - \bar{P}\) is small exactly when the model is already correct and confident, so learning spends its effort on the pairs it gets wrong rather than on pairs it has already separated.</p>
+  <table>
+    <thead>
+      <tr>
+        <th>Ordered pair</th>
+        <th>Gap \(s_i - s_j\)</th>
+        <th>\(P(i \succ j)\)</th>
+        <th>Logistic loss, \(\bar{P}=1\)</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>\(D_1\) over \(D_2\)</td>
+        <td>1.7</td>
+        <td>0.845</td>
+        <td>0.168</td>
+      </tr>
+      <tr>
+        <td>\(D_1\) over \(D_3\)</td>
+        <td>2.9</td>
+        <td>0.948</td>
+        <td>0.054</td>
+      </tr>
+      <tr>
+        <td>\(D_2\) over \(D_3\)</td>
+        <td>1.2</td>
+        <td>0.769</td>
+        <td>0.262</td>
+      </tr>
+    </tbody>
+  </table>
+  <p><strong>Reading the trace:</strong> every pair still yields the same order \(D_1, D_2, D_3\), but the model now also reports a confidence and a differentiable penalty to reduce. Wider score gaps shrink the loss, which is the concrete meaning of the "richer math" that plain subtraction only hinted at.</p>
+</div>
 <p>A compact way to read the result: D1 beats both rivals so it ranks one, D2 beats only D3 so it ranks two, and D3 beats none so it ranks three. That win-count reading turns three pair outcomes into one ordered list without any extra model.</p>
 <div class="warning-box">
   <p>Beginners often build all six directed pairs and train twice on the same fact. Three combinations without replacement are enough; the reverse pair is redundant because minus 2.9 still means D1 is greater than D3, so inference does not change.</p>

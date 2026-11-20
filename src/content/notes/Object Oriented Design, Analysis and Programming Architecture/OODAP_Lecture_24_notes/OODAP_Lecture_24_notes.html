@@ -728,6 +728,29 @@ System.out.println(cloned.hireDate.getYear()); // still 2020 — no leak</code><
     <li><strong>Missing subclass mutable fields.</strong> <code>Manager extends Employee</code> with a <code>Date promotionDate</code> must override <code>clone</code> and also clone <code>promotionDate</code>; inheriting <code>Employee.clone</code> alone does not isolate the subclass state.</li>
   </ul>
 </div>
+
+<h3 id="24.4.3-serialization-object-streams-transient-and-object-graph-identity">24.4.3 Serialization — Object Streams, transient, and Object-Graph Identity</h3>
+<div class="key-concept">
+  <p><strong>A marker interface for whole graphs.</strong> Where <code>Cloneable</code> opts a class into <code>Object.clone</code> (24.3.2), <code>Serializable</code> in <code>java.io</code> opts a class into the object-stream mechanism. It is a <em>tagging</em> interface — no methods and no fields — so there is nothing to implement: writing <code>implements Serializable</code> is enough, and all subtypes of a serializable class are serializable too. <code>ObjectOutputStream.writeObject</code> saves the object together with every object it references; <code>ObjectInputStream.readObject</code> rebuilds that whole graph as fresh boxes and returns <code>Object</code>, so the caller casts back.</p>
+  <pre><code>Employee[] staff = { new Employee("Smith", 35000), new Employee("Asha", 42000) };
+ObjectOutputStream out = new ObjectOutputStream(new FileOutputStream("staff.dat"));
+out.writeObject(staff);                        // array + every referenced object
+out.close();
+ObjectInputStream in = new ObjectInputStream(new FileInputStream("staff.dat"));
+Employee[] copy = (Employee[]) in.readObject(); // a new graph, not the old arrows
+in.close();</code></pre>
+  <p>Unlike the <code>super.clone()</code> shallow copy of 24.4.1, deserialization allocates new objects all the way down the reachable graph — a genuine deep copy of that graph.</p>
+</div>
+<div class="example-box">
+  <p><strong>Worked graph trace — two employees who are buddies.</strong> Suppose each <code>Employee</code> has a <code>private Employee buddy</code>, with <code>staff[0].buddy = staff[1]</code> and <code>staff[1].buddy = staff[0]</code> — a cycle. The stream writes each object once and assigns serial numbers:</p>
+  <pre><code>#1  Employee[]   [0] -&gt; #2, [1] -&gt; #3
+#2  Employee     name="Smith", salary=35000, buddy -&gt; #3
+#3  Employee     name="Asha",  salary=42000, buddy -&gt; #2  (back-reference, not re-saved)</code></pre>
+  <p>On first encounter an object's fields are written; on later encounters only its serial number is written. That is why the cycle terminates and why the restored graph preserves aliasing — <code>copy[0].buddy == copy[1]</code> holds, the same shared-arrow structure 24.2 called aliasing, but now between newly allocated boxes.</p>
+</div>
+<div class="warning-box">
+  <p><strong><code>transient</code> and failure modes.</strong> Mark a field <code>transient</code> to exclude it from the stream — for a flag like <code>selected</code> that should not be persisted, or for a field whose type is not serializable. If a non-transient field reaches an object that does not implement <code>Serializable</code>, traversal throws <code>NotSerializableException</code>. Custom <code>private writeObject(ObjectOutputStream)</code> / <code>readObject(ObjectInputStream)</code> methods can call <code>defaultWriteObject()</code> / <code>defaultReadObject()</code> to handle the normal fields, and a class should declare <code>private static final long serialVersionUID</code> so an evolved class still matches the stream's version — otherwise deserialization can fail with <code>InvalidClassException</code>.</p>
+</div>
 <div class="key-takeaway">
   <p><strong>Recap + bridge.</strong> Shallow copy via <code>super.clone()</code> duplicates the outer box at 2000 but shares inner arrows to 1064 (<code>String</code>) and 2044 (<code>Date</code>). Sharing a <code>String</code> at 1064 is safe because it cannot be mutated; sharing a <code>Date</code> at 2044 is unsafe until you add <code>cloned.hireDate = (Date) hireDate.clone()</code> to create a private copy at 3024. The next section moves from copying logic to lifetime: once objects are no longer needed, how the runtime decides they are eligible for collection and when it actually reclaims them.</p>
 </div>
@@ -1706,6 +1729,20 @@ System.out.println(d.doReverseOperation(5));      // "5" — Integer -&gt; Strin
   </ul>
 </div>
 <p>Real-world: generic interfaces are common in library design — <code>Converter&lt;T1, T2&gt;</code> with <code>T2 convert(T1)</code> and <code>T1 reverse(T2)</code>, <code>Repository&lt;T&gt;</code> or <code>Comparator&lt;T&gt;</code>, and Guava-like <code>Function&lt;T1,T2&gt;</code> — where the same contract must work for <code>String/Integer</code>, <code>Long/String</code>, or other pairs without duplicating the interface text. A single <code>DemoInterface&lt;String, Integer&gt;</code> can drive a form mapper, while <code>DemoInterface&lt;Long, String&gt;</code> with the same source text drives an ID stringifier.</p>
+
+<h3 id="24.11.3-type-erasure-bridge-methods-and-generic-restrictions">24.11.3 Type Erasure, Bridge Methods and Generic Restrictions</h3>
+<div class="key-concept">
+  <p><strong>Why generics vanish at run time.</strong> Generics were added without changing the JVM, so the compiler <em>erases</em> them: every type parameter is replaced by its bound, or by <code>Object</code> when unbounded, and casts are inserted to preserve type safety. <code>Identity&lt;Long&gt;</code> and <code>Identity&lt;String&gt;</code> therefore compile to the same erased class; no type argument survives into the bytecode. This is the mechanism behind the compile-time-only guarantees of 24.10, and the reason a bound can promise members such as <code>displayClass()</code> without carrying them at run time.</p>
+</div>
+<div class="example-box">
+  <p><strong>Worked bridge-method trace.</strong> Given <code>class Gen&lt;T&gt;</code> with <code>T getob()</code> and <code>class Gen2 extends Gen&lt;String&gt;</code> that overrides <code>String getob()</code>, erasure turns the superclass method into <code>Object getob()</code>, so the narrowed return no longer overrides it. To preserve polymorphism the compiler emits a synthetic bridge method; <code>javap</code> on <code>Gen2</code> shows both descriptors:</p>
+  <pre><code>java.lang.String getob();   // the source override
+java.lang.Object getob();   // bridge: delegates to the String version after a checkcast</code></pre>
+  <p>The same erasure explains the overload trap: <code>void set(T o)</code> and <code>void set(V o)</code> in one class both erase to <code>void set(Object o)</code>, so the two seemingly distinct overloads are the same method and the code does not compile.</p>
+</div>
+<div class="warning-box">
+  <p><strong>Restrictions that follow from erasure.</strong> You cannot instantiate a type parameter (<code>new T()</code> is illegal — <code>T</code> is only a placeholder), declare a static field of the class's <code>T</code> (a static generic <em>method</em> is fine, as in 24.11.1), or create arrays of parameterized types (<code>new List&lt;String&gt;[2]</code>). Critically for the type-inquiry tools of 24.8, you cannot test a parameterized type with <code>instanceof</code>: <code>x instanceof ArrayList&lt;Integer&gt;</code> is a compile-time error because the runtime cannot distinguish <code>ArrayList&lt;Integer&gt;</code> from <code>ArrayList&lt;String&gt;</code>; the reifiable family check <code>x instanceof ArrayList&lt;?&gt;</code> is legal. A generic class also cannot extend <code>Throwable</code>, and two overloads that erase to the same raw signature are rejected.</p>
+</div>
 <div class="key-takeaway">
   <p><strong>Recap + bridge.</strong> Generic methods declare <code>&lt;T&gt;</code> before the return (<code>&lt;T&gt; T getObject(T obj)</code>) so one operation can echo any type, while the rest of the class need not be generic; generic interfaces like <code>DemoInterface&lt;T1, T2&gt;</code> declare the slot pair once and implementors bind them (<code>DemoClass implements DemoInterface&lt;String, Integer&gt;</code> maps <code>T1-&gt;String</code>, <code>T2-&gt;Integer</code>). Both extend the generics arc that began with unbounded <code>Identity&lt;T&gt;</code> and tightened with bounded <code>Bound&lt;T extends A&gt;</code>. The module's closing advice applies to all — copy, run, swap type arguments, and watch compile-time acceptance turn red or green exactly where theory predicts.</p>
 </div>

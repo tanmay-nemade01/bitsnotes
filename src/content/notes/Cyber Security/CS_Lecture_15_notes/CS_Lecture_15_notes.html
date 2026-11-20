@@ -559,6 +559,36 @@ User-Agent: &lt;payload&gt;</code></pre>
   </svg>
   <p class="text-xs text-slate-500 mt-2"><strong>Figure:</strong> Log4Shell at 10 and Zoho at 9.8 in the patch-management queue, both above the 9.0 "patch immediately" line.</p>
 </div>
+
+<h3 id="15.4.6-cvss-v3-1-base-score-derivation">15.4.6 CVSS v3.1 Base Score: From Vector to Number</h3>
+<div class="key-concept">
+  <p><strong>Formal definition.</strong> The scores quoted in this lecture — 10.0 and 9.8 — are not subjective grades. Under CVSS v3.1 the Base Score is a deterministic function of eight metrics, each mapped to a published numeric constant. The metrics split into <em>Exploitability</em> (properties of the vulnerable component) and <em>Impact</em> (consequences for the impacted component), and a Scope flag selects which of two composition equations applies.</p>
+  <p><strong>Exploitability sub-score.</strong></p>
+  <p>\[ \text{Exploit} = 8.22 \times AV \times AC \times PR \times UI \]</p>
+  <p>with \(AV \in \{N:0.85,\ A:0.62,\ L:0.55,\ P:0.20\}\), \(AC \in \{L:0.77,\ H:0.44\}\), \(PR \in \{N:0.85,\ L:0.62,\ H:0.27\}\), and \(UI \in \{N:0.85,\ R:0.62\}\).</p>
+  <p><strong>Impact sub-score.</strong> Start with the complement of the "nothing is harmed" case:</p>
+  <p>\[ ISS = 1 - \left[(1-C)(1-I)(1-A)\right] \]</p>
+  <p>where \(C,I,A \in \{H:0.56,\ L:0.22,\ N:0\}\). Unchanged Scope gives \(\text{Impact} = 6.42\,ISS\); Changed Scope gives \(\text{Impact} = 7.52\,(ISS - 0.029) - 3.25\,(ISS - 0.02)^{15}\), which accounts for a blast radius that crosses a trust boundary.</p>
+  <p><strong>Composition.</strong></p>
+  <p>\[ \text{BaseScore} = \text{Roundup}\!\left(\min\!\left[k \cdot (\text{Impact} + \text{Exploit}),\,10\right]\right) \]</p>
+  <p>where \(k = 1\) for Scope Unchanged and \(k = 1.08\) for Scope Changed, and \(\text{Roundup}\) returns the smallest one-decimal value not below its input.</p>
+</div>
+<div class="example-box">
+  <p><strong>Worked calculation — reproducing the lecture's two headline scores.</strong> Both flaws are network-reachable, low-complexity, require no privileges and need no user interaction, so their Exploitability term is identical:</p>
+  <p>\[ \text{Exploit} = 8.22 \times 0.85 \times 0.77 \times 0.85 \times 0.85 \approx 3.89 \]</p>
+  <p>Both also score \(C = I = A = H = 0.56\), hence \(ISS = 1 - (0.44)^3 \approx 0.9148\). Scope is the only differing input:</p>
+  <table>
+    <thead>
+      <tr><th>Case</th><th>Scope</th><th>Impact</th><th>BaseScore</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>Log4Shell (CVE-2021-44228)</td><td>Changed</td><td>\(7.52(0.9148-0.029)-3.25(0.9148-0.02)^{15} \approx 6.05\)</td><td>\(\text{Roundup}(\min(1.08 \times (6.05+3.89),\,10)) = \mathbf{10.0}\)</td></tr>
+      <tr><td>Zoho ManageEngine</td><td>Unchanged</td><td>\(6.42 \times 0.9148 \approx 5.87\)</td><td>\(\text{Roundup}(\min(5.87+3.89,\,10)) = \mathbf{9.8}\)</td></tr>
+    </tbody>
+  </table>
+  <p><strong>Result.</strong> The "10" and the "9.8" are the same exploitability and impact inputs with one bit — Scope — toggled; crossing a trust boundary applies the 1.08 multiplier and pushes Log4Shell to the ceiling. <strong>Sense-check:</strong> neither number describes the organization; both are base scores, which is exactly why section 15.2 insists on a separate environmental adjustment before they become a prioritization decision.</p>
+</div>
+
 <div class="key-takeaway">
   <p><strong>Recap + bridge.</strong> Log4Shell is CVE-2021-44228: an attacker-controlled string in a logged message resolves as a JNDI lookup, pulling a malicious class file from an LDAP server the attacker controls, executing it, and handing over the server — a chain worth maximum CVSS severity of 10/10. The next three cases move from one catastrophic library bug to an entire family of different breach styles: the Twitter case shows that sometimes the weakest link is not software at all, but the people inside the organization.</p>
 </div>
@@ -966,6 +996,13 @@ User-Agent: &lt;payload&gt;</code></pre>
 <h3 id="15.9.2-technical-analysis">15.9.2 Technical Analysis</h3>
 <p>According to MongoDB's official reports, the incident began with a phishing attack that exploited one of the vulnerabilities in one of the third-party applications the company was using. MongoDB did not explicitly disclose which third-party application it was, but it can be inferred that the flaw existed in the authentication mechanism. The attacker used phishing attacks, gained access to the single sign-on credentials, and also got the time-based one-time passwords (TOTP). Once in, they had access to all the customer data and the messaging applications. The data accessible included addresses, names, locations, phone numbers, and metadata.</p>
 <p>The TOTP detail is the technical heart of the case. TOTP — time-based one-time password — is the six-digit code that regenerates every thirty seconds in an authenticator app; it is the second factor that stops a stolen password from being enough. Here it was captured alongside the password, which shows the attackers did not break the algorithm — they harvested the <em>tokens</em> through phishing and then used them the same way the legitimate employee would. This is why the industry has moved toward phishing-resistant MFA (for example hardware security keys tied to a specific site), where the second factor cannot be typed into a fake login page.</p>
+<div class="key-concept">
+  <p><strong>Formal mechanism — how the "six-digit code" is produced.</strong> A <em>one-time password</em> (OTP) is a password invalidated as soon as it is used, so a captured code cannot be replayed. The standard construction is <strong>HOTP</strong> (HMAC-Based One-Time Password): with a shared secret \(k\) and an 8-byte counter \(c\), compute \(h = \text{HMAC-SHA-1}(k,c)\), dynamically truncate \(h\) to a 31-bit integer \(p\), and emit \( \text{HOTP}(k,c) = p \bmod 10^{d} \) with \(d \ge 6\) — the source of the familiar six-digit value.</p>
+  <p><strong>TOTP</strong> (Time-Based OTP) replaces the event counter \(c\) with a time-derived counter, so an authenticator and a validator holding the same secret and clock produce the same code for each time step:</p>
+  <p>\[ T = \left\lfloor \frac{t - t_0}{X} \right\rfloor, \qquad \text{TOTP} = \text{HOTP}(k,T) \]</p>
+  <p>Here \(t_0 = 0\) (Unix epoch) and \(X = 30\) seconds by default; implementations may use HMAC-SHA-256 or HMAC-SHA-512 in place of HMAC-SHA-1.</p>
+  <p><strong>Boundary condition — clock drift.</strong> Client and server clocks drift, so a validator may accept a small window of adjacent time steps (the resynchronization parameter \(s\)); the recommended allowance is at most one time step of network delay. A larger window widens the interval during which a captured code is accepted, which is why the time step balances usability against exposure.</p>
+</div>
 <div class="important-note">
   <p><strong>Intuition: the attacker outlasted the defenders.</strong> MongoDB has defense in depth, including session limits: they logged the attacker out of the database after 24 hours. But the attacker remained logged into the messaging application. From there they used social engineering — pretending to be a real person working at the organization, drafting emails and messages to other employees, and manipulating them to reach into other applications. Since the attacker was already inside the network, it also became an adversary-in-the-middle situation: intercepting and manipulating communications, able to view the corporate database and applications. The attackers stayed hidden for so long because they used a VPN called Mullvad VPN for concealment — and because attackers constantly change their IP addresses, the security team has to stay constantly vigilant and keep updating the blacklist of addresses known to be hostile. Because they managed to remain for so long, this counts as an advanced persistent threat (APT): an organized, patient attacker running a long-term silent campaign against a carefully chosen target.</p>
 </div>

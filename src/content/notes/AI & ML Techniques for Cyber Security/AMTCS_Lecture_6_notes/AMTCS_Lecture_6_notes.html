@@ -313,6 +313,13 @@
     <li><strong>AUC-ROC</strong> measures how well the model separates classes across all thresholds — a single number summarizing discriminative power.</li>
   </ul>
 </div>
+<div class="example-box">
+  <p><strong>Worked calculation — The base-rate fallacy:</strong> The companion text on intrusion detection (R1, Ch. 8) names a phenomenon that explains the accuracy trap of Section 6.2.4: when intrusions are rare compared with legitimate traffic, even a good detector produces mostly false alarms unless its false-alarm rate is extraordinarily low.</p>
+  <p>Assume 1,000,000 packets with 100 malicious (base rate \(p = 0.0001\)). A detector with 99% detection rate (TPR) and 1% false-alarm rate (FPR) gives \(TP = 0.99 \times 100 = 99\) and \(FP = 0.01 \times 999{,}900 \approx 10{,}000\).</p>
+  <p>By Bayes' theorem, the probability that an alert is a real attack (the Bayesian detection rate) is:</p>
+  <p>\[ P(I \mid A) = \frac{p \cdot P(A \mid I)}{p \cdot P(A \mid I) + (1-p) \cdot P(A \mid \neg I)} = \frac{0.0001 \times 0.99}{0.0001 \times 0.99 + 0.9999 \times 0.01} \approx 0.0098 \]</p>
+  <p><strong>Result:</strong> Roughly <strong>99% of alerts are false alarms</strong>, even though the detector catches 99% of attacks. The vast number of benign events dominates the posterior; raising the detection rate barely helps. The false-alarm rate, not the detection rate, is the limiting factor — which is why imbalance-aware metrics (Section 6.3.5) are mandatory.</p>
+</div>
 <div class="important-note">
   <p><strong>Q:</strong> Are SHAP and LIME explainability frameworks? <strong>A:</strong> Yes, those are advanced explainability concepts. SHAP (SHapley Additive exPlanations) and LIME (Local Interpretable Model-agnostic Explanations) will be discussed later. But interpretability can also be much simpler — if you build a hierarchical decision science algorithm, it is very clear why you are prioritizing a particular vulnerability: this asset is externally-facing (more weight), this vulnerability has exploitability (more weight). You can also determine whether you are inadvertently inducing biases by examining which features receive more importance.</p>
 </div>
@@ -340,6 +347,19 @@
   <p><strong>Cost-sensitive learning defined:</strong> In standard ML, every misclassification costs the same — misclassifying a benign packet as malicious costs the same as misclassifying a malicious packet as benign. In cost-sensitive learning, you assign different costs to different types of errors. For security: <code>cost(FN) >> cost(FP)</code>. The algorithm then minimizes total expected cost rather than total error count. This naturally shifts the decision boundary to catch more attacks at the expense of more false alarms — which is exactly what you want in a SOC.</p>
 </div>
 <p>For example, suppose you set <code>cost(FN) = 100</code> (missing an attack costs 100 units) and <code>cost(FP) = 1</code> (a false alarm costs 1 unit). The algorithm will now strongly prefer predicting "malicious" when uncertain, because the penalty for missing a real attack is 100× higher than the penalty for a false alarm. This is a simple but effective way to encode security priorities directly into the learning objective.</p>
+
+<div class="example-box">
+  <p><strong>Worked derivation — the cost-optimal decision threshold:</strong> Assigning costs is only half the story; you must also compute <em>where</em> those costs move the decision boundary. Let \(p = P(\text{malicious} \mid x)\) be a calibrated posterior probability for a packet with features \(x\). Predicting <em>benign</em> incurs expected cost \(C_{FN}\,p\); predicting <em>malicious</em> incurs expected cost \(C_{FP}\,(1-p)\).</p>
+  <p>The cost-minimizing rule is to raise an alert whenever the second cost is smaller:</p>
+  \[
+  C_{FP}\,(1-p) \;<\; C_{FN}\,p
+  \quad\Longleftrightarrow\quad
+  p \;>\; \frac{C_{FP}}{C_{FN} + C_{FP}}
+  \]
+  <p>Substituting this section's numbers gives \(p^{*} = 1/(100+1) \approx 0.0099\). Instead of the default 0.5 cut-off, the detector should flag <strong>any packet whose malicious posterior exceeds roughly 1%</strong>. As the asymmetry widens (\(C_{FN} \gg C_{FP}\)), \(p^{*} \to 0\): the detector becomes deliberately trigger-happy, which is precisely the posture the security-guard analogy argues for. With symmetric costs (\(C_{FN}=C_{FP}\)) the formula collapses to \(p^{*}=0.5\), recovering the ordinary default.</p>
+  <p><strong>Why the threshold, not only the training weights:</strong> A threshold sweep on a trained fraud model shows the same effect empirically — lowering the cut-off from 0.5 to 0.1 raised recall from 0.925 to 1.0 without retraining, at the price of more false alarms. Reweighting training examples and <em>post-hoc threshold tuning</em> are therefore complementary: <code>TunedThresholdClassifierCV</code> selects the cut-off that minimizes a supplied cost matrix, and <code>FixedThresholdClassifier</code> applies a known one.</p>
+  <p><strong>Precondition:</strong> the inequality is valid only when \(p\) is a genuine probability. On uncalibrated scores (random forests, SVMs) apply the calibration step of Section 6.3.6 first, or tune the cut-off directly on a held-out validation set using the cost matrix.</p>
+</div>
 <h3 id="6.3.2-resampling-smote">6.3.2 Resampling (SMOTE)</h3>
 <p><em>SMOTE</em> (Synthetic Minority Over-sampling Technique) is one of the easiest approaches. If you have 10,000 samples where 99.9% are benign and 0.01% are malicious, SMOTE generates synthetic samples of the minority class to balance the dataset. It is like generating data based on the few true positives you have, then training the algorithm on the balanced set. This is a simple Python call. There are trade-offs — synthetic data may not perfectly represent real attack patterns — but it is a practical starting point.</p>
 <div class="key-concept">
@@ -351,6 +371,22 @@ X_resampled, y_resampled = smote.fit_resample(X_train, y_train)</code></pre>
 </div>
 <div class="warning-box">
   <p><strong>Pitfall — Synthetic data may not generalize:</strong> SMOTE generates synthetic attack samples by interpolating between existing attacks. If your training data contains only DDoS attacks, SMOTE will generate more DDoS-like samples — it will not generate SQL injection or phishing attacks. If the real-world attack distribution shifts (new attack types emerge), SMOTE-augmented models may still fail. Use SMOTE as a starting point, not a complete solution.</p>
+</div>
+
+<div class="warning-box">
+  <p><strong>Pitfall — Resampling before the split leaks test information:</strong> SMOTE is a <em>data-dependent</em> preprocessing step: it reads minority samples and their neighbours to manufacture new points. If you call <code>fit_resample</code> on the <em>full</em> dataset and only then split into train and test, synthetic points derived partly from test-set attacks land in the training fold. The test fold no longer measures performance on unseen traffic, and recall/F1 are inflated in exactly the regime where Section 6.2.4 demands honest measurement.</p>
+  <p><strong>Wrong order:</strong> <code>SMOTE.fit_resample(X, y)</code> → <code>train_test_split</code> → fit → evaluate. <strong>Correct order:</strong> split first → fit the resampler on the training fold only → leave the test fold at its natural, heavily imbalanced base rate → evaluate. Under <em>k</em>-fold cross-validation the resampler must be re-fitted <em>inside each fold</em>, never once on the pooled training data.</p>
+  <pre><code>from sklearn.model_selection import train_test_split
+from imblearn.pipeline import make_pipeline
+from imblearn.over_sampling import SMOTE
+
+X_train, X_test, y_train, y_test = train_test_split(
+    X, y, stratify=y, test_size=0.2
+)
+model = make_pipeline(SMOTE(random_state=0), classifier)  # resample inside the fold
+model.fit(X_train, y_train)          # SMOTE sees training data only
+y_pred = model.predict(X_test)       # test set keeps its real base rate</code></pre>
+  <p><strong>Security consequence:</strong> an offline score obtained with leaked synthetic attacks will not survive contact with production traffic, where the true base rate is ~0.01%. The same discipline applies to every transformation fitted on data — normalization, feature selection, and the scaler example in the companion network-traffic chapter. Split first, fit on train only, and use a pipeline so the rule is enforced mechanically.</p>
 </div>
 <h3 id="6.3.3-algorithm-inherent-approaches">6.3.3 Algorithm-Inherent Approaches</h3>
 <p>Some algorithms inherently handle imbalance because they are designed for anomaly detection:</p>
@@ -365,7 +401,26 @@ X_resampled, y_resampled = smote.fit_resample(X_train, y_train)</code></pre>
 <div class="key-concept">
   <p><strong>Why anomaly detection algorithms handle imbalance naturally:</strong> These algorithms use the imbalance itself as a signal. When 99.99% of data is normal, "normal" is easy to define — it is the dense cluster in feature space. Anything outside that cluster is anomalous. The extreme imbalance that breaks supervised classifiers (too few attack examples to learn from) is exactly what makes anomaly detection work well. This is the practical resolution of the class imbalance problem in security.</p>
 </div>
+<div class="important-note">
+  <p><strong>Training-data assumption — novelty detection vs. outlier detection:</strong> The companion text <em>Machine Learning and Security</em> (T1, Ch. 3) draws a distinction that directly affects algorithm choice; the companion chapter on context-based detection (R3, Ch. 7) makes the same split by label availability.</p>
+  <ul>
+    <li><strong>Novelty detection:</strong> the training data is clean — it contains only regular (normal) points. You learn a frontier around normality and flag new observations outside it. This is exactly the assumption behind the one-class SVM in Section 6.3.3.</li>
+    <li><strong>Outlier detection:</strong> the training data is already polluted with unlabeled anomalies. The algorithm must fit the dense normal region while staying insensitive to the contaminating outliers.</li>
+  </ul>
+  <p><strong>Practical consequence:</strong> If the “normal” baseline was captured during an active breach, a novelty detector learns the attacker as normal and never flags them. Official scikit-learn guidance notes that the one-class SVM is sensitive to outliers and is best reserved for clean training sets; on contaminated data prefer a robust method such as isolation forest or an elliptic envelope. Cleaning the baseline is laborious but often necessary — start by assuming the data contains anomalies if you are unsure.</p>
+</div>
 <p>The R4 companion text (<em>Data Mining and Machine Learning in Cybersecurity</em>) confirms: "Unsupervised anomaly detection can overcome the drawbacks of supervised anomaly detection" because it "aims to find malicious information buried in cyberinfrastructure even without prior knowledge about the data labels and new attacks."</p>
+
+<div class="key-concept">
+  <p><strong>Formal Definition — Elliptic envelope (robust-covariance) detection:</strong> Assume the regular traffic points are drawn from a \(d\)-dimensional Gaussian \(\mathcal{N}(\mu, \Sigma)\). Instead of measuring distance from the centre in raw units, score each observation \(x\) by its squared <em>Mahalanobis distance</em>, which normalizes for scale and correlation:</p>
+  \[
+  d_M^2(x) = (x-\mu)^{\top}\,\Sigma^{-1}\,(x-\mu)
+  \]
+  <p>Under the Gaussian assumption \(d_M^2 \sim \chi^2_{d}\), so an observation is flagged when \(d_M^2(x) > \chi^2_{d,\,1-\alpha}\) for a chosen tail probability \(\alpha\). The contour \(d_M^2 = \text{const}\) is an ellipse in 2-D (an ellipsoid in higher dimensions) — hence the name <em>elliptic envelope</em>.</p>
+  <p><strong>Why the covariance estimator must be robust:</strong> the ordinary maximum-likelihood covariance is itself distorted by the very attacks you want to find — a handful of injected outliers inflate the ellipse until the attacks sit inside it. The <em>Minimum Covariance Determinant</em> (MCD) estimator instead searches for a proportion \(h\) of "good" observations whose empirical covariance has the smallest determinant, rescales it for consistency, then reweights every point by its Mahalanobis distance. Outliers therefore receive large distances instead of reshaping the boundary.</p>
+  <p><strong>Worked trace:</strong> take 1,000 two-dimensional samples (peak CPU utilisation, process start hour) with an injected 1% uniform outlier ratio. Fitting MCD with <code>contamination=0.01</code> on the Gaussian mixture separates the modes cleanly and yields zero misclassifications; the same fit on a clearly non-Gaussian mixture mislabels eight points (four outliers accepted, four inliers flagged). The <code>contamination</code> parameter encodes the expected attack base rate from Section 6.2.4 — tune it from domain knowledge, not from the test set.</p>
+  <p><strong>Boundary conditions:</strong> the method is reliable for low-dimensional, approximately Gaussian, static feature sets. In high-dimensional or multimodal traffic its single ellipse is a poor model; and if time is dropped from the features to fit the Gaussian, an event that is ordinary at midday but anomalous at 3 AM becomes invisible. For streaming use, refit the envelope on a sliding window long enough to cover daily and weekly cycles.</p>
+</div>
 <h3 id="6.3.4-ensemble-approaches">6.3.4 Ensemble Approaches</h3>
 <p>An <em>ensemble</em> is a collection of models. You do not run a single algorithm — you run different configurations of the same algorithm or entirely different models. You then combine their outputs through voting, averaging, or weighted decisions. The first time this concept was demonstrated in practice was at a company Cisco acquired from the Czech Republic — Cognitive Security — about 12–13 years ago. It was a revelation: it is not about one algorithm, not about one supervised or unsupervised approach. It is a combination. We will dig deeper into ensemble types as the course progresses.</p>
 <div class="key-concept">

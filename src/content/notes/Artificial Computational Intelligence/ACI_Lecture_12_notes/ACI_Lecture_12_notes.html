@@ -129,6 +129,37 @@
 
 <p><strong>Compactness example.</strong> Suppose we have \(n = 30\) binary variables, each with at most \(k = 5\) parents. Each CPT requires at most \(2^5 = 32\) entries (actually \(2^k\) rows with probabilities that sum to 1, so \(2^k - 1\) free parameters per node). The complete network requires roughly \(2^k \cdot n = 32 \times 30 = 960\) numbers. The full joint distribution requires \(2^{30} \approx 1{,}073{,}741{,}824\) entries. This dramatic reduction — from over a billion to under a thousand — is what makes Bayesian networks practical.</p>
 
+<div class="key-concept">
+  <p><strong>Canonical distributions — compact CPTs with noisy-OR.</strong> Even with only \(k\) parents, a full CPT needs up to \(2^k\) numbers. When the parent–child relationship follows a standard <em>canonical pattern</em>, the whole table can be specified by naming the pattern and supplying a few parameters. The <em>noisy-OR</em> gate is the canonical pattern for a child with several independent causes: it generalizes logical OR by allowing each parent's influence to be independently <em>inhibited</em>. It makes two assumptions — all causes are listed (otherwise add a <em>leak node</em> for miscellaneous causes), and inhibitions of different parents are mutually independent. The child is then false only when <em>every</em> true parent is inhibited:</p>
+
+  \[
+  P(x_i \mid \text{Parents}(X_i)) = 1 - \prod_{\{j\,:\,X_j = \text{true}\}} q_j
+  \]
+
+  <p>where \(q_j = P(\neg x_i \mid X_j = \text{true},\ \text{all other parents false})\) is the inhibition probability of parent \(j\). A noisy-OR node with \(k\) parents needs only \(O(k)\) parameters instead of \(O(2^k)\). In the CPCS medical network this reduced 133,931,430 CPT numbers to just 8,254 across 448 nodes — a second, much stronger layer of compactness on top of the DAG factorization itself.</p>
+</div>
+
+<div class="example-box">
+  <p><strong>Worked example — building a noisy-OR CPT for Fever.</strong> Let Fever (\(Fe\)) be caused by Cold, Flu, and Malaria with inhibition probabilities \(q_{Co}=0.6\), \(q_{Fl}=0.2\), \(q_{Ma}=0.1\) — for instance \(q_{Fl}=P(\neg Fe \mid \neg Co, Fl, \neg Ma)=0.2\): a patient can have the flu yet not exhibit a fever.</p>
+
+  <p><strong>Apply \(P(Fe \mid \cdot)=1-\prod_{j\,:\,X_j=\text{true}} q_j\) row by row:</strong></p>
+
+  <ul>
+    <li>No cause true: empty product \(=1\), so \(P(\neg Fe)=1.0\) and \(P(Fe)=0\).</li>
+    <li>Only Malaria true: \(P(\neg Fe)=q_{Ma}=0.1\), so \(P(Fe)=0.9\).</li>
+    <li>Only Flu true: \(P(\neg Fe)=q_{Fl}=0.2\), so \(P(Fe)=0.8\).</li>
+    <li>Only Cold true: \(P(\neg Fe)=q_{Co}=0.6\), so \(P(Fe)=0.4\).</li>
+    <li>Cold and Flu true: \(P(\neg Fe)=0.6\times0.2=0.12\), so \(P(Fe)=0.88\).</li>
+    <li>All three true: \(P(\neg Fe)=0.6\times0.2\times0.1=0.012\), so \(P(Fe)=0.988\).</li>
+  </ul>
+
+  <p><strong>Result:</strong> just three inhibition parameters generate all \(2^3=8\) rows of the Fever CPT; the remaining entries are forced by the noisy-OR assumptions rather than elicited one row at a time.</p>
+</div>
+
+<div class="important-note">
+  <p><strong>Extension — continuous and hybrid networks.</strong> Every network in this lecture uses binary variables, but the Bayesian-network framework also handles continuous quantities such as height, temperature, and money. The textbook (Russell &amp; Norvig, §13.2.3) gives three standard approaches: <em>discretization</em> (partition the range into fixed intervals, trading accuracy against CPT size), a <em>parametric density</em> such as the Gaussian \(\mathcal{N}(x;\mu,\sigma^2)\), specified by two parameters instead of an entire table, and a <em>nonparametric</em> distribution defined implicitly by stored instances. A network mixing discrete and continuous variables is a <em>hybrid Bayesian network</em>; it additionally requires rules for a continuous node given discrete or continuous parents, and for a discrete node given continuous parents. These are representational extensions of the same DAG-plus-local-distribution semantics, not a different kind of inference.</p>
+</div>
+
 <h3 class="subsection-title" id="12.2.2">12.2.2 Key Properties</h3>
 
 <div class="key-concept">
@@ -1592,6 +1623,50 @@ P(B \mid J, M)
   <p>This exponential blowup is the fundamental limitation of enumeration. It works well for small networks but becomes impractical for large ones.</p>
 </div>
 
+<div class="key-concept">
+  <p><strong>The complexity landscape of exact inference.</strong> The exponential cost of enumeration is not merely an artifact of a naive algorithm — it is intrinsic to Bayesian-network inference in general. The determining factor is the <em>connectivity</em> of the underlying undirected graph (the DAG with all arrow directions ignored).</p>
+
+  <ul>
+    <li><strong>Singly connected networks (polytrees).</strong> A network in which there is at most one undirected path between any two nodes is called a <em>polytree</em>. Exact inference in a polytree is linear in the size of the network — linear in the number of CPT entries, and linear in the number of nodes when the number of parents per node is bounded. This holds for any elimination order consistent with the topological ordering. The burglary alarm network is a polytree, which is why every query in Sections 12.5–12.6 stayed small.</li>
+    <li><strong>Multiply connected networks.</strong> If some pair of nodes is joined by two or more undirected paths (as in the car-insurance network), variable elimination can require exponential time and space in the worst case, even with bounded parent counts. The relevant structural parameter is the <em>treewidth</em>: the induced width of the moralized graph, which governs the size of the largest intermediate factor.</li>
+  </ul>
+
+  <p><strong>Why the worst case is unavoidable — reduction from 3-SAT.</strong> Because propositional satisfiability is a special case, exact Bayesian-network inference is NP-hard. Encode a 3-CNF sentence with \(n\) variables: make each propositional variable a root with prior \(P = 0.5\); make each clause \(C_j\) a deterministic disjunction of its literals; let \(S = C_1 \wedge C_2 \wedge \cdots \wedge C_m\) be their conjunction. Then</p>
+
+  \[
+  P(S = \text{true}) > 0 \iff \text{the sentence is satisfiable}, \qquad P(S = \text{true}) = \frac{\#\text{satisfying assignments}}{2^n}
+  \]
+
+  <p>Each satisfying assignment has probability \(2^{-n}\), so evaluating \(P(S = \text{true})\) also <em>counts</em> satisfying assignments — exact inference is in fact <strong>#P-hard</strong>, strictly harder than NP-complete. A related reformulation recasts inference as <em>weighted model counting</em>, allowing highly optimized SAT solvers to be applied to high-treewidth networks.</p>
+
+  <table>
+    <thead>
+      <tr>
+        <th>Network class</th>
+        <th>Undirected paths</th>
+        <th>Exact inference cost</th>
+        <th>Example</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>Polytree (singly connected)</td>
+        <td>At most one between any two nodes</td>
+        <td>Linear in network size</td>
+        <td>Burglary alarm, dental, fever</td>
+      </tr>
+      <tr>
+        <td>Multiply connected</td>
+        <td>Two or more between some pair</td>
+        <td>Exponential in treewidth (worst case)</td>
+        <td>Car-insurance network</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <p><strong>Consequence.</strong> No general exact algorithm can be efficient on all networks. Practical systems either restrict the structure to low treewidth or turn to approximate inference — the subject of the next lecture.</p>
+</div>
+
 <p><em>Professor's insight on the number of hidden variables:</em> "If the missing variable is separately isolated somewhere, like ice is falling, it doesn't really matter. It is not getting influenced, nor influencing. It is a fully isolated independent variable. You can leave it alone."</p>
 
 <div class="warning-box">
@@ -1716,6 +1791,45 @@ P(B \mid J, M)
   </ul>
 
   <p>In general, the complexity of variable elimination depends on the <em>treewidth</em> of the network — a measure of how "tree-like" the graph is. For tree-structured networks, variable elimination runs in time linear in the number of nodes. For dense networks, it can still be exponential, but typically much less so than full enumeration.</p>
+</div>
+
+<div class="important-note">
+  <p><strong>Architectural extension — clustering (join-tree) algorithms.</strong> Variable elimination answers a <em>single</em> query efficiently. If we need the posterior for <em>every</em> variable in a polytree, issuing \(n\) separate \(O(n)\) queries costs \(O(n^2)\). Clustering algorithms (also called join-tree or clique-tree algorithms) avoid this repetition by joining nodes into cluster nodes so that the resulting network is a polytree, then caching and propagating messages along it. The total cost drops to \(O(n)\), which is why these algorithms are standard in commercial Bayes-net tools.</p>
+
+  <table>
+    <thead>
+      <tr>
+        <th>Method</th>
+        <th>What it computes</th>
+        <th>Cost on a polytree</th>
+        <th>Reuse of work</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>Enumeration</td>
+        <td>One query at a time</td>
+        <td>\(O(n \cdot 2^k)\)</td>
+        <td>None — recompute from scratch</td>
+      </tr>
+      <tr>
+        <td>Variable elimination (single query)</td>
+        <td>One query at a time</td>
+        <td>\(O(n)\) per query</td>
+        <td>Limited — intermediate factors discarded</td>
+      </tr>
+      <tr>
+        <td>Clustering / join tree</td>
+        <td>All marginals at once</td>
+        <td>\(O(n)\) total</td>
+        <td>Full — messages cached and re-propagated</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <p><strong>Mechanism in brief.</strong> Multiply connected nodes are merged into a single cluster variable whose CPT is the product of the merged CPTs (e.g., merging Sprinkler and Rain in the textbook's car-insurance network). The clusters are arranged as a tree; each edge carries a <em>message</em> — the product of the factors on one side of the edge, summed over the separator (shared) variables. Once a single pass of sum–product messages has been computed, every cluster's posterior is available, and new evidence is absorbed by local re-propagation rather than a fresh inference run.</p>
+
+  <p><strong>Connection to what you already know.</strong> The sum–product message \(\mu_{i \to j}(S_{ij}) = \sum_{X \setminus S_{ij}} \prod_{k \in i} \phi_k\) is exactly the "multiply factors, then sum out the eliminated variable" operation used in variable elimination (Section 12.10.1); clustering simply organizes these operations once so they can be reused for every query.</p>
 </div>
 
 <div class="warning-box">

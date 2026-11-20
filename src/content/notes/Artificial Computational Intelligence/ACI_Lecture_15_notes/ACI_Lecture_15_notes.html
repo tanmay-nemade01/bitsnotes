@@ -451,6 +451,23 @@ graph BT
   <p><strong>Recap + Bridge:</strong> The Markov property allows us to model temporal processes with limited memory. HMMs extend this by adding hidden states and observations. There are five fundamental queries we can ask of an HMM, each with its own purpose. The next sections will detail the algorithms for the three exam-relevant types: forward propagation, filtering, and Viterbi.</p>
 </div>
 
+<h3 id="15.2.4-smoothing-and-the-forward-backward-algorithm">15.2.4 Smoothing and the Forward–Backward Algorithm</h3>
+<div class="key-concept">
+  <p><strong>Why smoothing needs a second pass:</strong> Smoothing answers the fourth query type — the posterior over a <em>past</em> state \(X_k\) given the whole evidence sequence \(e_{1:t}\), with \(0 \le k &lt; t\). Filtering stops at \(k=t\); smoothing must also use evidence that arrives <em>after</em> \(k\). Split the evidence at \(k\) and apply Bayes' rule conditioned on \(e_{1:k}\):</p>
+  <p>\[ P(X_k \mid e_{1:t}) = \alpha \, P(X_k \mid e_{1:k}) \, P(e_{k+1:t} \mid X_k) = \alpha \, f_{1:k} \odot b_{k+1:t} \]</p>
+  <p>Here \(f_{1:k}\) is the ordinary forward (filtering) message and \(b_{k+1:t} = P(e_{k+1:t} \mid X_k)\) is a new <em>backward message</em>; \(\odot\) denotes pointwise multiplication and \(\alpha\) renormalizes the product. The backward message is computed by a recursion that runs from \(t\) down to \(k+1\):</p>
+  <p>\[ b_{k+1:t}(i) = \sum_{j} P(e_{k+1} \mid X_{k+1}=j) \; b_{k+2:t}(j) \; A_{ij} \]</p>
+  <p>Each factor is the sensor model, the already-computed later backward message, and the transition model — the same three ingredients as forward propagation, traversed in reverse. The recursion is initialized with \(b_{t+1:t} = \mathbf{1}\), because an empty evidence sequence has probability 1.</p>
+</div>
+<div class="example-box">
+  <p><strong>Worked Calculation (umbrella world):</strong> States are Rain / No-rain with \(A = \begin{bmatrix} 0.7 & 0.3 \\ 0.3 & 0.7 \end{bmatrix}\), \(P(\text{umbrella} \mid \text{rain}) = 0.9\) and \(P(\text{umbrella} \mid \neg\text{rain}) = 0.2\). Filtering has already given \(f_{1:1} = \langle 0.818, 0.182 \rangle\). The backward message for day 2 is</p>
+  <p>\[ P(u_2 \mid R_1) = \sum_{r_2} P(u_2 \mid r_2)\,P(r_2 \mid R_1) = \langle 0.9(0.7) + 0.2(0.3),\; 0.9(0.3) + 0.2(0.7) \rangle = \langle 0.69, 0.41 \rangle \]</p>
+  <p>Combining: \(P(R_1 \mid u_1, u_2) = \alpha \langle 0.818, 0.182 \rangle \odot \langle 0.69, 0.41 \rangle \approx \langle 0.883, 0.117 \rangle\). The smoothed rain probability (0.883) exceeds the filtered one (0.818) because the day-2 umbrella makes rain on day 2 more likely, and rain tends to persist.</p>
+</div>
+<div class="important-note">
+  <p><strong>Algorithm &amp; cost:</strong> Run the forward pass once over the whole sequence and store every \(f_{1:k}\); then run the backward pass from \(t\) down to 1, combining each stored \(f_{1:k}\) with the current \(b_{k+1:t}\). This is the <em>forward–backward algorithm</em>. Smoothing one slice costs \(O(t)\); naively repeating it for every slice costs \(O(t^2)\), but reusing the stored forward messages reduces the entire sequence to \(O(t)\).</p>
+</div>
+
 <h2 id="15.3-forward-propagation-algorithm-detailed-worked-example">15.3 Forward Propagation Algorithm: Detailed Worked Example</h2>
 <h3 id="15.3.1-the-problem-setup">15.3.1 The Problem Setup</h3>
 <div class="important-note">
@@ -600,6 +617,18 @@ graph BT
 <p>Exam-style example: "A student performed well in EC1, poorly in EC2, and well in EC3. What is the probability of this grade pattern?" The hidden variable is effort/concentration; the evidence is the grades.</p>
 <div class="key-takeaway">
   <p><strong>Recap + Bridge:</strong> Forward propagation computes the probability of an observed sequence by building up the probability day by day, summing over all possible hidden state paths. The algorithm is recursive: each day's values depend on the previous day's values, the TPM, and the EPM. The final answer is the sum of the probabilities for all possible hidden states on the last day. This is the foundation for filtering (Section 15.4) and Viterbi (Section 15.5), which modify the final step or the intermediate steps.</p>
+</div>
+
+<h3 id="15.3.9-matrix-formulation-of-hmm-inference">15.3.9 Matrix Formulation of HMM Inference</h3>
+<div class="key-concept">
+  <p><strong>Formalization:</strong> With \(S\) hidden states numbered \(1,\dots,S\), the transition model becomes an \(S \times S\) matrix \(T\) with \(T_{ij} = P(X_t = j \mid X_{t-1} = i)\). Because the observation at time \(t\) is actually seen, only its likelihood per state is needed; place these on the diagonal of an \(S \times S\) <em>observation matrix</em> \(O_t\) with \((O_t)_{ii} = P(e_t \mid X_t = i)\) and zeros elsewhere. Writing the forward and backward messages as column vectors turns the recursions into matrix–vector products:</p>
+  <p>\[ f_{1:t+1} = \alpha \, O_{t+1} \, T^{\top} f_{1:t} \qquad\qquad b_{k+1:t} = T \, O_{k+1} \, b_{k+2:t} \]</p>
+  <p>The transpose appears because the TPM stores the <em>from-state in rows and the to-state in columns</em>, while messages are column vectors. Each step multiplies an \(S\)-vector by an \(S \times S\) matrix, so filtering and smoothing run in \(O(S^2 t)\) time and the stored forward pass uses \(O(St)\) space.</p>
+</div>
+<div class="example-box">
+  <p><strong>Worked Calculation (reproduces Section 15.3):</strong> Use the SSR model with \(T = \begin{bmatrix} 0.5 & 0.5 \\ 0.5 & 0.5 \end{bmatrix}\), \(O_{\text{sunny}} = \begin{bmatrix} 0.2 & 0 \\ 0 & 0.6 \end{bmatrix}\), \(O_{\text{rainy}} = \begin{bmatrix} 0.8 & 0 \\ 0 & 0.4 \end{bmatrix}\) and \(\pi = \begin{bmatrix} 0.5 \\ 0.5 \end{bmatrix}\). Then</p>
+  <p>\[ f_1 = O_{\text{sunny}} T^{\top}\pi = \begin{bmatrix} 0.1 \\ 0.3 \end{bmatrix}, \quad f_2 = O_{\text{sunny}} T^{\top} f_1 = \begin{bmatrix} 0.04 \\ 0.12 \end{bmatrix}, \quad f_3 = O_{\text{rainy}} T^{\top} f_2 = \begin{bmatrix} 0.064 \\ 0.032 \end{bmatrix} \]</p>
+  <p>These are exactly the day-1, day-2 and day-3 node values computed by hand in Sections 15.3.2–15.3.4; the final sum \(0.064 + 0.032 = 0.096\) again gives \(P(\text{SSR})\). The matrix form therefore packages the entire trellis computation into repeated matrix–vector products.</p>
 </div>
 
 <h2 id="15.4-filtering-algorithm">15.4 Filtering Algorithm</h2>
@@ -1256,6 +1285,10 @@ graph BT
 <div class="key-concept">
   <p><strong>Mixed Strategy:</strong> A probability distribution over pure strategies. Player \(i\)'s mixed strategy is \(\sigma_i = (p_1, p_2, \dots, p_{|A_i|})\) where \(p_k \geq 0\) and \(\sum_k p_k = 1\).</p>
 </div>
+
+<div class="key-concept">
+  <p><strong>Nash's Existence Theorem:</strong> Every finite game — one with finitely many players and finitely many pure actions — has at least one Nash equilibrium in <em>mixed</em> strategies, even when no pure-strategy equilibrium exists (as in matching pennies). This is why randomization is central to non-cooperative game theory: solution concepts such as the dominant-strategy equilibrium are not guaranteed to exist for every game, but a mixed-strategy Nash equilibrium always does. At such an equilibrium, every player is still simultaneously playing a best response to the strategies of the others.</p>
+</div>
 <p>For the Mora example: with probability \(p\), show one finger; with probability \(1-p\), show two fingers. The opponent cannot reliably predict your move.</p>
 <div class="example-box">
   <p><strong>Worked Example (Goalkeeper):</strong></p>
@@ -1275,6 +1308,12 @@ graph BT
 </div>
 <div class="key-concept">
   <p><strong>Finding Optimal Mixed Strategy:</strong> To find the optimal mixed strategy, use the <em>indifference principle</em>: choose probabilities that make your opponent indifferent between their actions. If your opponent is indifferent, they have no profitable deviation, which is a Nash equilibrium.</p>
+</div>
+
+<div class="example-box">
+  <p><strong>Worked Calculation — Solving a Mixed-Strategy Equilibrium (Matching Pennies):</strong> Two players simultaneously choose Heads (H) or Tails (T). The row player wins \(+1\) when the choices match and \(-1\) when they differ; the column player's payoffs are the negative (a zero-sum game). There is no pure-strategy Nash equilibrium — for every pair of choices, one player regrets their move.</p>
+  <p>Let the column player choose Heads with probability \(q\). The row player's expected payoff is \(2q - 1\) from playing H and \(1 - 2q\) from playing T. By the <em>indifference principle</em>, the row player is made indifferent when \(2q - 1 = 1 - 2q\), giving \(q = 0.5\). By symmetry, the row player also randomizes with probability \(p = 0.5\).</p>
+  <p><strong>Final result:</strong> The unique mixed-strategy Nash equilibrium is \((0.5, 0.5)\) — both players choose H and T with equal probability, for an expected payoff of \(0\). If the column player deviates to \(q = 0.6\), the row player's best response becomes H with certainty (payoff \(2(0.6) - 1 = 0.2 > 0\)), so the deviator's payoff falls to \(-0.2\); hence no profitable deviation exists at \(q = 0.5\).</p>
 </div>
 <div class="key-takeaway">
   <p><strong>Recap + Bridge:</strong> Pure strategies are predictable and exploitable. Mixed strategies introduce randomness to prevent exploitation. The optimal mixed strategy often makes the opponent indifferent between their actions. The next section explores how strategies evolve in repeated games.</p>

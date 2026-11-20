@@ -645,6 +645,32 @@
 <p>From twins to numbers: how likely is each word sense?</p>
 <p>Training estimates the probability of a target word given a source word, written \(P(t \mid s)\), where \(t\) is a target word and \(s\) is a source word. The kept description is "estimate the probability of target word for the given source word". The more often a French word shows up in passages paired with a given English need, the higher that probability should be. Counts across twins become weights.</p>
 <p><em>Bayes view</em> (flipping conditional probabilities through prior and likelihood), used here to favor likely readings with soft weights, supports the soft choice. Where hard 0 or 1 membership fails, probabilities give a soft value of belonging to one reading with some weight and to another reading with another weight. IBM Models 1 to 5 all use such translations with different details. Model 1 is the focus here: it keeps only lexical weights plus uniform alignment, which is enough to learn useful \(P(t \mid s)\) tables.</p>
+
+<div class="important-note">
+  <p><strong>System detail — why Model 1's loose alignment helps retrieval:</strong> Section 15.6.3 lists reordering and multi-word fertility as effects Model 1 ignores. For machine translation that is a real weakness. For cross-lingual retrieval it is a deliberate advantage. Model 1 lets each target slot in a sentence align to any source slot in its twin, so the learned \(t(e \mid f)\) absorbs not just literal translation partners but also words that consistently co-occur in aligned sentences. Those co-occurring words flow into the translated query as added terms: an implicit query expansion that trades some precision for recall.</p>
+  <table>
+    <thead>
+      <tr>
+        <th>Goal</th>
+        <th>Preferred translation behaviour</th>
+        <th>Why</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>Machine translation</td>
+        <td>Tight, order-aware, one-sense-per-word links (higher IBM models)</td>
+        <td>The output must read naturally; loose links inject wrong words.</td>
+      </tr>
+      <tr>
+        <td>Cross-lingual retrieval</td>
+        <td>Loose, order-free bag-of-words links (IBM Model 1)</td>
+        <td>A query needs candidate terms, not polished prose; extra related words raise recall.</td>
+      </tr>
+    </tbody>
+  </table>
+  <p><strong>Worked consequence:</strong> when a source term's aligned target sentences repeatedly contain both the literal target and a near term, the near term earns non-zero translation weight and joins the query. A document holding only the near term now enters the candidate list, where ranking can still discard it. This is the same recall-first logic that makes a small bilingual dictionary with all its entries surprisingly competitive in retrieval, even though it looks crude beside a full translator.</p>
+</div>
 <div class="key-concept">
   <p>Let \(s\) be a source word and \(t\) be a target word. Let count \(c(s,t)\) be joint appearances in parallel text. Then \(P(t \mid s)\) grows with \(c(s,t)\) relative to other targets for the same \(s\). At query time the system replaces the query word with the highest-probability word. The kept rule is "at query time, replace the query word with the highest probable word". Think of a bag of marbles per source word: each target reading owns marbles in proportion to its count, and the draw favors the fullest color while keeping the others in play.</p>
 </div>
@@ -701,6 +727,16 @@
 <p>Who teaches the tables when no word links are marked? The loop teaches itself.</p>
 <p>Model 1 faces a chicken-and-egg loop. If complete word alignments were marked, estimation would be trivial: count links and divide. If model probabilities were already known, gaps could be filled: link each word to its best mate. Neither holds, so <em>expectation maximization</em> (an iterative method that fixes one set of parameters while tuning the other, then repeats to convergence), used as in k-means and Gaussian mixture models, is the tool. Start with uniform values in the first pass. Fix one parameter and optimize the other. Repeat until convergence. Final values give posterior probabilities for target words given source words.</p>
 <p>Purpose: learn \(t(f \mid e)\) tables from sentence twins alone, with no hand-marked word links. Inputs: a set of aligned sentence pairs plus a vocabulary on each side. Outputs: lexical tables \(t\) that maximize twin likelihood. Steps: (1) set all \(t\) uniform; (2) expectation: spread each observed co-occurrence across possible links in proportion to current \(t\); (3) maximization: re-estimate \(t\) from those fractional counts by dividing joint counts by marginal counts; (4) repeat steps 2-3 until shifts fall below a small threshold. Rationale per step: uniform start avoids early bias, expectation fills the missing links softly, maximization turns soft fills into better tables, and looping lets the two improve together.</p>
+
+<div class="key-concept">
+  <p><strong>Formal form of the E-step and M-step:</strong> The fix-one/tune-other loop described above has an exact update rule. Using the same lexical notation \(t(e \mid f)\) as Section 15.6.4, with \(e\) a target word, \(f\) a source word, and \(f=0\) the null token, let \(c(e,f)\) be a <em>fractional</em> count gathered over all aligned sentence pairs.</p>
+  <p><strong>E-step:</strong> for each aligned pair \((F,E)\) of lengths \(l_F\) and \(l_E\), spread every target slot \(j\) over all \(l_F + 1\) source slots \(i\), weighted by the current table:</p>
+  <p>\[ c(e,f) = \sum_{(F,E)} \sum_{j=1}^{l_E} \sum_{i=0}^{l_F} \frac{t(e \mid f)\,\delta(E_j,e)\,\delta(F_i,f)}{\sum_{i'=0}^{l_F} t(e \mid f_{i'})} \]</p>
+  <p>Here \(\delta(x,y)\) is the Kronecker delta, equal to \(1\) when the two words match and \(0\) otherwise. The denominator sums the current lexical weights over every candidate source slot, including null, so a target word with several plausible partners gives a fraction to each. That is the algebraic form of the equal-width lines in the toy: as counts accumulate, the lines stop being equal.</p>
+  <p><strong>M-step:</strong> renormalize each source row so that it sums to one:</p>
+  <p>\[ t^{(k+1)}(e \mid f) = \frac{c(e,f)}{\sum_{e'} c(e',f)} \]</p>
+  <p><strong>Worked one-row update:</strong> suppose the E-step assigns the French source word banque the fractional counts \(c(\text{bank}) = 6\), \(c(\text{banking}) = 2\), and \(c(\text{financial}) = 2\). The M-step gives \(t(\text{bank} \mid \text{banque}) = 6/10 = 0.6\) and \(0.2\) for each of the other two candidates. The row sums to \(1.0\) by construction, which is what makes the table a probability distribution. Repeat E and M until the largest change in any entry falls below a threshold; the converged table is the one that later feeds the \((l_F+1)^{l_E}\) sentence score.</p>
+</div>
 <p>A three-phrase French to English toy shows the intuition. Start uniform so each foreign word is equally likely to map to each English word. For example, la is equally likely to map to the and to other mates, and house is equally likely to map to la and to maison. That is the expectation start: every line has equal width.</p>
 <p>Then counts speak. In the three phrases, la appears three times. It meets the sense three times, house sense two times, and other senses fewer. The model learns that live alignment to the is common. Blue meets blue once. Flower meets flower once. La meets house twice, blue once, and flower once. Capture that signal by line width. The line between la and the grows thickest. The line to house is next. Lines to flower and blue stay thin. Repeat for other words. Fleur has only the flower link. Maison meets house twice. Blue meets blue once. When no alignment updates change further, the run has converged. There is no single straight one-to-one map. Cross links such as bleu to blue and maison to house remain, with widths set by final \(t\). Those learned weights are the lexical probabilities used later to maximize the sentence score.</p>
 <p>A practical init example: if Haus has two readings, house and building, start each at 0.5. So \(t(\text{house} \mid \text{Haus}) = 0.5\) and \(t(\text{building} \mid \text{Haus}) = 0.5\). Then assign missing alignments in proportion to 0.5/0.5, re-estimate from completed data (suppose counts move the split to 0.75/0.25), and repeat. That is the same fix-one, tune-other loop in words. After a few rounds the split might read 0.85/0.15 and then stop moving, which signals convergence.</p>

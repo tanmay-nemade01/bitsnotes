@@ -410,6 +410,32 @@
   </ul>
   <p><strong>Sense-check:</strong> with \(p = 6\), a node holding 1 key is illegal — it must borrow or merge (Section 14.3); a node holding 6 keys is illegal — it must split (Section 14.2). The boundaries are exactly what drive every restructure, so getting these two numbers right per \(p\) is the whole game.</p>
 </div>
+
+<div class="example-box">
+  <p><strong>Worked derivation — turning \(p\) into a real number from byte sizes.</strong> The capacity rules above are stated as abstract "keys per block"; to size a real index you solve for \(p\) from the hardware. Take the textbook's parameters: search key \(V = 9\) bytes, block \(B = 512\) bytes, record pointer \(P_r = 7\) bytes, block pointer \(P = 6\) bytes.</p>
+  <p>An internal node holds \(p\) block pointers and \(p-1\) separator keys, all inside one block:</p>
+  \[
+  (p \cdot P) + (p-1)\cdot V \le B \;\Longrightarrow\; 6p + 9(p-1) \le 512 \;\Longrightarrow\; 15p \le 521 \;\Longrightarrow\; p = 34
+  \]
+  <p>A leaf holds \(p_{\text{leaf}}\) (key, record-pointer) pairs plus one next-leaf pointer:</p>
+  \[
+  p_{\text{leaf}}(P_r + V) + P \le B \;\Longrightarrow\; 16\,p_{\text{leaf}} \le 506 \;\Longrightarrow\; p_{\text{leaf}} = 31
+  \]
+  <p>For the same sizes a B-tree manages only order 23 — the B+ tree's internal nodes omit record pointers, so \(p\) is larger and the tree is shallower.</p>
+  <table>
+    <thead>
+      <tr><th>Level</th><th>Nodes</th><th>Key entries</th><th>Pointers</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>Root</td><td>1</td><td>22</td><td>23</td></tr>
+      <tr><td>Index level 1</td><td>23</td><td>506</td><td>529</td></tr>
+      <tr><td>Index level 2</td><td>529</td><td>11,638</td><td>12,167</td></tr>
+      <tr><td>Leaf level</td><td>12,167</td><td>—</td><td>255,507 record pointers</td></tr>
+    </tbody>
+  </table>
+  <p><strong>Reading the table:</strong> it assumes 69% occupancy (each internal node averages \(34 \times 0.69 \approx 23\) pointers; each leaf \(31 \times 0.69 \approx 21\) entries). Three index levels above the leaves already address <strong>255,507</strong> records — versus 65,535 for the same-size B-tree — which is why production B+ trees stay at 2–4 levels. Commercial engines push \(p\) higher still with <em>prefix compression</em> (prefix B-trees): a separator stores only the shortest prefix that distinguishes its two adjacent child ranges, so more separators fit in the same block.</p>
+</div>
+
 <p>These are not idle bookkeeping numbers: they are the boundaries that decide when a block must split on insertion and when it must merge on deletion.</p>
 <div class="warning-box">
   <p><strong>Assumptions & scope.</strong> The capacity rules assume the classic B+ tree of <em>order-style</em> design: fixed-size nodes (one disk block per node), all keys of comparable size, and duplicates handled inside leaves. The rules change slightly in practice: commercial engines relax the strict \(\left\lceil p/2 \right\rceil\) minimum (T2's treatment uses an <em>order</em> parameter with a minimum occupancy, and typical trees run around 67% space occupancy), and variable-length keys make "keys per block" a budget question rather than a fixed count. For this course, the professor's \(p\) convention — \(p\) = max pointers per block — is the one that appears on the exam; use it consistently.</p>
@@ -511,6 +537,35 @@
   <p><strong>Recap + bridge.</strong> Insertion is a two-level loop: keep adding to a leaf until it overflows at \(p\) keys, promote the median (right-ordering) with the equal value left, and if the promoted key overflows the parent, keep promoting upward until a new root is born. The construction above produced a tree of height 3 — with \(p = 4\) barely any insertions are needed for the tree to grow tall. What happens when we remove values instead? The same boundaries now force <em>merges</em> — Section 14.3.</p>
 </div>
 <p>(Real-world connection: this hand-run trace is the literal algorithm executed by a DBMS on every <code>INSERT</code> into an indexed table — the only difference is that the DBMS chooses the node size from the disk block size, so a real B+ tree with millions of keys stays at 2–4 levels and a single insertion touches only the blocks on the path from root to leaf.)</p>
+
+<h3 id="14.2.6-bulk-loading-bottom-up-b-tree-construction">14.2.6 Bulk Loading: Building the Tree Bottom-Up</h3>
+<p>Everything in 14.2.2–14.2.5 inserts keys <em>one at a time</em> into an initially empty tree, each insertion descending from the root to a leaf. That is the right algorithm for a live table receiving a few new rows, but the wrong one for a one-time load of millions: every entry pays a root-to-leaf traversal, the target leaf is usually not in the buffer, and a random read plus a random write may be needed per entry. The textbook estimate is stark — 100 million records at roughly 10 ms per random I/O needs at least 1,000,000 seconds, while reading the same data sequentially (100-byte records at 50 MB/s) takes about 200 seconds.</p>
+<div class="example-box">
+  <p><strong>The bulk-loading algorithm.</strong></p>
+  <ol>
+    <li>Scan the relation and write one index entry (key, record pointer) per record into a temporary file.</li>
+    <li><strong>Externally sort</strong> that file on the search key — an external sort costs a few sequential passes, not random I/O.</li>
+    <li>Scan the sorted run and pack entries into disk blocks as full as the chosen fill fraction allows; these packed blocks are the <strong>leaf level</strong>, already chained in key order.</li>
+    <li>For each leaf block emit one parent entry <code>(smallest key in block, block pointer)</code>; pack those entries into blocks to form the next level.</li>
+    <li>Repeat the previous step until one block remains — that block is the <strong>root</strong>. No search descends from a root during the build.</li>
+  </ol>
+  <table>
+    <thead>
+      <tr><th>Aspect</th><th>One-at-a-time insertion (14.2.2–14.2.5)</th><th>Bulk / bottom-up load</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>Entry order</td><td>Arrival order; arbitrary</td><td>Sorted by search key first</td></tr>
+      <tr><td>I/O pattern</td><td>Random leaf read + write per entry</td><td>Sequential scan; each leaf written once</td></tr>
+      <tr><td>Splits</td><td>Anywhere; may propagate upward</td><td>Only on the rightmost path as pages fill</td></tr>
+      <tr><td>Cost</td><td>Roughly entries × tree height in I/Os</td><td>Create entries + sort + write index pages once</td></tr>
+      <tr><td>When used</td><td>Incremental inserts into a live index</td><td>CREATE INDEX on existing data; bulk restore</td></tr>
+    </tbody>
+  </table>
+  <p><strong>Fill fraction.</strong> A bulk load need not fill leaves 100%; leaving slack avoids immediate splits on later inserts. The textbook algorithms pack to a target (about 69% in one treatment, 80% in another); PostgreSQL exposes the same idea as the B-tree <code>fillfactor</code> storage parameter, which fills leaf pages to that percentage during initial index builds and defaults to 90.</p>
+</div>
+<div class="key-takeaway">
+  <p><strong>Takeaway.</strong> Bottom-up bulk loading sorts first, then builds each level from the minimum key of the level below, turning a random-I/O problem into a sequential one. This is exactly why commercial systems recommend dropping secondary indexes before a massive load and recreating them afterwards.</p>
+</div>
 
 <h2 id="14.3-deleting-from-a-b-tree">14.3 Deleting from a B+ Tree</h2>
 <h3 id="14.3.1-deleting-5-and-4-no-restructuring-needed">14.3.1 Deleting 5 and 4: No Restructuring Needed</h3>

@@ -199,6 +199,31 @@
   <li>Emoji <code>'🌍'</code>: <code>[11110000][10011111][10001100][10001101]</code> (4 bytes)</li>
 </ul>
 <p>Because UTF-8 preserves 7-bit ASCII directly in its 1-byte space, legacy ASCII text remains 100% valid UTF-8 without byte expansion.</p>
+<div class="example-box">
+  <p><strong>Worked Measurement: Characters, Bytes, and Bits Under UTF-8</strong></p>
+  <p>The variable byte widths listed above are not merely storage trivia: they decide whether a length function counts <em>typographic characters</em> or <em>physical bytes</em>. PostgreSQL reports the logical and physical views separately: <code>char_length()</code> (also <code>character_length()</code>) and <code>length()</code> return the number of characters, while <code>octet_length()</code> returns bytes and <code>bit_length()</code> returns bits. The gap widens under multibyte encodings such as Chinese, Japanese, or Korean, where one character can occupy several bytes.</p>
+  <p>On a UTF-8 server, measure one character from each width class:</p>
+  <pre><code>SELECT txt,
+       char_length(txt)  AS characters,
+       octet_length(txt) AS bytes,
+       bit_length(txt)   AS bits
+FROM (VALUES ('A'), ('é'), ('გ'), ('🌍')) AS t(txt);</code></pre>
+  <table>
+    <thead>
+      <tr><th>Value</th><th>UTF-8 bytes</th><th>char_length</th><th>octet_length</th><th>bit_length</th></tr>
+    </thead>
+    <tbody>
+      <tr><td><code>'A'</code></td><td>1</td><td>1</td><td>1</td><td>8</td></tr>
+      <tr><td><code>'é'</code></td><td>2</td><td>1</td><td>2</td><td>16</td></tr>
+      <tr><td><code>'გ'</code></td><td>3</td><td>1</td><td>3</td><td>24</td></tr>
+      <tr><td><code>'🌍'</code></td><td>4</td><td>1</td><td>4</td><td>32</td></tr>
+    </tbody>
+  </table>
+  <p>The relationship between the physical storage and logical character views is exact:</p>
+  <p>\[ \text{octet\_length}(s) = \sum_{i=1}^{n} k(c_i) \qquad \text{bit\_length}(s) = 8 \cdot \text{octet\_length}(s) \]</p>
+  <p>where \(n\) is the character count and \(k(c_i) \in \{1, 2, 3, 4\}\) is the UTF-8 byte width of the \(i\)-th character. For a Georgian-only string of \(n\) characters, \( \text{octet\_length} = 3n \) while \( \text{char\_length} = n \).</p>
+  <p><strong>Cross-engine caution:</strong> MySQL's identically named <code>LENGTH()</code> returns <em>bytes</em>, whereas <code>CHAR_LENGTH()</code> counts code points: <code>LENGTH('海豚') = 6</code> but <code>CHAR_LENGTH('海豚') = 2</code> for two 3-byte characters. PostgreSQL's <code>length()</code> instead returns characters, matching <code>char_length()</code>. Porting a byte-based MySQL length check to PostgreSQL silently changes its meaning; use <code>octet_length()</code> in PostgreSQL to preserve byte semantics.</p>
+</div>
 <h3 id="38.1.2-cluster-level-encoding-with-initdb">38.1.2 Cluster-Level Encoding with initdb</h3>
 <p>When setting up PostgreSQL, an administrator initializes a database cluster on disk. A <em>database cluster</em> is a collection of individual databases managed by a single running server instance. The cluster is initialized with the <code>initdb</code> command line utility.</p>
 <p>The <code>initdb</code> command selects a default character encoding for the entire cluster. Administrators specify this encoding using the <code>-E</code> or <code>--encoding</code> flag:</p>
@@ -283,6 +308,30 @@
     <li><em>Collation</em> (<code>LC_COLLATE</code>) dictates how characters compare relative to one another in sorting sequences.</li>
     <li><em>Character classification</em> (<code>LC_CTYPE</code>) dictates how the database engine identifies the semantic nature of an individual byte sequence—such as converting lowercase characters to uppercase or detecting whitespace boundaries.</li>
   </ul>
+</div>
+<div class="important-note">
+  <p><strong>Administrative Detail: Discovering Encodings and Collations Before Creation</strong></p>
+  <p>Before issuing <code>CREATE DATABASE</code>, an administrator must know which encodings and collations the server can actually provide. The SQL-standard <code>information_schema</code> exposes dedicated views for this purpose:</p>
+  <pre><code>SELECT character_set_name, character_repertoire, form_of_use, default_collate_name
+FROM information_schema.character_sets;
+
+SELECT collation_name, collation_schema, pad_attribute
+FROM information_schema.collations;</code></pre>
+  <p>In PostgreSQL, <code>character_sets</code> reports exactly <strong>one</strong> row—the current database's encoding—because a single database cannot mix encodings; <code>character_repertoire</code> reads <code>UCS</code> when the encoding is <code>UTF8</code>. The <code>collations</code> view lists every collation available in the current database and reports <code>NO PAD</code> as the padding attribute, since PostgreSQL does not implement <code>PAD SPACE</code> semantics.</p>
+  <p>MySQL exposes the same discovery surface differently, enumerating every server charset at once:</p>
+  <pre><code>SHOW CHARACTER SET;   -- Charset, Description, Default collation, Maxlen
+SHOW COLLATION;</code></pre>
+  <table>
+    <thead>
+      <tr><th>Discovery Question</th><th>PostgreSQL</th><th>MySQL</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>Which encodings exist?</td><td>One row in <code>information_schema.character_sets</code> (the current database encoding)</td><td>All rows in <code>SHOW CHARACTER SET</code></td></tr>
+      <tr><td>Which collations exist?</td><td><code>information_schema.collations</code></td><td><code>SHOW COLLATION</code></td></tr>
+      <tr><td>Is a charset multibyte?</td><td>Encoding is fixed per database; UTF8 is variable-width (1–4 bytes)</td><td><code>Maxlen &gt; 1</code> in <code>SHOW CHARACTER SET</code></td></tr>
+    </tbody>
+  </table>
+  <p>The decisive rule in MySQL is: if the fourth column <code>Maxlen</code> is greater than 1, the character set is multibyte—<code>utf8mb4</code> has <code>Maxlen = 4</code> while <code>latin1</code> has <code>Maxlen = 1</code>. This catalog-level check makes the host-locale and encoding-compatibility requirements of <code>CREATE DATABASE</code> verifiable before any DDL is executed.</p>
 </div>
 <h3 id="38.2.2-worked-walkthrough-creating-utf-8-and-euc-kr-databases">38.2.2 Worked Walkthrough: Creating UTF-8 and EUC-KR Databases</h3>
 <div class="example-box">

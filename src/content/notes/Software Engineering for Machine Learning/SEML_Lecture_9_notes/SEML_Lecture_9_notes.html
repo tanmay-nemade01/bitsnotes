@@ -608,6 +608,21 @@ predictions = model.predict(training_data)</code></pre>
 </ol>
 </div>
 
+<div class="important-note">
+<p><strong>Compiled execution — the additional lever the list above omits.</strong> Beyond algorithm choice, data structures, built-ins, asynchronous code, and parallelism, Python code can also be compiled to a lower-level representation. The companion text distinguishes three approaches:</p>
+<table>
+  <thead>
+    <tr><th>Tool</th><th>Language model</th><th>Compilation mechanism</th><th>Typical ML fit</th></tr>
+  </thead>
+  <tbody>
+    <tr><td><code>Cython</code></td><td>Superset of Python with optional static type declarations</td><td>Ahead-of-time: source is translated to optimized C/C++ and compiled as a Python extension module</td><td>Wrapping C libraries; typed hot loops</td></tr>
+    <tr><td><code>Numba</code></td><td>Subset of Python, centred on NumPy numeric code</td><td>Just-in-time via <code>@jit</code> / <code>@njit</code> decorators at call time</td><td>Numeric kernels over NumPy arrays with no source rewrite</td></tr>
+    <tr><td><code>PyPy</code></td><td>Alternative interpreter implemented in Python</td><td>Transparent JIT at the interpreter level; drop-in replacement for CPython</td><td>Long-running pure-Python workloads; C-extension compatibility caveats</td></tr>
+  </tbody>
+</table>
+<p><strong>Why this follows profiling, not precedes it.</strong> Each option trades portability, warm-up cost, and C-extension compatibility for speed — PyPy's own site reports PyPy 3.12 is about 4× faster than CPython 3.11 on average, but C-backed libraries may not behave identically. Compilation is a later-stage lever: first use the tools in sections 9.4–9.8 to confirm the hot loop is genuinely Python-bound. Compiling a function that already spends nearly all its time inside scikit-learn's C code (recall <code>model.fit</code> at 62.7% in section 9.7) yields no benefit.</p>
+</div>
+
 <div class="warning-box">
 <p><strong>Scope & Assumptions.</strong> The measurement tools in sections 9.4–9.8 are <em>development-time</em> tools. They help you find bottlenecks during coding and testing. In production, you use separate monitoring systems (MLOps, LLMOps, AgentOps) — these are designed for live environments with minimal overhead. Remove all profiling code before deploying.</p>
 </div>
@@ -711,6 +726,25 @@ print(f"Training time: {training_time:.6f} seconds")</code></pre>
 <li><strong><code>repeat</code>:</strong> How many times the whole benchmark is repeated. Example: <code>repeat=10</code> means the 100-call experiment is done 10 separate times, yielding 10 averages.</li>
 </ul>
 <p>The final result is the mean and standard deviation of those 10 averages.</p>
+</div>
+
+<div class="important-note">
+<p><strong>Mechanism — benchmarking in a standalone script with <code>timeit.Timer</code>.</strong> Both <code>timeit.repeat()</code> above and the <code>%%timeit</code> magic are convenience wrappers around the <code>timeit.Timer</code> class. When benchmarking a function defined in a regular <code>.py</code> file, construct the timer directly:</p>
+<pre><code class="language-python">import timeit
+
+def train_model():
+    model = DecisionTreeClassifier()
+    model.fit(X, y)
+
+# stmt executes in timeit's own namespace, so import your names via setup.
+timer = timeit.Timer(
+    stmt="train_model()",
+    setup="from __main__ import train_model, DecisionTreeClassifier, X, y"
+)
+times = timer.repeat(repeat=5, number=10)  # 5 lists of 10 calls each
+# Divide each element by `number` to obtain per-call timing.</code></pre>
+<p><code>stmt</code> is the statement being timed; <code>setup</code> runs once and its execution time is <em>excluded</em> from the measurement. The import in <code>setup</code> is necessary because <code>stmt</code> does not run in your script's namespace. Alternatively, pass <code>globals=globals()</code> to the constructor to run <code>stmt</code> in the current namespace and avoid listing imports individually.</p>
+<p><strong>Two non-obvious details.</strong> (1) <code>timeit</code> temporarily disables garbage collection during timing so that independent runs are comparable — this hides GC cost; if garbage collection is part of what you are measuring, re-enable it with <code>setup="gc.enable()"</code>. (2) The default timer is <code>time.perf_counter()</code> (wall-clock); the command-line <code>-p</code> flag switches to <code>time.process_time()</code> to measure CPU time instead.</p>
 </div>
 
 <h3 class="subsection-title">9.5.3 Worked Example — Iris Dataset with Decision Tree</h3>

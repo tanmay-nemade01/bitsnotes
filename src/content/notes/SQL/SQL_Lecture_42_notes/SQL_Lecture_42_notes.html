@@ -415,6 +415,52 @@ GROUP BY symbol_id;</code></pre>
   <p><strong>A:</strong> Standard SQL evaluates clauses in the order <code>FROM → WHERE → GROUP BY → SELECT</code>, so when grouping happens, <code>SELECT</code> aliases such as <code>AS price_date</code> do not exist yet — grouping must name base columns like <code>symbol_id</code>. (MySQL and a few dialects bend this rule and accept aliases in <code>GROUP BY</code>, but portable queries use the original column names.) Aliases are safe to use one step later, in <code>ORDER BY</code>, which runs after <code>SELECT</code>.</p>
 </div>
 <p>A comparison the lecture implies but never states outright: filtering one symbol with <code>WHERE</code> plus <code>ORDER BY/LIMIT</code> (Section 42.1) answers "the edges of this stock"; <code>GROUP BY</code> with <code>MIN/MAX</code> answers "the edges of every stock." Use the first when you need full rows (prices, volumes) at the boundary; use the second when you need one summary row per group. When you need full rows per group — the entire earliest record, not just its date — neither suffices, and the right tools are window functions (<code>ROW_NUMBER() OVER (PARTITION BY symbol_id ORDER BY price_date)</code>) or a lateral join, which later lectures cover.</p>
+<div class="key-concept">
+  <p><strong>Formal Definition:</strong> <code>DISTINCT ON (expression-list)</code> is a PostgreSQL extension to <code>SELECT DISTINCT</code> that keeps only the first row of each set of rows on which the listed expressions evaluate to equal. The expressions are interpreted using the same rules as <code>ORDER BY</code> and must be its <em>leftmost</em> expressions; additional trailing sort keys decide which row inside a group counts as "first." This is precisely the tool the comparison above left out: where <code>GROUP BY</code> with <code>MIN/MAX</code> returns only the extreme <em>date</em>, <code>DISTINCT ON</code> returns the entire boundary <em>row</em> — open, high, low, close and every other column attached to that date — with one row emitted per symbol.</p>
+  <p><strong>Worked queries on <code>stock_prices</code>:</strong> descending order selects the latest full record per symbol, ascending order the earliest.</p>
+  <pre><code>SELECT DISTINCT ON (symbol_id) symbol_id, price_date, open, close
+FROM stock_prices
+ORDER BY symbol_id, price_date DESC;
+
+SELECT DISTINCT ON (symbol_id) symbol_id, price_date, open, close
+FROM stock_prices
+ORDER BY symbol_id, price_date ASC;</code></pre>
+  <p><strong>Result:</strong> one row per <code>symbol_id</code> — for example symbol 11 with <code>2020-08-28</code> in the descending form, and symbol 8 with <code>2014-03-27</code> in the ascending form — each carrying its full price columns rather than a lone aggregate value. Because <code>symbol_id</code> is the leading sort key, these queries reproduce the lecture's verified <code>MAX</code> and <code>MIN</code> dates while preserving the rest of the row.</p>
+</div>
+<div class="important-note">
+  <p><strong>Why the ordering clause is mandatory:</strong> the "first row" of each set is <em>unpredictable unless ORDER BY is used</em> to put the desired row first — without it, which duplicate survives is implementation-dependent, the same non-determinism that <code>LIMIT</code> without <code>ORDER BY</code> produces in Section 42.1. When two ticks share a <code>price_date</code>, add a unique tiebreaker such as <code>ORDER BY symbol_id, price_date DESC, price_id DESC</code> so the chosen row is stable from one run to the next.</p>
+  <table>
+    <thead>
+      <tr>
+        <th>Technique</th>
+        <th>Rows out per symbol</th>
+        <th>What it returns</th>
+        <th>Portability</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><code>GROUP BY symbol_id</code> with no aggregate</td>
+        <td>One</td>
+        <td>One arbitrary row's grouping columns only; a valid way to force uniqueness</td>
+        <td>Standard SQL</td>
+      </tr>
+      <tr>
+        <td><code>GROUP BY</code> + <code>MIN/MAX(price_date)</code></td>
+        <td>One</td>
+        <td>The boundary date alone; every other column must be grouped or aggregated</td>
+        <td>Standard SQL</td>
+      </tr>
+      <tr>
+        <td><code>DISTINCT ON (symbol_id)</code> + <code>ORDER BY</code></td>
+        <td>One</td>
+        <td>The entire chosen row, with all of its columns</td>
+        <td>PostgreSQL only</td>
+      </tr>
+    </tbody>
+  </table>
+  <p><strong>Across engines:</strong> Snowflake expresses the same "first row per partition" idea with <code>QUALIFY ROW_NUMBER() OVER (PARTITION BY symbol_id ORDER BY price_date DESC) = 1</code>, filtering window results after they are computed; MySQL and SQL Server use an equivalent <code>ROW_NUMBER()</code> filter inside a derived table. Only PostgreSQL offers the single-line <code>DISTINCT ON</code> form, so carry the leading-sort-key rule over when porting the query — the two PostgreSQL statements above are not portable verbatim.</p>
+</div>
 <h3 id="42.2.5-industry-applications">42.2.5 Industry Applications</h3>
 <p>Market-data pipelines run <code>MIN(price_date)</code> / <code>MAX(price_date)</code> grouped by ticker to reconstruct each asset's active lifespan: the minimum reveals IPO or index-inclusion dates, the maximum reveals the latest coverage or a delisting. Risk teams join these spans against corporate-action calendars — a symbol whose maximum date suddenly stops advancing is a delisting candidate worth investigating.</p>
 <div class="key-takeaway">

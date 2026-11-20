@@ -550,6 +550,38 @@
     </tr>
   </tbody>
 </table>
+
+<div class="important-note">
+  <p><strong>System detail: why the scan needs <em>both</em> undo and redo.</strong> The immediate/deferred distinction above is the textbook's clean model; production systems make a finer buffer-management choice along two independent axes. The <em>force</em> policy writes a transaction's modified pages to disk at commit; <em>no-force</em> lets it commit while dirty pages remain in memory, because the log has already made the change durable. The <em>no-steal</em> policy forbids writing a page modified by an uncommitted transaction; <em>steal</em> allows the buffer manager to evict such a page when memory is needed. Almost every real DBMS uses <strong>steal + no-force</strong>: no-force makes commit fast (only the log tail must reach stable storage), and steal prevents one large transaction from monopolizing the buffer pool.</p>
+  <p>That single choice forces both halves of the recovery scan:</p>
+  <table>
+    <thead>
+      <tr>
+        <th>Buffer policy</th>
+        <th>State at the crash</th>
+        <th>Recovery consequence</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><strong>no-force</strong></td>
+        <td>A committed update may still live only in the log, not on disk</td>
+        <td><strong>REDO</strong> is required — replay the logged new values</td>
+      </tr>
+      <tr>
+        <td><strong>steal</strong></td>
+        <td>An uncommitted update may already have reached disk</td>
+        <td><strong>UNDO</strong> is required — restore the logged old values</td>
+      </tr>
+      <tr>
+        <td>force + no-steal (the clean model)</td>
+        <td>Disk contains committed work only</td>
+        <td>Neither REDO nor UNDO is needed — correct, but too costly in practice</td>
+      </tr>
+    </tbody>
+  </table>
+  <p><strong>The write-ahead logging (WAL) rule</strong> is what makes steal safe: before a modified page may be written to disk, the log record describing that change must already be on stable storage; and a transaction counts as committed only once its commit record has reached stable storage, after all of its update records. On restart the log therefore always holds the before-image needed to undo a stolen page and the after-image needed to redo a committed one — exactly the two-value format \(\langle T_i, X, v_{\text{old}}, v_{\text{new}}\rangle\) introduced in 17.3.4.</p>
+</div>
 <h3 id="17.3.7-undo-redo-and-idempotency">17.3.7 Undo, Redo, and Idempotency</h3>
 <p>The recovery operations themselves are familiar from everyday life. <em>Undo</em> means: whatever I did, I take it back — the way Ctrl-Z undoes the last change. <em>Redo</em> means: do it again — the way Ctrl-Y redoes a change in a word processor. The subtle and important point is why redo is safe. Redoing an operation must not change the result — the property the source describes with the garbled phrase "a.a is equal to": the property of <em>idempotency</em> — repeating an operation leaves the result unchanged. Concretely: if the log says \(A\) changed from 1000 to 950, then writing \(A = 950\) once, and writing \(A = 950\) again, both leave \(A\) at 950:</p>
 <p>\[\text{write}(A, 950) \Rightarrow A = 950, \quad \text{write}(A, 950) \Rightarrow A = 950\]</p>
@@ -594,6 +626,38 @@
     <li><strong>Reading the log as the database.</strong> The log is a record of changes, not a snapshot. The database state after failure is <em>what the records imply</em>, which is why the scan must replay them.</li>
   </ol>
 </div>
+
+<div class="key-concept">
+  <p><strong>Production extension — ARIES in three phases.</strong> The scan above is the textbook's logical algorithm. Commercial engines (IBM DB2 and systems derived from the same design) recover under a <em>steal/no-force</em> policy using <strong>ARIES</strong>, which refines that scan into three passes over the log. It relies on a monotonically increasing <em>log sequence number</em> (LSN) on every record and a <em>pageLSN</em> on every page, recording the last update applied to that page.</p>
+  <table>
+    <thead>
+      <tr>
+        <th>Phase</th>
+        <th>What it does</th>
+        <th>Data structure it builds / uses</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><strong>Analysis</strong></td>
+        <td>Scans forward from the last checkpoint to reconstruct which transactions were active at the crash and which pages may be dirty</td>
+        <td>Transaction table (lastLSN, status) and dirty page table (recLSN — the oldest change that may not be on disk)</td>
+      </tr>
+      <tr>
+        <td><strong>Redo</strong></td>
+        <td>Repeats history from the smallest recLSN, reapplying <em>every</em> action in its original order, including the losers' updates; a page is skipped when its pageLSN already covers the record</td>
+        <td>Restores the exact state at the instant of the crash</td>
+      </tr>
+      <tr>
+        <td><strong>Undo</strong></td>
+        <td>Walks loser transactions backward through prevLSN links, restoring before-images, and writes a <em>compensation log record</em> (CLR) for each reversal</td>
+        <td>CLR with undoNextLSN; "never undo an undo" makes recovery safe after a second crash mid-restart</td>
+      </tr>
+    </tbody>
+  </table>
+  <p><strong>Why repeat history first?</strong> Redoing winners <em>and</em> losers, then undoing the losers, keeps the log a single linear timeline: the database is returned to the exact instant of the crash before the losers are removed. Because Undo only ever applies physical before-images, ARIES can support fine-grained (record-level) locking instead of recovering at page granularity.</p>
+  <p><strong>Contrast with 17.3.8:</strong> the lecture scan redoes only committed transactions and undoes the rest; ARIES redoes everything (repeat history) and then undoes losers with CLRs. Both reach the same end state — committed work durable, uncommitted work gone — but logging each reversal means a crash partway through Undo resumes instead of re-undoing work already completed.</p>
+</div>
 <div class="key-takeaway">
   <p><strong>Recap + bridge.</strong> Recovery exists because failures happen (17.3.1), the volatile-memory model shows exactly what is lost (17.3.2), recoverability orders commits so recovery is never trapped (17.3.3), the log on stable storage is the vault that survives (17.3.4–17.3.5), immediate versus deferred modification decides what the scan must do (17.3.6), idempotency makes replay safe (17.3.7), and the scan itself is a short procedure: redo the committed, undo the uncommitted, write the aborts (17.3.8). One sentence to carry forward: <strong>recovery is a scan over the log — redo committed work, undo uncommitted work, write abort records — and it is safe only because writes are idempotent.</strong> The handoff: the scan described here starts at the beginning of the log — which is fine for a toy example and impossible for a system that has been running for years. The next topic gives the scan its starting line: the checkpoint.</p>
 </div>
@@ -631,6 +695,42 @@
     <li><strong>Safety is preserved by idempotency</strong> — if a redo is applied to a value that already reached the disk, the write just sets the same value; nothing is corrupted.</li>
   </ol>
   <p>The checkpoint record is written <em>periodically</em> — the interval is a system parameter, measured in time (every \(m\) minutes) or in activity (every \(t\) committed transactions since the last checkpoint). Taking one involves suspending transactions, flushing modified buffers to disk, writing the checkpoint record, and force-writing the log.</p>
+</div>
+
+<div class="important-note">
+  <p><strong>System detail: the checkpoint above is the "quiet point" variant.</strong> It pauses transaction processing while every modified buffer is flushed, so the checkpoint record is an exact snapshot. Production systems avoid that pause with a <em>fuzzy checkpoint</em>: the engine writes a <code>begin_checkpoint</code> record, lets transactions keep running while it captures the transaction table and the dirty page table, then appends an <code>end_checkpoint</code> record and persists a master record pointing back to the begin record. The captured tables are accurate <em>as of the begin record</em>; log records written in between are simply scanned past on restart.</p>
+  <table>
+    <thead>
+      <tr>
+        <th>Dimension</th>
+        <th>Quiet (simple) checkpoint</th>
+        <th>Fuzzy checkpoint</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>Transaction processing</td>
+        <td>Suspended for the duration of the checkpoint</td>
+        <td>Continues; no system quiescence</td>
+      </tr>
+      <tr>
+        <td>Buffer pages</td>
+        <td>All modified buffers forced to disk at checkpoint time</td>
+        <td>Not necessarily flushed; a background writer drains dirty pages over time</td>
+      </tr>
+      <tr>
+        <td>Log records</td>
+        <td>A single <code>&lt;checkpoint, L&gt;</code></td>
+        <td><code>begin_checkpoint</code> + <code>end_checkpoint</code> carrying the two tables, plus a master record</td>
+      </tr>
+      <tr>
+        <td>Effect on restart</td>
+        <td>Scan forward from the checkpoint</td>
+        <td>Redo starts at the smallest <em>recLSN</em> among dirty pages; a background writer bounds how far back that can be</td>
+      </tr>
+    </tbody>
+  </table>
+  <p><strong>Key point:</strong> fuzziness changes only <em>how the starting line is drawn</em>, not the recovery rules from 17.3.8–17.4.4 — redo the committed, undo the uncommitted, ignore what is already on disk. It removes the pause, not the logic; the price is that the scan may begin slightly earlier than a quiet checkpoint would require.</p>
 </div>
 <div class="warning-box">
   <p><strong>Scope: what the checkpoint does and does not do.</strong> The checkpoint is a <em>starting line</em>, not a cure. It does not make uncommitted work durable — an active transaction's writes may still sit only in the log, and recovery will still undo them. It does not remove the need to scan forward from it — committed transactions that started after the checkpoint must still be redone, because their values may not have reached the disk. What it removes is the need to scan <em>backwards</em>: everything before the boundary is already on disk, and re-scanning it would be pure waste. The boundary assumption is also worth naming: it holds because "everything up to now was written back" is true <em>by construction</em> at checkpoint time — which is why the checkpoint procedure flushes buffers before recording the checkpoint.</p>

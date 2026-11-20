@@ -381,6 +381,26 @@
     <h3 id="16.2.5-input-representation-and-tokenization">16.2.5 Input Representation and Tokenization</h3>
     <p>Many NLP tasks feed two segments at once: a question and an answer passage, or two sentences plus a paraphrase/entailment label. BERT's input format reflects this. Consider the pair "my dog is cute" and "he likes playing".</p>
     <p><strong>Subword tokenization.</strong> The text is first broken into tokens by a highly optimised <em>subword tokenizer</em> — rare or composite words are split into smaller pieces so the model never faces an unknown word. BERT's scheme is called <strong>WordPiece</strong>: a vocabulary of frequent pieces (whole common words plus frequent fragments like "##ing") covers any input by composition. So "unhappiness" might split into "un" + "##happiness", and even a typo or a made-up word still maps to known pieces. WordPiece is the standard subword scheme shipped with BERT.</p>
+    <div class="key-concept">
+      <p><strong>Where the sub-word vocabulary comes from.</strong> This section names WordPiece as BERT's tokenizer, but a vocabulary of "frequent pieces" has to be <em>built</em> before it can split anything. The standard construction is a greedy merge procedure called <strong>byte pair encoding (BPE)</strong>: frequent words stay whole, while rare words are decomposed into meaningful fragments.</p>
+      <p><strong>The greedy merge loop.</strong> Begin with the alphabet — letters, punctuation, and a whitespace marker — as the initial token set. Count every adjacent token pair in the corpus, merge the most frequent pair into a new token, reduce the counts of the pieces it replaced, and repeat until the vocabulary reaches a predetermined size.</p>
+      <p><strong>Worked trace from the textbook</strong> (a nursery-rhyme passage, characters and whitespace "_" as initial tokens):</p>
+      <ol>
+        <li>Iteration 1 — the most frequent adjacent pair is <code>se</code>; merge <code>s</code> + <code>e</code> into <code>se</code>. A rule forbidding a whitespace-ending first token prevents merges across word boundaries.</li>
+        <li>Iteration 2 — the next most frequent pair is <code>e</code> + <code>_</code>; merge into <code>e_</code>.</li>
+        <li>After 23 iterations the vocabulary is a mix of single letters, word fragments, and whole common words. Its size first rises as fragments are added, then falls as they merge; a real tokenizer stops at a target vocabulary size (about 30,000 for BERT) rather than running all the way to whole words.</li>
+      </ol>
+      <table>
+        <thead>
+          <tr><th>Scheme</th><th>Used by</th><th>Construction principle</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>Byte pair encoding (BPE)</td><td>GPT-2 (byte-level variant)</td><td>greedily merge the most frequent adjacent token pair</td></tr>
+          <tr><td>WordPiece</td><td>BERT</td><td>same sub-word family — compose rare words from frequent pieces</td></tr>
+        </tbody>
+      </table>
+      <p>Why this matters here: an unseen word such as a name or a typo still decomposes into known pieces, so BERT never faces an out-of-vocabulary token. The scheme named above is one member of this sub-word family, and its vocabulary is the product of exactly this kind of frequency-driven merging.</p>
+    </div>
     <p><strong>Special tokens.</strong> A special classification token <code>[CLS]</code> opens the sequence and a separator token <code>[SEP]</code> divides the two segments. The <code>[CLS]</code> position will later carry a summary vector used for whole-sequence classifications.</p>
     <p><strong>Three summed embeddings.</strong> On top of raw tokens the model computes three kinds of embeddings, summed into one vector per position:</p>
     <ul>
@@ -410,6 +430,21 @@
       <p>Training drives the model's start-distribution toward \(\mathbf{s}\) and end-distribution toward \(\mathbf{e}\). <strong>Answer: the span "on the mat" = tokens 4 through 6.</strong> Sense-check: every entry of each target vector sums to 1 and marks exactly one boundary — a valid one-hot pair.</p>
     </div>
     <p>This is why the workflow is called <em>semi-supervised</em>: the bulk of the learning is self-supervised pre-training on a huge corpus, and only a thin supervised layer is added per task. The same pre-trained checkpoint fine-tunes into question answering, summarisation-style tasks, and other understanding jobs.</p>
+    <div class="key-concept">
+      <p><strong>The fine-tuning head family.</strong> The span head derived above is one of three standard BERT readouts. All three reuse the identical pre-trained transformer and differ only in <em>which hidden vector is read</em>, what shape the output takes, and which loss trains it.</p>
+      <table>
+        <thead>
+          <tr><th>Task</th><th>Readout</th><th>Output</th><th>Training loss</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>Text classification (sentiment)</td><td>the <code>[CLS]</code> vector at the sequence start</td><td>one score → sigmoid probability</td><td>binary cross-entropy</td></tr>
+          <tr><td>Named entity recognition</td><td>the hidden vector at <em>each</em> token position</td><td>an <code>E</code>-way vector per token → softmax</td><td>multiclass cross-entropy summed over tokens</td></tr>
+          <tr><td>Extractive QA (SQuAD)</td><td>every paragraph-token hidden vector</td><td>two scores per token → start and end softmaxes</td><td>negative log-likelihood of the true boundary pair</td></tr>
+        </tbody>
+      </table>
+      <p><strong>Worked shape check.</strong> Let the encoder output \(N \times d\) hidden states. Classification selects 1 row and maps \(d \to 1\) — a single probability. NER maps each of the \(N\) rows \(d \to E\), giving \(N\) independent classifiers. Span QA maps each row \(d \to 2\), producing start and end score vectors of length \(N\) — exactly the \(\mathbf{s}\) and \(\mathbf{e}\) one-hot targets of the example above.</p>
+      <p>The pattern is the transfer-learning move stated earlier: pre-training once solves language, and a shallow head solves each downstream task. The <code>[CLS]</code> vector is the whole-sequence summary; per-token vectors carry word-level decisions.</p>
+    </div>
     <h3 id="16.2.7-where-masking-came-from-the-cloze-task">16.2.7 Where Masking Came From: The Cloze Task</h3>
     <div class="important-note">
       <p>Masked language modelling did not appear from nowhere. In 1953, researchers from the psychology and linguistics community introduced the <em>cloze task</em>: blank out words in a text and ask a person to fill them. It had nothing to do with training deep networks — it measured mental ability and psychological conditions. The deep learning community borrowed the format and turned it into a training signal: hide a token, predict it from both sides, and you have a self-supervised task over unlimited raw text.</p>
@@ -511,6 +546,22 @@
       <p>Sense-check: 3 + 4 = 7 is correct, and crucially it was not among the demonstrations — the model generalised the operation rather than copying a shown pair. No gradients moved anywhere in the network.</p>
     </div>
     <p>The same pattern works for editing requests: hand over three corrected-writing demonstrations — original page, corrected page — then supply a fresh page to fix, and the model returns the corrected page by imitating the shown transformation. The demonstrations define the mapping; the model applies it.</p>
+    <div class="important-note">
+      <p><strong>Generation detail — how the "next token" is actually chosen.</strong> The trace above says next-token prediction "continues the sequence", and the captioning section calls each word an argmax. That is only one possible <em>decoding strategy</em>. At step \(t\) the model supplies a distribution \(P(w_t \mid w_{1:t-1})\); a decoder must select a token from it, and the choice materially changes the output.</p>
+      <table>
+        <thead>
+          <tr><th>Strategy</th><th>Selection rule</th><th>Trade-off</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>Greedy</td><td>\(w_t = \arg\max_w P(w \mid w_{1:t-1})\)</td><td>Deterministic, but a strong continuation can hide behind a second-best first token; prone to repetition.</td></tr>
+          <tr><td>Beam search</td><td>Keep the \(B\) highest-probability partial sequences; return the one with the best total probability.</td><td>Recovers the globally better sequence greedy misses; more compute, still repetitive for open-ended text.</td></tr>
+          <tr><td>Top-\(k\) sampling</td><td>Renormalise over the \(k\) most likely tokens and sample.</td><td>Cuts off the low-probability tail; a fixed \(k\) is too restrictive on sharp distributions and too loose on flat ones.</td></tr>
+          <tr><td>Top-\(p\) (nucleus)</td><td>Sample from the smallest set whose cumulative probability exceeds \(p\).</td><td>Adaptively sized candidate set; both sampling variants work well in practice.</td></tr>
+        </tbody>
+      </table>
+      <p><strong>Worked greedy-versus-beam trace.</strong> Starting from "The": greedy picks "nice" (\(0.5\)) then "woman" (\(0.4\)), giving \(0.5 \times 0.4 = 0.2\). Beam with \(B = 2\) also keeps "dog" at step 1 (\(0.4\)); at step 2 "has" follows with probability \(0.9\), so "The dog has" scores \(0.4 \times 0.9 = 0.36 > 0.2\). Greedy missed the higher-probability sequence because "dog" was not the top first token.</p>
+      <p>None of this changes weights — it is inference-time selection over the same pre-trained distribution, exactly consistent with the no-gradient prompting story of this section.</p>
+    </div>
     <h3 id="16.5.4-data-and-compute-requirements">16.5.4 Data and Compute Requirements</h3>
     <p>The key message cuts both ways. With enormous training data and nearly limitless computing, you can learn the language model almost completely. Generation, question answering, summarisation, and design-flavoured generation all fall out of it. Remove those resources and you fall back on traditional NLP techniques — hand-built parsers, task-specific feature engineering, smaller statistical models.</p>
     <p>Real-world placement: companies with vast data and compute — Amazon, Google, OpenAI — can digitise data themselves, train, and keep improving such models; scale is their moat. For small datasets on local infrastructure, the realistic hope is open-source models; several strong ones now come out of China and compete respectably with proprietary systems such as GPT and Gemini. The strategic question for any team is not "which architecture?" but "whose checkpoint can we afford to adapt?"</p>

@@ -845,6 +845,32 @@ UNIQUE (product_code, product_name);</code></pre>
   <p><strong>Q:</strong> Does the check run on updates too, or only on inserts? <strong>A:</strong> Both insert update checked duplicate error. The unique constraint is evaluated on every write operation—both <code>INSERT</code> and <code>UPDATE</code>. If an <code>UPDATE</code> statement modifies a row's column to a value that already exists in another row, the engine blocks the update and returns the duplicate key violation error.</p>
   <p><strong>Q:</strong> Will Apple plus A collide with A plus Apple? <strong>A:</strong> No. The pair order concatenated whole comparison treats the composite key as an ordered tuple. Because <code>(&#x27;A&#x27;, &#x27;Apple&#x27;)</code> \(\neq\) <code>(&#x27;Apple&#x27;, &#x27;A&#x27;)</code>, the second pair is distinct and successfully commits.</p>
 </div>
+
+<h3 id="11.3.6-exclude-constraints-generalized-uniqueness" class="subsection-title">11.3.6 EXCLUDE Constraints: Generalized Uniqueness</h3>
+<div class="key-concept">
+  <p><strong>Formal Definition:</strong> An <em>exclusion constraint</em> generalizes <code>UNIQUE</code> by replacing the equality test with a per-column operator \(\theta_k\). It guarantees that for any two distinct rows \(t_i, t_j \in R\) at least one comparison is <code>FALSE</code> or <code>NULL</code>: \[ \forall t_i, t_j \in R, \; i \neq j \implies \exists k \in \{1,\dots,n\} : \neg\big(t_i[A_k] \; \theta_k \; t_j[A_k]\big) \] When every \(\theta_k\) is <code>=</code> this reduces to composite <code>UNIQUE</code>; choosing the <code>&amp;&amp;</code> (overlaps) operator on a range column instead forbids overlapping intervals, including intervals that merely touch under half-open bounds.</p>
+</div>
+<div class="example-box">
+  <p><strong>Worked Example: Non-Overlapping Exchange-Rate Validity Windows</strong></p>
+  <p>Each currency may have only one exchange rate valid at any instant (The Art of PostgreSQL, Ch. 28):</p>
+  <pre><code>  CREATE EXTENSION IF NOT EXISTS btree_gist;  -- GiST equality opclass for TEXT
+  CREATE TABLE rates (
+      currency TEXT,
+      validity DATERANGE,
+      rate NUMERIC,
+      EXCLUDE USING gist (currency WITH =, validity WITH &amp;&amp;)
+  );</code></pre>
+  <ul>
+    <li><code>INSERT INTO rates VALUES ('EUR', daterange('2024-01-01','2024-07-01'), 1.10);</code> &rarr; <code>INSERT 0 1</code>.</li>
+    <li><code>INSERT INTO rates VALUES ('EUR', daterange('2024-06-01','2024-12-01'), 1.12);</code> &rarr; rejected: <code>currency = 'EUR'</code> is <code>TRUE</code> and the two half-open ranges overlap, so <em>every</em> operator returns <code>TRUE</code>.</li>
+    <li><code>INSERT INTO rates VALUES ('USD', daterange('2024-06-01','2024-12-01'), 0.95);</code> &rarr; <code>INSERT 0 1</code> because <code>currency = 'EUR'</code> is <code>FALSE</code>.</li>
+    <li><code>INSERT INTO rates VALUES ('EUR', daterange('2024-07-01','2024-12-01'), 1.15);</code> &rarr; <code>INSERT 0 1</code> because half-open ranges that merely touch do not overlap.</li>
+  </ul>
+  <p><strong>Violation format:</strong> <code>ERROR: conflicting key value violates exclusion constraint "rates_currency_validity_excl"</code></p>
+</div>
+<div class="warning-box">
+  <p><strong>Implementation Note:</strong> <code>UNIQUE</code> and <code>PRIMARY KEY</code> are backed by a B-tree, but an exclusion constraint relies on the access method named in <code>USING</code> — in practice GiST or SP-GiST — so the rule can be maintained under MVCC. Each operator must be commutative and map to an operator class of that index method: equality on scalar types such as <code>TEXT</code> requires the <code>btree_gist</code> extension, while range overlap is built in. PostgreSQL also offers the shorthand <code>UNIQUE (currency, validity WITHOUT OVERLAPS)</code>, which is implemented as the equivalent GiST exclusion constraint.</p>
+</div>
 <div class="key-takeaway">
   <p>The <code>UNIQUE</code> constraint prevents duplicate data values while still permitting <code>NULL</code>s. When an attribute must uniquely identify a row and never be missing, or when an application needs a standard fallback value when data is omitted, databases combine uniqueness with the <code>DEFAULT</code> constraint and <code>PRIMARY KEY</code>.</p>
 </div>
@@ -1652,6 +1678,70 @@ INSERT INTO t_products (product_id, product_name, supplier_id) VALUES
   <p>Foreign keys establish bidirectional referential integrity, preventing both the insertion of phantom child rows and the accidental deletion of active parent entities. When maintenance or schema migrations require temporarily altering these relationships, constraints can be dropped or added via <code>ALTER TABLE</code>.</p>
 </div>
 <p>#### Real-World & Domain Connection In core banking and payment processing, referential integrity prevents catastrophic double-entry accounting errors. When a user closes a bank account, foreign key rules prevent the account from being purged while unsettled transactions, pending direct debits, or active credit card authorizations still point to it, ensuring an immutable legal audit trail.</p>
+
+<h3 id="11.10.3-on-update-referential-actions" class="subsection-title">11.10.3 ON UPDATE Referential Actions</h3>
+<div class="important-note">
+  <p>The referential-action table above lists <code>ON DELETE</code> clauses only, yet ANSI SQL defines a symmetric <code>ON UPDATE</code> set that fires when the <em>referenced key column itself</em> is modified. The textbook's Sakila schema uses both: <code>FOREIGN KEY (address_id) REFERENCES address (address_id) ON DELETE RESTRICT ON UPDATE CASCADE</code>.</p>
+</div>
+<table>
+  <thead>
+    <tr>
+      <th>Action</th>
+      <th><code>ON DELETE</code> effect</th>
+      <th><code>ON UPDATE</code> effect</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><strong>NO ACTION</strong></td>
+      <td>Raises an error if child rows still reference the deleted key; the check is deferred to statement/constraint-check time.</td>
+      <td>Raises an error if the new key would orphan children; validated against the post-update state.</td>
+    </tr>
+    <tr>
+      <td><strong>RESTRICT</strong></td>
+      <td>Immediately blocks the delete when any child references the key; the check cannot be deferred.</td>
+      <td>Blocks the key update even when the resulting state would still satisfy the FK (e.g. changing only letter case under a case-insensitive collation).</td>
+    </tr>
+    <tr>
+      <td><strong>CASCADE</strong></td>
+      <td>Deletes referencing child rows automatically.</td>
+      <td>Copies the parent's new key value into every referencing child row.</td>
+    </tr>
+    <tr>
+      <td><strong>SET NULL</strong></td>
+      <td>Sets child FK column(s) to <code>NULL</code>; a subset of columns may be named.</td>
+      <td>Sets child FK column(s) to <code>NULL</code>; a column subset is <em>not</em> permitted here.</td>
+    </tr>
+    <tr>
+      <td><strong>SET DEFAULT</strong></td>
+      <td>Sets child FK column(s) to their declared default; a subset of columns may be named.</td>
+      <td>Sets child FK column(s) to their declared default; a column subset is <em>not</em> permitted here.</td>
+    </tr>
+  </tbody>
+</table>
+<div class="example-box">
+  <p><strong>Worked Trace: Propagating a Primary-Key Change</strong></p>
+  <pre><code>  CREATE TABLE t_suppliers (
+      supplier_id INTEGER PRIMARY KEY,
+      supplier_name VARCHAR(100) NOT NULL
+  );
+  CREATE TABLE t_products (
+      product_id INTEGER PRIMARY KEY,
+      product_name VARCHAR(100) NOT NULL,
+      supplier_id INTEGER REFERENCES t_suppliers (supplier_id)
+          ON UPDATE CASCADE ON DELETE RESTRICT
+  );
+  INSERT INTO t_suppliers VALUES (123, 'Global Tech');
+  INSERT INTO t_products VALUES (1, 'laptop', 123);</code></pre>
+  <ul>
+    <li><code>UPDATE t_suppliers SET supplier_id = 9999 WHERE supplier_id = 123;</code> &rarr; succeeds; <code>ON UPDATE CASCADE</code> rewrites the child row to <code>(1, 'laptop', 9999)</code>, exactly the textbook's <code>address_id 123 &rarr; 9999</code> propagation.</li>
+    <li>Had the column been declared with <code>NO ACTION</code> instead (no <code>ON UPDATE</code> clause), the same statement would fail with <code>ERROR: update or delete on table "t_suppliers" violates foreign key constraint ...</code> while the child still points at 123.</li>
+    <li><code>ON DELETE RESTRICT</code> still blocks <code>DELETE FROM t_suppliers WHERE supplier_id = 9999;</code>, confirming the two referential-action clauses operate independently.</li>
+  </ul>
+</div>
+<div class="warning-box">
+  <p><strong>Pitfall — RESTRICT vs. NO ACTION on Updates:</strong> <code>NO ACTION</code> permits the update and validates the constraint afterward, so a genuinely equivalent new key can pass; <code>RESTRICT</code> refuses the update outright whenever a child matches the old key, even when the post-update state would be consistent — for example, updating a referenced text key to a different case variant under a case-insensitive collation.</p>
+</div>
 
 <h2 id="11.11-dropping-a-constraint">11.11 Dropping a Constraint</h2>
 <div class="important-note">

@@ -628,6 +628,30 @@
     </div>
     <h3 id="12.8.3-merging-only-buddies-combine">12.8.3 Merging: Only Buddies Combine</h3>
     <p>The last follow-up question was the trap: after freeing process C, there are two holes that sit adjacent to each other — both free, side by side. Should we combine them? No. Here is why: the division took place between this 2K and this 2K — they are buddies from the same 4K split; these two blocks over here are not buddies. Only the pair that was already divided together — the pair that came from splitting one larger block — can be recombined. This 2K belongs with that one, and that 2K belongs with the 4K family it was split from. If the buddy is free you can merge; if it is not free, you cannot — even when another free block happens to sit right next to yours. The two adjacent holes stay as they are.</p>
+
+    <h3 id="12.8.4-lazy-buddy-system-and-deferred-coalescing">12.8.4 Lazy Buddy System: Deferring Coalescing</h3>
+    <p>The buddy scheme above coalesces a freed block with its buddy <em>immediately</em>. Under the steady-state kernel workloads studied by Barkley and Lee — where demand for a given block size changes slowly — a \(2^i\) block that is freed and merged at once into a \(2^{i+1}\) block may be needed again as a \(2^i\) block in the next instant, forcing the larger block to be split straight back apart. The <em>lazy buddy system</em> breaks this coalesce-then-split thrash by deferring coalescing until it is actually needed, and it is the variant adopted for kernel memory allocation in SVR4.</p>
+    <div class="key-concept">
+      <p><strong>Four counters and the coalescing rule.</strong> For each size class \(i\) the scheme tracks \(N_i\), the total number of \(2^i\) blocks; \(A_i\), those currently allocated; \(G_i\), <em>globally</em> free blocks eligible to coalesce with a buddy; and \(L_i\), <em>locally</em> free blocks held back in anticipation of near-future demand and not eligible to merge. These satisfy</p>
+      <p>\[ N_i = A_i + G_i + L_i \]</p>
+      <p>A freed block joins the local pool, and coalescing fires only when that pool grows too large. The criterion keeps locally free blocks no more numerous than allocated ones:</p>
+      <p>\[ L_i \le A_i \quad\Longleftrightarrow\quad D_i = A_i - L_i = N_i - 2L_i - G_i \ge 0 \]</p>
+      <p>where \(D_i\) is the <em>delay</em> variable. While \(L_i \le A_i\) the free blocks stay local and no merge occurs; once \(L_i > A_i\), enough local blocks have accumulated that buddies are coalesced upward as far as possible.</p>
+    </div>
+    <table>
+      <thead>
+        <tr><th>Aspect</th><th>Standard buddy</th><th>Lazy buddy</th></tr>
+      </thead>
+      <tbody>
+        <tr><td>On every free</td><td>Coalesce at once with a free buddy</td><td>Keep locally free; merge only when \(L_i > A_i\)</td></tr>
+        <tr><td>Bookkeeping</td><td>One free list per size class</td><td>Extra counters \(N_i, A_i, G_i, L_i, D_i\) per class</td></tr>
+        <tr><td>Cost profile</td><td>Repeated split/merge work under steady demand</td><td>Work deferred; DELAY-2 bounds a free by two coalescing delays per class</td></tr>
+      </tbody>
+    </table>
+    <div class="example-box">
+      <p><strong>Worked micro-trace.</strong> Size class \(i\) holds \(N_i = 5\) blocks: \(A_i = 4\) allocated, \(G_i = 1\) globally free, \(L_i = 0\) locally free. One allocated block is freed, so \(A_i = 3\) and \(L_i = 1\) (the identity \(5 = 3 + 1 + 1\) still holds). The standard scheme would immediately coalesce the freed block with the free buddy into one \(2^{i+1}\) block; if the next request is again \(2^i\), that block must be split apart again. The lazy scheme keeps the block local and checks \(L_i = 1 \le A_i = 3\): the test passes, no merge runs, and the next \(2^i\) request is served from the local pool. The published DELAY-2 variant is reported up to 12% faster than the watermark-based lazy scheme and about 33% faster than the standard buddy system.</p>
+      <p><strong>Sense-check:</strong> deferral trades a little stranded local memory for far fewer split/merge operations — the greedy "merge whenever possible" rule of Section 12.8.3 is optimal for utilization, not for CPU time.</p>
+    </div>
     
     <h2 id="12.9-paging-an-introduction">12.9 Paging: An Introduction</h2>
     <p>Paging is the technique that overcomes the disadvantages of fixed-size partitioning and dynamic partitioning, and it eliminates external fragmentation completely. The core idea: the physical address space of a process is always non-contiguous — the first page is here, the second page is somewhere else entirely; it is not one block after another.</p>

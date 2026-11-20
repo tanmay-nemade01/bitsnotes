@@ -1571,6 +1571,31 @@ c = a / b;</code></pre>
 </div>
 <p>Real-world — This try-catch-finally-throw-throws pattern underpins production error handling: <code>BufferedReader.readLine()</code> and <code>Files.readAllLines</code> force checked <code>IOException</code> handling; arithmetic and indexing faults are naturally caught as unchecked; the <code>finally</code> block still appears in resource handling (file <code>close</code>, connection <code>close</code>, lock <code>unlock</code>) where cleanup must be guaranteed whether the try succeeded or threw, even though modern <code>try-with-resources</code> often supersedes manual <code>finally</code> for <code>Closeable</code> resources.</p>
 
+<h3 id="21.8.7-try-with-resources-automatic-resource-management-and-suppressed-exceptions">21.8.7 Try-with-Resources — Automatic Resource Management and Suppressed Exceptions</h3>
+<div class="important-note">
+  <p><strong>Mechanism — why <code>finally</code> alone is fragile:</strong> The <code>finally { if (br != null) br.close(); }</code> idiom of section 21.8.5 works, but it has two failure modes: the cleanup must be hand-written at every call site, and if the <code>try</code> throws <em>and</em> <code>close()</code> throws, the <code>finally</code> exception replaces (masks) the original. Since Java 7 the <em>try-with-resources</em> statement moves the resource declaration into parentheses after <code>try</code> and closes it automatically at block exit, on both the normal and the exceptional path.</p>
+</div>
+<pre><code>// Manual: cleanup is the programmer's responsibility
+void input() throws IOException {
+    BufferedReader br = new BufferedReader(new InputStreamReader(System.in));
+    try { String s = br.readLine(); }
+    finally { if (br != null) br.close(); }   // may mask the readLine exception
+}
+
+// Automatic: the resource is declared in the try header
+void input() throws IOException {
+    try (BufferedReader br = new BufferedReader(new InputStreamReader(System.in))) {
+        String s = br.readLine();
+    }   // br.close() inserted by the compiler here, on every exit path
+}</code></pre>
+<p>Eligibility: only objects whose type implements <code>java.lang.AutoCloseable</code> — which includes every <code>java.io.Closeable</code> stream, hence <code>BufferedReader</code>, <code>FileInputStream</code>, and JDBC <code>Statement</code> — may be used as a resource; <code>AutoCloseable</code> declares the single <code>close()</code> method. A resource declared in the header is implicitly <code>final</code> and its scope is the try block. Multiple resources are separated by semicolons and are closed in the <em>reverse</em> order of their declaration. Since JDK 9 the resource specification may also name a previously declared, effectively-final variable.</p>
+<div class="warning-box">
+  <p><strong>Suppressed exceptions — the subtle difference:</strong> In a manual <code>try-finally</code>, if <code>readLine()</code> throws and <code>close()</code> also throws, the second exception wins and the first is lost. In try-with-resources the <code>try</code>-block exception is propagated as primary and the <code>close()</code> exception is <em>suppressed</em> — attached to that primary throwable rather than discarded. Retrieve the full picture with <code>Throwable.getSuppressed()</code>; <code>printStackTrace()</code> renders each as a <code>Suppressed:</code> entry beneath the primary stack trace. A try-with-resources statement may still have <code>catch</code> and <code>finally</code> clauses — they run <em>after</em> the declared resources have been closed.</p>
+</div>
+<div class="key-takeaway">
+  <p><strong>Takeaway:</strong> Prefer try-with-resources for any <code>Closeable</code> resource: it guarantees <code>close()</code> on every exit path, keeps the original exception as the primary one, and preserves secondary failures as suppressed exceptions — achieving with one header what the manual <code>finally</code> idiom does with error-prone boilerplate. The classic <code>try-catch-finally</code> model remains the conceptual foundation; try-with-resources is its Java 7 refinement for resource release.</p>
+</div>
+
 <h2 id="21.9-exception-hierarchy-checked-vs-unchecked-and-multiple-and-nested-handling">21.9 Exception Hierarchy, Checked vs Unchecked and Multiple and Nested Handling</h2>
 <h3 id="21.9.1-the-throwable-hierarchy-throwable-exception-and-error">21.9.1 The Throwable Hierarchy — Throwable, Exception and Error</h3>
 <div class="important-note">
@@ -1740,6 +1765,22 @@ catch (ArrayIndexOutOfBoundsException e) {
 catch (ArithmeticException e) { ... }
 catch (ArrayIndexOutOfBoundsException e) { ... }
 catch (Exception e) { ... } // broader last</code></pre>
+</div>
+<div class="key-concept">
+  <p><strong>Java 7 multi-catch — one handler for several exception types:</strong> When two or more <code>catch</code> bodies would be identical, a single clause may list the alternatives separated by a vertical bar <code>|</code>. This removes duplicated handling code without widening to an overly broad <code>Exception</code> catch.</p>
+  <pre><code>try {
+    int a[] = {5, 10};
+    int x = a[0] / 0;        // ArithmeticException
+    int y = a[5];            // ArrayIndexOutOfBoundsException
+} catch (ArithmeticException | ArrayIndexOutOfBoundsException e) {
+    System.out.println("numeric/index fault: " + e);
+}</code></pre>
+  <ul>
+    <li>The alternatives must be <em>unrelated</em> — no alternative may be a subclass of another. <code>Exception | ArithmeticException</code> is illegal because <code>ArithmeticException</code> is already covered by its supertype <code>Exception</code>.</li>
+    <li>The multi-catch parameter is <em>implicitly <code>final</code></em>: <code>e</code> cannot be reassigned inside the handler (writing <code>final</code> explicitly is allowed but redundant), because one variable is bound to different runtime types.</li>
+    <li>Exactly one alternative matches per throw, decided by runtime type — the same first-match rule as ordinary multiple catches; listing several types does not make several handlers run.</li>
+    <li>Use it when the responses are genuinely identical (a common log-and-continue path); keep separate catches when the recovery action differs per fault family.</li>
+  </ul>
 </div>
 <p>Each catch targets one exception class. If the <code>try</code> throws <code>ArithmeticException</code> (divisor 0), the first catch matches; if it throws <code>NumberFormatException</code> (parsing <code>"abc"</code>), the second matches; if <code>a[2]</code> is accessed with only <code>a[0]</code> and <code>a[1]</code> present, the third matches. This is the general pattern: one <code>try</code>, many <code>catch</code> statements like cases in a <code>switch</code> on runtime type.</p>
 <div class="example-box">
@@ -1970,6 +2011,26 @@ try { person.setAge(-2); } catch (NegativeAgeException e){ System.out.println(e.
     <li><strong>Call-site guard:</strong> Separate <code>try { new Box(...); } catch (InvalidBoxDimensionException e){ handling }</code> per risky construction for independent evaluation.</li>
     <li><strong>Formula path:</strong> On valid <code>l,w,h &gt; 0</code>, <code>area = 2(lw+wh+hl)</code> computed; invalid path never reaches it.</li>
   </ul>
+</div>
+<div class="important-note">
+  <p><strong>Mechanism — exception chaining (since JDK 1.4):</strong> A handler frequently responds to a caught exception by throwing a <em>different</em>, layer-appropriate exception. Chaining preserves the original as the <em>cause</em> of the new one, so the full causal chain survives instead of being lost. <code>Throwable</code> supplies two cause-aware constructors — <code>Throwable(Throwable cause)</code> and <code>Throwable(String msg, Throwable cause)</code> — and two accessors: <code>getCause()</code> (returns the underlying throwable, or <code>null</code>) and <code>initCause(Throwable)</code> (attaches a cause after construction, and may be called only once, since a cause set by a constructor cannot be replaced).</p>
+  <pre><code>class DomainException extends RuntimeException {
+    DomainException(String msg, Throwable cause) { super(msg, cause); }
+}
+void loadConfig() throws IOException {
+    try (BufferedReader br = new BufferedReader(new FileReader("cfg.txt"))) {
+        String s = br.readLine();              // checked IOException
+    } catch (IOException e) {
+        throw new DomainException("cannot load configuration", e); // wrap, keep cause
+    }
+}
+// Higher-level handler:
+catch (DomainException e) {
+    e.printStackTrace();  // prints "... cannot load configuration"
+                          // followed by "Caused by: java.io.IOException: ..."
+    Throwable root = e.getCause();  // the original IOException
+}</code></pre>
+  <p>Why it matters here: this is the production-grade completion of the lecture's <code>InvalidBoxDimensionException</code> lifecycle. The domain exception names <em>what</em> failed, the cause preserves <em>why</em> at the lower layer (I/O, parsing, reflection), and <code>printStackTrace()</code> renders the whole chain. Choose a cause-aware constructor when you author the exception; use <code>initCause()</code> only for legacy exception classes that lack such a constructor. Overly long chains signal poor layering, but a single wrap at a system boundary is idiomatic.</p>
 </div>
 <div class="warning-box">
   <p><strong>Pitfalls — custom-exception mistakes that the lecture and T6 exam ask:</strong></p>

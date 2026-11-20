@@ -203,6 +203,10 @@
   <p><strong>Scope — bi-level optimization.</strong> CoDeepNEAT works in a bi-level fashion, meaning two steps. The high-level step is designing the architecture, done using genetic algorithms (the high-level search). The lower level is the learned parameters, where you use gradient descent — the actual training of the model. So evolution <em>replaces the designer</em>, not the training algorithm: every candidate architecture is still trained with gradient descent, and its validation performance is the fitness that drives the evolutionary search. The common beginner error is to think "evolution is now the whole learning process" — it is not; it is the <em>design</em> process layered on top of ordinary training.</p>
 </div>
 <p>Real-world: the same human-bottleneck argument applies broadly in industry — any domain where expert-designed solutions repeat known patterns, an evolutionary search can explore beyond them. Automated machine learning (AutoML) systems in production today ship exactly this promise: the pipeline and architecture are searched automatically, and the human sets the budget and the metric.</p>
+
+<div class="key-concept">
+  <p><strong>Broader context — the three dimensions of NAS.</strong> The survey literature on automatic architecture design decomposes NAS into three independent axes: the <em>search space</em> (which architectures can be represented at all), the <em>search strategy</em> (how that space is explored — evolutionary search, reinforcement learning, Bayesian optimization, or a continuous gradient-based relaxation), and the <em>performance estimation strategy</em> (how a candidate's quality is scored, from full train-and-validate to cheaper proxies). CoDeepNEAT is one concrete point in this grid: its search space is the blueprint-plus-modules representation of 7.1.6, its search strategy is the genetic algorithm of 7.1.7, and its performance estimator is short training followed by validation accuracy. Separating the axes is useful because a weakness in one — say, the cost of performance estimation — can be attacked without changing the other two.</p>
+</div>
 <h3 id="7.1.3-neuroevolution-in-one-word">7.1.3 Neuroevolution in One Word</h3>
 <p>Neuroevolution is, in a single word, using genetic algorithms to evolve neural networks — deep neural networks specifically. Here is how it works: first create many neural networks — that is the population, created randomly for your problem. Then train each network. Measure their performance — in other words, the fitness. Select the best ones, then perform crossover and mutation. Do these steps look familiar? Population generation, fitness check, selection of a parent, crossover, mutation — this is exactly genetic algorithms, but the genetic algorithm is being used to create a deep neural network automatically.</p>
 <p>Three terms carry over from the genetic algorithm material, and it is worth fixing their exact meaning in this setting:</p>
@@ -289,6 +293,47 @@
 <p><strong>Step 7 — Generations.</strong> The whole generational evolution process repeats across multiple generations; each generation again includes fitness evaluation, selection of parents, crossover, mutation, and putting children into species. Example for cat vs dog classification: in generation one, all the children give roughly 50% accuracy. Keep applying the genetic algorithm: by the 20th generation, around 75% accuracy; by the 50th generation, around 95%. The final architecture is selected based on the highest validation performance — go to the 50th generation, take the modules or children from there, and use them in phenotype construction.</p>
 <div class="warning-box">
   <p><strong>Cost & scope.</strong> Every child in every generation is trained — 100 children × 50 generations means thousands of full (short) training runs. That is why this is resource intensive, and why the lecture is explicit that the heavy cost is paid once: during genotype construction. The payoff is that the evolved modules are reusable afterwards — plug them into any blueprint. Related scope note: in the original CoDeepNEAT experiments, the module and blueprint populations were small (for example 25 blueprints and 45 modules), and about 100 assembled networks were trained per generation — the cost scales with population size, generations, and training epochs, all of which are hyperparameters the designer sets.</p>
+</div>
+
+<div class="important-note">
+  <p><strong>Extension — weight sharing and one-shot NAS.</strong> The cost above is specific to the evolutionary family, where every candidate is trained from scratch. A different family in the NAS literature, <em>one-shot architecture search</em>, attacks the same cost directly: it builds one over-parameterized supergraph (the "one-shot model") containing every candidate operation on every edge, trains that model once, and then treats each candidate architecture as a subgraph that inherits the already-trained weights — so scoring a candidate needs only validation evaluation, not a fresh training run. Reported search cost drops from thousands of GPU-days to a few. The trade-off is bias: the shared weights are tuned for the supergraph, so a candidate's estimated rank need not match its true stand-alone performance, and the supergraph fixes the search space to its own subgraphs. CoDeepNEAT's choice to retrain each child is the opposite bargain — it pays the heavy cost to keep the fitness signal unbiased.</p>
+</div>
+
+<div class="important-note">
+  <p><strong>Extension — cheaper fitness estimates: lower fidelity and learning-curve extrapolation.</strong> One-shot weight sharing is one way to attack the cost of Step 2; a complementary family leaves the evolutionary loop untouched and simply makes each fitness evaluation cheaper. The NAS survey groups these as <em>performance-estimation speed-ups</em>, measured against the full train-and-validate baseline:</p>
+  <table>
+    <thead>
+      <tr>
+        <th>Speed-up family</th>
+        <th>How the cost is cut</th>
+        <th>Bias it introduces</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>Lower-fidelity estimates</td>
+        <td>Train for fewer epochs, on a data subset, at lower image resolution, or with fewer filters/cells.</td>
+        <td>Scores are typically <em>underestimated</em>; safe only while the candidate ranking stays stable.</td>
+      </tr>
+      <tr>
+        <td>Learning-curve extrapolation</td>
+        <td>Train a few epochs, fit the accuracy curve, and stop candidates predicted to finish poorly.</td>
+        <td>Early noise can misrank slow starters; the predictor is learned from very few evaluations.</td>
+      </tr>
+      <tr>
+        <td>Weight inheritance / network morphisms</td>
+        <td>Warm-start a child from trained parent weights (Lamarckian inheritance) instead of random initialization.</td>
+        <td>Strict morphisms can only enlarge a network, encouraging over-complex architectures.</td>
+      </tr>
+      <tr>
+        <td>One-shot / weight sharing (covered above)</td>
+        <td>Train one supergraph once; score subgraphs by inheriting its trained weights.</td>
+        <td>The supergraph fixes the search space; estimated rank need not match true rank.</td>
+      </tr>
+    </tbody>
+  </table>
+  <p><strong>Worked early-stopping trace.</strong> Train each candidate for only a few epochs and extrapolate a saturating trend from consecutive accuracies \(a_1, a_2, a_3\). With geometric increments the ratio is \(r = \frac{a_3 - a_2}{a_2 - a_1}\) and the predicted ceiling is \(a_\infty = a_1 + \frac{a_2 - a_1}{1 - r}\). Candidate A: \(0.55, 0.68, 0.75\) gives \(r \approx 0.54\), so \(a_\infty \approx 0.55 + 0.13/0.46 \approx 0.83\). Candidate B: \(0.40, 0.45, 0.47\) gives \(r = 0.40\), so \(a_\infty \approx 0.40 + 0.05/0.60 \approx 0.48\). B is terminated early and only A is trained to convergence, saving the computation B would otherwise consume. The survey's caution is exactly this: cheap estimates bias scores downward, so the shortcut is sound when the search uses only the <em>ranking</em> — and a gradual increase in fidelity (successively larger epoch budgets and data subsets) repairs the cases where the ranking flips.</p>
+  <p><strong>Connection to this lecture.</strong> CoDeepNEAT's limited-epoch training in Step 2 is itself a lower-fidelity estimate; the difference is that it retrains each child (unbiased signal, high cost), whereas these methods predict or inherit performance (cheap signal, biased). The trade-off is the same one the one-shot note describes: cost versus the faithfulness of the fitness signal.</p>
 </div>
 <div class="important-note">
   <p><strong>Q:</strong> Introducing modules with limited training may cause generating a poor phenotype or unreliable phenotype predictions. <strong>A:</strong> That is exactly the point of doing the whole genetic algorithm first. We are not directly replacing a module in the blueprint mid-evolution. Phenotype construction happens once the whole genetic algorithm is completed. When you complete the whole genetic algorithm, you have a lot of children that you generated, and their fitness values are good — your modules are good. Only then do you go and put them in the blueprint. You run the whole genetic algorithm for several generations, and only then do you do the phenotype construction. The order is the safeguard: evolution finishes first, and only the <em>survivors</em> (high-fitness modules) ever reach the assembly stage.</p>
@@ -490,6 +535,20 @@
 <p><strong>Why "worst-case best"?</strong> The guarantee rests on a bet about the opponent: minimax assumes Min is perfect. Under that assumption, any branch whose worst leaf is bad is a branch that will actually deliver that bad leaf, because Min will steer there. So Max's only rational choice is the branch whose <em>worst</em> leaf is as high as possible — the best guaranteed outcome. If Min turns out to be weaker than perfect, Max only does better; the guarantee never erodes.</p>
 <div class="warning-box">
   <p><strong>Assumptions & limits.</strong> Minimax assumes (1) two players alternating moves, (2) perfect information — both players see the whole board — and (3) a deterministic, zero-sum game where a single utility value per leaf describes both players. When any assumption fails, minimax as described here needs modification: chance (dice) requires expected values over chance nodes; hidden information (poker) requires belief states; three or more players require utility tuples. For the two-player, deterministic, zero-sum, perfect-information setting this course covers, the guarantee "you will never be forced into the worst outcome" holds exactly.</p>
+</div>
+
+<div class="key-concept">
+  <p><strong>Extension — expectiminimax for games with chance.</strong> When the "chance (dice)" case above actually occurs, the game tree gains a third node type. A <em>chance node</em> is scored not by max or min but by the probability-weighted average over its outcomes; the MAX and MIN cases are unchanged:</p>
+  \[
+  \text{EXPECTIMINIMAX}(s) =
+  \begin{cases}
+  \text{UTILITY}(s) & \text{terminal state} \\
+  \max_a \text{EXPECTIMINIMAX}(\text{RESULT}(s,a)) & \text{MAX to move} \\
+  \min_a \text{EXPECTIMINIMAX}(\text{RESULT}(s,a)) & \text{MIN to move} \\
+  \sum_{r} P(r)\,\text{EXPECTIMINIMAX}(\text{RESULT}(s,r)) & \text{chance node}
+  \end{cases}
+  \]
+  <p>Here \(r\) ranges over the chance outcomes (for two dice there are 21 distinct rolls: a double such as 1–1 has probability \(1/36\), each of the other 15 rolls \(1/18\)) and \(P(r)\) is the probability of that outcome. A chance node with two equally likely outcomes whose backed-up values are \(4\) and \(-2\) is therefore worth \(\tfrac12\cdot4 + \tfrac12\cdot(-2) = 1\) — an expected value, neither a maximum nor a minimum.</p>
 </div>
 <p><strong>Cost of the full tree.</strong> Minimax explores the whole game tree down to the leaves. If the maximum depth is \(m\) and there are \(b\) legal moves at every point, the time complexity is \(O(b^m)\) — exponential in depth. That is why the lecture emphasizes partial trees: for chess (\(b \approx 35\), \(m \approx 80\) moves) the full tree is physically impossible, and real programs cut the tree at some depth and evaluate the cut nodes with static evaluation functions (the topic of 7.4).</p>
 <h3 id="7.3.2-worked-example-1-a-small-tree">7.3.2 Worked Example 1: A Small Tree</h3>

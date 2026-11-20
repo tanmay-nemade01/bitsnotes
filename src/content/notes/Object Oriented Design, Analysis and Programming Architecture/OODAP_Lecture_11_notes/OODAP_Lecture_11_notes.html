@@ -795,6 +795,41 @@ sequenceDiagram
   <p><strong>Assumptions and scope — when indirection helps and when it harms.</strong> Indirection helps when two elements are already highly coupled — many direct dependencies that repeat change impact. It helps when the mediator can offer a genuinely narrower and more stable interface than the pair it decouples. It harms when the coupling is already low (adding a layer increases depth and indirection cost without benefit), when the mediator itself becomes incohesive (a God mediator knowing everything), or when path length hurts performance — each hop adds call cost, and traversing long chains is flagged as a performance anti-consequence of high coupling earlier in the lecture (11.2.5) and again for long Demeter chains (11.7.3).</p>
   <p>The session's caution about performance is kept: long chains of object connections add traversal cost, so an indirection must earn its keep by measurably thinning the graph.</p>
 </div>
+<div class="key-concept">
+  <p><strong>Architectural extension — the Dependency Inversion Principle (DIP) names the direction indirection should take.</strong> Indirection inserts a mediator but does not say <em>which side owns the interface</em>. DIP, formulated by Robert C. Martin, supplies that rule: high-level policy modules should not depend on low-level detail modules — both should depend on abstractions — and abstractions should not depend on details; details should depend on abstractions. The "inversion" is a compile-time statement: at runtime the call still flows from policy down to a device or database, but the policy's source must not name that lower-level source. Instead the lower module is made to implement an interface the policy declares, so the source-level dependency arrow points upward toward the abstraction. This is the arrow-direction rule that plain mediator insertion leaves unspecified.</p>
+  <table>
+    <thead>
+      <tr>
+        <th>Aspect</th>
+        <th>Naive layering (Policy → Mechanism → Utility)</th>
+        <th>Inverted layering (DIP)</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>Compile-time dependency</td>
+        <td>Policy imports Mechanism, which imports Utility; dependence is transitive, so a Utility change can force Policy to recompile</td>
+        <td>Each upper layer declares the service interface it needs; lower layers implement it, so source dependence points toward the abstraction</td>
+      </tr>
+      <tr>
+        <td>Interface ownership</td>
+        <td>The utility library owns its own API; clients adapt to it</td>
+        <td>The client/policy layer owns the interface it consumes; server modules conform to it</td>
+      </tr>
+      <tr>
+        <td>Reuse of policy</td>
+        <td>Policy cannot be lifted without the whole lower stack</td>
+        <td>Policy is reusable in any context that supplies an implementation of its service interface</td>
+      </tr>
+      <tr>
+        <td>GRASP reading</td>
+        <td>A fabricated helper that merely forwards calls does not fix the direction of dependence</td>
+        <td>The ITaxCalculatorAdapter is DIP-conformant: Sale owns the stable abstraction and each vendor adapter depends on it</td>
+      </tr>
+    </tbody>
+  </table>
+  <p><strong>Heuristic and its boundary:</strong> "depend on abstractions" recommends that no variable hold a concrete type, no class derive from a concrete class, and no method override a concrete base method. The rule is not absolute — some module must eventually instantiate the concretes (a factory or configuration data supplies them), and stable, nonvolatile concrete classes need no interface. Applied without restraint, interfaces everywhere add plumbing that DIP's own author warns against; an abstraction is justified only when it protects a real variation point, which is exactly the predicted-change scope rule of Protected Variations in 11.7.1.</p>
+</div>
 <h3 id="11.5.3-relationship-to-pure-fabrication">11.5.3 Relationship to Pure Fabrication</h3>
 <div class="key-concept">
   <p><strong>Indirection is often a pure fabrication — the overlap made explicit.</strong> An <em>indirection class</em> (the mediator) is frequently a <em>pure fabrication</em> — an invented class that does not model a domain object and has no real-world counterpart named by the domain. It exists purely to carry coordination, reduce dependence, or group shared behavior for reuse.</p>
@@ -975,6 +1010,44 @@ flowchart TB
     <text x="320" y="175" fill="currentColor" font-size="9" text-anchor="middle">surprises callers</text>
   </svg>
   <p class="text-xs text-slate-500 mt-2"><strong>Figure:</strong> The contract shadow — a subtype's shadow must stay inside its supertype's; where S's shadow sticks out past T's, substitution surprises callers.</p>
+</div>
+<div class="key-concept">
+  <p><strong>Mechanism — Design by Contract makes the LSP "contract" executable.</strong> The word <em>contract</em> used throughout LSP is not only a metaphor: Design by Contract (DbC), introduced by Bertrand Meyer and native to Eiffel, states a module's obligations as three checks — a <em>precondition</em> the client must satisfy before a call, a <em>postcondition</em> the supplier guarantees after the call, and a <em>class invariant</em> that must hold on entry and exit. Eiffel writes these as <code>require</code>, <code>ensure</code>, and <code>invariant</code> clauses, and treats them as part of the design rather than as after-the-fact tests.</p>
+  <p><strong>Formal substitution rule (Meyer):</strong> when a subtype \(S\) redefines an operation of supertype \(T\), it may replace \(T\)'s precondition only with one equal or <em>weaker</em>, and \(T\)'s postcondition only with one equal or <em>stronger</em>. Read as sets of allowed inputs and outputs:</p>
+  \[ \text{pre}_T \subseteq \text{pre}_S \quad \land \quad \text{post}_S \subseteq \text{post}_T \]
+  <p>A weaker precondition is a larger input set (\(pre_T \subseteq pre_S\)) — \(S\) must accept everything \(T\) accepted. A stronger postcondition is a smaller output set (\(post_S \subseteq post_T\)) — \(S\) must promise at least what \(T\) promised. This is the \(\forall P(T)\) behavioral condition of LSP stated constructively, and it is why the type checker alone cannot certify substitution.</p>
+  <table>
+    <thead>
+      <tr>
+        <th>Operation on ITaxCalculatorAdapter.getTaxes(sale)</th>
+        <th>Contract change</th>
+        <th>LSP verdict</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>Base interface: <code>require sale /= Void; ensure result /= Void</code></td>
+        <td>Declares the baseline obligations</td>
+        <td>Reference contract</td>
+      </tr>
+      <tr>
+        <td>Local-rules adapter: accepts the same inputs, returns a non-negative tax list, leaves <code>sale</code> unchanged</td>
+        <td>Same precondition, same-or-stronger postcondition</td>
+        <td>Substitutable</td>
+      </tr>
+      <tr>
+        <td>Adapter requiring <code>sale.customer.loyaltyTier = GOLD</code></td>
+        <td><em>Strengthens</em> the precondition — rejects inputs the base accepted</td>
+        <td>Violates rule; callers written for \(T\) now fail</td>
+      </tr>
+      <tr>
+        <td>Adapter that recomputes by mutating <code>sale.total</code></td>
+        <td>Weakens the postcondition / breaks the argument-unchanged invariant</td>
+        <td>Violates rule although the signature compiles</td>
+      </tr>
+    </tbody>
+  </table>
+  <p><strong>Takeaway:</strong> where a language has no native contract clauses, the same discipline is expressed through assertions and unit tests that encode the base type's preconditions, postconditions, and invariants; a subtype that fails them is not a behavioral subtype, whatever its declared type says.</p>
 </div>
 <h3 id="11.7.3-the-law-of-demeter-don-t-talk-to-strangers">11.7.3 The Law of Demeter — Don't Talk to Strangers</h3>
 <div class="key-concept">

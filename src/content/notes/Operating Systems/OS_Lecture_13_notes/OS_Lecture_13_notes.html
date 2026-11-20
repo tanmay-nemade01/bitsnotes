@@ -284,6 +284,24 @@
 <p>Why is the TLB needed at all? Because the page table always lives in main memory. To find an entry you need two registers: a <em>base register</em> that points to the start of the page table, and a <em>page table length register</em> (PTLR) that holds the size of the page table. To access one instruction or one piece of data you need <strong>two memory accesses</strong>: the first goes to the page table to fetch the frame number, the second goes to the frame itself to fetch the data or instruction. That doubling is the price of paging — and the TLB is the cure, because a hit replaces the first memory access with a fast cache lookup.</p>
 <p>If the page is not in the page table either, it lives on secondary storage, and we must bring it in with a page replacement policy — the topic of Section 13.4. The hardware support needed for paging is exactly this: the base register, the length register, and the associative memory. The <em>valid/invalid bit</em> protects the table as well: before trusting an entry, the system checks whether the page is legal and present.</p>
 <p>Real-world: the TLB is the hardware cache inside the processor that makes address translation fast; without it, every single memory access would be doubled by page-table lookups. The percentage of translations found in the TLB is called the <em>hit ratio</em>, and on real processors it is well above 95% — that is why paging costs so little in practice. The hit ratio is so important that modern designs use larger pages (2 MB or even 1 GB "huge pages") just to make each TLB entry cover more memory.</p>
+<div class="important-note">
+  <p><strong>System Detail — structuring the page table for large address spaces.</strong> The flat, one-level table described above does not scale. With a 32-bit logical address space and 4 KB pages, one process has \(2^{32}/2^{12} = 2^{20}\) pages; at 4 bytes per entry its page table alone occupies \(2^{20} \times 4 = 4\) MB of <em>contiguous</em> physical memory — and most of that table maps address space the process never touches.</p>
+  <p><strong>Hierarchical (multi-level) paging</strong> pages the page table itself. Split the 20-bit page number into a 10-bit outer index \(p_1\) and a 10-bit inner index \(p_2\), leaving the familiar 12-bit offset \(d\):</p>
+  <p>\[ \text{logical address} = \underbrace{p_1}_{10\ \text{bits}}\ \underbrace{p_2}_{10\ \text{bits}}\ \underbrace{d}_{12\ \text{bits}} \]</p>
+  <p>The outer table has \(2^{10}\) entries; each inner table also has \(2^{10}\) entries and fits in exactly one 4 KB page. Translation walks \(p_1 \rightarrow p_2 \rightarrow \text{frame}\) and appends \(d\). A process allocates an inner page table only for regions it actually uses, so a sparse address space no longer demands a 4 MB contiguous table — the price is one extra memory access per level, which the TLB must then cache to stay fast.</p>
+  <table>
+    <thead>
+      <tr><th>Organization</th><th>Key idea</th><th>Table size / memory cost</th><th>Cost or limitation</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>Single-level</td><td>One table indexed by the full page number</td><td>\(2^{20}\) entries = 4 MB for 32-bit / 4 KB</td><td>Huge, must be contiguous, mostly unused</td></tr>
+      <tr><td>Two-level hierarchical</td><td>Outer table points to paged inner tables</td><td>Outer + only the inner tables in use</td><td>One extra memory reference per level</td></tr>
+      <tr><td>Hashed</td><td>Hash the virtual page number; chain collisions</td><td>Entries hold (virtual page, frame, next pointer)</td><td>Linked-list search on a hash collision</td></tr>
+      <tr><td>Inverted</td><td>One entry per physical frame: &lt;process-id, page&gt;</td><td>Sized by RAM, not by virtual address space</td><td>Slow lookup without hashing; sharing is awkward</td></tr>
+    </tbody>
+  </table>
+  <p><strong>Where this appears in practice:</strong> mainline systems organize page tables hierarchically — higher levels point to lower-level tables, the top-level pointer lives in a register, and successive address bits index each level down to the final offset. On x86-64 this reaches four (and with 5-level paging, five) levels; hashed and inverted organizations are the alternatives used when address spaces outgrow even a two-level scheme.</p>
+</div>
 <div class="warning-box">
   <p><strong>Common pitfalls</strong></p>
   <ul>
@@ -407,6 +425,30 @@
 <h3 id="13.3.2-demand-paging-and-the-lazy-swapper">13.3.2 Demand Paging and the Lazy Swapper</h3>
 <p>Bringing in a page only when it is needed is <em>demand paging</em>, and it is done by a <em>lazy swapper</em>. The lazy swapper never swaps a page into memory unless that page is needed; the swapper used for this kind of paging is called the <em>pager</em>. When a page or a set of pages is not required, it is swapped out to secondary storage, and only the pages necessary for execution are brought from secondary storage into memory. That selective swapping is how virtual memory is implemented.</p>
 <p>The advantages of demand paging: less I/O is needed, less memory is needed, responses are faster, and more users can be served at a time.</p>
+<div class="important-note">
+  <p><strong>System Detail — copy-on-write (COW) and demand zeroing.</strong> Demand paging does more than fetch a page on a fault: it lets two address spaces share physical frames safely. With copy-on-write, <code>fork()</code> gives the child page-table entries pointing at the <em>same</em> frames as the parent, but marks the writable ones COW. Both processes see identical pages without a single frame being copied up front.</p>
+  <p><strong>Worked trace:</strong> parent P holds pages A, B, C in frames 7, 8, 9 (C writable).</p>
+  <ol>
+    <li>At <code>fork()</code>, child Q's entries for A, B, C also map frames 7, 8, 9, with the COW bit set on each.</li>
+    <li>A read by either process is an ordinary hit on the shared frame — no copy, no fault.</li>
+    <li>Q writes to C; the MMU sees the COW bit and traps to the operating system.</li>
+    <li>The OS draws a fresh free frame (say 14), copies frame 9 into it, and rewrites Q's entry to frame 14 with COW cleared.</li>
+    <li>The faulting store is restarted against Q's private copy. P's entry still names frame 9 and is untouched.</li>
+  </ol>
+  <p>Only pages actually written are copied; unmodified pages, including read-only code, remain shared. Contrast this with the traditional alternative:</p>
+  <table>
+    <thead>
+      <tr><th>Property</th><th>Eager copy (traditional fork)</th><th>Copy-on-write fork</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>When frames are copied</td><td>At process creation, for the whole address space</td><td>Only on the first write to a shared page</td></tr>
+      <tr><td>Memory right after fork</td><td>Doubled for the child</td><td>Nearly unchanged — pages are shared</td></tr>
+      <tr><td>Child that immediately calls exec()</td><td>All copied pages thrown away</td><td>Almost no copying cost</td></tr>
+      <tr><td>Read-only code pages</td><td>Copied needlessly</td><td>Shared permanently</td></tr>
+    </tbody>
+  </table>
+  <p><strong>Demand zeroing:</strong> when a stack or heap grows, or a COW copy is needed, the kernel draws from a pool of free pages that have been zero-filled in advance. A read of an untouched anonymous page is mapped to a special shared page of zeroes; the first write faults in a real, zeroed frame. This is why a new process never reads another process's stale data. Private <code>mmap()</code> mappings expose this same private copy-on-write behaviour to user programs, and the technique is standard in Linux, Windows, and Solaris.</p>
+</div>
 <div class="key-concept">
   <p><strong>The valid/invalid bit makes demand paging work.</strong> In the page table, one bit tells whether the page is valid or invalid: <em>valid</em> means the page is in memory, <em>invalid</em> means it is not.</p>
   <ul>

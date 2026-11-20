@@ -340,6 +340,20 @@
 <p><strong>Step 4 — Decision boundary.</strong> \(W \cdot X + b = 0\). For the lecture's data: \(y = 2\), a horizontal line.</p>
 <p><strong>Sense-check:</strong> A horizontal line separating \(y_1=-1\) (below) from \(y_2,y_3=+1\) (above) — geometrically consistent.</p>
 </div>
+
+<div class="important-note">
+<p><strong>Algorithm detail — Solving the dual at scale (Sequential Minimal Optimization):</strong> The elimination trick above works for three multipliers. A real dataset has millions, and the dual is a quadratic program with a dense \(\alpha_i\alpha_j K_{ij}\) matrix — too large for a generic QP solver. Bishop (§7.1, p. 355) traces the practical response: <em>chunking</em> (Vapnik) drops rows/columns with \(\alpha_i = 0\), <em>decomposition</em> (Osuna et al.) fixes the subproblem size, and <strong>SMO</strong> (Platt, 1999) takes chunking to its limit by optimizing just <strong>two multipliers at a time</strong>, so the subproblem has a closed-form solution and no numerical QP inner loop is needed.</p>
+<p>With all multipliers except \(\alpha_1, \alpha_2\) held fixed, the equality constraint \(\sum_i \alpha_i y_i = 0\) forces</p>
+\[\alpha_1 y_1 + \alpha_2 y_2 = -\sum_{i\ge 3}\alpha_i y_i = k \quad\Longrightarrow\quad \alpha_2 = y_2 k - y_1 y_2 \alpha_1.\]
+<p>The dual objective is therefore a one-dimensional quadratic in \(\alpha_1\). Define \(E_i = f(X_i) - y_i = \sum_j \alpha_j y_j K(X_j, X_i) + b - y_i\) and \(\eta = K_{11} + K_{22} - 2K_{12} = \|\phi(X_1) - \phi(X_2)\|^2 \ge 0\). The unconstrained minimizer is obtained in one step:</p>
+\[\alpha_2^{\text{new, unclipped}} = \alpha_2^{\text{old}} + \frac{y_2 (E_1 - E_2)}{\eta}.\]
+<p>The box constraints \(0 \le \alpha_i \le C\) then clip this value to a feasible interval:</p>
+\[\begin{aligned}
+y_1 \ne y_2:&\quad L = \max(0, \alpha_2^{\text{old}} - \alpha_1^{\text{old}}),\;\; U = \min(C,\; C + \alpha_2^{\text{old}} - \alpha_1^{\text{old}}) \\[2pt]
+y_1 = y_2:&\quad L = \max(0, \alpha_1^{\text{old}} + \alpha_2^{\text{old}} - C),\;\; U = \min(C,\; \alpha_1^{\text{old}} + \alpha_2^{\text{old}})
+\end{aligned}\]
+<p>Set \(\alpha_2^{\text{new}} = \min(U, \max(L, \alpha_2^{\text{new, unclipped}}))\) and restore the equality with \(\alpha_1^{\text{new}} = \alpha_1^{\text{old}} + y_1 y_2(\alpha_2^{\text{old}} - \alpha_2^{\text{new}})\). Repeating this pair update (pairs chosen by heuristics on the \(E_i\)) converges to the same dual optimum as a full QP solver. Memory is linear in the number of training points and observed scaling lies between linear and quadratic — this is the engine behind libraries such as LIBSVM.</p>
+</div>
 <h3>17.1.5 Assumptions & Scope</h3>
 <div class="warning-box">
 <p><strong>Scope / Assumptions:</strong> - <strong>Binary classification only.</strong> SVM natively handles two classes. For \(K>2\), use one-vs-rest or one-vs-one. - <strong>Hard margin assumes linear separability.</strong> Overlapping classes produce no feasible solution. Use soft margin (§17.2). - <strong>Dot-product formulation.</strong> The dual uses only \(X_i \cdot X_j\) — this is what enables the kernel trick later. - <strong>Convex optimization.</strong> The dual is a convex QP. Any local optimum is global. No initialization lottery.</p>
@@ -391,6 +405,43 @@
 </div>
 <h3>17.1.9 Real-World & Domain Connection</h3>
 <p>SVMs were the dominant classifier before deep learning, especially in text categorization (spam filters, sentiment analysis) and bioinformatics (gene expression, protein structure). They excel with high-dimensional data because the dual formulation's cost depends on the number of points, not dimensions. Linear SVMs remain production defaults for text classification — fast training, few hyperparameters, strong theoretical guarantees via VC bounds. The sparsity property (only support vectors matter) also makes SVMs memory-efficient at prediction time.</p>
+
+<div class="important-note">
+<p><strong>Related technique — Relevance Vector Machine (RVM):</strong> Bishop (§7.2, pp. 365–356) presents a Bayesian alternative that keeps the SVM's kernel form but changes how sparsity arises. The RVM writes \(y(X) = \sum_{n=1}^{N} w_n K(X, X_n)\) — one kernel per training point — but places an independent Gaussian prior on each weight with its own precision (hyperparameter) \(\alpha_n\). During <em>automatic relevance determination</em> (ARD) learning, most \(\alpha_n \to \infty\), driving the corresponding \(w_n \to 0\); only a few weights survive. The surviving points are <em>relevance vectors</em>, and — unlike support vectors — they need not lie near the decision boundary. Tipping (2001) notes that the RVM shares the SVM's functional form while typically using dramatically fewer basis functions.</p>
+<table>
+<tr>
+<th>Property</th>
+<th>SVM</th>
+<th>RVM</th>
+</tr>
+<tr>
+<td>Basis / sparsity</td>
+<td>Support vectors; \(\alpha_i = 0\) from hinge loss + box constraint</td>
+<td>Relevance vectors; \(w_n \to 0\) via ARD priors</td>
+</tr>
+<tr>
+<td>Output</td>
+<td>Hard sign decision; probabilities need extra Platt calibration</td>
+<td>Native posterior probabilities from the Bayesian model</td>
+</tr>
+<tr>
+<td>Kernel requirement</td>
+<td>Must be a valid Mercer (PSD) kernel (§17.7)</td>
+<td>Arbitrary basis functions; non-Mercer kernels permitted</td>
+</tr>
+<tr>
+<td>Complexity parameter</td>
+<td>\(C\) (or \(\nu\)), set by cross-validation</td>
+<td>Estimated automatically during learning; no CV sweep for \(C\)</td>
+</tr>
+<tr>
+<td>Training / inference speed</td>
+<td>Faster training; more test-time evaluations</td>
+<td>Slower training; sparser model → faster test predictions</td>
+</tr>
+</table>
+<p>The trade-off is explicit: RVMs often generalize comparably with far fewer relevance vectors and produce probabilities directly, but training is slower and the multiclass extension costs an extra factor of \(K^3\). Platt scaling and the RVM illustrate the same broader point — sparsity, calibrated uncertainty, and kernel validity are separable design choices, not fixed properties of the maximum-margin classifier.</p>
+</div>
 <hr>
 
 <h2>17.2 Soft Margin SVM — Handling Noisy Data</h2>
@@ -632,6 +683,13 @@
 </tr>
 </table>
 <p><strong>When to pick which:</strong> Use hinge loss (SVM) when sparsity and margin maximization matter. Use logistic loss when calibrated probability estimates are needed.</p>
+
+<div class="important-note">
+<p><strong>Extension — Platt scaling: recovering probabilities from an SVM:</strong> The table's "no probabilistic output" row is a limitation of the <em>raw</em> SVM decision function \(f(X)\), not an insurmountable one. Bishop (§7.1, p. 356, Eq. 7.43) records the standard fix due to Platt (2000): after training the SVM, fit a logistic sigmoid to its signed decision values,</p>
+\[p(t = +1 \mid X) = \sigma\!\big(A\,f(X) + B\big) = \frac{1}{1 + e^{-(A f(X) + B)}}.\]
+<p>The two parameters \(A\) and \(B\) are found by minimizing the cross-entropy error on a set of pairs \((f(X_n), t_n)\). Crucially, this calibration set must be <em>independent</em> of the data used to train the SVM — fitting the sigmoid on the training data itself overfits severely. This two-stage construction is equivalent to treating the raw SVM output as an uncalibrated log-odds score; because the hinge-loss objective was never designed to produce well-calibrated posteriors, the resulting probabilities can still be imperfect.</p>
+<p><strong>Practical mechanics:</strong> In <code>sklearn.svm.SVC</code>, setting <code>probability=True</code> enables this second stage internally via cross-validation (the fitted parameters are exposed as <code>probA_</code> and <code>probB_</code>), after which <code>predict_proba</code> returns class probabilities. The current scikit-learn documentation recommends <code>CalibratedClassifierCV</code> around the SVM instead, and warns that the fitted probability model can disagree with <code>predict</code> and is unreliable on very small datasets. So hinge loss still buys sparsity — calibrated probabilities are a separate, post-hoc calibration step, not a property of the margin objective itself.</p>
+</div>
 <h3>17.3.8 Student Q&A</h3>
 <div class="important-note">
 <p><strong>Q:</strong> Why is the prediction "greater than 1" for a correctly classified positive point? Shouldn't it be exactly 1 on the margin? <strong>A:</strong> Points exactly on the margin give \(W\cdot X_i + b = +1\) (positive side) or \(-1\) (negative side) — these are the support vectors. But most correctly classified points lie <em>beyond</em> the margin, giving values \(> +1\) or \(< -1\). The margin boundary is the threshold, not a ceiling. Several students asked this — it's a key geometric point.</p>

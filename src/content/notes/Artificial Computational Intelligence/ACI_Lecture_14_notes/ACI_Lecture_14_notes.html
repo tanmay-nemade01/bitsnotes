@@ -376,6 +376,12 @@
   <p><strong>Sense-check:</strong> With prior 0.5 for each, the next state has \(0.5(0.4) + 0.5(0.2) = 0.3\) for Computer and \(0.5(0.6) + 0.5(0.8) = 0.7\) for Media, summing to 1.0.</p>
 </div>
 <p>You can keep multiplying by the TPM to get further future states, but note that the TPM stays fixed — it is a "stale" estimate. For one or two steps ahead this is reasonably accurate, but for longer horizons the TPM should ideally be updated.</p>
+<div class="key-concept">
+  <p><strong>Long-Horizon Limit — Stationary Distribution:</strong> Repeatedly multiplying by the same TPM does not diverge: for a regular chain the state distribution converges to a unique <em>stationary distribution</em> \(\boldsymbol{\pi}\) satisfying \( \boldsymbol{\pi}\,\text{TPM} = \boldsymbol{\pi} \) with \( \sum_i \pi_i = 1 \). Equivalently, \( \boldsymbol{\pi} \) is a left eigenvector of the TPM with eigenvalue \( 1 \). The rate of convergence is governed by the chain's <em>mixing time</em>; well beyond that horizon, predicting the actual state is unreliable unless \( \boldsymbol{\pi} \) is strongly concentrated.</p>
+  <p><strong>Worked calculation (shop TPM):</strong> Solve \( (a,b)\begin{pmatrix}0.4&0.6\\0.2&0.8\end{pmatrix} = (a,b) \) with \( a + b = 1 \):</p>
+  <p>\[ a = 0.4a + 0.2b \;\Rightarrow\; 0.6a = 0.2b \;\Rightarrow\; b = 3a \;\Rightarrow\; a = 0.25,\; b = 0.75 \]</p>
+  <p>So in the long run the customer buys Media \(75\%\) of visits and Computer \(25\%\), regardless of today's purchase. Contrast this with the single-step uniform-prior result \((0.3, 0.7)\) above: that is one step from a 50/50 start, whereas \((0.25, 0.75)\) is the limit after arbitrarily many steps.</p>
+</div>
 <h3 id="14.3.2-type-2-probability-of-a-specific-sequence">14.3.2 Type 2: Probability of a Specific Sequence</h3>
 <p>Given that today the customer bought a Computer, what is the probability that the purchasing behavior follows the exact sequence: Computer, Media, Media, Computer?</p>
 <p>This is a joint probability question, but we do <em>not</em> apply the chain rule from Bayesian networks. Instead, we use the Markov property directly. Each transition's probability comes from the TPM:</p>
@@ -653,6 +659,30 @@
 <div class="warning-box">
   <p><strong>Scope:</strong> Second-order HMMs are more expressive but require exponentially more parameters. For this course, the exam focuses on first-order HMMs. Second-order examples are shown for understanding only.</p>
 </div>
+<h3 id="14.4.6-dynamic-bayesian-networks" class="subsection-title">14.4.6 Dynamic Bayesian Networks (Factored State)</h3>
+<p>An HMM assumes a <em>single</em> state variable per time step. A <strong>dynamic Bayesian network (DBN)</strong> instead splits the state at each step into several variables, with every slice's links and conditional distributions copied from slice to slice and edges confined to a slice or the immediately preceding slice — the temporal analogue of the Bayesian networks studied earlier in the course.</p>
+<div class="important-note">
+  <p><strong>Expressive Equivalence, Practical Difference:</strong> Every HMM is a DBN with one state variable and one evidence variable, and every finite DBN can be turned into an HMM by merging all its state variables into a single tuple-valued variable. What changes is size: for \(n\) state variables with up to \(d\) values each, an HMM transition matrix needs \(O(d^{2n})\) entries, while a DBN with at most \(k\) parents per variable needs only \(O(nd^k)\) — linear in \(n\) rather than exponential. The exponential blow-up behind the second-order TPM above is exactly what this factored representation avoids.</p>
+</div>
+<div class="key-takeaway">
+  <p><strong>Takeaway:</strong> A DBN is the factored generalization of an HMM: the same first-order temporal semantics, but a compact representation when the state has many independently varying components. It is the bridge from the simple models in this lecture to the full Bayesian-network machinery used in practice.</p>
+</div>
+
+<h3 id="14.4.7-particle-filtering-for-approximate-inference-in-dbns" class="subsection-title">14.4.7 Particle Filtering for Approximate Inference in DBNs</h3>
+<p>Exact inference in a temporal model costs \(O(|X|^2)\) per update (Section 14.6), which becomes prohibitive when the state space is large or continuous. <em>Particle filtering</em> represents the belief state not as a full probability table but as a set of \(N\) weighted samples (particles), applying likelihood-weighted sampling one time slice at a time. It is the temporal analogue of likelihood weighting, augmented with a resampling step.</p>
+<div class="key-concept">
+  <p><strong>Sequential Importance Sampling and the Degeneracy Problem:</strong> Running likelihood weighting directly on an unrolled DBN suffers because none of the state variables have evidence variables among their ancestors — the samples are generated independently of the evidence. The fraction of samples carrying non-negligible weight therefore decays exponentially with the sequence length \(t\); with a fixed sample budget the approximation collapses after only a handful of updates. This failure mode is <em>sequential importance sampling (SIS)</em> without resampling.</p>
+  <p><strong>The Particle-Filtering Update (three steps):</strong></p>
+  <ol>
+    <li><strong>Propagate:</strong> for each particle \(x_t\), draw \(x_{t+1} \sim P(X_{t+1} \mid x_t)\) using the transition model (the TPM analogue).</li>
+    <li><strong>Weight:</strong> set \(w^{(i)} = P(e_{t+1} \mid x^{(i)}_{t+1})\) from the sensor model (the EPM analogue), giving the weighted belief \(\hat{P}(x, e_{t+1}) = \hat{P}(x)\,P(e_{t+1} \mid x)\); normalize to obtain \(\hat{P}(X \mid e_{t+1})\).</li>
+    <li><strong>Resample:</strong> draw \(N\) new particles <em>with replacement</em> from \(\hat{P}(X \mid e_{t+1})\), discarding low-weight particles and replicating high-weight ones.</li>
+  </ol>
+  <p>The belief after each update is approximated by \(\hat{P}(X_t = x) = \frac{\text{particles with value }x}{N}\), and the cost per step is \(O(N)\) — constant in the length of the evidence sequence. Resampling concentrates samples in high-posterior regions and is precisely what separates a practical particle filter from plain SIS.</p>
+</div>
+<div class="warning-box">
+  <p><strong>Pitfall — Sample Impoverishment:</strong> Aggressive resampling can replicate the same high-weight particle many times, collapsing the diversity of the population. If all particles coincide before the next observation, the filter can no longer represent alternative hypotheses, and no amount of subsequent weighting can recover them. This is the practical counterpart of the theoretical degeneracy of SIS.</p>
+</div>
 <div class="key-takeaway">
   <p><strong>Recap + Bridge:</strong> An HMM extends a Markov model by adding hidden states and observable evidence. It requires two matrices: the TPM (hidden-to-hidden transitions) and the EPM (hidden-to-evidence emissions). The urn game and the commute example both illustrate this two-matrix structure. Now that we know what an HMM is, the natural next question is: what kinds of questions can we ask of an HMM? That is the subject of Section 14.5 — the four HMM query types.</p>
 </div>
@@ -706,6 +736,22 @@
   <p>"What was the pressure on Day 3?"</p>
   <p>At the time Day 3 occurred, you only had evidence from Days 1–3 (filtering). But now, with evidence from Days 4 and 5 as well, you can produce a <em>better</em> estimate of Day 3's pressure. Smoothing incorporates the backward flow of information.</p>
   <p>The term "smoothing" comes from the fact that when tracking a moving object with noisy observations, the smoothed trajectory is literally smoother (less noisy) than the filtered trajectory.</p>
+</div>
+<div class="key-concept">
+  <p><strong>Formal Definition — Backward Message:</strong> Smoothing needs a second kind of message. Define the <em>backward message</em> \(b_{k+1:t}(i) = P(e_{k+1:t} \mid X_k = i)\): the probability of the evidence from \(k+1\) through \(t\), given that the state at time \(k\) is \(i\). Splitting the evidence around the query time \(k\) with Bayes' rule gives the smoothing identity</p>
+  <p>\[ P(X_k \mid e_{1:t}) = \alpha\,P(X_k \mid e_{1:k})\,P(e_{k+1:t} \mid X_k) = \alpha\,f_{1:k} \times b_{k+1:t} \]</p>
+  <p>where \(\times\) is pointwise multiplication of vectors, \(f_{1:k}\) is the ordinary filtering (forward) message computed at time \(k\), and \(\alpha\) renormalizes the result. The backward message obeys a recursion that runs in the opposite direction in time:</p>
+  <p>\[ b_{k+1:t}(i) = \sum_{j} P(e_{k+1} \mid X_{k+1}=j)\;P(e_{k+2:t} \mid X_{k+1}=j)\;P(X_{k+1}=j \mid X_k=i) \]</p>
+  <p>Every factor is either model-provided (the sensor model \(P(e \mid X)\) and the transition model \(P(X' \mid X)\)) or the previously computed backward message \(b_{k+2:t}\). The recursion is initialized at the right end with \(b_{t+1:t} = \mathbf{1}\), a vector of ones, because the probability of an empty evidence sequence is 1. Each backward update takes constant time, independent of \(t\).</p>
+</div>
+<div class="example-box">
+  <p><strong>Worked Trace — Smoothing the Umbrella Example:</strong> With \(P(u \mid \text{rain}) = 0.9\), \(P(u \mid \neg\text{rain}) = 0.2\), and transitions \(P(\text{rain} \mid \text{rain}) = 0.7\), \(P(\text{rain} \mid \neg\text{rain}) = 0.3\), suppose filtering has already produced \(f_{1:1} = \langle 0.818, 0.182 \rangle\) for Day 1 after seeing the first umbrella. A second umbrella arrives on Day 2; compute the smoothed belief for Day 1.</p>
+  <p>Backward message for Day 1:</p>
+  <p>\[ b_2(\text{rain}) = 0.9 \times 0.7 + 0.2 \times 0.3 = 0.69, \qquad b_2(\neg\text{rain}) = 0.9 \times 0.3 + 0.2 \times 0.7 = 0.41 \]</p>
+  <p>Combine forward and backward messages pointwise and renormalize:</p>
+  <p>\[ \langle 0.818 \times 0.69,\; 0.182 \times 0.41 \rangle = \langle 0.5644,\; 0.0746 \rangle \;\xrightarrow{\;\alpha\;}\; \langle 0.883,\; 0.117 \rangle \]</p>
+  <p>The smoothed probability of rain on Day 1 (<strong>0.883</strong>) exceeds the filtered estimate (0.818): the Day 2 umbrella makes rain on Day 2 more likely, and because rain persists, that in turn raises the probability of rain on Day 1. Evidence genuinely flows backward.</p>
+  <p><strong>Forward–Backward Algorithm:</strong> record the forward messages \(f_{1:i}\) for all \(i = 1,\ldots,t\) in one pass, initialize \(b = \mathbf{1}\), then sweep backward from \(i = t\) down to 1, storing \(P(X_i \mid e_{1:t}) = \text{NORMALIZE}(f_{1:i} \times b)\) and updating \(b \leftarrow \text{BACKWARD}(b, e_i)\). This reuses the forward pass to smooth the <em>entire</em> sequence in \(O(t)\) time instead of \(O(t^2)\); the memory cost is \(O(|f|\,t)\) in the stored forward messages.</p>
 </div>
 <h3 id="14.5.4-most-likely-explanation-viterbi-s-algorithm">14.5.4 Most Likely Explanation (Viterbi's Algorithm)</h3>
 <div class="key-concept">
@@ -857,6 +903,9 @@
 <hr>
 <p><strong>Final answer:</strong> The probability of the evidence sequence (Sunny, Sunny, Rainy) is obtained by summing the forward variables from the last day:</p>
 <p>\[ P(\text{Sunny}, \text{Sunny}, \text{Rainy}) = \alpha_3(L) + \alpha_3(H) = 0.03664 + 0.06008 = \mathbf{0.09672} \]</p>
+<div class="warning-box">
+  <p><strong>Pitfall — Numerical Underflow:</strong> The unnormalized forward variables \( \alpha_t(s) = P(s, e_{1:t}) \) are joint probabilities of longer and longer evidence prefixes, so they shrink at every step. On long sequences they eventually underflow floating-point arithmetic: \( \sum_s \alpha_T(s) \) can evaluate to \(0\) even though the true likelihood is positive. The normalization introduced in Step 1 therefore becomes essential here — rescaling \( \alpha_t \) by \( \sum_s \alpha_t(s) \) at each step keeps the numbers representable and is standard practice outside short hand-worked traces.</p>
+</div>
 <div class="example-box">
   <p><strong>Worked Example — Complete Trace:</strong> Here is the full computation in one view:</p>
   <table>

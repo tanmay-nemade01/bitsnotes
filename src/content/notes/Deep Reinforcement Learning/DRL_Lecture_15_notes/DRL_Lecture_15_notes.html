@@ -979,6 +979,24 @@
   <li>1 channel indicates which player is currently playing.</li>
 </ul>
 <p>So the input dimensions are \(8 \times 8\) spatial with 17 feature planes, giving an input tensor of shape \(8 \times 8 \times 17\).</p>
+
+<div class="important-note">
+  <p><strong>Architectural detail — why the history planes are necessary.</strong> The 8+8+1 breakdown above can look arbitrary, but it is forced by a subtle property of Go: a bare board image is <em>not a Markov state</em>. The Markov assumption underlying MDPs and value functions requires \(P(s_{t+1} \mid s_t) = P(s_{t+1} \mid s_1, \ldots, s_t)\) — the present state must be a sufficient statistic of the past. Two Go rules violate this for the raw stone layout:</p>
+  <ul>
+    <li><strong>Ko / repetition:</strong> a move that recreates a previously seen board position is illegal, so the set of <em>legal</em> actions depends on which positions occurred earlier, not only on the current stones.</li>
+    <li><strong>Komi (compensation points):</strong> the player without the first move receives compensation, so two visually identical stone layouts can carry different expected outcomes depending on who moved first.</li>
+  </ul>
+  <p>The network is therefore fed \(T = 8\) consecutive snapshots (the current player's stones over the last eight time steps, then the opponent's over the last eight) plus a colour / player-to-move plane. The history window makes repetition and side-to-move recoverable, restoring a practically Markov representation from which the policy \(p_\theta(s)\) and value \(v_\theta(s)\) are well defined.</p>
+  <table>
+    <thead>
+      <tr><th>Network input</th><th>Markov?</th><th>Consequence</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>Current \(19 \times 19\) stone layout only</td><td>No</td><td>Ko-legality and komi are invisible; the same image can imply different legal moves and outcomes</td></tr>
+      <tr><td>8-step history + colour plane (\(19 \times 19 \times 17\))</td><td>Yes (effectively)</td><td>Repetition and side-to-move are recoverable, so \(p_\theta\) and \(v_\theta\) are valid functions of the input</td></tr>
+    </tbody>
+  </table>
+</div>
 <p>This input is processed through a deep <em>convolutional neural network</em> (CNN) with residual blocks. The CNN automatically learns spatial features from the board position — detecting patterns like stone formations, territory control, and tactical shapes. The residual blocks allow the network to train deeper without degradation. (In the original AlphaGo Zero paper, the network had 41 residual blocks.)</p>
 <p>The output of the CNN is fed into two separate heads:</p>
 <ul>
@@ -1074,6 +1092,21 @@
     </tr>
   </tbody>
 </table>
+<div class="important-note">
+  <p><strong>The missing bridge — AlphaGo Zero (2017).</strong> The progression table jumps from AlphaGo straight to AlphaZero, but one system sits between them, and it introduced two of the "AlphaZero" changes listed in the previous section. AlphaGo Zero began from <em>random weights with no expert games</em> and merged AlphaGo's separate policy and value networks into a <em>single dual-headed network</em> — tabula-rasa self-play and one network were already present here before AlphaZero generalized them to chess and shogi.</p>
+  <p>Its third change is the one most easily overlooked: <strong>AlphaGo Zero removed the rollout phase entirely.</strong> AlphaGo's APV-MCTS scores a newly expanded leaf with the mixture \(v(s) = (1-\eta)v_\theta(s) + \eta G\), where \(G\) is a complete random playout (Section 15.11.4). AlphaGo Zero stops each simulation at the leaf and scores it directly with the network's value head, so the playout return \(G\) and the fast rollout policy disappear and the evaluation collapses to \(v(s) = v_\theta(s)\).</p>
+  <table>
+    <thead>
+      <tr><th>System</th><th>Expert data</th><th>Rollouts in MCTS</th><th>Networks</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>AlphaGo (2016)</td><td>Yes</td><td>Yes — APV-MCTS mixes \(v_\theta\) with rollout \(G\)</td><td>3 (SL policy, RL policy, value)</td></tr>
+      <tr><td>AlphaGo Zero (2017)</td><td>No</td><td><strong>No</strong> — leaf scored by value head only</td><td>1 (dual-headed)</td></tr>
+      <tr><td>AlphaZero (2017)</td><td>No</td><td>No</td><td>1 (dual-headed, general)</td></tr>
+    </tbody>
+  </table>
+  <p>Seen in this light, AlphaZero's contribution is generality of <em>domain</em> (the same rollout-free, single-network template applied to three games), while MuZero's contribution is to replace the <em>known rules</em> that these MCTS simulators assume with a learned latent model — the search machinery itself is inherited essentially unchanged.</p>
+</div>
 <div class="key-concept">
   <p><strong>MuZero's key innovation:</strong> Instead of using the true game dynamics in MCTS (which requires knowing the rules), MuZero learns a <em>latent model</em> of the environment. This model operates in a learned abstract state space (not the raw game state) and predicts: (1) the next latent state, (2) the immediate reward, and (3) the policy and value. The MCTS planner uses this learned model to simulate futures, entirely replacing the need for a programmed game simulator.</p>
 </div>

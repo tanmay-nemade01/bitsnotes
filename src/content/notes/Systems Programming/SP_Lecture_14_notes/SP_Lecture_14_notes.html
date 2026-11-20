@@ -1570,6 +1570,50 @@ if (pid &gt; 0) {
   </ul>
   <p>Real-world rule: a server that forks per request typically saves each child's PID and either waits for a specific child after a <code>select</code> timeout or installs a <code>SIGCHLD</code> handler that loops <code>waitpid(-1, &status, WNOHANG)</code> to reap whichever children have finished without blocking the dispatcher. Forgetting any reap path is how long-running services accumulate zombies.</p>
 </div>
+<div class="key-concept">
+  <p><strong>Decoding the status integer (Figure 8.4 made explicit):</strong> The <code>status</code> written by <code>wait</code>/<code>waitpid</code> is an implementation-defined integer, so POSIX.1 requires decoding it with macros from <code>&lt;sys/wait.h&gt;</code>. Exactly one of the four <code>WIF*</code> predicates is true for any returned status, and the companion value macro is meaningful only inside the matching branch.</p>
+  <table>
+    <thead>
+      <tr>
+        <th>Mutually exclusive test</th>
+        <th>True when</th>
+        <th>Companion value macro</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><code>WIFEXITED(status)</code></td>
+        <td>Child terminated normally via <code>exit</code>, <code>_exit</code>, or return from <code>main</code></td>
+        <td><code>WEXITSTATUS(status)</code> â€” low-order 8 bits of the exit argument</td>
+      </tr>
+      <tr>
+        <td><code>WIFSIGNALED(status)</code></td>
+        <td>Child terminated abnormally by an uncaught signal</td>
+        <td><code>WTERMSIG(status)</code> â€” signal number; <code>WCOREDUMP(status)</code> â€” core file generated</td>
+      </tr>
+      <tr>
+        <td><code>WIFSTOPPED(status)</code></td>
+        <td>Child is currently stopped (requires <code>WUNTRACED</code> or tracing)</td>
+        <td><code>WSTOPSIG(status)</code> â€” signal that caused the stop</td>
+      </tr>
+      <tr>
+        <td><code>WIFCONTINUED(status)</code></td>
+        <td>Stopped child was resumed by <code>SIGCONT</code> (<code>waitpid</code> only)</td>
+        <td>None â€” the predicate itself is the information</td>
+      </tr>
+    </tbody>
+  </table>
+  <p>Portability note: the companion text observes that <code>WCOREDUMP</code> was historically outside the Single UNIX Specification and could be hidden under <code>_POSIX_C_SOURCE</code>; current POSIX.1-2024 lists it, so guarding it with <code>#ifdef</code> remains the safe cross-version pattern.</p>
+</div>
+<div class="example-box">
+  <p><strong>Worked decoding trace (the companion's <code>pr_exit</code>):</strong> A parent that <code>fork</code>s three children and reaps each with <code>waitpid(pid, &amp;status, 0)</code> observes:</p>
+  <ul>
+    <li>Child A calls <code>exit(7)</code> â†’ <code>WIFEXITED</code> true, <code>WEXITSTATUS = 7</code>; the other three predicates are false.</li>
+    <li>Child B calls <code>abort()</code> (<code>SIGABRT</code> = 6) â†’ <code>WIFSIGNALED</code> true, <code>WTERMSIG = 6</code>, and on FreeBSD 8.0, Linux 3.2.0, Mac OS X 10.6.8 and Solaris 10 <code>WCOREDUMP</code> is true ("core file generated").</li>
+    <li>Child C divides by zero (<code>SIGFPE</code> = 8) â†’ <code>WIFSIGNALED</code> true, <code>WTERMSIG = 8</code>, core dump again; both numbers are read from <code>&lt;signal.h&gt;</code>.</li>
+  </ul>
+  <p>The dispatch skeleton is <code>if (WIFEXITED(status)) â€¦ else if (WIFSIGNALED(status)) â€¦ else if (WIFSTOPPED(status)) â€¦ else if (WIFCONTINUED(status)) â€¦</code> â€” safe precisely because the four tests are mutually exclusive. Reading raw bits instead would be non-portable across the implementations listed above.</p>
+</div>
 <div class="important-note">
   <p><strong>Q:</strong> After adding wait, what do you expect the parent to do?</p>
   <p><strong>A:</strong> The parent will exit only after the child has finished its work. The <code>wait</code> call blocks the parent until the child's exit can be collected. The run confirmed it: the parent printed a waiting message, the child executed to completion, and then the parent resumed and ended. In the trace with <code>PID</code> 1771 and child 1722, the parent's <code>waitpid(1722, &status, 0)</code> stayed blocked while 1722 ran, the kernel delivered <code>SIGCHLD</code> on 1722's <code>exit</code>, <code>waitpid</code> returned 1722, and only then did 1771 reach its own <code>return 0</code> / final print.</p>
@@ -1968,6 +2012,54 @@ int main(void) {
 <p>Real-world: diagnosing whether a process ended on its own or was killed, using exit codes in scripts.</p>
 <div class="key-takeaway">
   <p><strong>Recap + Bridge:</strong> <code>Ctrl+C</code> is <code>SIGINT</code>, survival hinged on <code>signal(SIGINT, sig_handler)</code> plus the handler's <code>signal(SIGINT, SIG_DFL)</code> switch that makes the first <code>Ctrl+C</code> a caught detour and the second a default termination with exit status <code>130</code> versus normal <code>0</code>. That disposition machinery is the base for the programmatic signals next â€” <code>raise</code> and <code>kill</code>.</p>
+</div>
+<h3 id="14.12.5-signal-masks-and-blocked-signals" class="subsection-title">14.12.5 Signal Masks and Blocked Signals</h3>
+<div class="key-concept">
+  <p><strong>Definition:</strong> Every process has a <em>signal mask</em> â€” the set of signals whose delivery is currently <em>blocked</em>. Conceptually one bit per signal, but because the number of signals can exceed the bits in an integer, POSIX.1 defines the opaque type <code>sigset_t</code> to hold a signal set. A generated signal whose disposition is to catch it but which is blocked stays <em>pending</em> until the process unblocks it or changes the action to ignore; whether a blocked standard signal generated twice is delivered once or queued is implementation-dependent.</p>
+  <p>Before use, a set must be initialised with <code>sigemptyset(&amp;set)</code> or <code>sigfillset(&amp;set)</code>; then <code>sigaddset</code>, <code>sigdelset</code>, and <code>sigismember</code> manipulate and test it. The mask itself is changed with:</p>
+  <p>\[ \text{int sigprocmask(int how, const sigset_t *set, sigset_t *oldset);} \]</p>
+  <table>
+    <thead>
+      <tr>
+        <th><code>how</code></th>
+        <th>Effect on the blocked-signal set</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><code>SIG_BLOCK</code></td>
+        <td>Union of the current mask with <code>set</code> (add signals to the blocked set)</td>
+      </tr>
+      <tr>
+        <td><code>SIG_UNBLOCK</code></td>
+        <td>Intersection of the current mask with the complement of <code>set</code> (remove signals)</td>
+      </tr>
+      <tr>
+        <td><code>SIG_SETMASK</code></td>
+        <td>Assignment â€” the blocked set becomes exactly <code>set</code></td>
+      </tr>
+    </tbody>
+  </table>
+  <p>A non-null <code>oldset</code> receives the previous mask; a null <code>set</code> leaves the mask unchanged and merely queries it. If any unblocked signal is pending when <code>sigprocmask</code> returns, at least one is delivered before the call returns.</p>
+</div>
+<div class="example-box">
+  <p><strong>Worked critical section:</strong> Protect a shared update from <code>SIGINT</code> using the companion's mask idiom:</p>
+  <pre><code>#include &lt;signal.h&gt;
+sigset_t newmask, oldmask;
+sigemptyset(&amp;newmask);
+sigaddset(&amp;newmask, SIGINT);
+sigprocmask(SIG_BLOCK, &amp;newmask, &amp;oldmask);  /* enter: union  */
+/* ... critical section; SIGINT stays pending here ... */
+sigprocmask(SIG_SETMASK, &amp;oldmask, NULL);    /* exit: restore  */</code></pre>
+  <p>While blocked, a <code>Ctrl+C</code> does not run the handler; it becomes pending. Restoring <code>oldmask</code> with <code>SIG_SETMASK</code> unblocks <code>SIGINT</code>, and the pending signal is delivered before <code>sigprocmask</code> returns, so the handler runs at the boundary rather than inside the critical section.</p>
+</div>
+<div class="warning-box">
+  <p><strong>Pitfalls:</strong></p>
+  <ul>
+    <li><code>SIGKILL</code> and <code>SIGSTOP</code> cannot be blocked â€” attempts are silently ignored, so a mask is never a guarantee against forcible termination.</li>
+    <li>A signal generated repeatedly while blocked is normally coalesced into a single pending delivery (no queueing for standard signals unless real-time extensions apply), so a mask cannot be used as a counter of events.</li>
+    <li><code>sigprocmask</code> is specified for single-threaded processes; in a multithreaded process each thread has its own mask and <code>pthread_sigmask</code> should be used. The mask is inherited across <code>fork</code> and preserved across <code>exec</code>.</li>
+  </ul>
 </div>
 
 <h2 id="14.13-raising-and-sending-signals-raise-and-kill">14.13 Raising and Sending Signals â€” raise and kill</h2>

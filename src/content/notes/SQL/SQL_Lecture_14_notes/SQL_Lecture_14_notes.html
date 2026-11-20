@@ -670,6 +670,41 @@ SELECT * FROM demo_avg;</code></pre>
   <p><strong>Recap:</strong> AVG rejects text and skips NULLs — \((1+2+3)/3 = 2\), never divided by 4. The bridge forward: aggregates collapse columns, but the five arithmetic operators next build new values <em>within</em> each row before any collapsing happens.</p>
 </div>
 
+<h3 id="14.4.5-dispersion-aggregates-variance-and-standard-deviation" class="subsection-title">14.4.5 Dispersion Aggregates: Variance and Standard Deviation</h3>
+<div class="key-concept">
+  <p><strong>Beyond the mean.</strong> AVG locates the centre of a column but says nothing about how widely the values scatter around it. Two further aggregate families measure that scatter. For the non-missing values \(x_1, \dots, x_N\) with population mean \(\mu\) (or sample mean \(\bar{x}\)):</p>
+  <p>\[ \mathrm{Var}_{pop} = \frac{1}{N}\sum_{i=1}^{N}(x_i - \mu)^2, \qquad \mathrm{Var}_{samp} = \frac{1}{n - 1}\sum_{i=1}^{n}(x_i - \bar{x})^2 \]</p>
+  <p>Variance is the average squared distance from the mean; standard deviation is its square root and so returns to the original unit of measurement. PostgreSQL exposes <code>stddev_pop</code> and <code>stddev_samp</code> beside <code>var_pop</code> and <code>var_samp</code>, while the bare names <code>variance</code> and <code>stddev</code> are historical aliases for <code>var_samp</code> and <code>stddev_samp</code>. The \(n - 1\) divisor in the sample form is Bessel's correction: it makes the sample variance an unbiased estimate of the population variance, which is why the sample figures always run slightly larger.</p>
+</div>
+<div class="example-box">
+  <p><strong>Worked calculation — four constructed lengths.</strong> Take \(100, 110, 120, 130\) with \(N = 4\) and mean \(115\). The deviations are \(-15, -5, 5, 15\); their squares are \(225, 25, 25, 225\), summing to \(500\). Population variance is \(500/4 = 125\), so \(\mathrm{stddev\_pop} = \sqrt{125} \approx 11.18\). Sample variance is \(500/3 \approx 166.67\), so \(\mathrm{stddev\_samp} \approx 12.91\).</p>
+  <pre><code>SELECT var_pop(n), var_samp(n), stddev_pop(n), stddev_samp(n)
+FROM (VALUES (100), (110), (120), (130)) AS t(n);</code></pre>
+  <p>Sense-check: the sample numbers exceed the population numbers because the smaller \(n - 1\) divisor inflates the estimate, and standard deviation (minutes) is the square-root scale of variance (squared minutes) — the same spread expressed in two units.</p>
+</div>
+<div class="warning-box">
+  <p><strong>Edge case and dialect check.</strong> These aggregates skip NULL input, and \(N\) counts only non-null rows. When the computation is meaningless a NULL is returned rather than zero: with a single non-null value, <code>var_samp</code> and <code>stddev_samp</code> return NULL because the \(n - 1\) divisor is zero, whereas <code>var_pop</code> and <code>stddev_pop</code> return \(0\). The same four function names exist in MySQL (<code>VAR_POP</code>, <code>VAR_SAMP</code>, <code>STDDEV_POP</code>, <code>STDDEV_SAMP</code>, with <code>STD</code>/<code>STDDEV</code> aliases), Snowflake and Databricks; check which of sample versus population a bare <code>variance</code> or <code>stddev</code> alias defaults to before comparing numbers across engines.</p>
+</div>
+
+<h3 id="14.4.6-median-and-percentiles-ordered-set-aggregates" class="subsection-title">14.4.6 Median and Percentiles: Ordered-Set Aggregates</h3>
+<div class="key-concept">
+  <p><strong>The typical value when the mean misleads.</strong> A handful of extreme rows pull AVG toward them, so skewed data such as incomes or populations are often summarised by the <em>median</em> — the 50th percentile, the point below which half the ordered values fall. SQL has no built-in <code>median()</code>; percentiles are ANSI SQL and use <em>ordered-set</em> syntax, with the sort written inside <code>WITHIN GROUP</code>:</p>
+  <pre><code>SELECT percentile_cont(0.5) WITHIN GROUP (ORDER BY movie_length),
+       percentile_disc(0.5) WITHIN GROUP (ORDER BY movie_length)
+FROM movies;</code></pre>
+  <p><code>percentile_cont</code> treats the fraction as continuous and interpolates between adjacent rows, so it may return a number absent from the table; <code>percentile_disc</code> returns an actual member, the first value whose cumulative position reaches the fraction. The fraction must lie in \([0, 1]\), NULLs in the ordered input are ignored, and a NULL fraction produces a NULL result.</p>
+</div>
+<div class="example-box">
+  <p><strong>Worked calculation — median of six values.</strong> For \(1, 2, 3, 4, 5, 6\) the two middle values are \(3\) and \(4\). The continuous form averages them, \((3 + 4)/2 = 3.5\); the discrete form returns \(3\), the last value in the first half. With seven values \(1, \dots, 7\), both forms return \(4\), the single middle member.</p>
+  <pre><code>SELECT percentile_cont(0.5) WITHIN GROUP (ORDER BY n) AS median_cont,
+       percentile_disc(0.5) WITHIN GROUP (ORDER BY n) AS median_disc
+FROM (VALUES (1), (2), (3), (4), (5), (6)) AS t(n);</code></pre>
+  <p>The diagnostic habit is to report the median beside the mean and compare. When the two diverge sharply the cause is a skewed tail, not a bug, and the median is usually the more honest "typical" number. A quantile such as \(0.25\) or \(0.75\) generalises the same idea to quartiles.</p>
+</div>
+<div class="warning-box">
+  <p><strong>Scope and portability.</strong> Percentiles are whole-table aggregates: they collapse the input to one value, unlike the ranking functions taught later, which attach a position to every row. <code>percentile_cont</code> and <code>percentile_disc</code> are available in PostgreSQL, SQL Server and Snowflake; MySQL 8 has no ordered-set percentile, so the median is reproduced with a windowed row-number expression or a subquery that averages the two middle rows. Keep the interpolated and discrete forms distinct in reporting — 3.5 and 3 answer different questions even on the same six values.</p>
+</div>
+
 <h2 id="14.5-combining-columns-with-mathematical-operators">14.5 Combining Columns with Mathematical Operators</h2>
 <h3 id="14.5.1-the-five-operators">14.5.1 The Five Operators</h3>
 <div class="important-note">

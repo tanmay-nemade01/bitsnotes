@@ -463,6 +463,14 @@
   <p>Here \(d(i, j)\) is a scalar gap with \(d(i, j) \ge 0\), small when the two frames matter in the same mix of ways. This is the ordinary Euclidean distance equation applied to the new triplet feature vector rather than to pixels. Self-checks: distance is zero when triplets match exactly; it is symmetric with \(d(i,j) = d(j,i)\); and each output lies in \([0, \sqrt{3}]\) since each cue gap lies in \([-1, 1]\). A tiny spot-check: triplets \((1, 0, 0)\) and \((0, 1, 0)\) give \(d = \sqrt{2} \approx 1.414\), large as expected for opposite strengths.</p>
 </div>
 <p>K-means then clusters these triplet points: it picks \(K\) centers, assigns each frame to its nearest center by \(d(i, j)\), moves each center to its group mean, and repeats. Feature choice matters more than the clustering routine itself, which is the professor intuition to carry forward: the same k-means on pixels versus on triplets gives garbage versus story-aware groups.</p>
+
+<div class="key-concept">
+  <p><strong>Formalize: what k-means actually minimizes.</strong> Write the \(K\) groups of frames as \(C_1, \ldots, C_K\) and the mean (centroid) of group \(C_k\) as \(\mu_k = \frac{1}{|C_k|}\sum_{i \in C_k} x_i\), where \(x_i = (s_i^{v}, s_i^{a}, s_i^{m})\) is the importance triplet of frame \(i\). Lloyd's iteration alternates two steps until the assignments stop changing:</p>
+  <p>\[ \text{assign: } C_k \leftarrow \{ i : d(i, \mu_k) \le d(i, \mu_{\ell}) \ \forall \ell \}, \qquad \text{update: } \mu_k \leftarrow \frac{1}{|C_k|}\sum_{i \in C_k} x_i \]</p>
+  <p>Both steps decrease the same objective, the within-cluster sum of squares (often called <em>inertia</em>):</p>
+  <p>\[ J = \sum_{k=1}^{K}\sum_{i \in C_k} d(i, \mu_k)^{2} = \sum_{k=1}^{K}\sum_{i \in C_k} \| x_i - \mu_k \|^{2} \]</p>
+  <p>Because each step can only lower \(J\), the iteration converges, but to a <em>local</em> minimum: an unlucky random start can leave a centroid far from any real group. Two repairs follow straight from the objective. <strong>Multiple restarts</strong> run the whole iteration from different seeds and keep the grouping with the smallest \(J\). <strong>k-means++ initialization</strong> places each new center by sampling with probability proportional to its squared distance from the nearest existing center, which spreads the seeds, speeds up convergence, and lowers the final \(J\). Average cost is \(O(KNT)\) for \(N\) frames and \(T\) iterations, so several restarts are cheap at skim scale.</p>
+</div>
 <div class="warning-box">
   <p><strong>Scope:</strong> the triplet average assumes the three cues share one scale and deserve equal weight. <strong>Assumption:</strong> each cue score is calibrated to \([0, 1]\) with larger meaning more important. When one cue is noisier than the others, use a weighted average instead of \(1/3\) each. When sound is missing, average only over present cues rather than inserting zero, or silence drags every score down unfairly.</p>
 </div>
@@ -486,6 +494,45 @@
 </div>
 <div class="warning-box">
   <p>Beginners run Euclidean distance on raw pixels and wonder why day and night shots of the same event never group. Pixels measure appearance, not importance. Another trap is fixing \(K\) once for all videos: a quiet lecture needs few groups while a football match needs many, so adapt \(K\) per video and check groups against viewer judgment.</p>
+</div>
+
+<div class="important-note">
+  <p><strong>How to adapt \(K\) without guessing it: non-parametric mode finding.</strong> The warning above fixes \(K\) by hand, but the companion text draws a sharp line between two families. <em>K-means is parametric</em>: it treats frames as samples from a fixed mixture of spherically symmetric blobs, so the group count must be supplied in advance and every group inherits the same round shape. <em>Mean shift is non-parametric</em>: it smooths the observed density of triplet points and walks each seed uphill to the nearest peak, so the number of groups is whatever number of modes the data actually contains.</p>
+  <p>Formally, start seeds \(y^{(0)}\) in triplet space and repeatedly shift each seed to the mean of the points inside a window of radius \(h\) around it:</p>
+  <p>\[ y^{(t+1)} = \frac{\sum_{i: \|x_i - y^{(t)}\| \le h} x_i}{\left|\{i : \|x_i - y^{(t)}\| \le h\}\right|} \]</p>
+  <p>Seeds that converge to the same peak are merged, and each surviving peak becomes one group of frames.</p>
+  <table>
+    <thead>
+      <tr>
+        <th>Property</th>
+        <th>K-means (parametric)</th>
+        <th>Mean shift (non-parametric)</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>Group count</td>
+        <td>Fixed \(K\) supplied by the user</td>
+        <td>Discovered from the number of density peaks</td>
+      </tr>
+      <tr>
+        <td>Control knob</td>
+        <td>\(K\) and the initialization</td>
+        <td>Window radius \(h\); wide \(h\) merges peaks, narrow \(h\) splits them</td>
+      </tr>
+      <tr>
+        <td>Shape assumption</td>
+        <td>Round, equally sized groups</td>
+        <td>Any peak shape the smoothed density reveals</td>
+      </tr>
+      <tr>
+        <td>Fit to this lecture</td>
+        <td>Groups triplets by distance to \(K\) chosen centers</td>
+        <td>Answers "adapt \(K\) per video" without hand-picking \(K\)</td>
+      </tr>
+    </tbody>
+  </table>
+  <p><strong>Trade-off:</strong> the freedom costs a bandwidth choice and extra computation, since density estimation and mode seeking scale worse than k-means as dimensionality grows. The triplet space stays small here (three cues), so the cost is modest; the same radius \(h\) can yield few groups for a quiet lecture and many for a football match automatically, which is exactly the per-video adaptation a single fixed \(K\) cannot give. Check the surviving peaks against viewer judgment just as with k-means groups.</p>
 </div>
 <h3 id="15.4.2-worked-examples" class="subsection-title">15.4.2 Worked Examples</h3>
 <div class="example-box">

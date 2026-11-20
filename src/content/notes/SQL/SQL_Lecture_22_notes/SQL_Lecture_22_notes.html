@@ -992,6 +992,48 @@ WHERE tablename = 'orders' AND indexname = 'idx_orders_order_date_hash';</code><
 </div>
 <p><strong>Real-World & Domain Connection:</strong> Log aggregation and time-series monitoring systems, such as Prometheus or audit event stores, use BRIN indexing on event timestamps to manage multi-terabyte tables without encountering B-tree index bloat. E-commerce product catalogs store arbitrary product attributes in PostgreSQL <code>JSONB</code> columns indexed with <code>GIN</code>, enabling dynamic multi-filter facet navigation without requiring schema migrations for new product specifications.</p>
 
+<h3 id="22.4.6-gist-and-spgist-generalized-search-trees" class="subsection-title">22.4.6 GiST and SP-GiST: Generalized Search Trees Beyond the B-Tree</h3>
+<div class="key-concept">
+  <p><strong>Formal Definition — Generalized Search Tree (GiST):</strong> GiST is a balanced, tree-structured access method that acts as a base template in which arbitrary indexing schemes (B-trees, R-trees, and others) can be implemented. Where a B-tree assumes a total order \( <, =, > \) over scalar keys, GiST delegates two responsibilities to an <em>operator class</em>: a <code>consistent</code> predicate that decides whether a subtree can satisfy a query, and a <code>union</code> function that summarizes a set of child keys into one parent key. Formally, each internal node stores a lossy bounding key \( u = \text{union}(k_1, \dots, k_n) \) that must contain every descendant key \( k_i \); a search descends only into branches where \( \text{consistent}(u, q) = \text{true} \). This relaxation lets types with no total order — geometric points, boxes, polygons, ranges, and network addresses — be indexed. SP-GiST (space-partitioned GiST) is the complementary design: it maps <em>non-balanced</em> partitioned trees (quadtrees, k-d trees, radix tries) onto 8 KB pages by repeatedly splitting the search space into partitions that need not be equal in size.</p>
+</div>
+<table>
+  <thead>
+    <tr><th>Access Method</th><th>Tree Balance</th><th>Organizing Principle</th><th>Representative Operators</th><th>Best Fit</th></tr>
+  </thead>
+  <tbody>
+    <tr><td><strong>B-tree</strong></td><td>Balanced</td><td>Total order on scalar keys</td><td><code>&lt;</code>, <code>=</code>, <code>&gt;</code>, <code>BETWEEN</code></td><td>High-cardinality scalars, ranges, <code>ORDER BY</code></td></tr>
+    <tr><td><strong>GiST</strong></td><td>Balanced</td><td>Overlapping bounding keys via <code>union</code>/<code>consistent</code></td><td><code>&amp;&amp;</code>, <code>@&gt;</code>, <code>&lt;@</code>, <code>&lt;-&gt;</code></td><td>Geometry, ranges, <code>inet</code>, full-text (<code>tsvector</code>)</td></tr>
+    <tr><td><strong>SP-GiST</strong></td><td>Non-balanced</td><td>Recursive space partitioning (quadtree, k-d tree, trie)</td><td><code>&lt;-&gt;</code>, <code>@&gt;</code>, <code>^@</code></td><td>Skewed 2-D point clouds, IP routing prefixes, string prefixes</td></tr>
+    <tr><td><strong>GIN / BRIN</strong></td><td>Inverted / summary</td><td>Posting lists or per-block min/max summaries</td><td><code>@&gt;</code>, <code>@@</code></td><td>Arrays, JSONB, documents / correlated append-only logs</td></tr>
+  </tbody>
+</table>
+<div class="example-box">
+  <p><strong>Worked Example: k-Nearest-Neighbour Search with a GiST Index</strong></p>
+  <p><strong>Objective:</strong> Retrieve the five points closest to a query point from a <code>places</code> table whose <code>location</code> column has no natural scalar ordering.</p>
+  <pre><code>CREATE INDEX idx_places_location_gist ON places USING gist (location);
+EXPLAIN SELECT name FROM places ORDER BY location &lt;-&gt; point(0, 0) LIMIT 5;</code></pre>
+  <p>GiST's built-in <code>point_ops</code> operator class exposes the <code>&lt;-&gt;</code> distance ordering operator. The executor descends the tree by increasing bounding-box distance and returns the closest tuples first, avoiding a full sort of the relation.</p>
+  <p><strong>Final result:</strong> An <code>Index Scan using idx_places_location_gist</code> with <code>Order By: (location &lt;-&gt; '(0,0)'::point)</code>; SP-GiST's <code>quad_point_ops</code> and <code>kd_point_ops</code> expose the same k-NN operator through a different partitioned layout.</p>
+</div>
+
+<h3 id="22.4.7-bloom-filter-indexes-signature-based-multi-column-exclusion" class="subsection-title">22.4.7 Bloom Filter Indexes: Signature-Based Multi-Column Exclusion</h3>
+<div class="key-concept">
+  <p><strong>Formal Definition — Bloom Index Signature:</strong> A Bloom index maps each row's indexed attributes to a fixed-length bit signature \( s \in \{0,1\}^{L} \), where \( L \) is the signature length in bits (default \( L = 80 \), maximum \( 4096 \), rounded up to a multiple of 16) and each column \( j \) contributes \( b_j \) bits (default \( 2 \), maximum \( 4095 \)), with \( \sum_{j} b_j \le L \). Equality lookups test signature membership; because a signature is a lossy representation, it can yield <em>false positives</em>, so every candidate returned by the index must be rechecked against the actual heap tuple. One such structure can replace many single-column B-trees when queries test arbitrary combinations of many attributes.</p>
+</div>
+<div class="example-box">
+  <p><strong>Worked Example: Six-Column Bloom Index versus B-Tree Indexes on 10 Million Rows</strong></p>
+  <p><strong>Objective:</strong> Accelerate the two-column equality predicate <code>i2 = 898732 AND i5 = 123451</code> on a 10,000,000-row <code>tbloom</code> table.</p>
+  <pre><code>CREATE EXTENSION bloom;  -- available since PostgreSQL 9.6
+CREATE INDEX bloomidx ON tbloom USING bloom (i1, i2, i3, i4, i5, i6);</code></pre>
+  <p><strong>Step 1 — Baseline:</strong> A sequential scan removes all 10,000,000 rows by filter and takes about <strong>357 ms</strong>.</p>
+  <p><strong>Step 2 — Composite B-tree:</strong> <code>CREATE INDEX ON tbloom (i1,...,i6)</code> consumes <strong>386 MB</strong> but is ignored, because the leading column <code>i1</code> is unconstrained — the same leading-column rule from Section 22.1.2.</p>
+  <p><strong>Step 3 — Bloom index:</strong> A <code>Bitmap Index Scan on bloomidx</code> produces a candidate bitmap whose <code>Recheck Cond</code> discards <strong>2,300</strong> false positives via <code>Rows Removed by Index Recheck</code>; the index occupies only <strong>153 MB</strong> and execution falls to about <strong>22.6 ms</strong>.</p>
+  <p><strong>Final result:</strong> Six separate single-column B-trees reach <code>0.047 ms</code> through <code>BitmapAnd</code> but occupy <strong>531 MB</strong> (6 × 88.5 MB) — over three times the Bloom index — illustrating the storage-versus-latency trade-off.</p>
+</div>
+<div class="warning-box">
+  <p><strong>Scope & Limitations:</strong> Bloom indexes support equality (<code>=</code>) only — no range predicates, sorting, <code>UNIQUE</code> constraints, or <code>NULL</code> searches. Larger signatures reduce false positives but enlarge the index and slow its scan, so a B-tree remains faster for a single-column predicate. The signature recheck is the same <code>Recheck Cond</code> mechanism already encountered with BRIN range summaries and bitmap heap scans.</p>
+</div>
+
 <h2 id="22.5-query-plan-inspection-with-explain-and-explain-analyze">22.5 Query Plan Inspection with EXPLAIN and EXPLAIN ANALYZE</h2>
 <h3 id="22.5.1-the-explain-statement-and-cost-tuple-syntax">22.5.1 The EXPLAIN Statement and Cost Tuple Syntax</h3>
 <div class="important-note">

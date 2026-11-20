@@ -472,6 +472,49 @@
 <div class="important-note">
   <p><strong>Decoupling.</strong> The ecosystem consuming the processed events sits on the right-hand side of the model, and it is disconnected from the devices that produce data. Data producers, data consumers, and the processing unit are all separate, and the consumers consume at their own time scales — consumption does not have to happen immediately after processing. A consumer that went offline at 10:00 can still read the enriched events produced at 10:00 when it returns; the reference book makes exactly this point when it defines a streaming data system as a non-hard real-time service whose clients consume data when they need it.</p>
 </div>
+<h3 id="3.3.4-stream-joins-combining-events-across-multiple-inputs" class="subsection-title">3.3.4 Stream Joins: Combining Events Across Multiple Inputs</h3>
+<div class="key-concept">
+  <p><strong>Formal definition — stream join.</strong> Section 3.2 enumerated filtering and aggregation on a <em>single</em> stream; the computational model of 3.3 has many uncontrolled sources, so the process box must also combine events arriving on <em>different</em> inputs. A join correlates events from two inputs by a common key and keeps the state needed to find matches as events arrive. Because a stream never ends, the sort-merge joins of the batch world do not apply: the join must hold state (recent events, a profile table, a follower list) and query it on messages from the other input. There are exactly three cases:</p>
+</div>
+<table>
+  <thead>
+    <tr>
+      <th>Join type</th>
+      <th>Inputs</th>
+      <th>State maintained</th>
+      <th>Output / purpose</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td>Stream–stream (window join)</td>
+      <td>Two event streams</td>
+      <td>Events of both streams in the window, indexed by key</td>
+      <td>Paired events (search + click) for a click-through rate</td>
+    </tr>
+    <tr>
+      <td>Stream–table (stream enrichment)</td>
+      <td>Event stream + changing table (changelog)</td>
+      <td>Local copy of the table, refreshed by change data capture</td>
+      <td>Each event augmented with current reference data — the enriched event of 3.3.3</td>
+    </tr>
+    <tr>
+      <td>Table–table (materialized view maintenance)</td>
+      <td>Two changelog streams</td>
+      <td>One side's current state (e.g. a follower list)</td>
+      <td>A continuously updated derived table (e.g. a timeline cache)</td>
+    </tr>
+  </tbody>
+</table>
+<div class="example-box">
+  <p><strong>Worked example — the click-through window join.</strong> A search event and a click event carry the same session ID. The click may arrive seconds or days after the search, and network delay can even deliver the click first, so the engine pairs only events whose timestamps lie within a chosen bound \(W\) (say one hour):</p>
+  <p>\[ t_{\text{click}} \in [\,t_{\text{search}},\, t_{\text{search}} + W\,], \qquad W = 1\ \text{hour} \]</p>
+  <p>For each session the processor buffers the search event for one hour, indexed by session ID; when a click arrives it looks up the matching search and emits a pair, otherwise the search expires unmatched. This is a Flink-style interval join with lower bound \(0\) and upper bound \(W\). <strong>Result:</strong> each click is attributed to its search, giving a correct click-through rate — embedding the search details inside the click event would not do this, because it would omit searches that received no click at all.</p>
+</div>
+<div class="warning-box">
+  <p><strong>Pitfall — time-dependence of joins.</strong> All three join types maintain state from one input and query it on the other, so the <em>order</em> in which events across streams are processed matters: a profile update joined before or after an activity event yields a different enriched event. A partitioned log preserves order only <em>within</em> one partition, not across streams; when cross-stream ordering is undetermined the join becomes non-deterministic, and re-running the job on the same input need not reproduce the same output. Bounding the window in event time limits how long such state must be kept, but it does not remove the interleaving ambiguity.</p>
+</div>
+
 <p><strong>Recap and bridge.</strong> The computational model keeps input-process-output, but the input is heterogeneous (many uncontrolled sources), the output is enriched events (raw events plus computed insight) served to diverse clients that consume at their own pace. Next, section 3.4 places this model in the real-time classification from 3.1: what kind of real-time system is a streaming system?</p>
 
 <h2 id="3.4-streaming-systems-versus-real-time-systems">3.4 Streaming Systems versus Real-Time Systems</h2>

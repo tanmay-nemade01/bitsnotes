@@ -352,6 +352,43 @@ flowchart TD
 <div class="warning-box">
   <p><strong>Pitfalls.</strong> Naming the index column without the class silently uses default ordering and the demo appears to "work" while sorting wrong. Reusing the class name without dropping the old class first raises a duplicate-object error. Forgetting <code>FOR TYPE text USING btree</code> binds the class to the wrong type or method, so later <code>CREATE INDEX</code> cannot find it.</p>
 </div>
+
+<div class="important-note">
+  <p><strong>System detail — operator classes, families, and the catalog.</strong> A B-tree operator class is the minimum bundle an index needs for one data type: the five strategy operators plus the comparison support function registered above. PostgreSQL explicitly allows several classes for the same type and access method, and marks only one as the <em>default</em>. Because <code>opclass_ssn_ops1</code> was created without <code>DEFAULT</code>, a plain <code>CREATE INDEX</code> still uses default text ordering and the tail-first order appears only when the class is named. An <em>operator family</em> is the wider grouping: it contains one or more compatible classes and may hold "loose" cross-type operators and support functions that belong to the family rather than to any single class. Companion material calls classes and families the <em>glue objects</em> that register index access methods so the planner can decide to use a new index.</p>
+  <table>
+    <thead>
+      <tr>
+        <th>Level</th>
+        <th>Scope</th>
+        <th>Role in this lecture</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>Operator class</td>
+        <td>One data type plus one access method; minimum operators and support functions</td>
+        <td><code>opclass_ssn_ops1</code> binds strategies 1–5 and <code>FUNCTION 1 ssn_compare</code> for text.</td>
+      </tr>
+      <tr>
+        <td>Operator family</td>
+        <td>One or more compatible classes; may include loose cross-type operators</td>
+        <td>Groups classes whose operators sort compatibly, which helps planner reasoning about comparisons.</td>
+      </tr>
+      <tr>
+        <td>Default class</td>
+        <td>The class chosen when no class is named</td>
+        <td>Only the default text class serves plain indexes; the tail-first class must be named explicitly.</td>
+      </tr>
+    </tbody>
+  </table>
+  <p><strong>System dependency.</strong> PostgreSQL also reads the default B-tree class to define the meaning of <code>ORDER BY</code>, <code>DISTINCT</code>, and <code>GROUP BY</code> for a type, so class semantics reach beyond indexes. To inspect the family behind the built-in text/btree class, query the catalogs:</p>
+  <pre><code>SELECT amop.amopopr::regoperator
+FROM pg_opclass c
+JOIN pg_am am ON am.oid = c.opcmethod
+JOIN pg_amop amop ON amop.amopfamily = c.opcfamily
+WHERE c.opcintype = 'text'::regtype AND am.amname = 'btree';</code></pre>
+  <p>The join walks <code>pg_opclass</code> → <code>pg_am</code> (access method) → <code>pg_amop</code> (family members), returning the text comparison operators that a class such as <code>opclass_ssn_ops1</code> mirrors at strategies 1–5. MySQL, Snowflake, and Databricks expose no user-defined operator classes or families, so this catalog path is PostgreSQL-only; their substitute remains a derived column with a plain index, as noted above.</p>
+</div>
 <p>Cross-database supporting note: MySQL, Snowflake, and Databricks have no <code>CREATE OPERATOR CLASS</code> statement. In MySQL the portable substitute is an expression or generated-column index such as <code>INDEX ((SUBSTRING(...)))</code> on recent versions, or a stored generated column plus a plain index. In Snowflake and Databricks the substitute is a derived column in a view or materialized result with clustering or sorting on that column. The PostgreSQL class is worth learning as the PostgreSQL spelling of "teach the index a new sort order", with generated-column indexes as its sibling elsewhere.</p>
 <h3 id="47.1.5-planner-control-and-reading-explain-output">47.1.5 Planner control and reading EXPLAIN output</h3>
 <p>PostgreSQL normally prefers a sequential scan for tiny tables, so the session first shows the default plan with a plain <code>ORDER BY ssn</code> producing a sequential scan with sort key <code>ssn</code>, then changes the planner switch to force the new path during testing:</p>
@@ -445,6 +482,44 @@ LANGUAGE sql IMMUTABLE;</code></pre>
 <p>A common wrong reading is that the function adds a fresh 5 per row; the walk shows 5 enters only once through INITCOND, and each call adds just \(km \times rate\). The counter-example in the worked examples quantifies that overshoot so the distinction sticks.</p>
 <div class="warning-box">
   <p><strong>Scope:</strong> this transition assumes non-negative distances and a fixed non-negative rate passed per call. <strong>Assumption:</strong> rows within a group can fold in any order because addition commutes, so \(a + b = b + a\) keeps the total order-independent. If the fold involved a non-commutative step such as string concatenation in arrival order, row order would need an <code>ORDER BY</code> inside the aggregate.</p>
+</div>
+
+<div class="example-box">
+  <p><strong>Order-sensitive folds and the in-call <code>ORDER BY</code>.</strong> The fare fold above is commutative, so the \(km \times rate\) additions reach \(36.00\) and \(17.50\) regardless of arrival order. An order-sensitive fold is different: PostgreSQL documents that <code>array_agg</code>, <code>string_agg</code>, and similar user-defined aggregates "produce meaningfully different result values depending on the order of the input values", and that this ordering is unspecified unless an <code>ORDER BY</code> is written inside the aggregate call. Formally, with a permutation \(\pi\) that sorts a group's rows by key \(k\):</p>
+  <p>\[ \text{agg}(x_1, \dots, x_n \mid \pi) = F\big(x_{\pi(1)}, x_{\pi(2)}, \dots, x_{\pi(n)}\big) \]</p>
+  <p><strong>Worked trace on the taxi table.</strong> Trip 1 rows arrive as \(3.5, 4.2, 1.2, 3.5\). <code>SELECT string_agg(kilometer::text, ' + ' ORDER BY kilometer) FROM taxi WHERE id_trip = 1</code> sorts them to \(1.2, 3.5, 3.5, 4.2\) and returns <strong>1.2 + 3.5 + 3.5 + 4.2</strong>; without the in-call <code>ORDER BY</code> that element order is unspecified. Adding <code>DISTINCT</code> gives <code>array_agg(DISTINCT kilometer ORDER BY kilometer)</code> = \(\{1.2, 3.5, 4.2\}\), collapsing the repeated 3.5 before sorting. Trip 2 returns <strong>1.8 + 3.2</strong> from the same call. An outer <code>ORDER BY id_trip</code> controls result-row order; only the in-call clause controls element order inside each list.</p>
+  <table>
+    <thead>
+      <tr>
+        <th>Engine</th>
+        <th>Ordered, deduplicated list syntax</th>
+        <th>Engine-specific detail</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>PostgreSQL</td>
+        <td><code>string_agg(x::text, ', ' ORDER BY k)</code> / <code>array_agg(DISTINCT x ORDER BY x)</code></td>
+        <td><code>ORDER BY</code> and <code>DISTINCT</code> sit inside the call; <code>string_agg</code> skips null inputs.</td>
+      </tr>
+      <tr>
+        <td>MySQL</td>
+        <td><code>GROUP_CONCAT(DISTINCT x ORDER BY k SEPARATOR ', ')</code></td>
+        <td>Default separator is a comma; output is truncated at <code>group_concat_max_len</code> (default 1024 bytes).</td>
+      </tr>
+      <tr>
+        <td>Snowflake</td>
+        <td><code>LISTAGG(DISTINCT x, ', ') WITHIN GROUP (ORDER BY k)</code></td>
+        <td>With <code>DISTINCT</code>, the <code>WITHIN GROUP</code> key must be the same column.</td>
+      </tr>
+      <tr>
+        <td>Databricks SQL</td>
+        <td><code>listagg(DISTINCT x, ', ') WITHIN GROUP (ORDER BY k)</code></td>
+        <td>Alias of <code>string_agg</code> (Runtime 16.4+); with <code>DISTINCT</code> the sort key must match the value expression.</td>
+      </tr>
+    </tbody>
+  </table>
+  <p><strong>Why this belongs beside the fold.</strong> The warning above promises that a non-commutative step needs an in-call <code>ORDER BY</code>; this is that mechanism, and the table shows that the idea is portable while the spelling is not. The flagfall-in-INITCOND pattern itself stays unchanged — ordering affects only folds whose result is sequence-dependent.</p>
 </div>
 <div class="warning-box">
   <p><strong>Pitfalls.</strong> Swapping the argument order (rate where kilometers belong) silently computes the wrong leg fare with no type error, since all three inputs share type numeric. Forgetting that <code>rate</code> is an argument and hard-coding 2.5 inside the body removes flexibility and breaks the later two-argument aggregate call. Using integer instead of numeric truncates money decimals.</p>

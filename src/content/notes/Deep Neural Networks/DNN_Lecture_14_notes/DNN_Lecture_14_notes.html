@@ -1582,6 +1582,17 @@ flowchart LR
 </p>
 <p>This is a similarity-based score. It works well when query and key have the same dimension.
 </p>
+
+<div class="key-concept">
+<p><strong>Derivation — Dot Product as a Gaussian Distance Kernel:</strong> The dot-product score is not an arbitrary choice; it is the algebraic limit of a Gaussian distance kernel. Expand the squared distance between query <span class="math-inline">\(q\)</span> and key <span class="math-inline">\(k_i\)</span>:</p>
+<div class="math-block">\[-\frac{1}{2}\|q - k_i\|^2 = q^\top k_i - \frac{1}{2}\|k_i\|^2 - \frac{1}{2}\|q\|^2\]</div>
+<p>Insert this score into the softmax. Adding any term that is <em>constant across all keys</em> leaves the normalized weights unchanged, because the extra factor cancels between numerator and denominator:</p>
+<div class="math-block">\[\frac{e^{a_i + c}}{\sum_j e^{a_j + c}} = \frac{e^{c}e^{a_i}}{e^{c}\sum_j e^{a_j}} = \frac{e^{a_i}}{\sum_j e^{a_j}}\]</div>
+<p>Since <span class="math-inline">\(-\frac{1}{2}\|q\|^2\)</span> depends only on the query, it is the same <span class="math-inline">\(c\)</span> for every key pair and cancels. If the keys have (approximately) constant norm — exactly the case after layer normalization — then <span class="math-inline">\(-\frac{1}{2}\|k_i\|^2\)</span> is also constant and drops out. Only the inner product survives:</p>
+<div class="math-block">\[\alpha(q, k_i) \propto \exp\!\left(q^\top k_i\right)\]</div>
+<p><strong>Special case — unit vectors:</strong> if <span class="math-inline">\(\|q\|=\|k_i\|=1\)</span>, then <span class="math-inline">\(\|q-k_i\|^2 = \|q\|^2 + \|k_i\|^2 - 2q^\top k_i = 2 - 2q^\top k_i\)</span>, so <span class="math-inline">\(\exp(-\frac{1}{2}\|q-k_i\|^2) = e^{-1}\exp(q^\top k_i)\)</span>. The Gaussian kernel and the dot-product kernel are then identical up to a constant that the softmax removes.</p>
+<p><strong>Takeaway:</strong> Dot-product attention is normalized kernel smoothing over learned representations; the <span class="math-inline">\(1/\sqrt{d_k}\)</span> factor derived in Section 14.8.3 simply rescales the resulting logits to keep softmax out of its saturation region.</p>
+</div>
 <h3 class="subsection-title">Softmax Normalization</h3>
 <p>Raw scores are just numbers. They could be 10, -5, 0.3. To turn them into weights, apply softmax:
 </p>
@@ -1858,6 +1869,25 @@ flowchart LR
 </table>
 <p>Attention pooling is different. The weights are learned and context-dependent. Given a query, the network learns which values to emphasize and which to downplay. The weights come from learned matrices <span class="math-inline">\(W_Q, W_K, W_V\)</span> and the specific tokens being processed.
 </p>
+
+<div class="important-note">
+<p><strong>Foundational Precursor — Nadaraya–Watson Kernel Regression:</strong> Learned attention pooling has a classical, training-free ancestor. In 1964, Nadaraya and Watson independently proposed estimating a function <span class="math-inline">\(f(q)\)</span> at a query location <span class="math-inline">\(q\)</span> as a similarity-weighted average of the values <span class="math-inline">\(v_i\)</span> stored at keys <span class="math-inline">\(k_i\)</span>:</p>
+<div class="math-block">\[f(q) = \sum_{i=1}^{n} \frac{\alpha(q, k_i)}{\sum_{j=1}^{n} \alpha(q, k_j)}\, v_i\]</div>
+<p>The weights come from a <em>kernel</em> <span class="math-inline">\(\alpha(q,k_i)\)</span> — a fixed, hand-crafted function of the distance <span class="math-inline">\(\|q-k_i\|\)</span>. This is the attention-pooling equation with <span class="math-inline">\(\alpha\)</span> supplied by a kernel instead of by <span class="math-inline">\(W_Q, W_K\)</span>. Standard choices are:</p>
+<table>
+  <thead>
+    <tr><th>Kernel</th><th>Definition</th><th>Behavior</th></tr>
+  </thead>
+  <tbody>
+    <tr><td>Gaussian</td><td><span class="math-inline">\(\exp\!\left(-\frac{1}{2}\|q-k\|^2\right)\)</span></td><td>Smooth and positive everywhere; bandwidth <span class="math-inline">\(\sigma\)</span> sets the smoothness</td></tr>
+    <tr><td>Boxcar (uniform)</td><td><span class="math-inline">\(1\)</span> if <span class="math-inline">\(\|q-k\|\le 1\)</span>, else <span class="math-inline">\(0\)</span></td><td>Hard cutoff: indiscriminate within range, discontinuous at the edge</td></tr>
+    <tr><td>Epanechnikov</td><td><span class="math-inline">\(\max(0, 1-\|q-k\|)\)</span></td><td>Compact support with linear decay to zero</td></tr>
+    <tr><td>Constant</td><td><span class="math-inline">\(1\)</span></td><td>Uniform weights — degenerates to ordinary average pooling</td></tr>
+  </tbody>
+</table>
+<p>Three properties make this a useful lens. First, it needs <strong>no training</strong> — one plugs in the observed key–value pairs and evaluates. Second, it is <strong>statistically consistent</strong>: Mack and Silverman (1982) showed that if the kernel width shrinks as the sample grows, the estimate converges to the true function. Third, the <strong>bandwidth</strong> controls a bias–variance trade-off — a wide kernel gives a smooth but biased estimate, while a narrow kernel adapts to local variation but is noisy and jagged.</p>
+<p><strong>Takeaway:</strong> Attention pooling is the learned generalization of classical kernel smoothing. The constant kernel recovers average pooling; the other kernels already mimic smooth, distance-based attention. What modern attention adds is learned query and key representations in place of a fixed distance metric — a point made formal in Section 14.8.</p>
+</div>
 <p>The key idea: attention weights are customized per time step and per query. This makes the aggregation data-dependent. For time series (stock price prediction), recent days might get higher attention. For sentiment analysis, emotionally charged words get higher attention. The network learns what to focus on.
 </p>
 <div class="example-box">

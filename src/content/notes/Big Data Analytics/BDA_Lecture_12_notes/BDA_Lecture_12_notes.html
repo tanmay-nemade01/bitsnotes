@@ -715,6 +715,35 @@
   <li><strong>Batch Window Duration</strong>: 10 minutes (sliding windows: <code>[0, 10]</code>, <code>[5, 15]</code>, <code>[10, 20]</code>, etc.)</li>
   <li><strong>Watermark Threshold (\(\Delta_{\text{watermark}}\))</strong>: 10 minutes</li>
 </ul>
+
+<div class="important-note">
+  <p><strong>Window semantics — the parameter this trace silently assumes.</strong> A sliding-window model computes statistics over a fixed-size window covering only the most recent items, rather than over the entire unbounded stream. Apache Spark makes this concrete with <code>window(timeColumn, windowDuration, slideDuration=None, startTime=None)</code>: <code>windowDuration</code> fixes the window width, while <code>slideDuration</code> fixes how often a new window is created. When <code>slideDuration</code> is omitted it defaults to the width, yielding <em>tumbling</em> (non-overlapping) windows; supplying a smaller slide yields <em>sliding</em> (overlapping) windows. A new window is generated every <code>slideDuration</code>, which must be no larger than <code>windowDuration</code>.</p>
+  <table>
+    <thead>
+      <tr>
+        <th>Window type</th>
+        <th><code>slideDuration</code></th>
+        <th>Overlap</th>
+        <th>Windows over this 10-min span</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>Tumbling (default)</td>
+        <td>omitted → equals width</td>
+        <td>None (disjoint)</td>
+        <td>One: <code>[0, 10]</code> only</td>
+      </tr>
+      <tr>
+        <td>Sliding (this trace)</td>
+        <td>5 min, width 10 min</td>
+        <td>50% — each event in two windows</td>
+        <td>Two: <code>[0, 10]</code> and <code>[5, 15]</code></td>
+      </tr>
+    </tbody>
+  </table>
+  <p><strong>Why this matters here:</strong> the declaration shown in Section 12.3.1, <code>window("event_time", "10 minutes")</code>, has no third argument, so it specifies a <em>tumbling</em> 10-minute window and would emit only one window per span — it cannot produce the two overlapping windows <code>[0, 10]</code> and <code>[5, 15]</code> finalized at triggers 5 and 6. To generate this trace the grouping must be <code>window("event_time", "10 minutes", "5 minutes")</code>. Generalizing, a window of width \(W\) with a slide \(S\) strictly smaller than \(W\) places each interior event in \(\lceil W/S \rceil\) windows; here \(10/5 = 2\), which is exactly why the tuple <code>(13, "owl")</code> is counted in both final windows. The optional <code>startTime</code> shifts the epoch-aligned origin (for example, 15 minutes for windows that start quarter-past the hour), which matters when aligning windows to business reporting boundaries.</p>
+</div>
 <p>The timeline is tracked across system processing time \(t_{\text{sys}}\) (horizontal axis) and event timestamps \(t_{\text{event}}\) embedded in data tuples <code>(event_time, word)</code>.</p>
 <pre><code>System Processing Timeline (t_sys):
 t_sys = 5 min  ---&gt; Trigger 1: Engine starts; Watermark = None; Output = None
@@ -1235,6 +1264,52 @@ Reg.    Class.           Clust.   Assoc.             Agent   Reward</code></pre>
   <li><strong>Lift</strong>: The ratio of observed joint occurrence to expected independent occurrence:</li>
 </ul>
 <p>\[ \text{Lift}(A \rightarrow B) = \frac{P(A \cap B)}{P(A) \cdot P(B)} = \frac{\text{Confidence}(A \rightarrow B)}{P(B)} \] where a \(\text{Lift} > 1\) indicates a strong positive inferential association between itemset purchase behaviors.</p>
+
+<div class="key-concept">
+  <p><strong>Formal Definition — the Apriori (downward-closure) property.</strong> Before any rule metric can be computed, association-rule mining must first find the <em>frequent itemsets</em>: the task decomposes into two steps — identify every itemset whose support meets a user-set minimum, then derive from those itemsets the rules that clear a minimum confidence. Apriori makes the first step tractable through one observation: if an itemset is frequent, <strong>every non-empty subset of it is also frequent</strong>. The contrapositive is the algorithm's pruning engine — if a \((k-1)\)-itemset is <em>infrequent</em>, no \(k\)-itemset containing it can be frequent, so such supersets can be discarded without ever scanning the transactions to count them.</p>
+  <p>Thus if \(\{A, B, C\}\) is frequent, \(\{A, B\}\) and \(\{B, C\}\) are necessarily frequent; conversely, if \(\{A, B\}\) is infrequent, \(\{A, B, C\}\) can be skipped. Apriori proceeds bottom-up — join frequent \((k-1)\)-itemsets into candidate \(k\)-itemsets, prune any candidate containing an infrequent \((k-1)\)-subset, then count the survivors in one pass over the data. This is why the Support, Confidence and Lift computed above are only applied to itemsets that survived this frequent-itemset stage, and why the search avoids the combinatorial explosion of enumerating every possible itemset.</p>
+</div>
+
+<div class="important-note">
+  <p><strong>Beyond Apriori — alternative frequent-itemset engines.</strong> Given a transaction set and fixed minimum support and confidence, the resulting rule set is uniquely determined regardless of the algorithm used; the most popular generators are Apriori, Eclat and FP-Growth. Apriori's bottleneck is that it repeatedly scans the database to count a combinatorially large candidate set. FP-Growth removes candidate generation entirely: it first counts single items, then compresses each transaction into a frequent-pattern tree (an FP-tree, a suffix-tree structure) from which frequent itemsets are extracted directly. Spark's distributed variant, PFP, partitions the work by transaction suffixes and grows FP-trees in parallel, which is what carries it past a single machine. PCY attacks the same cost from a different angle: its first pass stores item counts <em>and</em> hashes item pairs into an in-memory bucket table, so pairs landing in infrequent buckets can be discarded before the second pass; a bitmap variant cuts that table's memory roughly 32-fold.</p>
+  <table>
+    <thead>
+      <tr>
+        <th>Algorithm</th>
+        <th>Candidate generation</th>
+        <th>DB scans</th>
+        <th>Key structure / scaling lever</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>Apriori</td>
+        <td>Explicit bottom-up join + prune</td>
+        <td>One per \(k\)-level</td>
+        <td>Downward-closure pruning; simple but I/O heavy</td>
+      </tr>
+      <tr>
+        <td>FP-Growth</td>
+        <td>None — the tree encodes transactions</td>
+        <td>Two (count items, build tree)</td>
+        <td>Compact FP-tree; no candidate explosion</td>
+      </tr>
+      <tr>
+        <td>PFP (Spark)</td>
+        <td>None</td>
+        <td>Distributed passes</td>
+        <td>Parallel FP-trees grouped by suffix; <code>numPartitions</code> controls spread</td>
+      </tr>
+      <tr>
+        <td>PCY</td>
+        <td>Hash-bucket filter in pass 1</td>
+        <td>Two or more</td>
+        <td>Hashing prunes impossible pairs early; bitmap variant saves memory</td>
+      </tr>
+    </tbody>
+  </table>
+  <p><strong>Why this matters for big data:</strong> all four return the same frequent itemsets and therefore the same Support, Confidence and Lift computed above — they differ only in <em>how</em> they get there. On multi-terabyte transaction logs, candidate generation and repeated scans dominate runtime, which is why a tree-based or hash-filtered method combined with parallel execution (MLlib's <code>FPGrowth</code>, Mahout's parallel frequent pattern growth) is preferred over textbook Apriori. Sense-check: FP-Growth's reported <code>lift</code> is exactly the \(\text{Confidence}/P(B)\) ratio defined earlier, so the choice of mining algorithm never changes the business interpretation of a rule.</p>
+</div>
 <div class="key-concept">
   <p><strong>Formalize — reading the three metrics in words.</strong> Support asks "how common is the co-occurrence overall?" (a high-support rule involves frequent items). Confidence asks "when \(A\) is bought, how often is \(B\) bought too?" (a high-confidence rule is a reliable implication). Lift asks "is the co-occurrence <em>more likely than pure chance</em>?" — it divides what actually happens by what would happen if \(A\) and \(B\) were independent. Lift \(> 1\): buying \(A\) makes buying \(B\) more likely. Lift \(= 1\): independent. Lift \(< 1\): buying \(A\) makes buying \(B\) <em>less</em> likely.</p>
 </div>
@@ -1397,6 +1472,11 @@ Reg.    Class.           Clust.   Assoc.             Agent   Reward</code></pre>
   <li><strong>R-Squared (\(R^2\) Coefficient of Determination)</strong>: The proportion of variance in the dependent target variable explained by the regression model:</li>
 </ol>
 <p>\[ R^2 = 1 - \frac{\sum_{i=1}^{N} (y_i - \hat{y}_i)^2}{\sum_{i=1}^{N} (y_i - \bar{y})^2} \] where \(\bar{y} = \frac{1}{N}\sum_{i=1}^{N} y_i\) is the empirical mean of actual target values. An \(R^2 = 1.0\) indicates perfect model fit, while \(R^2 = 0.0\) indicates the model performs no better than predicting the mean value \(\bar{y}\).</p>
+
+<div class="key-concept">
+  <p><strong>Where the "R" in \(R^2\) comes from — its link to the correlation coefficient.</strong> A fitted curve's quality of fit is also measured by a <em>coefficient of correlation</em> \(r\), the signed square root of the fraction of variance the fit explains. In least-squares regression with a single predictor this is an identity: \(R^2 = r^2\), where \(r \in [-1, 1]\) is the Pearson correlation coefficient between the predictor and the response.</p>
+  <p>Because squaring removes the sign, \(R^2 \in [0, 1]\) measures only the <em>strength</em> of the linear fit while \(r\) also records its <em>direction</em>: a downward slope gives \(r < 0\) yet can yield the same high \(R^2\) as an equally tight upward fit. Equivalently, the explained fraction \(1 - \text{SSE}/\text{SST}\) defined above has \(|r| = \sqrt{R^2}\) as its signed-square-root counterpart. Sense-check against the boundary cases just stated: \(r = \pm 1\) means every point lies exactly on the fitted line (\(R^2 = 1\)), while \(r = 0\) means a horizontal fit explaining none of the variance (\(R^2 = 0\)).</p>
+</div>
 <div class="example-box">
   <p><strong>Worked example — regression metrics with real numbers.</strong> A model predicts house prices for \(N = 3\) houses. Actual prices \(y = [2, 4, 6]\) (in lakhs); predictions \(\hat{y} = [3, 4, 5]\). Errors \(y_i - \hat{y}_i = [-1, 0, 1]\).</p>
   <p>\[ \text{MSE} = \frac{(-1)^2 + 0^2 + 1^2}{3} = \frac{1 + 0 + 1}{3} = \frac{2}{3} \approx 0.667 \]</p>

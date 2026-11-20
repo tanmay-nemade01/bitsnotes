@@ -369,6 +369,21 @@ SELECT to_tsvector('english', 'I am walking across the sitting room')
   <p><strong>Scope:</strong> <code>to_tsquery</code> expects operator-linked input and throws on sloppy spacing; <code>plainto_tsquery</code> and <code>websearch_to_tsquery</code> accept raw human typing instead. The assumption behind <code>to_tsquery</code> is that you, the query author, supply the logic. When the input is untrusted user text, that assumption fails — switch builders rather than string-hacking quotes around user words.</p>
 </div>
 <p>Product search and help center search use this same AND OR NOT mix to cut huge result piles down to the useful few, and news search leans on the distance form for phrase fidelity.</p>
+
+<div class="important-note">
+  <p><strong>Complementary mechanism — trigram fuzzy matching:</strong> Every match above is exact at the lexeme level, and that is also its blind spot: a searcher who types <code>defnse</code> or <code>defence</code> produces a lexeme absent from the vector, and no arrangement of <code>&amp;</code>, <code>|</code>, or <code>&lt;N&gt;</code> can recover it. PostgreSQL's bundled <code>pg_trgm</code> extension addresses this separate failure mode. Enable it with <code>CREATE EXTENSION pg_trgm;</code> and each string is split into overlapping three-character groups: <code>show_trgm('tom torn')</code> returns <code>{"  t"," to","om ",orn,"rn ",tom,tor}</code>, with two leading spaces and one trailing space padding each word. Similarity is the fraction of trigrams the two strings share; the documentation defines <code>similarity(text, text)</code> on a scale from 0 (completely dissimilar) to 1 (identical).</p>
+  <p>Worked values from the companion text: <code>similarity('tomy', 'tom')</code> is <code>0.5</code> because the strings share the trigrams <code>' to'</code> and <code>tom</code>, while <code>similarity('dim', 'tom')</code> is <code>0</code>. The <code>%</code> operator reads as <em>similar to</em> and is true only when similarity exceeds <code>pg_trgm.similarity_threshold</code> (default <code>0.3</code>); on plain text <code>&lt;-&gt;</code> returns the distance, defined as one minus the similarity. The companion text is explicit that trigrams are <em>complementary</em> to full text search, not a replacement: parsers, stemming dictionaries, phrase operators, and ranking stay with the tsvector/tsquery stack above.</p>
+</div>
+
+<div class="warning-box">
+  <p><strong>Pitfall — <code>&lt;-&gt;</code> carries two meanings:</strong> In a tsquery it is the <em>FOLLOWED BY</em> positional operator used earlier in <code>'military &lt;-&gt; defense'</code>; applied to plain <code>text</code> with <code>pg_trgm</code> installed it is the numeric distance <code>1 - similarity</code>. The operand types decide which one applies, so the same symbol in <code>WHERE speech_tsv @@ ...</code> and in <code>ORDER BY title &lt;-&gt; 'love'</code> does two different jobs.</p>
+  <pre><code>SELECT word, similarity(word, 'defnse') AS score
+FROM words
+WHERE word % 'defnse'
+ORDER BY score DESC
+LIMIT 5;</code></pre>
+  <p>A <code>GIN</code> index using the <code>gin_trgm_ops</code> operator class keeps this suggestion query fast over a large vocabulary, and it can also accelerate <code>LIKE</code> and regular-expression searches that a B-tree cannot serve. Keep the full text filter in <code>WHERE</code> and use trigrams only to clean or suggest the user's raw input before it becomes a tsquery.</p>
+</div>
 <div class="key-takeaway">
   <p>One vector plus one query plus <code>@@</code> gives a boolean; <code>&</code>, <code>|</code>, <code>!</code>, and <code><-></code>/<code>&lt;N&gt;</code> combine booleans and slot lists into precise asks. Normalize both sides with the same language, write every link explicitly, and bracket mixed logic.</p>
 </div>

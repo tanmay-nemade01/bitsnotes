@@ -529,6 +529,36 @@ flowchart LR
   </tbody>
 </table>
 <p><strong>When to pick which:</strong> duplicate everything when budget permits (blue-green); expose gradually and test with real users when you want feedback before full rollout (canary); stay cheap and incremental when you accept mixed versions during the upgrade (rolling).</p>
+<h3 id="15.4.4-application-based-release-patterns-feature-toggles-and-dark-launching" class="subsection-title">15.4.4 Application-Based Release Patterns: Feature Toggles and Dark Launching</h3>
+<div class="key-concept">
+  <p><strong>The missing half of decoupling.</strong> Sections 15.5–15.7 achieve safe releases with <em>environment-based</em> patterns: duplicate or partition machines, then switch traffic between them. The companion text describes a second family — <em>application-based</em> patterns implemented in the code itself — that decouples <em>code deployment</em> from <em>feature release</em> without duplicating any infrastructure. The core mechanism is the <strong>feature toggle</strong> (feature flag): application logic or UI is wrapped in a conditional whose value is read from configuration, so a feature can be switched on or off at run time with no new deployment.</p>
+  <p>Formally, for a feature \(f\), its visibility is a function of a toggle setting \(t_f\) and the requesting user segment \(u\):</p>
+  \[
+  \text{visible}(f, u) = \mathbf{1}\big[\,t_f = \text{on} \land u \in \text{targeted}(f)\,\big]
+  \]
+  <p>Because \(t_f\) lives in configuration rather than in the deployed binary, changing it changes behavior in seconds — the "instant kill switch" — while the artifact itself is untouched.</p>
+</div>
+<div class="important-note">
+  <p><strong>What toggles buy you (beyond on/off).</strong> The companion lists four uses that go past a simple switch:</p>
+  <ul>
+    <li><strong>One-feature rollback.</strong> Disable just the misbehaving feature instead of rolling back an entire release — far cheaper when deployments are infrequent and one stakeholder's feature is at fault.</li>
+    <li><strong>Graceful degradation.</strong> Under extreme load, turn off CPU-intensive extras (for example, recommendations) or cut the fraction of users allowed into a feature, trading functionality for availability.</li>
+    <li><strong>Resilience to unfinished dependencies.</strong> Ship code that calls a service not yet ready, hidden behind a toggle; when that downstream service fails, switch the feature off so the rest of the application keeps running.</li>
+    <li><strong>Targeted exposure.</strong> Restrict a feature to internal employees or a customer segment — the same idea canary releasing achieves with routing, but expressed in application code.</li>
+  </ul>
+  <p><strong>Testing rule:</strong> automated acceptance tests must run with <em>all</em> toggles on, and the toggle mechanism itself must be tested — otherwise the off-state hides defects until a real customer turns the feature on.</p>
+</div>
+<div class="example-box">
+  <p><strong>Worked trace — dark launching a risky search feature.</strong> <em>Dark launching</em> deploys the complete feature to production while it stays invisible to customers, so it can be exercised under real load before launch.</p>
+  <ol>
+    <li>Deploy v1.1 with the new search-query code to every production instance; keep the toggle <code>new_search</code> off for all external users.</li>
+    <li>Modify session code so 1% of user sessions call the new search functions in the background; log or discard the results — the UI shows nothing.</li>
+    <li>Watch latency and error metrics under this invisible load, fix issues, then raise the simulated share from 1% to 10%, 50%, 100%.</li>
+    <li>Flip the toggle for a real customer segment, then the whole user base; a defect at any stage is contained by switching the flag back off.</li>
+  </ol>
+  <p><strong>Historical anchor:</strong> Facebook's 2008 Chat launch kept the UI hidden behind its Gatekeeper toggling service while every user session silently sent test chat messages to the new back end, turning the entire user base into a production-load test — performance problems were found and fixed long before the public release.</p>
+  <p><strong>Sense-check:</strong> no second environment and no traffic rerouting were needed; deployment and release were separated purely in application state, which is the decoupling mantra of section 15.4.2 taken to its logical end.</p>
+</div>
 <div class="key-takeaway">
   <p><strong>Recap + bridge.</strong> Zero downtime means the switch in <em>and</em> the switch back are nearly instantaneous; the key mantra is decoupling the parts of the release process, with microservices as the natural enabler. Three syllabus strategies deliver it — blue-green, canary, and rolling upgrade — and the next section starts with the most powerful of the three: blue-green deployment.</p>
 </div>
@@ -747,6 +777,22 @@ flowchart TB
     <li><strong>Keeping too many versions alive.</strong> The textbook warns to keep as few versions in production as possible — supporting many versions simultaneously is painful; keep the number of canaries to a minimum.</li>
     <li><strong>Forgetting the data constraint.</strong> Both versions share the database; any shared resource must work with all versions in production, or the database part must be managed separately and independently (the same decoupling logic as section 15.5.3).</li>
   </ol>
+</div>
+<h3 id="15.6.6-the-cluster-immune-system-automated-canary-rollback" class="subsection-title">15.6.6 The Cluster Immune System: Automated Canary Rollback</h3>
+<div class="key-concept">
+  <p><strong>Formal definition.</strong> The <em>cluster immune system</em> is a canary release whose observation step is closed into an automatic loop: the production monitoring system is linked to the release process so that when a user-facing metric on the canary deviates outside a predefined expected range, the code is rolled back automatically — no human has to notice the alert and decide. Where the step-by-step canary of 15.6.2 ends with "observe and decide," the cluster immune system replaces the decision with a threshold comparison.</p>
+  <p>More formally, let \(m\) be a monitored user-facing metric and \([L, U]\) its historical acceptance band (for example, a new-user conversion rate whose historical norm is 15%–20%). With \(m_{\text{canary}}\) the canary's measured value:</p>
+  \[
+  \text{rollback} = \mathbf{1}\big[\,m_{\text{canary}} < L \;\lor\; m_{\text{canary}} > U\,\big]
+  \]
+  <p>When the predicate fires, traffic is rerouted back to the baseline instances and the canary is taken out of service; otherwise the rollout advances to the next group.</p>
+</div>
+<div class="important-note">
+  <p><strong>Staged groups and what the automation catches.</strong> The companion describes Facebook's canary groups as A1 (production servers serving only internal employees), A2 (a small percentage of customers, promoted once acceptance criteria are met), and A3 (the rest of the fleet, promoted after A2 meets its criteria). The cluster immune system monitors each stage and reverses the promotion on degradation.</p>
+  <p>It earns its keep against defects that automated tests struggle to find — the companion's example is a CSS change that renders a critical page element invisible, which no unit or acceptance test flags but which collapses conversion. The second benefit is speed: the time from "degradation introduced" to "degradation undone" shrinks from a human response interval to the monitoring/rollout interval.</p>
+</div>
+<div class="warning-box">
+  <p><strong>Pitfall — the band must be meaningful.</strong> An immune system is only as good as its thresholds and its telemetry: a band that is too wide never fires, while one that is too narrow rolls back on normal variance. Modern implementations (for example, the open-source automated-canary-analysis services used with continuous-delivery platforms) compare canary and baseline metric time series statistically before declaring significant degradation, and treat some metrics as <em>critical</em> so a single breach forces an immediate fail. The pattern therefore depends on production telemetry: if you cannot measure user-facing behavior, you cannot automate its defense.</p>
 </div>
 <div class="key-takeaway">
   <p><strong>Recap + bridge.</strong> Canary releasing upgrades a subset of production instances, exposes a small set of users to version \(X+1\), and rolls back or proceeds based on what those users reveal; it costs less than blue-green but consumes production capacity during the rollout. The next section removes even the subset: rolling upgrade, which replaces instances one at a time with almost no extra resources at all.</p>

@@ -411,6 +411,30 @@
   <p><strong>Scope note — where these conventions live.</strong> These naming schemes describe <em>logical</em> path syntax, not the physical placement of files on the disk. The same logical path can point to a file that is stored anywhere on a disk, a volume, or even a remote machine — the mapping from path name to physical block is the job of the allocation and mounting machinery in the next sections. Also note the path separators are not interchangeable: DOS uses <code>\</code>, UNIX uses <code>/</code>, and mixing them is a classic cross-platform bug.</p>
 </div>
 <p>The session does not go into the commands in depth, but notes that to search for a file we navigate to it and use the <code>ls</code> command to list; other commands give information about a particular file.</p>
+
+<h3 id="15.2.5-directory-implementation-linear-lists-and-hash-tables" class="subsection-title">15.2.5 Directory Implementation: Linear Lists and Hash Tables</h3>
+<p>Sections 15.2.1–15.2.4 describe the <em>logical shape</em> of directories. The directory itself is a file, so its contents — the list of (name, identifier) pairs — must also be physically laid out and searched. The choice of directory-management algorithm affects the efficiency, performance, and reliability of the whole file system. Two classic on-disk implementations are the <strong>linear list</strong> and the <strong>hash table</strong>.</p>
+<div class="key-concept">
+  <p><strong>Formal definition:</strong> A directory implementation is the data structure that maps a file-name string to the pointer (FCB or inode number) of the file's metadata. In a <em>linear list</em> the entries are stored one after another in a file, so <code>create</code> appends only after a name-uniqueness scan and <code>delete</code> either marks the slot unused (a used/unused bit or a blank name), links it onto a free-entry list, or copies the last entry into the hole and shortens the list. In a <em>hash table</em> a function \(h(\text{name})\) maps the name to a bucket holding a pointer into the entry list, so search time is roughly constant rather than proportional to the number of entries.</p>
+</div>
+<table>
+  <thead>
+    <tr><th>Implementation</th><th>Search</th><th>Create / delete</th><th>Trade-off</th></tr>
+  </thead>
+  <tbody>
+    <tr><td>Unsorted linear list</td><td>\(O(n)\) linear scan</td><td>Append; mark slot unused or compact</td><td>Simplest to program, slowest to search — directory data is used constantly, so latency is visible</td></tr>
+    <tr><td>Sorted list / B-tree</td><td>\(O(\log n)\) binary or tree search</td><td>Must keep order — inserts may shift many entries or split nodes</td><td>Fast lookup and an already-sorted directory listing, at the cost of update complexity</td></tr>
+    <tr><td>Hash table (fixed size)</td><td>\(O(1)\) average, worse on collisions</td><td>Straightforward, but collisions need a policy</td><td>Fastest lookup; fixed size ties the hash function to the table size</td></tr>
+    <tr><td>Hash table with chained overflow</td><td>Bucket lookup then a short chain walk</td><td>A new colliding entry is pushed onto the bucket's linked list</td><td>Collisions are absorbed without resizing; long chains slow lookups</td></tr>
+  </tbody>
+</table>
+<div class="example-box">
+  <p><strong>Worked hash-directory trace.</strong> Take a 64-bucket linear-probing hash table with \(h(s) = \big(\sum \text{ASCII codes of }s\big) \bmod 64\). Then \(h(\text{"alpha"}) = 518 \bmod 64 = 6\), \(h(\text{"trace"}) = 527 \bmod 64 = 15\), and \(h(\text{"inode"}) = 527 \bmod 64 = 15\) — "trace" and "inode" <em>collide</em> at bucket 15. With linear probing, "trace" takes bucket 15 and "inode" is placed in the next free bucket 16, so finding "inode" probes 15 then 16. With chained overflow, bucket 15 holds the list ["trace", "inode"] and lookup walks it.</p>
+  <p><strong>The resize trap.</strong> Creating a 65th file overflows the 64-entry table. Moving to 128 entries forces a new function \(h'(s) = \big(\sum \text{ASCII codes of }s\big) \bmod 128\): "reporting" has ASCII sum \(986\), so it moves from bucket \(986 \bmod 64 = 26\) to bucket \(986 \bmod 128 = 90\). Every existing entry must be rehashed and relocated — the fixed size makes the hash function size-dependent. Chained overflow avoids that forced reorganization but trades it for chain-walking cost.</p>
+</div>
+<div class="important-note">
+  <p><strong>System detail — what real file systems do.</strong> ext4 stores a directory by default as a series of data blocks, each containing a <em>linear array</em> of entries (inode number, record length, name length, file type, name); an unused entry is marked with <code>inode = 0</code>. When the directory's <code>EXT4_INDEX_FL</code> flag is set, ext4 switches to an <strong>htree</strong> — a balanced tree keyed off a hash of the entry name. A lookup computes the hash, descends to the leaf covering that hash range, and scans following leaves when hashes collide; interior nodes are hidden inside the directory file as apparently empty entries so older linear scanners still work. The same trade-off in production form: start linear for simplicity, add hashing once the directory grows large.</p>
+</div>
 <div class="key-takeaway">
   <p><strong>Takeaway:</strong> directory design evolves in steps — single-level (no naming freedom), two-level (per-user, but no sharing), tree (full hierarchy, but no sharing), acyclic graph (sharing via links, with dangling-pointer risk), and general graph (cycles allowed, but garbage collection gets hard). Each step buys a capability and pays for it with a new failure mode; the path-naming conventions of DOS, VMS, and UNIX are simply different syntaxes for the same tree idea.</p>
 </div>
@@ -444,6 +468,30 @@
   <p><strong>How the four objects do the work.</strong> Each object carries a pointer to a <em>function table</em> — the addresses of the functions that implement that object's operations for the concrete file system behind it. When the VFS calls <code>read()</code> on an open file, it does not need to know whether that file lives on ext4, on FAT, or on a remote NFS server: it simply looks up <code>read</code> in that file object's function table and calls the implementation it finds. In textbook terms, the VFS also distinguishes local from remote files: local requests are dispatched to the file-system-specific code, while remote requests are handed to the NFS protocol procedures.</p>
 </div>
 <p>This is also the layer where a network file system plugs in: NFS rides on top of the VFS, so a remote file looks like just another file type. The three-layer NFS architecture in section 15.6.4 is the same idea made concrete.</p>
+
+<h3 id="15.3.3-journaling-and-crash-recovery" class="subsection-title">15.3.3 Journaling and Crash Recovery</h3>
+<p>Section 15.3.1 noted that a file system is checked for correctness before it is mounted. The reason is that one logical operation is many physical writes: creating a file modifies the directory structure, allocates an FCB/inode and data blocks, and decreases the free counts for all of them. A crash between these steps leaves the structures disagreeing — for example, the free-FCB count may say an FCB was allocated while no directory entry points to it. One response is an after-the-fact consistency checker (the <code>fsck</code>/<code>chkdsk</code> idea seen earlier); the modern alternative is to make the update itself crash-atomic with a <strong>journal</strong>.</p>
+<div class="key-concept">
+  <p><strong>Formal definition — write-ahead logging.</strong> A <em>transaction</em> is the set of metadata changes that carry out one file-system operation. The journal records all of them <em>sequentially</em> in a circular log before they are applied to their home locations on disk. Once the log records are durable, a <em>commit record</em> is written and the system call may return; the slow, scattered writes to the real structures are replayed afterwards. On recovery, a transaction with a valid commit record is <em>redone</em> (replayed to completion), while an uncommitted transaction is discarded — so the file system never appears stuck midway through an update.</p>
+</div>
+<pre><code>  metadata edits collected
+          |
+          v
+  write sequentially to journal
+          |
+          +-- crash before commit --&gt; discard partial edits on recovery
+          |
+          v
+  write commit record ---- crash here --&gt; replay all records (redo)
+          |
+          v
+  replay into home locations --&gt; checkpoint --&gt; free log space</code></pre>
+<div class="example-box">
+  <p><strong>Worked recovery trace.</strong> Creating <code>report.txt</code> needs four metadata edits: (1) append a directory entry, (2) allocate an inode, (3) reserve data blocks, (4) decrement the free-block count. The journal receives records for all four, then a commit record. <strong>Crash before commit:</strong> recovery sees no commit record and discards whatever partial edits reached disk — the directory and free counts still agree. <strong>Crash after commit but before replay:</strong> recovery replays all four records into their home locations; the operation completes atomically even though none of the scattered writes had finished. The cost is that metadata is written twice — once to the log, once in place — and the log is a circular buffer, so its space is freed only once a transaction is checkpointed.</p>
+</div>
+<div class="important-note">
+  <p><strong>System detail — ext4 and jbd2.</strong> In ext4 the journal (usually inode 8, often a whole block group) is maintained by jbd2. A transaction is laid out as a descriptor block, the data blocks it describes, and a final commit block; if the commit record is missing or its checksum fails, the transaction is discarded during replay. By default ext4 journals <em>metadata only</em> (<code>data=ordered</code>), so file data blocks are not guaranteed consistent after a crash; <code>data=journal</code> routes all data through the log (safest but slower), and <code>data=writeback</code> flushes neither before the metadata commit. An external journal on a separate spindle cuts head contention and seek time — trading hardware for recovery speed.</p>
+</div>
 <div class="key-takeaway">
   <p><strong>Takeaway:</strong> mounting is a privileged operation that attaches a checked file system to a mount point inside an existing tree (marked by a flag in the inode in UNIX, a drive letter in Windows). The VFS is the uniform interface layer — four object types (inode, file, superblock, dentry) — that lets one operating system host many file systems, local and remote, behind a single set of system calls.</p>
 </div>

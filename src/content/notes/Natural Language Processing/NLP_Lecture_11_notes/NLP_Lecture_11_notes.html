@@ -703,6 +703,22 @@ h_t = \tanh(W_h h_{t-1} + W_x x_t + b)
 <p>where \(h_{t-1}\) is the previous hidden state (the "memory"), \(x_t\) is the current input, \(W_h\) and \(W_x\) are learned weight matrices, and \(\tanh\) squashes values to \([-1, 1]\) to prevent unbounded growth. The hidden state \(h_t\) encodes information about all words seen so far.</p>
 </div>
 
+<div class="example-box">
+<p><strong>Worked calculation — unrolling the RNN recurrence with real numbers.</strong> The recurrence \(h_t = \tanh(W_h h_{t-1} + W_x x_t + b)\) is easiest to trust once it has been computed by hand. Use a 2-dimensional hidden state and 2-dimensional word vectors from the companion text, reading the fragment "I don't like NLP".</p>
+<p><strong>Setup.</strong> Empty memory \(h_0 = \begin{pmatrix}0\\0\end{pmatrix}\); recurrent matrix \(W_h = \begin{pmatrix}0.5 &amp; 0\\0 &amp; 0.5\end{pmatrix}\); input matrix \(W_x = \begin{pmatrix}1 &amp; 0\\0 &amp; 1\end{pmatrix}\); bias \(b = \begin{pmatrix}0\\0\end{pmatrix}\).</p>
+<p><strong>Dimension check.</strong> \(W_h, W_x \in \mathbb{R}^{2\times 2}\) and \(x_t, h_t \in \mathbb{R}^{2}\), so each matrix–vector product has shape \((2\times 2)(2\times 1) = 2\times 1\); the two products and the bias are conformable for addition, and \(\tanh\) acts elementwise.</p>
+<p><strong>Step 1 — \(x_1 = \begin{pmatrix}1\\0\end{pmatrix}\) ("I").</strong></p>
+<p>\[
+h_1 = \tanh\!\left(W_h h_0 + W_x x_1\right) = \tanh\!\left(\begin{pmatrix}0\\0\end{pmatrix} + \begin{pmatrix}1\\0\end{pmatrix}\right) = \tanh\!\begin{pmatrix}1\\0\end{pmatrix} \approx \begin{pmatrix}0.76\\0\end{pmatrix}
+\]</p>
+<p><strong>Step 2 — \(x_2 = \begin{pmatrix}0\\-1\end{pmatrix}\) ("don't").</strong></p>
+<p>\[
+h_2 = \tanh\!\left(W_h h_1 + W_x x_2\right) = \tanh\!\left(\begin{pmatrix}0.38\\0\end{pmatrix} + \begin{pmatrix}0\\-1\end{pmatrix}\right) = \tanh\!\begin{pmatrix}0.38\\-1\end{pmatrix} \approx \begin{pmatrix}0.36\\-0.76\end{pmatrix}
+\]</p>
+<p><strong>Reading the trace.</strong> The first component still carries "I" but decays \(1 \to 0.76 \to 0.38\) because the recurrent matrix scales the old state by \(0.5\); the second component now carries the negative polarity of "don't".</p>
+<p><strong>Final result:</strong> \(h_2 \approx (0.36,\,-0.76)^{T}\) — a literal blend of every word seen so far, exactly as the colour-mixing picture suggests. The same repeated multiplication by \(0.5\) that shrinks the first component is the mechanism behind the vanishing gradient of Section 11.6.</p>
+</div>
+
 <h3>11.4.2 Types of RNNs</h3>
 <ul>
   <li><strong>Simple RNN:</strong> The basic recurrent architecture with no gating mechanism. Suffers from vanishing gradients over long sequences.</li>
@@ -711,6 +727,51 @@ h_t = \tanh(W_h h_{t-1} + W_x x_t + b)
   <li><strong>GRU (Gated Recurrent Unit):</strong> A simplified version of LSTM with two gates (update and reset) and fewer parameters.</li>
 </ul>
 <p>Any of these can serve as the building block inside an encoder or decoder. When the lecture says "RNN," it could mean any of these variants — simple RNN, LSTM, GRU, or bidirectional LSTM.</p>
+
+<div class="key-concept">
+<p><strong>Formal Definition — the Gated Recurrent Unit (GRU).</strong> The note states that a GRU is "a simplified version of LSTM with two gates (update and reset) and fewer parameters." The companion text makes this precise: a GRU has <em>no separate memory cell</em> — the hidden state \(h_t\) serves as both memory and output — and only two sigmoid gates.</p>
+<p>With \(\sigma\) the sigmoid, \(\odot\) the elementwise (Hadamard) product, \(x_t\) the current input and \(h_{t-1}\) the previous hidden state, the canonical update is:</p>
+<p>\[
+\begin{aligned}
+r_t &= \sigma(W_r x_t + U_r h_{t-1} + b_r) &amp;&amp;\text{(reset gate)}\\
+z_t &= \sigma(W_z x_t + U_z h_{t-1} + b_z) &amp;&amp;\text{(update gate)}\\
+\tilde{h}_t &= \tanh\!\left(W_h x_t + U_h\,(r_t \odot h_{t-1}) + b_h\right) &amp;&amp;\text{(candidate state)}\\
+h_t &= (1 - z_t) \odot h_{t-1} + z_t \odot \tilde{h}_t &amp;&amp;\text{(new hidden state)}
+\end{aligned}
+\]</p>
+<p><strong>Why two gates suffice.</strong> The reset gate \(r_t\) decides how much of the old state may enter the candidate \(\tilde{h}_t\); with \(r_t \approx 0\) the model discards irrelevant history. The update gate \(z_t\) then interpolates between the old state \(h_{t-1}\) and the candidate: when \(z_t \approx 0\) the previous state is copied through unchanged — a gradient "highway" for long-range dependencies — while \(z_t \approx 1\) makes the new state depend almost entirely on the current input. This single interpolation replaces the LSTM's separate forget and output gates.</p>
+<table>
+<thead>
+<tr>
+  <th>Variant</th>
+  <th>Gates</th>
+  <th>Separate memory cell</th>
+  <th>Recurrent weight matrices (hidden size \(d\))</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+  <td>Simple RNN</td>
+  <td>None</td>
+  <td>No</td>
+  <td>1 (\(U\))</td>
+</tr>
+<tr>
+  <td>GRU</td>
+  <td>2 (reset, update)</td>
+  <td>No</td>
+  <td>3 (\(U_r, U_z, U_h\))</td>
+</tr>
+<tr>
+  <td>LSTM</td>
+  <td>3 (forget, input, output)</td>
+  <td>Yes (\(C_t\))</td>
+  <td>4</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Takeaway:</strong> the GRU reaches roughly LSTM-level modelling with three recurrent matrices instead of four and no cell state — fewer parameters, shorter training time, and less overfitting. That is the precise content behind the lecture's "fewer parameters" remark.</p>
+</div>
 <h3>11.4.3 Sequence-to-Sequence Problems</h3>
 <p>The lecture emphasizes that most NLP applications are sequence-to-sequence problems:</p>
 <table>

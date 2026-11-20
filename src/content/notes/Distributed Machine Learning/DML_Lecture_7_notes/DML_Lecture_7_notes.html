@@ -750,6 +750,55 @@ flowchart TB
 <p>In commercial machine learning deployments, engineers distinguish RDDs and DataFrames from traditional databases such as Oracle, PostgreSQL, or MySQL. An RDD is an ephemeral computational data structure that exists strictly within active memory during the lifespan of a Spark job. When the <code>SparkSession</code> terminates, all in-memory RDD partitions dissolve.</p>
 <p>To preserve model weights, extracted features, or inference predictions permanently, the application must explicitly write results out to relational databases, document stores, or cloud object storage (such as Amazon S3 or Google Cloud Storage). Modern production pipelines often stage raw data in cloud buckets, process features in ephemeral PySpark DataFrames, and export final model metrics to persistent operational data stores.</p>
 
+<h3 id="7.3.6-shared-variables-broadcast-and-accumulators">7.3.6 Shared Variables: Broadcast Variables and Accumulators</h3>
+<p>Immutability keeps parent partitions pristine, but it leaves a practical question open from the banking-ledger analogy in Section 7.3.1: how does a read-only reference value—such as the authoritative \(10\%\) interest rate—reach every worker without being copied into every task, and how can workers safely contribute to a single aggregate counter? Spark answers with two deliberately restricted <em>shared variables</em> that relax closure isolation in controlled ways.</p>
+<div class="key-concept">
+  <p><strong>Formal Definition (Broadcast Variable):</strong> A broadcast variable wraps a driver-side value \(v\) into a read-only handle \(B = \text{broadcast}(v)\) whose value is cached in serialized form once per executor and shared by every task scheduled on that executor. Without broadcasting, a closure referencing \(v\) ships a separate serialized copy with each of the \(T\) tasks, costing \(O(T \cdot |v|)\) bytes of network transfer. With broadcasting, transfer cost falls to \(O(E \cdot |v|)\) for \(E\) executors where \(E \ll T\):</p>
+  <p>\[ C_{\text{closure}} = T \cdot |v| \quad \longrightarrow \quad C_{\text{broadcast}} = E \cdot |v| \]</p>
+  <p>The value is read through \(B.\text{value}\), and \(v\) must not be mutated after broadcasting; otherwise an executor joining the cluster later would observe a divergent value, breaking the determinism that lineage replay in Section 7.4 depends upon.</p>
+</div>
+<div class="example-box">
+  <p><strong>Worked Example (Applying the Shared Interest Rate):</strong> A driver holds the master rate \(r = 0.10\) and scores \(M = 10^6\) loan records spread over \(P = 100\) partitions on \(E = 20\) executors.</p>
+  <ul>
+    <li><strong>Naive closure capture:</strong> each of the \(P = 100\) task closures embeds \(r\), transferring \(100 \times |r|\) bytes. Worse, a stray local edit in any task can silently produce the erroneous \(2\%\) value described in Section 7.3.4.</li>
+    <li><strong>Broadcast variable:</strong> \(r\) is shipped \(E = 20\) times (once per executor) and cached read-only; all \(100\) tasks read the single immutable \(B.\text{value} = 0.10\). Network transfers drop by a factor of \(P/E = 5\), and no task can overwrite the master rate.</li>
+    <li><strong>Accumulator:</strong> rejected-loan counts are combined as \(A \leftarrow A \oplus 1\) using an associative, commutative add, so workers merge partial counts locally and only the driver reads \(A.\text{value}\). Workers may add to \(A\) but cannot read it, eliminating read-modify-write races.</li>
+  </ul>
+</div>
+<table>
+  <thead>
+    <tr>
+      <th>Property</th>
+      <th>Broadcast Variable</th>
+      <th>Accumulator</th>
+      <th>Closure-Captured Variable</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><strong>Worker access</strong></td>
+      <td>Read-only (<code>B.value</code>)</td>
+      <td>Add-only; driver reads final value</td>
+      <td>Read/write on a private copy</td>
+    </tr>
+    <tr>
+      <td><strong>Propagation to driver</strong></td>
+      <td>None (driver originates value)</td>
+      <td>Aggregated via associative operator</td>
+      <td>None (worker updates are discarded)</td>
+    </tr>
+    <tr>
+      <td><strong>Transfer cost</strong></td>
+      <td>\(O(E \cdot |v|)\) per cluster</td>
+      <td>\(O(\text{tasks})\) partial merges</td>
+      <td>\(O(T \cdot |v|)\) per job</td>
+    </tr>
+  </tbody>
+</table>
+<div class="warning-box">
+  <p><strong>Pitfall — Accumulators and Lazy Recomputation:</strong> Accumulator updates do not alter Spark's lazy evaluation model. An accumulator incremented inside a transformation (such as <code>.map()</code>) is updated only when that RDD is materialized by an action, and—because the lineage recovery of Section 7.4 may re-execute a task—the same update can be applied more than once. Spark guarantees exactly-once updates only for increments performed inside actions. Counting side effects inside transformations therefore yields silently inflated metrics after a worker failure; use an action-side update or a proper RDD reduction for exact counts.</p>
+</div>
+
 <h2 id="7.4-lineage-graphs-and-deterministic-fault-tolerance">7.4 Lineage Graphs and Deterministic Fault Tolerance</h2>
 <p>Distributed computing environments operating on commodity hardware inevitably encounter node failures, network partitions, and hardware stalls. Apache Spark provides robust fault tolerance without the massive input/output overhead of continuous disk checkpointing through the concept of RDD <em>lineage</em>.</p>
 <div class="important-note">
@@ -1052,6 +1101,16 @@ flowchart TB
   <li><code>join()</code>: Merges two relational datasets based on matching keys.</li>
 </ul>
 <p>Wide transformations require a <em>shuffle</em>, serializing records and transmitting them across physical network switches to redistribute data by hash key. Shuffling represents the most expensive operation in distributed cluster computing.</p>
+<div class="important-note">
+  <p><strong>System Detail (Anatomy of a Shuffle):</strong> A shuffle is not a single network call but a coordinated two-phase MapReduce-style exchange. Spark generates <em>map tasks</em> that organize each parent partition and <em>reduce tasks</em> that merge the redistributed records—terminology inherited from MapReduce and unrelated to the RDD <code>map</code> and <code>reduce</code> primitives.</p>
+  <ol>
+    <li><strong>Map side:</strong> each map task computes its output records, applies map-side aggregation (for example <code>reduceByKey</code>), and buffers results in memory. Records are sorted by <em>target partition</em> (hash of the key); when the buffer exceeds available memory they spill to disk, producing one shuffle file per map task that holds sorted blocks destined for every reducer.</li>
+    <li><strong>Reduce side:</strong> each reduce task fetches the block addressed to its partition id from every map task's shuffle file and merges the sorted runs, grouping equal keys before applying the reduce function.</li>
+  </ol>
+  <p><strong>Cost model:</strong> with \(N\) raw records, \(P\) map partitions, and \(K\) distinct keys, map-side combining collapses each key's local values to one partial aggregate, shrinking shuffle traffic from \(O(N)\) raw records to at most \(O(P \cdot K)\) aggregated pairs:</p>
+  <p>\[ V_{\text{no combine}} \propto N, \qquad V_{\text{map combine}} \propto P \cdot K \ll N \]</p>
+  <p>Shuffle files are retained on local disk (directory <code>spark.local.dir</code>) until the corresponding RDD is garbage-collected, so the lineage recomputation of Section 7.4 can reuse existing map outputs instead of rerunning the entire upstream DAG. This is precisely why shuffle is disk-I/O-, serialization-, and network-bound—and why it forms the stage boundary that the lazy optimization of Section 7.5 cannot fuse across.</p>
+</div>
 <ol>
   <li><strong>Actions</strong>: Primitives that materialize execution and return values to the driver or write data to an external sink:</li>
 </ol>

@@ -618,6 +618,16 @@
     <li>Apply non-maximum suppression within local \(3 \times 3\) or \(5 \times 5\) neighborhoods, preserving only those pixels whose response score exceeds all neighboring candidates.</li>
   </ul>
 </div>
+<div class="important-note">
+  <p><strong>Extension — Adaptive Non-Maximal Suppression (ANMS):</strong> Plain NMS keeps the strongest response inside every fixed \(3 \times 3\) or \(5 \times 5\) window, which tends to cluster keypoints in high-contrast regions while leaving low-contrast regions empty. Brown, Szeliski, and Winder (2005) replace the fixed suppression neighborhood with an <em>adaptive suppression radius</em> \(r\): a candidate survives only if it is a local maximum <em>and</em> its response is at least about \(10\%\) greater than every other maximum lying within distance \(r\). This produces a spatially uniform spread of keypoints with far fewer features.</p>
+  <p>The procedure assigns a suppression radius \(r_i\) to every local maximum:</p>
+  <ol>
+    <li>Sort all local maxima by decreasing corner response \(R_i\).</li>
+    <li>A neighbor \(j\) is <em>significantly stronger</em> than \(i\) when \(R_j &gt; 1.1\,R_i\). Set \(r_i\) to the distance to the nearest such significantly stronger maximum: \(r_i = \min_{j\,:\,R_j &gt; 1.1 R_i} \lVert \mathbf{p}_i - \mathbf{p}_j \rVert\). A global winner with no stronger neighbor receives an unbounded radius.</li>
+    <li>Create a second list sorted by decreasing \(r_i\) and retain the top \(n\) points. A large \(r_i\) means the point dominates a wide region because no significantly stronger rival lies nearby.</li>
+  </ol>
+  <p>Because selection depends on a response <em>ratio</em> rather than an absolute threshold, the same rule adapts automatically to images of widely varying contrast. ANMS is a direct replacement for the plain NMS step of Stage 5 and is widely used in feature-based matching pipelines where spatial coverage matters more than raw detector count.</p>
+</div>
 <h3 id="6.3.4-associative-property-of-convolution-in-gradient-operators">6.3.4 Associative Property of Convolution in Gradient Operators</h3>
 <div class="key-concept">
   <p><strong>Associative Convolution in Numerical Differentiation:</strong></p>
@@ -799,6 +809,27 @@
     <li><em>Block Normalization</em>: Group cells into larger, overlapping spatial blocks of \(2 \times 2\) cells (\(16 \times 16\) pixels). Histograms from the four constituent cells are concatenated into a 36-dimensional vector (\(4 \text{ cells} \times 9 \text{ bins} = 36\)). We normalize this vector using L2-norm or L2-Hys (L2-norm with clipping) to ensure invariance to illumination changes and shadowing.</li>
     <li><em>Principal Orientation Extraction</em>: For structural visualization and compact template generation, each cell identifies its dominant orientation—the bin holding the highest accumulated gradient magnitude.</li>
   </ol>
+</div>
+<div class="key-concept">
+  <p><strong>Contrast Normalization Schemes for HOG Blocks:</strong> Let \(\xi\) denote the unnormalized concatenated histogram vector of a block, \(\|\xi\|_k\) its \(k\)-norm, and \(\epsilon &gt; 0\) a small stabilizing constant. Dalal and Triggs evaluated four per-block contrast normalization functions:</p>
+  <ol>
+    <li><em>L2 norm</em>: \( \xi \rightarrow \dfrac{\xi}{\sqrt{\|\xi\|_2^2 + \epsilon^2}} \)</li>
+    <li><em>L2-Hys</em>: apply the L2 norm, clip every component at a fixed ceiling (0.2 was found appropriate), then renormalize with L2. The acronym stands for hysteresis.</li>
+    <li><em>L1 norm</em>: \( \xi \rightarrow \dfrac{\xi}{\|\xi\|_1 + \epsilon} \)</li>
+    <li><em>L1-sqrt</em>: apply the L1 norm, then take the square root of each component, effectively treating the descriptor vector as a probability distribution.</li>
+  </ol>
+  <p>All four schemes markedly outperform no normalization at all; the plain L1 norm was the least successful, while L2-Hys became the standard default in later implementations. Performance is only weakly sensitive to the exact value of \(\epsilon\). Normalizing each overlapping block independently is what makes the descriptor robust to illumination changes and local shadowing.</p>
+</div>
+<div class="example-box">
+  <p><strong>Worked Derivation: Final HOG Descriptor Length for the \(64 \times 128\) Pedestrian Window.</strong> The grid geometry above yields \(8 \times 16 = 128\) cells and 36-dimensional normalized blocks, but the linear classifier consumes a <em>single</em> flat vector. We derive its exact length.</p>
+  <p><strong>Step 1 — Overlapping block count.</strong> A \(2 \times 2\) cell block spans \(16 \times 16\) pixels, and consecutive blocks are displaced by one cell, i.e. a stride of \(8\) pixels. The number of legal block placements along each axis is:</p>
+  <p>\[ n_x = \frac{64 - 16}{8} + 1 = 7, \qquad n_y = \frac{128 - 16}{8} + 1 = 15 \]</p>
+  <p>so the window contains \(n_{\text{blocks}} = 7 \times 15 = 105\) overlapping blocks.</p>
+  <p><strong>Step 2 — Per-block length.</strong> Each block contains \(2 \times 2 = 4\) cells, each with \(9\) orientation bins, so one normalized block contributes \(4 \times 9 = 36\) components.</p>
+  <p><strong>Step 3 — Total descriptor length.</strong> Concatenating every normalized block gives:</p>
+  <p>\[ D = n_{\text{blocks}} \times 36 = 105 \times 36 = \mathbf{3780} \]</p>
+  <p>Equivalently, the general block-grid formula \(D = n_{\text{bins}} \cdot \frac{w_b}{w_c} \cdot \frac{h_b}{h_c} \cdot \left(\frac{W - w_b}{s_x} + 1\right) \cdot \left(\frac{H - h_b}{s_y} + 1\right)\), with \((W, H) = (64, 128)\), \((w_b, h_b) = (16, 16)\), \((w_c, h_c) = (8, 8)\), \((s_x, s_y) = (8, 8)\) and \(n_{\text{bins}} = 9\), returns \(9 \times 2 \times 2 \times 7 \times 15 = 3780\).</p>
+  <p><strong>Sense-check:</strong> Although the window holds only 128 cells, each cell is reused inside several independently normalized overlapping blocks. This redundancy is why the final vector (3780 components) is far longer than the naive \(128 \times 9 = 1152\) cell-histogram count, and it is the fixed-length input on which the linear SVM of §6.5.1 is trained.</p>
 </div>
 <p>The following table contrasts the Harris corner detector with HOG and SIFT across key structural dimensions:</p>
 <table>

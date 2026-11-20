@@ -537,6 +537,25 @@
 <h3 id="15.4.4-updating-the-proximity-matrix-after-a-merge">15.4.4 Updating the Proximity Matrix After a Merge</h3>
 <p>When two clusters merge, only a few cells of the proximity matrix need updating. Suppose C2 and C5 merge first in a diagrammed example. After the merge you have one cluster C2â€“C5 instead of two, so the cells involving C2 and C5 are updated to reflect the new cluster, while the rest of the matrix stays as it is: the distance between C3 and C4 does not change just because C2 and C5 merged.</p>
 <p>Concretely: in a matrix over \(m\) current clusters, a merge removes two rows and two columns and adds one row and one column for the new cluster â€” so only \(O(m)\) cells are recomputed, out of \(O(m^2)\) total. The expensive part of each round is not the update but the search for the minimum entry, which is why the cost analysis in a later section focuses on the scanning.</p>
+
+<div class="key-concept">
+  <p><strong>Unifying update rule — the Lance–Williams recurrence:</strong> rather than redefining "distance to the new cluster" from scratch for every linkage method, all five methods in this unit fit one linear update formula. When clusters \(A\) and \(B\) merge into \(R = A \cup B\), the proximity from \(R\) to any still-existing cluster \(Q\) is</p>
+  <p>\[ p(R, Q) = \alpha_A \, p(A, Q) + \alpha_B \, p(B, Q) + \beta \, p(A, B) + \gamma \, \bigl| p(A, Q) - p(B, Q) \bigr| \]</p>
+  <p>Choosing the four coefficients \((\alpha_A, \alpha_B, \beta, \gamma)\) recovers each linkage method; \(m\) denotes a cluster's size (number of points):</p>
+  <table>
+    <thead>
+      <tr><th>Linkage</th><th>\(\alpha_A\)</th><th>\(\alpha_B\)</th><th>\(\beta\)</th><th>\(\gamma\)</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>Min / single</td><td>\(1/2\)</td><td>\(1/2\)</td><td>\(0\)</td><td>\(-1/2\)</td></tr>
+      <tr><td>Max / complete</td><td>\(1/2\)</td><td>\(1/2\)</td><td>\(0\)</td><td>\(+1/2\)</td></tr>
+      <tr><td>Group average (UPGMA)</td><td>\(m_A/(m_A+m_B)\)</td><td>\(m_B/(m_A+m_B)\)</td><td>\(0\)</td><td>\(0\)</td></tr>
+      <tr><td>Centroid</td><td>\(m_A/(m_A+m_B)\)</td><td>\(m_B/(m_A+m_B)\)</td><td>\(-m_A m_B/(m_A+m_B)^2\)</td><td>\(0\)</td></tr>
+      <tr><td>Ward's</td><td>\((m_A+m_Q)/(m_A+m_B+m_Q)\)</td><td>\((m_B+m_Q)/(m_A+m_B+m_Q)\)</td><td>\(-m_Q/(m_A+m_B+m_Q)\)</td><td>\(0\)</td></tr>
+    </tbody>
+  </table>
+  <p>The \(\gamma\) term is the tell: with \(\gamma = -1/2\) the expression collapses to \(\min\{p(A,Q), p(B,Q)\}\), and with \(\gamma = +1/2\) to the maximum — exactly the min and max rules of sections 15.5 and 15.6. Because the update needs only current matrix entries (and cluster sizes), the original data points need not be kept: the proximity matrix alone carries the whole hierarchy, which is why implementations store just that table.</p>
+</div>
 <div class="warning-box">
   <p><strong>Pitfall â€” a merge can be wrong in hindsight:</strong> every agglomerative merge is final. If round one merges two points that a better hierarchy would have kept apart, no later round can undo it â€” the error is baked into every level above. This is why the choice of linkage method (how you compute the cells after each update) matters more than any other detail of the algorithm.</p>
 </div>
@@ -683,6 +702,26 @@
 <div class="warning-box">
   <p><strong>Pitfall â€” inversions:</strong> centroid linkage is the one standard method that can produce <em>inversions</em> in the dendrogram: a later merge at a <em>smaller</em> height than an earlier one. This happens because the new centroid after a merge is a weighted compromise of the two old ones, and the compromise can land closer to some third cluster than either original centroid was. An inverted dendrogram can no longer be read with simple horizontal cuts â€” junction heights no longer increase up the tree â€” so a "taller junction = farther apart" reading breaks.</p>
 </div>
+
+<div class="important-note">
+  <p><strong>Extension — escaping the single-centroid assumption (CURE):</strong> centroid linkage fails on crescents because it represents a whole cluster by one point. <em>CURE</em> (Clustering Using REpresentatives) instead keeps a small set of \(c\) representative points per cluster, so the cluster's geometry survives. Choose the first representative as the point farthest from the centroid \(\mu\), then repeatedly pick the point farthest from every representative already chosen (typically \(c \ge 10\)). This spreads the representatives around the boundary — exactly where a crescent or a ring carries its shape.</p>
+  <p><strong>Shrinkage step:</strong> each chosen representative \(r_i\) is pulled toward the centroid by a factor \(\alpha \in [0,1]\):</p>
+  <p>\[ r_i' = \mu + \alpha (r_i - \mu) \]</p>
+  <p>Outliers sit far from \(\mu\), so the same \(\alpha\) shrinks them most; the genuine boundary representatives are retained while extreme points lose their leverage. Inter-cluster distance is the <em>minimum</em> distance between any two shrunken representatives, one from each cluster — the min-rule of section 15.5 applied to boundary proxies rather than raw points.</p>
+  <p><strong>Worked shrinkage (concentric circle and ring, both centred at \(\mu = (0,0)\)):</strong> a circle-boundary representative at radius \(10\) and a ring representative at radius \(20\) shrink with \(\alpha = 0.2\) to radii \(10 - 0.2(10) = 8\) and \(20 - 0.2(20) = 16\). A ring <em>inner-edge</em> representative at radius \(12\) shrinks to \(12 - 0.2(12) = 9.6\) — it moves to radius 9.6, outside the ring's inner boundary at 12, so it no longer falsely pulls the inner circle toward the ring. The two clusters stay separate despite sharing a centroid, the exact case where centroid linkage collapses them.</p>
+  <table>
+    <thead>
+      <tr><th>\(\alpha\)</th><th>Representative location</th><th>Recovered behaviour</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>\(0\)</td><td>All reps collapse to \(\mu\)</td><td>Centroid linkage</td></tr>
+      <tr><td>\(0.2\)</td><td>Pulled 20% toward \(\mu\)</td><td>Shape kept, outliers damped</td></tr>
+      <tr><td>\(1\)</td><td>Original points untouched</td><td>Roughly single-link</td></tr>
+    </tbody>
+  </table>
+  <p><strong>Scaling:</strong> outliers are eliminated twice — once when the cluster count falls to about \(n/3\), and again near the target \(K\), when small slow-growing clusters are dropped. Because the worst case is \(O(m^2 \log m)\) for \(m\) points, CURE clusters a random sample (the original paper derives its size), partitions it when the sample is still too large, then assigns every remaining point to its nearest representative — a hierarchical method that reaches large databases without storing all pairwise distances.</p>
+</div>
+
 <h3 id="15.8.3-worked-example-min-vs-centroid-on-four-points">15.8.3 Worked Example: Min vs Centroid on Four Points</h3>
 <div class="example-box">
   <p><strong>Worked example â€” min linkage on four points (real numbers):</strong> four points with coordinates \(p_1 = (0, 0)\), \(p_2 = (1, 0)\), \(p_3 = (2, 0.5)\), \(p_4 = (3, 2)\). Pairwise distances:</p>
@@ -830,6 +869,27 @@
 <p>\[ \sum_{m=2}^{n} O(m^2) = O(n^3) \]</p>
 <p><strong>Piece 3 â€” smarter bookkeeping gives the \(O(n^2 \log n)\) variant.</strong> If the distances from each cluster to every other cluster are kept in a sorted structure (a heap or sorted list), finding the closest pair drops from \(O(m^2)\) to \(O(\log m)\) per round, and the total becomes \(O(n^2 \log n)\). The storage cost is the same in both cases: the matrix itself occupies \(O(n^2)\) space.</p>
 <p><strong>The bottom line:</strong> naive agglomerative clustering is \(O(n^3)\) time and \(O(n^2)\) space; the heap-based variant reaches \(O(n^2 \log n)\) time. Either way, the \(n^2\) in the space and the extra \(n\) in the time are why hierarchical clustering is described as expensive â€” it is practical for thousands of points, not millions.</p>
+
+<div class="key-concept">
+  <p><strong>Scalable hierarchical clustering — BIRCH's clustering feature:</strong> the \(O(n^3)\) scan is exactly what BIRCH (Balanced Iterative Reducing and Clustering using Hierarchies) avoids. For a cluster of points \(p_1,\dots,p_N \in \mathbb{R}^d\) it stores only a triple \(CF = (N,\, \mathbf{LS},\, SS)\), with \(N\) the count, \(\mathbf{LS} = \sum p_i\) the linear sum and \(SS = \sum \|p_i\|^2\) the sum of squared norms. Centroid and RMS radius are recovered without the original data:</p>
+  <p>\[ \mu = \frac{\mathbf{LS}}{N}, \qquad R = \sqrt{\frac{SS}{N} - \|\mu\|^2} \]</p>
+  <p><strong>Additivity (the incremental property):</strong> merging two subclusters needs no re-scan — \(CF_{A \cup B} = (N_A + N_B,\, \mathbf{LS}_A + \mathbf{LS}_B,\, SS_A + SS_B)\) — from which the merged centroid and radius follow in \(O(d)\). That single identity is why a point can be absorbed in one pass while the tree is built, rather than by recomputing an \(n \times n\) matrix.</p>
+  <p><strong>The CF-tree:</strong> a height-balanced tree whose interior nodes hold entries \([\,CF_i, \text{child}_i\,]\) and whose leaves hold CF entries constrained to a diameter below a threshold \(T\). A point descends by the closest entry; if absorbing it would exceed \(T\), a new entry is created or the leaf splits using its two farthest-apart entries as seeds, possibly cascading splits upward. A merge step after each split counteracts skewed input order. Two parameters govern the whole structure: the threshold \(T\) (fineness, when to split) and the branching factor (maximum entries per node) — \(T\) is tuned to keep the tree in main memory.</p>
+  <p><strong>Four phases:</strong> (1) build the CF tree in one pass; (2) rebuild a smaller tree with a larger \(T\), merging leaf clusters; (3) run an ordinary agglomerative method on the leaf CFs; (4) redistribute the original points using the discovered centroids and iterate to a local optimum. Sparse entries are flagged as outliers, set aside, and reabsorbed only if they fit without growing the tree.</p>
+  <table>
+    <thead>
+      <tr><th>Aspect</th><th>Naive agglomerative (this section)</th><th>BIRCH</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>What is stored</td><td>Pairwise proximity matrix, \(O(n^2)\)</td><td>CF triple per subcluster, \(O(d)\) each</td></tr>
+      <tr><td>Cluster proximity</td><td>Recomputed over point pairs</td><td>Derived from \((N,\mathbf{LS},SS)\) summaries</td></tr>
+      <tr><td>Passes over data</td><td>All pairs scanned repeatedly</td><td>One pass to build the tree, few refinement passes</td></tr>
+      <tr><td>Outliers</td><td>Chain/merge distortion (§15.5)</td><td>Explicitly set aside as sparse leaf entries</td></tr>
+    </tbody>
+  </table>
+  <p><strong>Connection to this section:</strong> BIRCH is still hierarchical — phase 3 is the agglomerative clustering studied above — but it compresses \(n\) points into a small set of sufficient statistics first, moving an \(O(n^3)\)-class procedure into the large-database regime. The price is the same convex/Euclidean bias as centroid linkage: the averages in \((N,\mathbf{LS},SS)\) require a vector space, so crescents remain hard.</p>
+</div>
+
 <h3 id="15.10.2-where-the-algorithms-land">15.10.2 Where the Algorithms Land</h3>
 <p>Putting the complexity numbers together: k-means costs \(O(i \cdot k \cdot n \cdot d)\), which is a good complexity â€” linear in the number of points, the only problem there is that it is a center-based strategy, so you can only get convex clusters. Hierarchical clustering, whether agglomerative or bisecting k-means, is costlier â€” agglomerative pays \(O(n^3)\) or \(O(n^2 \log n)\), bisecting k-means pays an extra \(\log n\) factor over k-means.</p>
 <p>If you are looking for non-convex structure, density can be another notion of what a cluster is â€” which is exactly where the next algorithm comes in. The complexity ledger so far:</p>
@@ -1003,6 +1063,24 @@
 <p>Then there is <strong>indirect density reachable</strong>. Point A and point B are indirect density reachable if you can travel from B to A by traversing through core points in a sequential fashion: B sits next to a core point, that core point sits next to another core point, and so on, until you reach A. The chain of core points is the bridge that connects two dense areas.</p>
 <p>Formally: A and B are (indirectly) density reachable when there is a sequence of points \(p_1, p_2, \dots, p_m\) with \(p_1 = B\), \(p_m = A\), where each step \(p_i \to p_{i+1}\) is direct density reachability (each \(p_i\) for \(i < m\) is a core point and \(d(p_i, p_{i+1}) \leq \text{eps}\)). The first step may start from a core point, and the final step may land on a border point â€” the middle of the chain is all core points.</p>
 <p>The everyday picture: a bridge built of stepping stones. Each stone (core point) is close enough to the next that you can cross; the chain connects two banks (dense regions) that are never directly adjacent. This is why a cluster can snake across a large area â€” no single point needs to see the whole cluster, only its neighbor in the chain.</p>
+
+<div class="key-concept">
+  <p><strong>Formal gap — the third reachability relation:</strong> the two preceding subsections defined direct and indirect density <em>reachability</em>, but the distinction between "reachable" and "connected" needs one more definition. Fix \(\text{eps}\) and \(\text{minPts}\):</p>
+  <ul>
+    <li><strong>Directly density-reachable:</strong> \(a \to b\) iff \(b\) is core and \(d(a,b) \leq \text{eps}\). Asymmetric — the source of the step must be core.</li>
+    <li><strong>Density-reachable:</strong> a chain \(p_1 = b, \dots, p_m = a\) with every \(p_i \to p_{i+1}\). Also asymmetric: a border point can be reached but cannot start a chain.</li>
+    <li><strong>Density-connected:</strong> \(a \sim b\) iff some point \(o\) exists from which both \(a\) and \(b\) are density-reachable. Unlike reachability, connectedness is symmetric — and it is an equivalence relation (reflexive, symmetric, transitive).</li>
+  </ul>
+  <p><strong>Why the distinction matters:</strong> a cluster is the <em>maximal</em> set of pairwise density-connected points. Formally \(C \subseteq D\) is a cluster iff (1) every \(o_1, o_2 \in C\) are density-connected, and (2) no \(o' \in D \setminus C\) is density-connected to any member of \(C\). Border points attach to one cluster by a tie-breaking rule; noise belongs to none. This is the precise version of the informal "connected components of core points plus attached border points" rule from the next subsection.</p>
+  <p><strong>Worked trace (\(\text{eps} = 1\), \(\text{minPts} = 3\)):</strong> points \(A=(0,0)\), \(B=(0.5,0)\), \(C=(1,0)\), \(D=(1.5,0.2)\), \(E=(4,0)\), \(F=(4.5,0)\).</p>
+  <ul>
+    <li>\(A\): neighbours \(\{A,B,C\} = 3\) → core; \(B\): \(\{A,B,C\}\) → core; \(C\): \(\{A,B,C,D\}\) since \(d(C,D)=\sqrt{0.5^2+0.2^2}\approx0.54\) → core.</li>
+    <li>\(D\): only \(\{C,D\}\) because \(d(B,D)=\sqrt{1^2+0.2^2}\approx1.02 > 1\) → count 2, not core; \(C\) is core within eps → border.</li>
+    <li>\(E,F\): two points with no core point within eps → noise, discarded.</li>
+    <li>The single cluster is \(\{A,B,C,D\}\). \(D\) and \(A\) are density-<em>connected</em> via the core point \(C\): \(D \leftarrow C \rightarrow A\). But \(A\) is <em>not</em> density-reachable from \(D\), because \(D\) is not core and cannot start a chain. That asymmetry is exactly why reachability cannot define a cluster, while connectedness can.</li>
+  </ul>
+</div>
+
 <h3 id="15.14.3-how-a-cluster-grows">15.14.3 How a Cluster Grows</h3>
 <div class="example-box">
   <p><strong>Worked example (from the lecture):</strong> this is how DBSCAN builds clusters. Given a dataset with two natural clusters, red and blue, the algorithm first identifies a core point somewhere. All the points in the vicinity of that core point become part of the cluster, and the cluster grows from there: every point in the neighborhood is checked, points that are themselves core points connect onward, and the cluster grows iteratively until no more points can be reached. Two points are part of the same cluster when you can go from point one to point two by moving through a dense area the whole way.</p>

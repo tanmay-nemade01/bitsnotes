@@ -627,6 +627,40 @@
 <div class="key-concept">
   <p>A <em>symbol table</em> in a compiler or assembler translates symbolic names (a variable called <code>total</code>) into their values or addresses. The directory plays the same role for the file system: it translates a human-readable <em>file name</em> into the file's <em>directory entry</em>, which in turn points to the file's attributes and the location of its data. Whatever internal organization the directory uses — a simple list, a sorted list, a hash table — the user never sees it; the system handles it.</p>
 </div>
+<p><strong>Directory implementation — the data structure behind the symbol table:</strong> the choice of how the directory is physically stored directly affects search speed, insertion cost, and reliability.</p>
+<table>
+  <thead>
+    <tr>
+      <th>Structure</th>
+      <th>Search cost</th>
+      <th>Strengths</th>
+      <th>Weaknesses</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td>Linear list (unsorted)</td>
+      <td>\(O(n)\) linear scan</td>
+      <td>Simplest to program; append the new entry on create</td>
+      <td>Every lookup scans the list — noticeable because directory data is used so often</td>
+    </tr>
+    <tr>
+      <td>Sorted list / B-tree</td>
+      <td>\(O(\log n)\) binary or tree search</td>
+      <td>Fast lookup; a sorted listing needs no separate sort step</td>
+      <td>Keeping the list sorted complicates create and delete, which may move many entries</td>
+    </tr>
+    <tr>
+      <td>Hash table</td>
+      <td>\(O(1)\) average via \(h(\text{name})\)</td>
+      <td>Greatly reduces search time; insertion and deletion are straightforward</td>
+      <td>Collisions need handling; fixed size ties the hash function to the table size</td>
+    </tr>
+  </tbody>
+</table>
+<div class="important-note">
+  <p>A software cache of recently used directory information avoids rereading blocks from disk on every lookup. With a hash table, collisions are resolved by a chained-overflow linked list, and growing a fixed 64-entry table to 128 entries forces a new hash function plus rehashing of every existing entry. In ext4, directories are stored by default as linear arrays of entries within each data block; when the index flag is set, a hashed B-tree (htree) keyed by a 31-bit hash of the name is used instead — a lookup computes the hash, locates the correct leaf range, and scans following leaves in the event of a collision.</p>
+</div>
 <h3 id="14.6.2-directory-operations">14.6.2 Directory Operations</h3>
 <p>Whatever the file system, the directory supports a standard set of operations:</p>
 <ul>
@@ -888,6 +922,23 @@
 </div>
 <div class="key-takeaway">
   <p>Partitions are raw (no file system) or cooked (file system, possibly with a boot block). The boot block is a single block that loads the kernel; the root partition holds the kernel and is mounted at boot, after the file system's consistency has been checked — which is why boot time shows the file systems being verified before access is granted.</p>
+</div>
+
+<h3 id="14.11.3-journaling-and-log-structured-consistency">14.11.3 Journaling and Log-Structured Consistency</h3>
+<p>Full consistency checking (fsck/chkdsk) repairs structures <em>after</em> a crash, but on a large volume it can take hours and may even need human intervention. A faster alternative, used by NTFS, the Veritas file system, and recent Solaris UFS, records metadata changes in a log so that recovery replays completed work instead of rescanning the whole disk.</p>
+<div class="key-concept">
+  <p><strong>Formal Definition:</strong> A <em>transaction</em> is the set of metadata operations that carry the file system from one consistent state to the next. All metadata changes are written sequentially to a circular log; a transaction is <em>committed</em> once its commit record reaches stable storage. The system call may then return to the user while the log entries are replayed asynchronously into the real on-disk structures, with a pointer tracking which actions are complete. When a transaction finishes it is removed from the circular log, whose space is then reused. These are the log-based transaction-oriented (or <em>journaling</em>) file systems.</p>
+</div>
+<div class="example-box">
+  <p><strong>Worked crash-recovery trace:</strong> a create operation must (a) allocate a data block, (b) add a directory entry, and (c) decrement the free-block count. Grouped as one transaction \(T\), all three changes are first journalled.</p>
+  <ul>
+    <li><strong>Crash before the commit record:</strong> \(T\) was never committed, so on reboot its partial log entries are <em>discarded</em> (undone). The file system stays in its pre-\(T\) consistent state.</li>
+    <li><strong>Crash after the commit record:</strong> \(T\) is committed, so recovery replays it from the log pointer to completion, finishing (a)–(c) even though the original writes had not reached their final locations. Replay stops at the latest valid commit record.</li>
+  </ul>
+  <p>Recovery therefore touches only the log, not terabytes of metadata: the guarantee is atomicity of each metadata update, not a full-disk scan.</p>
+</div>
+<div class="important-note">
+  <p><strong>System Detail:</strong> Linux ext4 implements this with the jbd2 journal: a transaction in the log ends with a commit block, and a transaction is discarded during replay if its commit record is missing or its checksums do not match. ext4 offers three modes — <code>data=journal</code> (all data and metadata through the journal, safest), <code>data=ordered</code> (metadata only, the default), and <code>data=writeback</code> (data may follow metadata). The side benefit is speed: synchronous <em>random</em> metadata writes become synchronous <em>sequential</em> log writes, later replayed asynchronously as random writes — which is why metadata-heavy operations such as file creation and deletion get faster.</p>
 </div>
 
 <h2 id="14.12-contiguous-allocation">14.12 Contiguous Allocation</h2>

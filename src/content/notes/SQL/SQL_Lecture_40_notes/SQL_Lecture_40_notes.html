@@ -1996,6 +1996,45 @@ ORDER BY ship_country;</code></pre>
   <p><strong>Section Recap:</strong> <code>ROW_NUMBER()</code> assigns unique sequential integers within partitions, making it the premier tool for extracting complete records matching group boundaries. Always specify secondary tie-breakers for deterministic rankings.</p>
 </div>
 
+<h3 id="40.17.4-lateral-joins-correlated-from-subqueries-and-top-n-per-group">40.17.4 LATERAL Joins: Correlated FROM Subqueries and Top-N-per-Group</h3>
+<p>The <code>ROW_NUMBER()</code> pattern extracts group extremes by ranking every row and then filtering on the assigned rank. An alternative mechanism, native to PostgreSQL's <code>FROM</code>-clause semantics, is the <code>LATERAL</code> keyword. Placing <code>LATERAL</code> before a subquery in the <code>FROM</code> clause permits that subquery to reference columns of <code>FROM</code> items that appear <em>before</em> it — which an ordinary subquery cannot do, because it is evaluated independently.</p>
+<div class="key-concept">
+  <p><strong>Formal Semantics:</strong> For each row of the left "column source" relation \(\mathcal{R}\), the correlated item \(f\) is evaluated once using that row's column values, and its resulting rows are joined back to the source row: \[ \text{LATERAL}(f, \mathcal{R}) = \bigcup_{t \in \mathcal{R}} f(t) \] where \(f\) is a subquery parameterized by the current left-row \(t\). The source relation must be <code>INNER JOIN</code>ed or <code>LEFT JOIN</code>ed to the lateral item; a construct such as <code>X RIGHT JOIN LATERAL Y</code> is syntactically valid but <code>Y</code> cannot reference <code>X</code>.</p>
+</div>
+<div class="example-box">
+  <p><strong>Worked Example A — Reusing a Computed Expression:</strong> Section 40.4 established that a <code>SELECT</code>-list alias cannot be referenced in the <code>WHERE</code> clause of the same block. A <code>LATERAL</code> subquery computes the expression once in <code>FROM</code> and exposes it as a named column that downstream clauses may filter on:</p>
+  <pre><code>SELECT OD.order_id, OD.product_id, L.line_total
+FROM order_details OD
+CROSS JOIN LATERAL (
+    SELECT OD.unit_price * OD.quantity - OD.discount AS line_total
+) L
+WHERE L.line_total &gt; 1000
+ORDER BY L.line_total DESC;</code></pre>
+  <p><strong>Worked Example B — Top-N per Country without Window Functions:</strong> Deduplicate the country dimension, then let the <code>LATERAL</code> subquery run once per country with an internal <code>ORDER BY … LIMIT 1</code>:</p>
+  <pre><code>SELECT S.ship_country, L.order_id, L.order_date, L.freight
+FROM (SELECT DISTINCT ship_country FROM orders) S
+CROSS JOIN LATERAL (
+    SELECT O.order_id, O.order_date, O.freight
+    FROM orders O
+    WHERE O.ship_country = S.ship_country
+    ORDER BY O.order_date DESC, O.order_id DESC
+    LIMIT 1
+) L
+ORDER BY S.ship_country;</code></pre>
+  <p><strong>Sense-Check:</strong> Example B returns exactly <strong>21</strong> rows — one latest order per destination country — matching the <code>ROW_NUMBER() = 1</code> result of Section 40.17.2, but achieving it with a per-row correlated subquery instead of a window sort.</p>
+</div>
+<div class="warning-box">
+  <p><strong>Pitfalls and Trade-offs:</strong></p>
+  <ul>
+    <li><strong>Mandatory Alias:</strong> A <code>LATERAL</code> subquery in <code>FROM</code> must carry an alias (e.g., <code>L</code> above); omitting it is a syntax error.</li>
+    <li><strong>Per-Row Execution Cost:</strong> Because the subquery runs once for each left-row, a <code>LATERAL</code> top-N query is efficient only when an index supports the inner sort (e.g., on <code>(ship_country, order_date DESC)</code>). Without it, the engine repeatedly sorts the child rows.</li>
+    <li><strong>Preserving Empty Groups:</strong> Use <code>LEFT JOIN LATERAL … ON true</code> rather than <code>CROSS JOIN LATERAL</code> when parent rows with no matching child rows must be retained; <code>ON true</code> forms the join without naming columns.</li>
+  </ul>
+</div>
+<div class="key-takeaway">
+  <p><strong>Takeaway:</strong> <code>LATERAL</code> turns a <code>FROM</code>-clause subquery into a per-row correlated computation, enabling expression reuse and top-N-per-group retrieval without window functions. It complements rather than replaces <code>ROW_NUMBER()</code>: <code>LATERAL</code> excels with a supporting index and small per-group limits, while window functions scale better for whole-partition analytics.</p>
+</div>
+
 <h2 id="key-industry-applications">Key Industry Applications</h2>
 <p>Practical enterprise SQL queries mirror production architectures across ecommerce, supply chain logistics, financial auditing, and corporate analytics. The relational patterns explored in this lecture drive mission-critical commercial workflows:</p>
 <ol>

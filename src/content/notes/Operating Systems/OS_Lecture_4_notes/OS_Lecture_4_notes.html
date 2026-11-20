@@ -908,6 +908,41 @@
 <div class="key-concept">
   <p><strong>One-to-one.</strong> Each user thread gets its own kernel thread. When a user thread blocks, its kernel thread blocks but the kernel can run another kernel thread of the same process — so a blocking call no longer stalls the process. Several threads can also run in parallel on several cores. The price is the professor's arithmetic: 10 user threads means 10 kernel threads must be created and maintained, and kernel thread creation carries real overhead. For this reason, most implementations restrict the total number of threads an application may create. Windows, Linux, and Solaris 9 and later use this model — it is the modern default.</p>
 </div>
+<div class="important-note">
+  <p><strong>System Detail — how Linux realizes the one-to-one model.</strong> Linux keeps no separate "thread" abstraction: processes and threads alike are <em>tasks</em> represented by <code>struct task_struct</code>, which stores <em>pointers</em> to shared resources rather than copies. A new task is created by <code>clone()</code>, and its flag mask decides exactly how much the parent and child share; passing no flags reproduces <code>fork()</code>.</p>
+  <table>
+    <thead>
+      <tr>
+        <th><code>clone()</code> flag</th>
+        <th>Shared between parent and child</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><code>CLONE_VM</code></td>
+        <td>The virtual address space — memory writes are visible to both (the core of "threads share data")</td>
+      </tr>
+      <tr>
+        <td><code>CLONE_FILES</code></td>
+        <td>The file-descriptor table — a descriptor opened or closed by either affects the other</td>
+      </tr>
+      <tr>
+        <td><code>CLONE_FS</code></td>
+        <td>Filesystem information: root, current working directory, and umask</td>
+      </tr>
+      <tr>
+        <td><code>CLONE_SIGHAND</code></td>
+        <td>The signal-handler table (each thread still has its own signal mask)</td>
+      </tr>
+      <tr>
+        <td><code>CLONE_THREAD</code></td>
+        <td>Places the child in the caller's <em>thread group</em>: both share one PID (the TGID returned by <code>getpid()</code>) yet have distinct thread IDs (TIDs)</td>
+      </tr>
+    </tbody>
+  </table>
+  <p><strong>Constraint chain.</strong> These flags are not independent: <code>CLONE_THREAD</code> requires <code>CLONE_SIGHAND</code>, which in turn requires <code>CLONE_VM</code>. A genuine Linux thread therefore shares memory, signal handlers, filesystem context, and descriptors — exactly the shared code, data, and files of section 4.5 — while its own stack, registers, signal mask, and TID remain private.</p>
+  <p><strong>NPTL.</strong> The Native POSIX Threads Library is the modern 1:1 implementation: every POSIX thread maps to one kernel scheduling entity through <code>clone()</code>, all threads of a process sit in one thread group, and synchronization primitives such as mutexes and joins are built on the kernel's <code>futex()</code> facility. The older LinuxThreads implementation was also 1:1 but used a manager thread and per-thread PIDs, breaking POSIX semantics; NPTL corrected that and scales to very large thread counts.</p>
+</div>
 <h3 id="4.8.3-many-to-many">4.8.3 Many-to-Many</h3>
 <p>Many user threads are mapped to many kernel threads, and the numbers need not match. Five user threads with three or four kernel threads are enough to achieve multithreading on a multi-core system. Real-world: earlier versions of Solaris used this model, and Windows uses it with the thread fiber package.</p>
 <div class="key-concept">
@@ -1331,6 +1366,44 @@ for (i = 0; i &lt; n; i++) {
     </tbody>
   </table>
   <p>Why deferred is the safe default: asynchronous cancellation can strike in the middle of updating shared data or while the thread holds a resource, and the operating system reclaims system resources but not all user-level resources. Deferred cancellation confines the exit to points the thread controls, where it can clean up. In Java, cancellation is handled through interrupt signals on the target thread; the thread checks its interrupt status cooperatively.</p>
+</div>
+<div class="important-note">
+  <p><strong>System Detail — POSIX cancellation points and cleanup handlers.</strong> Deferred cancellation does not fire at an arbitrary instruction. POSIX.1 defines a set of <em>cancellation points</em>, and a pending request is honoured only when the target thread calls one of them: "If a thread is cancelable, its cancelability type is deferred, and a cancelation request is pending for the thread, then the thread is canceled when it calls a function that is a cancelation point." Required cancellation points include <code>read()</code>, <code>write()</code>, <code>open()</code>, <code>pthread_join()</code>, <code>pthread_cond_wait()</code>, <code>sleep()</code>, and <code>pthread_testcancel()</code> — a function whose only job is to create a point in code that has none. Between such calls the thread keeps running normally even with a request pending, which is exactly why deferred cancellation is orderly and asynchronous cancellation is not.</p>
+  <p>The companion problem is the one just named: the kernel reclaims system resources but <em>not</em> user-level resources such as a heap buffer or a mutex the thread still holds. POSIX supplies a LIFO stack of <em>cleanup handlers</em>:</p>
+  <pre><code>pthread_cleanup_push(unlock_and_free, arg);   // register handler
+while (!done) {
+    pthread_testcancel();                      // cancellation point
+    ...                                        // work on shared data
+}
+pthread_cleanup_pop(1);                        // normal exit: pop and run</code></pre>
+  <p><strong>Which exit path runs the handler:</strong></p>
+  <table>
+    <thead>
+      <tr>
+        <th>How the thread leaves the block</th>
+        <th>Cleanup handler runs?</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>Deferred cancellation at a cancellation point</td>
+        <td>Yes — all stacked handlers, in reverse (LIFO) order</td>
+      </tr>
+      <tr>
+        <td><code>pthread_exit()</code></td>
+        <td>Yes — same LIFO order</td>
+      </tr>
+      <tr>
+        <td>Plain <code>return</code> from the start function</td>
+        <td>No — handlers are discarded, so a still-held mutex stays locked</td>
+      </tr>
+      <tr>
+        <td><code>pthread_cleanup_pop(1)</code> on the normal path</td>
+        <td>Yes — the top handler is popped and explicitly executed</td>
+      </tr>
+    </tbody>
+  </table>
+  <p><strong>Pairing rule.</strong> <code>pthread_cleanup_push()</code> and <code>pthread_cleanup_pop()</code> must appear at the same lexical nesting level, since POSIX permits them to be macros expanding to <code>{</code> and <code>}</code>; leaving the block early with <code>return</code>, <code>break</code>, <code>continue</code>, or <code>goto</code> is undefined. The payoff is the failure mode this section warns about, fixed concretely: a cancelled worker releases its mutex and frees its buffer before it dies, so no sibling thread is left waiting on a lock nobody can unlock.</p>
 </div>
 <h3 id="4.11.4-thread-local-storage-tls">4.11.4 Thread-Local Storage (TLS)</h3>
 <p>Threads usually share the data, the code, and the files of the process. But certain threads need their own data; that is called <em>thread-local storage</em> (TLS). TLS is useful exactly when we do not have control over thread creation — for instance, when we are using a pool of threads, we do not create a thread for every task, so the pool's threads need a place to keep their own values. TLS lasts for the entire execution of the thread, and it stays visible across different invocations of the same function: if a local variable is set, it ceases to exist when we come out of the function, but if the same function is called multiple times by a particular thread, the TLS value remains visible across those invocations. Think of TLS as static data that is unique for each and every thread.</p>

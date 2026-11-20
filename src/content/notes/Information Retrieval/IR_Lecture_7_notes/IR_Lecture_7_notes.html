@@ -720,6 +720,40 @@
 <p>First take 8 bits. Look at \(C\). If \(C = 0\), keep the 7 value bits aside and read the next 8 bits. If \(C = 1\), keep its 7 value bits and stop. Join kept groups in order with \(n = 128 \times n + \text{group}\), convert the joined binary to decimal for the gap, then add to the prior identifier to get the true identifier. Repeat for the next 8 bits. The first number has no prior identifier, so it stands as is. Every later number is a gap that must be added back.</p>
 <p>Variable byte gap codes underlie fast merge steps in real engines because less bytes read means less wait per query.</p>
 
+<h3 id="7.8.5-gamma-codes-for-bit-level-gap-encoding">7.8.5 Gamma Codes for Bit-Level Gap Encoding</h3>
+<div class="important-note">
+  <p>Variable byte codes adapt at the byte level. What if a gap of 13 could be written in 7 bits instead of a full byte?</p>
+</div>
+<p>The spoken session stops at variable bytes and names gamma codes only as a size figure. The companion text develops them as the natural bit-level extension: instead of rounding every gap up to a whole number of bytes, a <em>gamma code</em> (a universal prefix code for positive integers, written \(\gamma\)) splits a gap \(G\) into a <em>length</em> and an <em>offset</em>. Offset is the binary form of \(G\) with its leading 1 removed, of length \(\lfloor \log_2 G \rfloor\) bits. Length is that bit-count written in <em>unary code</em> (the integer \(n\) as \(n\) ones followed by a zero), so it is self-delimiting without any table.</p>
+<div class="key-concept">
+  <p><strong>Encoding rule:</strong> \(\gamma(G) = \text{unary}(\lfloor \log_2 G \rfloor) \cdot \text{offset}(G)\), where offset is \(G\)'s binary digits after the leading 1. Total length is \(\lfloor \log_2 G \rfloor + 1 + \lfloor \log_2 G \rfloor = 2\lfloor \log_2 G \rfloor + 1\) bits, always odd. This is within a factor of 2 of the information bound \(\log_2 G\) bits for an equiprobable gap in \(1 \le G \le 2^n\).</p>
+</div>
+<div class="example-box">
+  <p><strong>Worked encode and decode — \(G = 13\).</strong> Binary of 13 is 1101, so offset is 101 and its length is 3. Unary of 3 is 1110. Concatenate: \(\gamma(13) = 1110\,101 = 1110101\), which is 7 bits against 1 byte for VB. To decode 1110101, read the unary run up to its terminating zero (1110) to learn the offset length 3, take the next 3 bits (101), then prepend the chopped leading 1: \(101 \to 1101 = 13\). <strong>Answer: 13 encodes as 1110101 and decodes back to 13.</strong> Sense-check: small gaps such as \(\gamma(1)=1\) cost a single bit, which is why bit-level codes win where stop-word gaps dominate.</p>
+</div>
+
+<h3 id="7.8.6-delta-codes-and-bit-level-versus-byte-aligned-trade-offs">7.8.6 Delta Codes and Bit-Level versus Byte-Aligned Trade-offs</h3>
+<p>Gamma still writes its length field in wasteful unary. A <em>delta code</em> (written \(\delta\), another Elias universal code) keeps the same offset field but re-encodes the length in gamma instead of unary, shrinking large gaps further.</p>
+<div class="example-box">
+  <p><strong>Worked example — \(\delta(7)\).</strong> Binary of 7 is 111, so the offset is 11 with length 2. Gamma of 2 is \(\gamma(2)=100\) (offset 0 of length 1, unary 10). Concatenate length then offset: \(\delta(7) = 100\,11 = 10011\), five bits. <strong>Answer: \(\delta(7)=10011\).</strong> Sense-check: \(\gamma(7)=110\,11\) is also five bits, so delta wins not on small numbers but on distributions dominated by large gaps, where a unary length field grows linearly while a gamma-coded one grows logarithmically.</p>
+</div>
+<div class="diagram-container my-6 text-center">
+  <table class="mx-auto text-sm">
+    <thead>
+      <tr><th class="px-3 py-1">Code</th><th class="px-3 py-1">Unit</th><th class="px-3 py-1">Bits for gap \(G\)</th><th class="px-3 py-1">Decode cost</th><th class="px-3 py-1">Preferred setting</th></tr>
+    </thead>
+    <tbody>
+      <tr><td class="px-3 py-1">Variable byte (VB)</td><td class="px-3 py-1">whole bytes</td><td class="px-3 py-1">\(8\lceil(\lfloor\log_2 G\rfloor+1)/7\rceil\)</td><td class="px-3 py-1">Lowest; byte-aligned</td><td class="px-3 py-1">Default; speed-critical merges</td></tr>
+      <tr><td class="px-3 py-1">Gamma (\(\gamma\))</td><td class="px-3 py-1">bits</td><td class="px-3 py-1">\(2\lfloor\log_2 G\rfloor+1\)</td><td class="px-3 py-1">Higher; bit manipulation</td><td class="px-3 py-1">Disk-limited indexes; small gaps</td></tr>
+      <tr><td class="px-3 py-1">Delta (\(\delta\))</td><td class="px-3 py-1">bits</td><td class="px-3 py-1">\(m + 2\lfloor\log_2 m\rfloor + 1,\; m=\lfloor\log_2 G\rfloor\)</td><td class="px-3 py-1">Highest</td><td class="px-3 py-1">Large gaps dominate</td></tr>
+    </tbody>
+  </table>
+  <p class="text-xs text-slate-500 mt-2"><strong>Figure:</strong> All three codes are lossless and universal; VB trades a little space for fast byte-aligned decoding, while bit-level gamma and delta trade decode work for compactness as gaps grow.</p>
+</div>
+<div class="key-takeaway">
+  <p>All three gap codes rebuild the same postings exactly, so the choice is a space-against-speed decision. The megabyte ladder already recorded the outcome; these codes explain the bits behind it.</p>
+</div>
+
 <h2 id="7.9-ranked-retrieval-and-the-jaccard-coefficient">7.9 Ranked Retrieval and the Jaccard Coefficient</h2>
 <h3 id="7.9.1-mathematical-formulation">7.9.1 Mathematical Formulation</h3>
 <div class="important-note">

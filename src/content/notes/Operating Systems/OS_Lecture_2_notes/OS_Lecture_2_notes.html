@@ -1075,6 +1075,25 @@ flowchart TD
 <div class="warning-box">
   <p><strong>Scope:</strong> Emulation is a fallback, not a design goal. If the operating system was written for specific hardware, emulation lets it run elsewhere, but with slower execution and heavier resource use. Where native support exists (Linux on many CPUs), no emulation is needed and performance is full speed. A related idea — running whole operating systems in virtual machines (such as VMware) — is discussed in the next sections, but virtualization is different from emulation: a virtual machine presents the guest with hardware that matches what it expects, while an emulator translates between different architectures.</p>
 </div>
+
+<h3 id="2.8.5-operating-system-generation-sysgen">2.8.5 Operating System Generation (SYSGEN)</h3>
+<p>An operating system is rarely written for exactly one machine at one site. More commonly it is designed to run on a whole <em>class</em> of machines with different peripherals, so it must be configured — <em>generated</em> — for each specific installation. That tailoring step is called <em>system generation</em> (SYSGEN), and it is the practical bridge between the design decisions above and the boot process of 2.11.</p>
+<div class="key-concept">
+  <p><strong>Formalize:</strong> A <em>SYSGEN program</em> obtains the details of the target configuration — by reading a configuration file, asking the operator, or probing the hardware directly — and produces an operating system tailored to that description. Five kinds of information are needed:</p>
+  <ol>
+    <li><strong>CPU</strong> — which processor and which installed options (extended instruction sets, floating point); on a multiprocessor, every CPU is described.</li>
+    <li><strong>Boot disk</strong> — how it is formatted and how many partitions it is split into.</li>
+    <li><strong>Memory</strong> — how much is present; some systems probe address after address until an illegal-address fault defines the last legal location.</li>
+    <li><strong>Devices</strong> — what is attached, with each device's number, interrupt number, type, model, and any special characteristics.</li>
+    <li><strong>OS options and parameters</strong> — buffer counts and sizes, the chosen CPU-scheduling algorithm, the maximum number of processes, and similar choices.</li>
+  </ol>
+</div>
+<div class="important-note">
+  <p><strong>System Detail:</strong> There are three levels of tailoring. At the most thorough level the administrator edits the OS source and recompiles everything, producing a small, purpose-built system. In the middle, a configuration description selects modules from a precompiled library and builds tables — fast, because nothing is recompiled, but more general than necessary. At the other extreme the system is entirely <em>table driven</em>: all code is always present and selection happens at execution time, so generation is simply the creation of the right tables. The trade-off is size and generality versus how easily the system absorbs a newly acquired disk drive or terminal later.</p>
+</div>
+<div class="key-takeaway">
+  <p><strong>Takeaway:</strong> The same idea survives in modern kernel configuration: the administrator inventories the hardware, edits a configuration file whose lines name devices and subsystems, and compiles a kernel stripped down to that machine's hardware — or loads a driver as a module when the configuration changes. SYSGEN is where the portability decision of 2.11.1 becomes a concrete, site-specific operating system.</p>
+</div>
 <div class="key-takeaway">
   <p><strong>Recap + Bridge:</strong> Design sets goals first (user and system goals), separates policy from mechanism, chooses an implementation language (higher-level for portability, assembly where speed and size rule), and uses emulation only to run systems on non-native hardware. The design decisions now made, the next topic is how the finished operating system is physically arranged inside: the structures from simple MS-DOS to layered, microkernel, modular, hybrid, and mobile designs.</p>
 </div>
@@ -1215,6 +1234,59 @@ flowchart TD
     <li>Believing a microkernel is slow in the abstract: the overhead is real, but it is a deliberate trade — security and reliability in exchange for speed. Windows NT's history (microkernel → more monolithic in NT 4.0) shows designers trading back when performance suffered.</li>
     <li>Treating the structures as mutually exclusive. Real systems combine them: Mac OS X is layered + microkernel + modules; Linux is mostly monolithic in spirit but modular in loading drivers.</li>
   </ul>
+</div>
+
+<h3 id="2.9.8-virtual-machines-and-hypervisors">2.9.8 Virtual Machines and Hypervisors</h3>
+<p>The layered idea taken to its logical conclusion is the <em>virtual machine</em>: the hardware of one physical computer — CPU, memory, disks, network cards — is abstracted into several execution environments, each with the illusion that it owns a private machine. The thin layer that creates and runs these environments is the <em>virtual machine monitor</em>, or <em>hypervisor</em>; the machine underneath is the <em>host</em>, and each environment is a <em>guest</em> running its own operating system.</p>
+<div class="key-concept">
+  <p><strong>Formalize:</strong> A virtual machine presents an interface essentially identical to the underlying bare hardware, so an unmodified guest OS can run inside it. Historically, IBM's VM/370 appeared commercially in 1972 and divided one mainframe into several VMs, each running its own operating system (typically CMS). Because a handful of physical disk drives could not be handed to every guest, VM/370 introduced <em>minidisks</em> — virtual disks identical in every respect except size, carved out of tracks on the real disks.</p>
+</div>
+<table>
+  <thead>
+    <tr>
+      <th>Approach</th>
+      <th>Interface presented</th>
+      <th>Guest OS changes</th>
+      <th>Performance / cost</th>
+      <th>Examples</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td>Full virtualization — Type 1 (bare metal)</td>
+      <td>Virtual hardware identical to the real machine</td>
+      <td>None</td>
+      <td>Near-native; hypervisor runs directly on the hardware</td>
+      <td>IBM VM/370, Xen, KVM</td>
+    </tr>
+    <tr>
+      <td>Full virtualization — Type 2 (hosted)</td>
+      <td>Virtual hardware identical to the real machine</td>
+      <td>None</td>
+      <td>Near-native, plus the host OS underneath</td>
+      <td>VMware Workstation, VirtualBox</td>
+    </tr>
+    <tr>
+      <td>Para-virtualization</td>
+      <td>Similar but deliberately simplified hardware</td>
+      <td>Guest must be modified</td>
+      <td>More efficient use of resources, smaller virtualization layer</td>
+      <td>Solaris 10 containers/zones, Xen PV</td>
+    </tr>
+    <tr>
+      <td>Emulation (simulation)</td>
+      <td>A different instruction set, translated in software</td>
+      <td>Guest compiled for the other architecture</td>
+      <td>Up to roughly 10× slower; a whole CPU in software</td>
+      <td>DOSBox running x86 programs on modern PCs</td>
+    </tr>
+  </tbody>
+</table>
+<div class="important-note">
+  <p><strong>System Detail:</strong> The chief benefit is isolation: a virus inside one guest damages that guest but not the host or the other guests, and several lightly used physical machines can be consolidated onto one host. Isolation is not absolute — guests share by exporting a file-system volume or by joining a virtual network implemented in software. Operating-system research also benefits: developers get their own VM instead of taking a production machine down for "system-development time", and testers run several OS environments on one workstation. Standardized formats such as the Open Virtualization Format let a configured VM be moved between virtualization platforms.</p>
+</div>
+<div class="key-takeaway">
+  <p><strong>Takeaway:</strong> Virtualization is not the emulation of 2.8.4: it presents the guest with the hardware it expects, so it runs at almost full speed, while emulation translates between instruction sets and pays a large penalty. Para-virtualization is the middle path, modifying the guest for a smaller, more efficient layer. The abstraction is concrete in Linux's KVM interface: opening <code>/dev/kvm</code> obtains a handle, a <code>KVM_CREATE_VM</code> operation creates a virtual machine, and <code>KVM_CREATE_VCPU</code> adds a virtual CPU to it.</p>
 </div>
 <div class="key-takeaway">
   <p><strong>Recap + Bridge:</strong> Operating system structures form a design spectrum: simple (MS-DOS — no separation, one bug destroys everything), traditional UNIX (system programs + one big kernel), layered (strict levels using only lower layers), microkernel (small kernel, message-passing between user-mode services, overhead cost), loadable modules (core kernel plus dynamically loaded modules), hybrids (Mac OS X: Aqua + Cocoa + Mach/BSD + kernel extensions), and mobile platforms (iOS with Cocoa Touch, Android with Dalvik). The common thread: every structure is a different answer to how much to separate, and how much overhead that separation is worth. With structures covered, the session turns to what happens when systems fail: debugging and failure analysis.</p>

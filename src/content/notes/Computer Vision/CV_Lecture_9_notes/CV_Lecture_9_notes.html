@@ -353,6 +353,9 @@
   <p>No weights to learn here. To tag a new photo, find the stored photo that looks most like it and copy that tag.</p>
 </div>
 <p>A <em>nearest neighbour classifier</em> (a rule that copies the label of the closest stored example) needs no fitted weights. It stores the training set. At test time it scores gaps and takes a majority vote among the k closest items. The <em>k-nearest neighbours rule</em> (the same vote with k neighbours instead of one) smooths the choice by polling more stored points. With \(k = 1\) we copy the single best match. With \(k = 5\) we poll five stored rows and take the top label.</p>
+<div class="important-note">
+  <p><strong>Effect of k on the boundary:</strong> k is a hyperparameter that trades noise sensitivity against boundary sharpness, so it must be tuned rather than fixed. With k too small, the vote follows individual stored rows and the decision surface turns jagged — one noisy or mislabelled neighbour can flip a query, which is overfitting. As k grows, the vote averages over more rows and suppresses that noise, but the boundary over-smooths and small regions shrink or vanish, which is underfitting. Textbooks put it plainly: too small a k acts "in a very random way," too large a k "underfits (over-smooths)." Pick k on validation data, as the tuning split in 9.5 prescribes.</p>
+</div>
 <div class="key-concept">
   <p>Purpose: tag a new image with zero training cost by reuse of stored rows. Inputs: test vector plus all train vectors plus their labels. Outputs: predicted label by smallest gap or majority vote.</p>
 </div>
@@ -408,6 +411,16 @@
 </div>
 <div class="warning-box">
   <p><strong>Scope:</strong> this rule assumes dense coverage of each class and a gap that tracks shape. <strong>Assumption:</strong> same size, same scale, same light across train and test. When views shift or light swings, raw pixel gaps stop tracking class and votes drift.</p>
+</div>
+
+<div class="key-concept">
+  <p><strong>Scale sensitivity of a distance metric:</strong> L1 and L2 gaps sum raw coordinate differences, so they are measured in whatever units each feature happens to use. A feature with a large numeric range therefore dominates the vote even when a small-range feature carries the real class signal. The fix is to put every feature on a common scale <em>before</em> storing rows and scoring gaps.</p>
+  <p>Standardization (z-score) rewrites each coordinate \(j\) using the training mean \(\mu_{j}\) and training standard deviation \(\sigma_{j}\):</p>
+  <p>\[x'_{j} = \frac{x_{j} - \mu_{j}}{\sigma_{j}}\]</p>
+  <p><strong>Worked two-feature trace:</strong> a query \(q = [0.5,\,500]\), stored row \(r_1 = [0.5,\,480]\) (same feature A, shifted B), and stored row \(r_2 = [0.6,\,500]\) (shifted A, same B). Let feature A range over \(0\) to \(1\) and feature B over \(0\) to \(1000\). With \(\mu_A = 0.5,\ \sigma_A = 0.1\) and \(\mu_B = 500,\ \sigma_B = 200\):</p>
+  <p>Raw L2 gives \(d(q,r_1) = \sqrt{0^2 + 20^2} = 20\) and \(d(q,r_2) = \sqrt{0.1^2 + 0^2} = 0.1\), so the large-range feature B decides and \(r_2\) wins.</p>
+  <p>After standardization \(q' = [0,0]\), \(r_1' = [0,-0.1]\), \(r_2' = [1,0]\). Now \(d(q',r_1') = 0.1\) and \(d(q',r_2') = 1\), so \(r_1\) wins. Same data, same L2 formula, different label: scaling changes the neighbour structure itself.</p>
+  <p><strong>Whitening</strong> goes one step further and decorrelates the coordinates using the covariance matrix, so each direction contributes independently. Both operations must use statistics fitted on training data only and then be reused unchanged at test time, or train and test features stop lining up.</p>
 </div>
 <h3 id="9.4.2-worked-examples">9.4.2 Worked Examples</h3>
 <div class="example-box">
@@ -599,9 +612,36 @@
 <p>For many-way picks the squash is the <em>softmax function</em> (a normalizer that turns raw scores into probabilities that sum to one). The verbal form is exponent of this class over sum of exponents of all classes. The softmax exponent of class over sum of exponents yields probabilities. With raw scores \(s_{j}\) in real space for class \(j\) and output \(p_{j}\) in interval 0,1:</p>
 <p>\[p_{j} = \frac{\exp(s_{j})}{\sum_{k} \exp(s_{k})}\]</p>
 <p>Here \(j\) marks the target class, \(k\) runs over all classes, \(\\exp\) is the natural exponent, and the \(p_{j}\) values sum to one across \(j\). Shift check: adding one constant to all \(s\) leaves \(p\) fixed. The 10 by 1 vector such as 0.7, 0.1, and so on is this \(p\) vector, and the top entry names the label. Paired with cross entropy, the per-image loss in words is minus log of the predicted chance for the true class:</p>
+<div class="important-note">
+  <p><strong>Numerical stability:</strong> the shift invariance noted above has a practical consequence. Exponentiating large raw scores can overflow fixed-precision floats — for scores such as \([123, 456, 789]\), \(\exp(789)\) is far beyond the float range. Subtract the largest score before exponentiating. Let \(m = \max_{k} s_{k}\) and set \(s'_{k} = s_{k} - m\). The largest exponent is then \(\exp(0) = 1\) and every other lies in \((0, 1]\), so the probabilities are unchanged (the common factor cancels) yet no term overflows. This is the log-sum-exp trick used by production softmax implementations.</p>
+</div>
 <p>\[L_{ce} = -\log p_{true}\]</p>
 <p>where \(p_{true}\) in interval 0,1 is the softmax chance placed on the correct label. Example: true cat with \(p = 0.7\) gives loss about 0.36. With \(p = 0.1\) loss is about 2.30. Same moral as binary: doubt costs a little, confident error costs a lot.</p>
 <p>A <em>max-margin loss</em> (a loss that rewards wide gaps between classes) reads the same splits in a different way. Two lines can both give zero errors yet differ in <em>margin</em> (the clear space between the line and the nearest points). The line with larger clear space on both sides generalizes better. Margin as clear space where the line sits far from points and safer points win is the rule. That is why SVM-style training prefers the wide-margin line even when error counts tie. Decision lines are picked by the loss, not by error count alone.</p>
+<div class="key-concept">
+  <p><strong>Gradient of softmax plus cross entropy:</strong> the "send the gradient back" step of SGD has a clean closed form. Let \(s_{k}\) be the raw score for class \(k\), \(p_{k}\) its softmax chance, and \(t_{k}\) the one-hot target (1 for the true class, 0 otherwise). The derivative of the per-image loss with respect to each score collapses to:</p>
+  \[
+  \frac{\partial L_{i}}{\partial s_{k}} = p_{k} - t_{k}
+  \]
+  <p>For the true class the gradient is \(p_{true} - 1\), negative while \(p_{true} < 1\), so its score is pushed up; for every wrong class it is just \(p_{k}\), positive, so those scores are pushed down. The softmax derivative and the loss derivative cancel during the chain rule, leaving only predicted chance minus true identity. The gradient has the same 10 by 1 shape as the score vector.</p>
+</div>
+
+<div class="important-note">
+  <p><strong>Regularized objective:</strong> the mean loss \(L\) can be minimized on its own, or with a penalty on the size of the weights. Adding a p-norm penalty gives</p>
+  <p>\[J(W,b) = L(W,b) + \lambda \sum_{j,i} |W_{j,i}|^{p}\]</p>
+  <table>
+    <thead>
+      <tr><th>Penalty</th><th>Form</th><th>Effect on \(W\)</th><th>Typical use</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>L2 (\(p=2\))</td><td>\(\lambda\sum W_{j,i}^{2}\)</td><td>Shrinks all weights smoothly</td><td>Default; better conditioning, less overfitting</td></tr>
+      <tr><td>L1 (\(p=1\), lasso)</td><td>\(\lambda\sum |W_{j,i}|\)</td><td>Drives some weights exactly to zero</td><td>Sparse templates / feature selection</td></tr>
+    </tbody>
+  </table>
+  <p>\(\lambda \ge 0\) is a hyperparameter tuned on validation data, never on test.</p>
+  <p><strong>Why "weight decay":</strong> differentiating the L2 penalty adds \(2\lambda W\) to the gradient, so a plain SGD step \(W \leftarrow W - \eta \nabla L\) becomes \(W \leftarrow (1 - 2\eta\lambda)W - \eta \nabla L\). Every update multiplies the weights by a factor slightly below one. With \(\eta = 0.1\) and \(\lambda = 0.01\) that factor is \(0.998\) per step, so after 100 steps an untouched weight falls to about \(0.82\) of its starting value. This is the term that lifts the linear map from roughly 40 percent toward 45 to 48 percent in the notes' sketch.</p>
+  <p><strong>Adaptive-optimizer nuance:</strong> for adaptive methods such as Adam, adding \(\lambda\|W\|_2^2\) to the loss is not the same as shrinking the weights directly, because the penalty enters the running momentum and variance averages. Decoupled weight decay applies the shrink separately, so it does not accumulate in the momentum nor variance. Keep the two mechanisms distinct when reading optimizer settings.</p>
+</div>
 <h3 id="9.8.2-worked-examples">9.8.2 Worked Examples</h3>
 <div class="example-box">
   <p>Loss picks the line where margin breaks ties. Sketch one shows a line that leaves one positive on the wrong side and one negative on the wrong side, giving loss 2. Sketch two shifts the line so all points sit on the right side, giving loss 0. Sketch three tilts another way and also gives loss 0. Zero ties with zero. The margin as clear space breaks the tie. The line with larger support gap wins because far points are safer than near-grazing points. <strong>Final answer: pick the zero-loss line with the widest gap.</strong> Sense-check: grazing lines flip under tiny noise, wide lines hold.</p>

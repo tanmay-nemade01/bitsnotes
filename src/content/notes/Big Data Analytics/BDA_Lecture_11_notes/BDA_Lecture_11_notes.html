@@ -656,6 +656,22 @@ Raw Data Source      ---&gt; Message Queue       ---&gt; In-Memory Queue (Kafka)
   <p><strong>Hook:</strong> To know that \(2\) was followed by \(10\) then \(5\), what must the engine remember—and for how long?</p>
 </div>
 <p>Pattern detection needs <em>state</em>: running counts, last-seen keys, open windows. <em>State remembrance</em> asks how long keys live—1 hour, 24 hours, 30 days, forever? RAM is finite; unbounded state exhausts executors. Engines bound retention with time windows and <em>watermarks</em> that finalize and evict stale keys.</p>
+<div class="key-concept">
+  <p><strong>Bounded-memory windowed aggregation — the DGIM algorithm.</strong> Exact counts over the most recent \(N\) elements require storing all \(N\) bits. When \(N\) is so large that this is impossible, the <em>Datar–Gionis–Indyk–Motwani (DGIM)</em> algorithm answers "how many 1s occurred in the last \(k \le N\) bits?" approximately using only \(O(\log N)\) bucket records and at most a \(50\%\) relative error.</p>
+  <p><strong>Bucket invariants.</strong> Each bucket stores (i) the timestamp of its rightmost (most recent) 1-bit and (ii) its <em>size</em> — the count of 1s it spans, which must be a power of two. The maintained buckets obey:</p>
+  <ol>
+    <li>The right end of every bucket is a bit equal to 1; every 1-bit belongs to exactly one bucket.</li>
+    <li>There are one or two buckets of each power-of-two size, and sizes never decrease as you move left in time.</li>
+    <li>Buckets are disjoint and ordered by timestamp; the leftmost bucket is dropped once it falls outside the \(N\)-bit window.</li>
+  </ol>
+  <p><strong>Estimate rule.</strong> Let \(b\) be the leftmost bucket that overlaps the last \(k\) bits. Then \[ \hat{c} = \tfrac{1}{2}\,\text{size}(b) + \sum_{\text{buckets right of } b} \text{size}(\cdot) \] — take half of \(b\) (assuming its 1s are spread across it) plus the full sizes of all more recent buckets. On arrival of a new 1, create a size-1 bucket; if three buckets of one size accumulate, merge the two oldest into a bucket of double the size, cascading upward.</p>
+  <p><strong>Worked trace.</strong> For a stream ending in <code>...0110010110</code> with \(k=10\), the overlapping leftmost bucket has size 4 (spanning <code>11101</code>) and the buckets to its right have sizes 2, 1, 1. The estimate is \(\hat{c} = 4/2 + 2 + 1 + 1 = 6\) versus an exact count of \(5\) — an error well inside the \(50\%\) bound. <strong>Final result:</strong> \(O(\log N)\) bucket records replace \(N\) stored bits, trading exactness for bounded state.</p>
+</div>
+<div class="key-concept">
+  <p><strong>Decaying windows — exponentially weighted aggregation.</strong> A sliding window discards everything older than \(N\). When instead we want <em>all</em> history but with recent events weighted more heavily, a decaying window maintains an exponentially weighted sum. For a stream \(a_1, a_2, \dots, a_t\) and decay constant \(c\) (small, e.g. \(10^{-6}\)–\(10^{-9}\)): \[ S_t = \sum_{i=0}^{t-1} a_{t-i}(1-c)^i \] Each step updates in constant time: \(S_{t+1} = (1-c)\,S_t + a_{t+1}\).</p>
+  <p><strong>Bounded state.</strong> Under decay the total of all tracked scores converges to \(1/c\). A key whose score drops below a threshold \(\tau\) (e.g. \(0.5\)) is evicted, so at most \(1/(c\tau)\) keys can be tracked — for \(\tau = 0.5\), at most \(2/c\) elements — independent of stream length.</p>
+  <p><strong>Worked trace.</strong> With \(c = 0.1\), a movie watched at steps 1 and 3 scores \(S_3 = 1\cdot(0.9)^2 + 0 + 1\cdot(0.9)^0 = 0.81 + 1 = 1.81\); a movie seen only at step 1 scores \(0.81\). Both stay above \(\tau = 0.5\), but the older one is discounted. <strong>Final result:</strong> recent events dominate a fixed-size score table — "most popular currently" without storing the full stream.</p>
+</div>
 <div class="warning-box">
   <p><strong>Pitfalls:</strong> Infinite <code>groupBy</code> keys without watermarks; storing full raw history in state instead of aggregates; forgetting state rebuild cost after failure without checkpoints.</p>
 </div>
@@ -763,6 +779,12 @@ Micro-Batching:        Incoming Events (Interval: e.g., 2s) ---&gt; Micro-Batch 
   <li><strong>Micro-batching only</strong> (no continuous mode).</li>
   <li><strong>Processing-time windowing only</strong>—no native event-time or watermarking for late data.</li>
 </ul>
+<div class="key-concept">
+  <p><strong>Formalize — windowed DStream aggregation.</strong> The "windowed variants" noted above are governed by two parameters: the <em>window length</em> \(W\) (how much recent data each result covers) and the <em>sliding interval</em> \(S\) (how often the window is evaluated). Both \(W\) and \(S\) must be multiples of the source DStream's batch interval \(B\). When \(S = W\) the windows do not overlap (a <em>tumbling</em> window, each batch counted once); when \(S < W\) consecutive windows overlap by \(W - S\), so each input batch contributes to \(W/S\) successive results.</p>
+</div>
+<div class="example-box">
+  <p><strong>Worked example — windowed word count.</strong> A socket text stream is read every \(1\,\text{s}\). Words are counted over a window of length \(W = 60\,\text{s}\), recomputed every \(S = 10\,\text{s}\), via <code>reduceByKeyAndWindow(func, 60, 10)</code>. Each emitted table covers the most recent 60 seconds of words; since \(W/S = 6\), any one second's words appear in 6 consecutive outputs. <strong>Final answer: windowed counts refresh every 10 s, each result spanning the latest 60 s.</strong> Sense-check: setting \(S = 60\,\text{s}\) makes windows non-overlapping, each batch counted once.</p>
+</div>
 <div class="key-concept">
   <p><strong>Purpose (procedural view):</strong> Turn an unbounded input into repeating RDD batches so the core Spark engine can run familiar transformations in near real time.</p>
 </div>

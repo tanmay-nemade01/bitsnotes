@@ -311,6 +311,48 @@
   <p><strong>Sense-check:</strong> the two versions differ only in what accompanies the label — and that difference is the whole subject of this lecture.</p>
 </div>
 <p>The productive way to keep score for interpretability is to think of each feature as adding or subtracting risk points, so the total is a transparent sum rather than a single mysterious number. Reference treatments of the subject add two distinctions that sharpen the picture. A model is <em>intrinsically interpretable</em> when a human can understand its internal workings directly — a small decision tree, a short rule list, or the scorecard that appears next in this lecture. When the internals stay hidden, we can still attach <em>post hoc explanations</em> to individual predictions, for instance by identifying which inputs mattered most for a specific outcome. Those two routes are not equally strong: an explanation derived from outside observations of an opaque model is an approximation, and for high-stakes decisions — sentencing, bail, medical treatment — the safer engineering choice is usually an intrinsically interpretable model whose full logic can be inspected, rather than an opaque model wrapped in explanations.</p>
+<div class="key-concept">
+  <p><strong>Post hoc explanation methods.</strong> When the model stays opaque, we can still attach an explanation to one prediction. Three families appear in practice, each formalizing "which inputs mattered" differently:</p>
+  <p><strong>LIME (local interpretable model-agnostic explanations)</strong> fits an interpretable surrogate \(g\) in a neighbourhood of the example \(x\), by minimizing a weighted fidelity loss plus a complexity penalty:</p>
+  <p>\[ \xi(x) = \arg\min_{g \in \mathcal{G}} \Big( L\big(f, g, \pi_x\big) + \Omega(g) \Big) \]</p>
+  <p>where \(\pi_x\) weights perturbations by their proximity to \(x\), and \(\mathcal{G}\) is a simple model class such as linear models. The coefficients of the fitted \(g\) are read as per-feature influence for that single prediction.</p>
+  <p><strong>SHAP (SHapley Additive exPlanations)</strong> assigns each feature its Shapley value — the average marginal contribution of that feature across all coalitions of the other features:</p>
+  <p>\[ \phi_i = \sum_{S \subseteq N \setminus \{i\}} \frac{|S|!\,(|N|-|S|-1)!}{|N|!}\Big[f_x(S \cup \{i\}) - f_x(S)\Big] \]</p>
+  <p>with \(N\) the full feature set and \(f_x(S)\) the model output when the features in \(S\) are present and the rest are marginalized out. These values satisfy efficiency \(\big(\sum_i \phi_i = f(x) - \mathbb{E}[f(x)]\big)\), symmetry, dummy and additivity, which makes the decomposition locally exact rather than merely approximate.</p>
+</div>
+<table>
+  <thead>
+    <tr>
+      <th>Method</th>
+      <th>Question answered</th>
+      <th>Mechanism</th>
+      <th>Main limitation</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td>LIME</td>
+      <td>Which features drove this local decision?</td>
+      <td>Weighted local surrogate; read its coefficients</td>
+      <td>Unstable — different runs can give different influences</td>
+    </tr>
+    <tr>
+      <td>SHAP</td>
+      <td>How much did each feature contribute, on an additive scale?</td>
+      <td>Shapley values over all feature coalitions</td>
+      <td>Exponential number of coalitions; needs approximations</td>
+    </tr>
+    <tr>
+      <td>Counterfactual</td>
+      <td>What is the smallest change that would flip this outcome?</td>
+      <td>Search for the nearest input crossing the decision boundary</td>
+      <td>Many valid "closest" worlds; suggested changes may be unactionable</td>
+    </tr>
+  </tbody>
+</table>
+<div class="warning-box">
+  <p><strong>Scope.</strong> All three are <em>post hoc</em>: they describe what an opaque model did, not whether it was right. They are local — they explain the decision boundary near one input, not the model globally — and a faithful explanation of the model's reasoning is not proof that the reasoning is correct. In the recidivism setting a counterfactual such as "one fewer prior arrest" is easy to state but impossible for a defendant to enact, so counterfactual explanations are most useful when the suggested changes are actually within the person's control.</p>
+</div>
 <p>This is why trust is the real subject here. In policy discussions, transparency means disclosure: telling users and the public what the system does, what data trained it, and how it was evaluated. Auditing a system for fairness, safety or security is far easier when the internals can be inspected, and affected individuals can contest a decision only when they can see its basis. In practice, explainability is used for model debugging more often than for anything else: developers check whether a model that performs well is actually relying on the right signals rather than on shortcuts such as background pixels or uninformative metadata.</p>
 <p>Explanations serve five distinct purposes, and the right explanation depends on which one is in play: <em>debugging</em> (sanity-checking that the model predicts for the expected reasons), <em>auditing</em> (checking fairness, safety or security properties of a decision rule), <em>human oversight</em> (a judge or doctor deciding when to trust or override the model), <em>dignity and appeals</em> (letting affected people see the basis of a decision and contest it — for example, a defendant whose wrong age was used in a risk score), and <em>discovery</em> (scientists using explanations of opaque models to form hypotheses). The same model may need different explanations for a developer, a judge and the person being decided about.</p>
 <div class="diagram-container my-6 text-center">
@@ -578,6 +620,53 @@ flowchart LR
   <p><strong>Recap + bridge.</strong> Bias is not a property of one dataset but a system property, with six named sources that enter at different stages — and each source suggests its own mitigation (resampling, reweighting, better labeling protocols, more features, more data, proxy auditing). With fairness placed as a systems concern, the next section moves to safety: robustness, monitoring and alignment.</p>
 </div>
 <p>In practice these six sources surface constantly: election polling misses the actual result because the interviewed voters were not representative; crime datasets skew toward the neighborhoods that are policed more; and zip-code-based wealth inference is a standing example of proxy bias in credit and marketing decisions.</p>
+<h3 id="16.4.3-formal-fairness-criteria-and-their-incompatibility">16.4.3 Formal Fairness Criteria and Their Incompatibility</h3>
+<p>The six sources explain how bias enters a pipeline; fairness criteria state precisely what "fair" means once the pipeline exists. Let \(Y'\) be the prediction, \(Y\) the ground-truth outcome and \(A \in \{0,1\}\) a protected attribute.</p>
+<div class="key-concept">
+  <p><strong>Group fairness (demographic parity, independence).</strong> \(P[Y'=1 \mid A=1] = P[Y'=1 \mid A=0]\), i.e. \(Y' \perp A\). It constrains only outcome rates, not accuracy: accepting 20% of applicants at random in each group satisfies it even if one group is selected far less accurately.</p>
+  <p><strong>Equalized odds (separation).</strong> Both error rates match across groups: \(P[Y'=1 \mid Y=0, A=1] = P[Y'=1 \mid Y=0, A=0]\) and \(P[Y'=0 \mid Y=1, A=1] = P[Y'=0 \mid Y=1, A=0]\), equivalently \(Y' \perp A \mid Y\).</p>
+  <p><strong>Equal opportunity.</strong> Only the false-negative rate is equalized, appropriate when the positive outcome is preferred and wrongly withholding it is the graver error.</p>
+  <p><strong>Anti-classification (blinding).</strong> \(\forall x.\; f(x[A \leftarrow 0]) = f(x[A \leftarrow 1])\) — the prediction must not change when the protected attribute is flipped.</p>
+</div>
+<table>
+  <thead>
+    <tr>
+      <th>Criterion</th>
+      <th>Statistical property</th>
+      <th>Equalizes</th>
+      <th>Blind spot</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td>Group fairness</td>
+      <td>Independence \(Y' \perp A\)</td>
+      <td>Positive-outcome rate</td>
+      <td>Ignores ground truth \(Y\) and accuracy</td>
+    </tr>
+    <tr>
+      <td>Equalized odds</td>
+      <td>Separation \(Y' \perp A \mid Y\)</td>
+      <td>False-positive and false-negative rates</td>
+      <td>Can still produce unequal acceptance rates</td>
+    </tr>
+    <tr>
+      <td>Equal opportunity</td>
+      <td>Partial separation</td>
+      <td>False-negative rate only</td>
+      <td>Does not constrain false positives</td>
+    </tr>
+    <tr>
+      <td>Anti-classification</td>
+      <td>Counterfactual invariance</td>
+      <td>Prediction under attribute flips</td>
+      <td>Blocking \(A\) does not remove correlated proxies</td>
+    </tr>
+  </tbody>
+</table>
+<div class="warning-box">
+  <p><strong>Incompatibility and the legal threshold.</strong> Except in constrained cases — equal base rates across groups or a perfect predictor — no classifier can satisfy demographic parity and equalized odds at the same time; the criteria are provably mutually exclusive, so choosing one is a value-laden decision that must be justified rather than a purely technical tuning step. US employment law operationalizes group fairness with the four-fifths rule: a selection rate below \(4/5 = 80\%\) of the highest group's rate is generally treated as evidence of adverse impact. For example, rates of \(50\%\) versus \(35\%\) give \(35/50 = 0.70 < 0.80\), which crosses that threshold.</p>
+</div>
 
 <h2 id="16.5-safety-robustness-monitoring-and-alignment">16.5 Safety — Robustness, Monitoring and Alignment</h2>
 <p>Safety was defined as prevention of system failure or malfunction that results in death or serious injury. That is the most critical reading, but safety also includes loss of or severe damage to property — illustrated by landslides and earthquakes that move or destroy entire properties, including heavy rains in Coorg, Karnataka in the last two years that dismantled structures — and harm to the environment or society.</p>

@@ -415,6 +415,28 @@
           <li><strong>Multi-Row Result Handling:</strong> The inner query can return zero, one, or thousands of rows. If the inner query returns zero rows, <code>col IN (empty)</code> evaluates to <code>FALSE</code>.</li>
         </ol>
       </div>
+      <div class="example-box">
+        <p>#### Example 4: Multi-Column (Row Constructor) IN Subqueries</p>
+        <p><strong>Objective:</strong> Match a <em>pair</em> of columns against a subquery returning the same number of columns, rather than testing two columns independently.</p>
+        <p><strong>Extension of the single-column rule:</strong> The single-column projection rule above governs the ordinary <code>column IN (subquery)</code> form. SQL also defines a <em>row-constructor</em> form, <code>(c1, c2, ..., ck) IN (subquery)</code>, in which the subquery must project exactly \( k \) columns and the left-hand expressions are compared <em>row-wise</em> to each subquery row — two rows are equal only when every corresponding member is equal and non-null. This preserves the pairing between columns that two independent <code>IN</code> predicates discard.</p>
+        <p><strong>Step 1: Two independent IN predicates (pairing is lost)</strong></p>
+        <pre><code>SELECT movie_id, movie_name, movie_lang
+      FROM movies
+      WHERE movie_id IN (SELECT movie_id FROM movies WHERE movie_length &gt; 120)
+        AND movie_lang IN (SELECT movie_lang FROM movies WHERE movie_length &gt; 120);</code></pre>
+        <p><em>Problem:</em> The two subqueries are evaluated independently, so an identifier from one qualifying row can be combined with a language from an unrelated qualifying row, admitting mismatched pairings.</p>
+        <p><strong>Step 2: Row-constructor IN enforces row-wise pairing</strong></p>
+        <pre><code>SELECT movie_id, movie_name, movie_lang
+      FROM movies
+      WHERE (movie_id, movie_lang) IN (
+          SELECT movie_id, movie_lang
+          FROM movies
+          WHERE movie_length &gt; 120
+      );</code></pre>
+        <p><em>Execution trace:</em> The subquery returns \( k = 2 \) columns per row. For each outer row the engine constructs the tuple \( (\text{movie\_id}, \text{movie\_lang}) \) and tests it against every subquery tuple; a match requires both members to agree. Only genuinely paired rows survive.</p>
+        <p><em>Three-valued-logic note:</em> If a member of a compared tuple is <code>NULL</code>, that row comparison is <code>UNKNOWN</code>. Row-constructor <code>IN</code> returns <code>TRUE</code> only on a definite equal pair, <code>FALSE</code> only when every pair is definitely unequal, and <code>NULL</code> when no pair is equal but at least one is <code>UNKNOWN</code> — the same null trap that affects <code>NOT IN</code>.</p>
+        <p><em>Sense-check:</em> Row-constructor <code>IN</code> is a conjunction of equality predicates evaluated against the <em>same</em> subquery row, not a Cartesian product of two independent subqueries.</p>
+      </div>
       <h3 id="24.2.2-mathematical-formulation-of-set-inclusions">24.2.2 Mathematical Formulation of Set Inclusions</h3>
       <p>Let \( R \) represent the outer entity relation (e.g., movies) and \( S \) represent the related entity relation (e.g., revenue records). Let \( \text{movie\_id}(t) \) denote the primary identifier of tuple \( t \in R \).</p>
       <p>We formulate the set membership condition where movie id belongs to qualifying domestic revenues exceeding 200 million as: \[ \text{movie\_id} \in \{ m \in \mathbb{N} \mid \exists s \in S : s.\text{movie\_id} = m \land \text{revenues\_domestic}(s) > 200 \} \] where:</p>
@@ -946,6 +968,39 @@
           <li><strong>Omitting Derived Table Aliases:</strong> Forgetting to supply a table alias for a subquery in the <code>FROM</code> clause, causing immediate parser failure in PostgreSQL and Snowflake.</li>
           <li><strong>Unintended Cross Products:</strong> Joining multiple derived tables without specifying an explicit <code>ON</code> join condition, accidentally triggering an exponential Cartesian product.</li>
         </ul>
+      </div>
+
+      <h3 id="24.5.6-lateral-and-correlated-derived-tables-in-the-from-clause">24.5.6 LATERAL and Correlated Derived Tables in the FROM Clause</h3>
+      <div class="key-concept">
+        <p><strong>Formal Definition:</strong> An ordinary derived table in the <code>FROM</code> clause is evaluated independently and cannot see any other <code>FROM</code> item. Prefixing it with <code>LATERAL</code> lifts that restriction: a <em>lateral</em> subquery may reference columns from <code>FROM</code> items that appear before it. Evaluation proceeds row-by-row — for each row of the preceding item(s) the subquery is evaluated with that row's column values, and its resulting rows are joined back to the row they were computed from. If \( S(t) \) is the inner relation parameterized by an outer tuple \( t \in R \), the lateral join yields \( \bigcup_{t \in R} \left( \{t\} \times S(t) \right) \), i.e. one independent evaluation of the inner relation per outer tuple.</p>
+      </div>
+      <div class="example-box">
+        <p>#### Example 4: Chained LATERAL Items and a Top-N LEFT JOIN LATERAL</p>
+        <p><strong>Step 1: LATERAL in the FROM list reuses earlier calculations.</strong> A subquery preceded by <code>LATERAL</code> can reference columns of a table named earlier in the same <code>FROM</code> clause without repeating its name; a second LATERAL item can in turn reuse the first item's alias:</p>
+        <pre><code>SELECT movie_id, revenues_domestic, revenues_international,
+       total_rev, domestic_share
+FROM movies_revenues,
+     LATERAL (SELECT revenues_domestic + revenues_international AS total_rev) t,
+     LATERAL (SELECT revenues_domestic / NULLIF(total_rev, 0) AS domestic_share) s
+ORDER BY total_rev DESC;</code></pre>
+        <p><em>Trace:</em> <code>t</code> computes total revenue for the current <code>movies_revenues</code> row; <code>s</code> then reads <code>t.total_rev</code> from the preceding LATERAL item to compute the domestic share, avoiding a full recomputation. Both items still require an alias, exactly like any other derived table.</p>
+        <p><strong>Step 2: LEFT JOIN LATERAL for a per-row Top-N result.</strong> Combining <code>LATERAL</code> with <code>JOIN</code> behaves like a <em>for loop</em>: the inner query runs once for each outer row. <code>ON true</code> is used because the correlation lives in the subquery's <code>WHERE</code>, not in the join condition:</p>
+        <pre><code>SELECT d.director_id, d.first_name, d.last_name,
+       m.movie_name, m.movie_length
+FROM directors d
+LEFT JOIN LATERAL (
+    SELECT movie_name, movie_length
+    FROM movies
+    WHERE director_id = d.director_id
+    ORDER BY movie_length DESC
+    LIMIT 2
+) m ON true
+ORDER BY d.director_id;</code></pre>
+        <p><em>Trace:</em> For each director row <code>d</code>, the subquery filters <code>movies</code> on <code>director_id = d.director_id</code>, sorts by <code>movie_length DESC</code>, and keeps the two longest films; <code>LEFT JOIN</code> preserves directors with no matching movies. Each outer row is emitted at most twice rather than being duplicated across the whole child table.</p>
+        <p><em>Sense-check:</em> Without <code>LATERAL</code>, the inner predicate <code>director_id = d.director_id</code> would be invalid because the alias <code>d</code> lies outside the subquery's independently evaluated scope.</p>
+      </div>
+      <div class="important-note">
+        <p><strong>Cross-Database Notes:</strong> <code>LATERAL</code> joins are available in PostgreSQL (9.3+), Snowflake (<code>INNER JOIN LATERAL</code>, also used with <code>FLATTEN</code> for semi-structured data), Databricks / Spark SQL, and MySQL (8.0.14+). In PostgreSQL the keyword is optional before a set-returning table function, because a function call in <code>FROM</code> may already reference earlier <code>FROM</code> items; writing <code>LATERAL</code> nevertheless documents the dependency explicitly.</p>
       </div>
 
       <h2 id="24.6-correlated-subqueries">24.6 Correlated Subqueries</h2>

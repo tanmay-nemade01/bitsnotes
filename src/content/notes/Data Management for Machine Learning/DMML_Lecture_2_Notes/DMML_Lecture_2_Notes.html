@@ -597,14 +597,109 @@
   <p>Each arrow says "reports to" — every person has exactly one parent, and the whole chart hangs from the CEO as the root. A query that starts at the CEO walks the tree downward level by level; a query that needs "all managers under the director" is a simple subtree walk. <strong>The trade-off:</strong> anything that is not a strict tree — say, an engineer who reports to two managers — does not fit this model without duplicating the node.</p>
   <p><strong>Sense-check:</strong> the tree shape matches a directory structure, which is why this model is easy to picture and why XML represents it naturally.</p>
 </div>
+
+<div class="important-note">
+  <p><strong>Beyond the tree — the network (CODASYL) model.</strong> The hierarchical model's strict "one parent per node" rule was relaxed by the <em>network model</em>, standardized in the 1970s by the CODASYL Data Base Task Group. In the network model a record may have <em>several</em> parents: a "region" record can own every user in that region, while each user may simultaneously belong to several regions. The links are closer to pointers than to foreign keys — the only way to reach a record is to follow an <em>access path</em> from a root along chains of links.</p>
+  <table>
+    <thead>
+      <tr>
+        <th>Property</th>
+        <th>Hierarchical</th>
+        <th>Network (CODASYL)</th>
+        <th>Relational</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>Parents per record</td>
+        <td>exactly one</td>
+        <td>many (multiple owners)</td>
+        <td>n/a — rows relate by values</td>
+      </tr>
+      <tr>
+        <td>Relationship storage</td>
+        <td>nested tree edges</td>
+        <td>pointer-like links</td>
+        <td>foreign keys, joined at query time</td>
+      </tr>
+      <tr>
+        <td>Many-to-many</td>
+        <td>awkward — duplicate the node</td>
+        <td>possible, but the program tracks every path</td>
+        <td>natural via a junction table</td>
+      </tr>
+      <tr>
+        <td>Query style</td>
+        <td>subtree walk</td>
+        <td>cursor walks an access path</td>
+        <td>declarative conditions over all rows</td>
+      </tr>
+    </tbody>
+  </table>
+  <p><strong>Why it faded:</strong> a query is a manual traversal — move a cursor through lists and keep all incoming paths in your head, metaphorically navigating an \(n\)-dimensional data space. If the data model changes, every hand-written access path must be rewritten. The relational model won by laying the data open in tables and leaving the join to the database — exactly the declarative idea of Section 2.5.</p>
+</div>
 <h3 id="2.4.3-graph-model">2.4.3 Graph Model</h3>
 <p>The graph data model is what the world is highly using now — most people are moving into it. A graph consists of <em>nodes</em> and <em>edges</em>, where an edge represents a relationship between nodes: a customer purchases a product; a customer places an order. Instead of using an entity-relationship diagram, you can do a graph. Databases that store data using a graph structure are <em>graph databases</em>, and in a graph database the relationship is the priority — you can have multiple relationships, and each edge can carry its own label ("friend of", "worked at", "purchased").</p>
 <div class="important-note">
   <p><strong>Intuition — in a graph, the relationships are the data.</strong> A relational table answers "what things exist"; a graph answers "how things are connected". Where the hierarchical model forces a strict tree — one parent per node — the graph model allows any node to connect to any other, and a node can have many parents. That is why "friend-of-friend" queries, which mean joining a table to itself four times in SQL, become a short walk in a graph.</p>
 </div>
+<div class="example-box">
+  <p><strong>Worked example — querying a graph declaratively with Cypher.</strong> Graphs are queried with declarative languages such as <em>Cypher</em> (for Neo4j's property graphs), SPARQL, and Datalog. In Cypher, <code>(a)-[:LABEL]-&gt;(b)</code> describes an edge pattern, and <code>MATCH</code> finds such patterns in the graph:</p>
+  <pre><code>MATCH
+  (person) -[:BORN_IN]-&gt; () -[:WITHIN*0..]-&gt; (us:Location {name:'United States'}),
+  (person) -[:LIVES_IN]-&gt; () -[:WITHIN*0..]-&gt; (eu:Location {name:'Europe'})
+RETURN person.name</code></pre>
+  <p>This finds people who emigrated from the United States to Europe. The notation <code>:WITHIN*0..</code> means "follow a WITHIN edge zero or more times" — a <em>variable-length path</em>, because a residence may be a city within a state within a country, or several levels removed. Expressing the same idea in SQL requires a recursive common table expression (<code>WITH RECURSIVE</code>), which is far clumsier.</p>
+  <p><strong>Sense-check:</strong> you describe the pattern you want, not the steps to find it — and, just as with SQL, the optimizer decides whether to start from the people or from the two location vertices. That is the declarative idea of Section 2.5 applied to graphs.</p>
+</div>
 <p>Real-world: Neo4j, Neptune, and Gephi are graph databases; LinkedIn uses them for the proper connectivity of people, tagging people, and friend-of-friend recommendations; Facebook uses graph structure for social connections — a single graph holding people, places, events, and comments all connected by labeled edges.</p>
 <div class="warning-box">
   <p><strong>Assumptions & Scope — when the graph is the wrong box.</strong> The graph model shines when relationships are many-to-many, deep, and queried by traversal. It is the wrong tool when your data is a simple list or a strict tree, and when queries are mostly aggregations over one table — a relational or document model will serve those with far less machinery. The choice of box should follow the questions you ask, not fashion.</p>
+</div>
+
+<div class="key-concept">
+  <p><strong>Formal definition — the RDF triple store.</strong> The other major declarative graph family stores information as triples <code>(subject, predicate, object)</code>; a set of triples is an <em>RDF graph</em>. The subject is a vertex; the object is either a literal value (making the triple a property of the subject) or another vertex (making the predicate a labeled edge). Queried with <em>SPARQL</em>, a triple pattern lets the subject, predicate, or object be a variable.</p>
+  <pre><code>@prefix : &lt;urn:example:&gt;.
+_:lucy  a       :Person;   :name "Lucy";  :bornIn _:idaho.
+_:idaho a       :Location; :name "Idaho"; :type "state";   :within _:usa.
+_:usa   a       :Location; :name "United States"; :type "country"; :within _:namerica.</code></pre>
+  <table>
+    <thead>
+      <tr>
+        <th>Aspect</th>
+        <th>Property graph (Cypher)</th>
+        <th>RDF triple store (SPARQL)</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>Atomic unit</td>
+        <td>vertex with key–value properties and labeled edges</td>
+        <td>subject–predicate–object triple</td>
+      </tr>
+      <tr>
+        <td>Properties</td>
+        <td>stored on the vertex as key–value pairs</td>
+        <td>encoded as triples whose object is a literal</td>
+      </tr>
+      <tr>
+        <td>Naming</td>
+        <td>database-local identifiers</td>
+        <td>globally scoped IRIs, so graphs from different sources merge</td>
+      </tr>
+      <tr>
+        <td>Query idea</td>
+        <td>pattern <code>(a)-[:LABEL]-&gt;(b)</code></td>
+        <td>triple patterns with <code>?</code> variables in a <code>WHERE</code> clause</td>
+      </tr>
+      <tr>
+        <td>Variable-length walk</td>
+        <td><code>[:WITHIN*0..]</code></td>
+        <td>property path <code>/ :within*</code></td>
+      </tr>
+    </tbody>
+  </table>
+  <p><strong>Worked query:</strong> a containment walk in SPARQL — <code>?lucy :bornIn / :within* ?place</code> — matches Lucy's birthplace and every location it lies within, zero or more hops. The <code>/</code> composes path steps and <code>*</code> repeats a step, mirroring the Cypher variable-length path above without specifying how the engine traverses the graph.</p>
 </div>
 <h3 id="2.4.4-document-model">2.4.4 Document Model</h3>
 <p>In the document data model, anything and everything is stored as a document, and documents can be encoded in JSON or XML files. In a traditional database system we call a record a <em>tuple</em>; here we call it a <em>document</em>, and the set of documents is called a <em>collection</em>. The document is self-contained: all the facts about one entity travel together, so fetching one document gets everything in one read.</p>
@@ -700,6 +795,32 @@
   <p><strong>Intuition — the optimizer is the driver, not the passenger.</strong> When you type a query, the optimizer is the driver choosing the route: it knows the data (the traffic), it knows the access paths (the roads, the indexes), and it decides what to do — which path to take, which order to join, which index to use. That is why queries are very, very powerful: use the proper indexes and proper conditions, and you are done — easy to work with compared to imperative languages, because it hides the implementation details. You do not need to know how the storing or the creating happens; you just want the result — the end result matters.</p>
 </div>
 <p>In the database, the optimizer decides what access path to choose and what to do. The user never spells out the plan; the optimizer builds one, and it can rebuild a better one when the data changes.</p>
+
+<div class="important-note">
+  <p><strong>System Detail — what the optimizer's "access path" actually is.</strong> When the optimizer picks an index, it is choosing among physical <em>index data structures</em>, not merely a column name. Two families dominate:</p>
+  <table>
+    <thead>
+      <tr>
+        <th>Index structure</th>
+        <th>How it stores data</th>
+        <th>Strength</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>B-tree (page-oriented)</td>
+        <td>Keys sorted inside fixed-size pages (traditionally 4 KB); a balanced tree of page references with depth \(O(\log n)\).</td>
+        <td>The standard index in most relational databases; efficient equality <em>and</em> range lookups.</td>
+      </tr>
+      <tr>
+        <td>LSM-tree (log-structured)</td>
+        <td>Writes land in an in-memory <em>memtable</em>, then flush to sorted <em>SSTables</em> that are merged and compacted in the background.</td>
+        <td>Sequential writes give very high write throughput; the engine behind LevelDB, RocksDB, Cassandra, and HBase.</td>
+      </tr>
+    </tbody>
+  </table>
+  <p>So the "path" chosen in an execution plan is really a decision about which of these structures can answer the query's predicate — an equality check, a range scan, or a sort — most cheaply.</p>
+</div>
 <h3 id="2.6.2-worked-example-distributing-fruits-into-bags">2.6.2 Worked Example: Distributing Fruits into Bags</h3>
 <div class="example-box">
   <p><strong>Worked example — why the optimizer matters: fruits into bags.</strong> The example used to show why the optimizer matters: keep 2 to the power 6 in your mind.</p>
@@ -777,6 +898,37 @@ restored = json.loads(serialized)  # deserializes: back to a dictionary</code></
 <p><code>json.dumps(user)</code> converts the data into a serialized string, printing the entire thing as one string; <code>json.loads</code> deserializes it back. So: <code>dumps</code> serializes, <code>loads</code> deserializes. In Java there is something called a <em>Serializable interface</em>: take the same example — a user class with Alice, 25, Chennai — implement the interface, and convert the object into a string; similarly you can deserialize it.</p>
 <h3 id="2.7.5-formats-tools-and-streams">2.7.5 Formats, Tools, and Streams</h3>
 <p>The process overall: data is produced, data is consumed, and in between data is transferred — so you serialize the data, transfer it, and deserialize it. You can take any format to any format: text to CSV, binary, and so on. There is a stream of data, especially in sensors and IoT, where a lot of serialization tools are used: JSON files to BSON (the binary format), binary formats, text formats, and human-readable formats. Even Hadoop uses the Parquet format. There are a lot of tools, interfaces, and APIs available — no need to worry about which one: the pattern is the same everywhere, serialize on one side, transfer, deserialize on the other.</p>
+
+<div class="key-concept">
+  <p><strong>Formalize — text versus binary encodings.</strong> The "binary formats" used in pipelines are usually <em>schema-based</em>: the structure of a record is declared once in an interface definition, and a code generator produces readers and writers for many languages. The record itself then carries only values, not field names:</p>
+  <table>
+    <thead>
+      <tr>
+        <th>Format</th>
+        <th>Self-describing?</th>
+        <th>Where it is used</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>JSON / XML (text)</td>
+        <td>Yes — field names travel with the values</td>
+        <td>Human-readable configuration, web APIs, logs</td>
+      </tr>
+      <tr>
+        <td>Avro (binary)</td>
+        <td>No — a schema must accompany the data</td>
+        <td>Hadoop, Kafka, and data-lake file storage</td>
+      </tr>
+      <tr>
+        <td>Protocol Buffers / Thrift (binary)</td>
+        <td>No — defined by <code>.proto</code> / IDL files</td>
+        <td>gRPC and cross-language service messages</td>
+      </tr>
+    </tbody>
+  </table>
+  <p>Binary encodings are smaller and faster to parse than JSON, and they generate native language bindings — but you cannot interpret the bytes without the matching schema, which is why the "same algorithm" rule of Section 2.7.1 extends here to "same schema".</p>
+</div>
 <div class="key-takeaway">
   <p><strong>Recap + Bridge.</strong> Serialization flattens objects into bytes for storage and transfer, and deserialization rebuilds them with the same algorithm — pack and unpack the same way. This is the plumbing that every pipeline below the surface relies on; next, the two processing worlds that sit on top of it: OLTP and OLAP.</p>
 </div>

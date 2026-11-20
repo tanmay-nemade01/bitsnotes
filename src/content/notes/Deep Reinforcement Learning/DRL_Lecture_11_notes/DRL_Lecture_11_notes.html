@@ -411,6 +411,42 @@ v_\pi(s) = \mathbb{E}_\pi[R_{t+1} + \gamma v_\pi(S_{t+1}) \mid S_t = s]
 <p>TD learning bridges Monte Carlo and dynamic programming — it samples like MC but bootstraps like DP. The TD error <span class="math inline">\(\delta_t = R_{t+1} + \gamma V(S_{t+1}) - V(S_t)\)</span> is the engine: it captures how much expectations shift over time, letting you learn from every step without waiting. Next we see that targets can span multiple steps, trading bias for variance.</p>
 </div>
 <p><strong>Real-world connection:</strong> TD learning is behind many practical systems. In finance, TD methods price options by learning value functions from market data without modeling the full stochastic process. In robotics, TD enables robots to learn walking gaits from trial and error — each step gives a reward signal, and the robot updates its value estimates online rather than waiting until it falls over. The DQN agent that learned to play Atari games at superhuman level (Mnih et al., 2015) uses Q-learning, the control variant of TD, as its core learning rule.</p>
+
+<div class="key-concept">
+<p><strong>Batch updating and the certainty-equivalence estimate</strong> (Sutton &amp; Barto §6.3, "Optimality of TD(0)"). When experience is scarce, <em>batch updating</em> re-presents the whole dataset many times: all increments are computed from a frozen value function and applied once as their sum, then the batch is replayed. Under batch updating, TD(0) converges deterministically to a single answer independent of <span class="math inline">\(\alpha\)</span> (for sufficiently small <span class="math inline">\(\alpha\)</span>), and constant-<span class="math inline">\(\alpha\)</span> Monte Carlo converges to a different one.</p>
+<p><strong>The two batch answers:</strong></p>
+<ul>
+  <li><strong>Batch MC:</strong> <span class="math inline">\(V(s)\)</span> is the sample average of the actual returns observed after <span class="math inline">\(s\)</span> — the estimate that minimizes mean-squared error <em>on the training set</em> (zero error on seen data).</li>
+  <li><strong>Batch TD(0):</strong> the <strong>certainty-equivalence estimate</strong> — the value function that would be exactly correct if the maximum-likelihood model of the MDP were the true model (transition probabilities = observed transition fractions; expected rewards = observed reward averages).</li>
+</ul>
+<p><strong>Worked example — "You are the Predictor" (Example 6.4):</strong> You observe eight episodes: one <code>A → B (r = 0), terminal (r = 0)</code>, plus seven episodes starting at B that terminate immediately, six with reward 1 and two with reward 0.</p>
+<table>
+  <thead>
+    <tr>
+      <th>Method</th>
+      <th><span class="math inline">\(V(B)\)</span></th>
+      <th><span class="math inline">\(V(A)\)</span></th>
+      <th>Training-set error</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td>Batch TD(0) / certainty equivalence</td>
+      <td><span class="math inline">\(6/8 = 3/4\)</span></td>
+      <td><span class="math inline">\(0 + 3/4 = 3/4\)</span></td>
+      <td>not minimal on seen data</td>
+    </tr>
+    <tr>
+      <td>Batch Monte Carlo</td>
+      <td><span class="math inline">\(3/4\)</span></td>
+      <td><span class="math inline">\(0\)</span> (the only observed return after A)</td>
+      <td>zero — optimal on the batch</td>
+    </tr>
+  </tbody>
+</table>
+<p>Because <span class="math inline">\(A\)</span> transitions to <span class="math inline">\(B\)</span> on 100% of observations, the Markov assumption says the correct prediction is <span class="math inline">\(V(A) = V(B) = 3/4\)</span> — the TD answer — even though MC fits the observed data perfectly. This is why batch TD beats batch MC on the random-walk task (Figure 6.2), and why nonbatch TD moves roughly toward this better target.</p>
+<p><strong>Complexity:</strong> forming the maximum-likelihood model needs <span class="math inline">\(O(n^2)\)</span> memory and solving it <span class="math inline">\(O(n^3)\)</span> time for <span class="math inline">\(n = |\mathcal{S}|\)</span>; TD(0) approximates the same answer with <span class="math inline">\(O(n)\)</span> memory and no explicit model — often the only feasible route for large state spaces.</p>
+</div>
 <h3 class="subsection-title">11.1.2 Multi-Step Targets (n-Step TD)</h3>
 <p>The target does not have to be one-step. You can use a two-step target, a three-step target, or any <span class="math inline">\(n\)</span>-step target. The general <span class="math inline">\(n\)</span>-step return is:</p>
 <p>\[
@@ -949,6 +985,19 @@ U_t = R_{t+1} + \gamma \hat{V}(S_{t+1}; \mathbf{w})
 <p>This is the full gradient — it includes the effect of <span class="math inline">\(\mathbf{w}\)</span> on the target. The semi-gradient update <strong>ignores</strong> the <span class="math inline">\(\gamma \nabla_{\mathbf{w}} \hat{V}(S'; \mathbf{w})\)</span> term and uses only <span class="math inline">\(\nabla_{\mathbf{w}} \hat{V}(S; \mathbf{w})\)</span>. It is not a true gradient — so we call it "semi-gradient."</p>
 <p>From Sutton & Barto (§9.3): "Bootstrapping methods are not in fact instances of true gradient descent. They take into account the effect of changing the weight vector <span class="math inline">\(\mathbf{w}_t\)</span> on the estimate, but ignore its effect on the target. They include only a part of the gradient, and accordingly, we call them semi-gradient methods."</p>
 <p>Despite being semi-gradient, these methods work well in practice. The dependence on <span class="math inline">\(\mathbf{w}\)</span> in the target is through the next state's estimate, and bootstrapping in this way enables online learning. For linear function approximators, semi-gradient TD(0) converges to a well-defined fixed point near the <span class="math inline">\(\overline{\text{VE}}\)</span> minimum.</p>
+</div>
+
+<div class="key-concept">
+<p><strong>What "fixed point" means — the linear TD(0) convergence result</strong> (Sutton &amp; Barto §9.4, eqs. 9.9–9.14). With <span class="math inline">\(\hat{V}(s;\mathbf{w}) = \mathbf{w}^{\top}\mathbf{x}(s)\)</span>, expanding the bracket of the semi-gradient update gives, at steady state, the expected next weight vector:</p>
+<p>\[
+\mathbb{E}[\mathbf{w}_{t+1}\mid \mathbf{w}_t] = \mathbf{w}_t + \alpha\left(\mathbf{b} - \mathbf{A}\mathbf{w}_t\right), \qquad \mathbf{b} = \mathbb{E}[R_{t+1}\mathbf{x}_t], \quad \mathbf{A} = \mathbb{E}\!\left[\mathbf{x}_t\left(\mathbf{x}_t - \gamma \mathbf{x}_{t+1}\right)^{\top}\right]
+\]</p>
+<p>Setting the expected change to zero yields <span class="math inline">\(\mathbf{b} = \mathbf{A}\mathbf{w}_{\text{TD}}\)</span>, so the algorithm converges to the <strong>TD fixed point</strong> <span class="math inline">\(\mathbf{w}_{\text{TD}} = \mathbf{A}^{-1}\mathbf{b}\)</span> — not the VE optimum that gradient Monte Carlo seeks. In matrix form <span class="math inline">\(\mathbf{A} = \mathbf{X}^{\top}\mathbf{D}(\mathbf{I} - \gamma \mathbf{P})\mathbf{X}\)</span>, with <span class="math inline">\(\mathbf{P}\)</span> the transition matrix, <span class="math inline">\(\mathbf{D} = \operatorname{diag}(\mu)\)</span>, and <span class="math inline">\(\mathbf{X}\)</span> the matrix whose rows are <span class="math inline">\(\mathbf{x}(s)\)</span>. Because <span class="math inline">\(\mu\)</span> is stationary, <span class="math inline">\(\mathbf{1}^{\top}\mathbf{D}(\mathbf{I} - \gamma\mathbf{P}) = \mu^{\top}(\mathbf{I} - \gamma\mathbf{P}) = (1-\gamma)\mu^{\top} > 0\)</span>; together with positive row sums this makes <span class="math inline">\(\mathbf{A}\)</span> positive definite, so <span class="math inline">\(\mathbf{A}^{-1}\)</span> exists and linear semi-gradient TD(0) is stable under the usual decreasing-<span class="math inline">\(\alpha\)</span> conditions.</p>
+<p><strong>Asymptotic quality bound (eq. 9.14):</strong></p>
+<p>\[
+\overline{\text{VE}}(\mathbf{w}_{\text{TD}}) \leq \frac{1}{1-\gamma}\,\min_{\mathbf{w}} \overline{\text{VE}}(\mathbf{w})
+\]</p>
+<p>The fixed point's error is never worse than the best achievable VE (the Monte Carlo limit) by more than a factor <span class="math inline">\(1/(1-\gamma)\)</span>. With <span class="math inline">\(\gamma \approx 0.99\)</span> that factor is 100, so the bound is intentionally loose — TD's practical advantage comes from far lower variance, not from dominating the VE optimum. Crucially, the guarantee assumes states are updated from the on-policy distribution <span class="math inline">\(\mu\)</span>; under a different distribution, bootstrapping with function approximation can diverge (the "deadly triad" flagged earlier).</p>
 </div>
 <h3 class="subsection-title">11.6.5 Worked Example: Semi-Gradient TD(0)</h3>
 <div class="example-box">

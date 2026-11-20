@@ -276,6 +276,13 @@ iptables --append INPUT --protocol tcp --dport 22 --jump DROP</code></pre>
 <h2 id="13.4-machine-learning-for-traffic-classification">13.4 Machine Learning for Traffic Classification</h2>
 <h3 id="13.4.1-feature-extraction-cicflowmeter">13.4.1 Feature Extraction — CICFlowMeter</h3>
 <p>Feature selection is critical for three reasons: training speed, model interpretability, and avoiding overfitting. CICFlowMeter is an open-source tool that extracts 80+ features from network traffic flows. These features include flow-level statistical parameters (packet counts, byte counts, duration), temporal parameters (inter-arrival times, jitter), and protocol-specific fields.</p>
+<div class="key-concept">
+  <p><strong>Formal Definition — Network Flow:</strong> A <em>flow</em> is a unidirectional sequence of packets observed at a measurement point during a time interval, all sharing a common set of properties. In practice a flow is keyed by the 5-tuple <em>(source IP, source port, destination IP, destination port, protocol)</em>; the feature extractor attaches derived values — flow start time, duration, byte count, packet count, and cumulative TCP flags — to that key.</p>
+  <p>This is the exact unit CICFlowMeter operates on: it groups packets by this key, then computes its 80+ statistical features from the resulting flow record. The key matters because redefining the tuple (for example, merging or separating the two traffic directions) changes what the classifier sees as one sample.</p>
+</div>
+<div class="important-note">
+  <p><strong>Where flow records come from in production:</strong> Routers and switches export IP flow information with Cisco NetFlow (whose template-based Version 9 export format is the basis of the IETF IPFIX standard) or directly in IPFIX. A flow record carries fields such as <code>IPV4_SRC_ADDR</code>, <code>L4_SRC_PORT</code>, <code>IPV4_DST_ADDR</code>, <code>L4_DST_PORT</code>, <code>PROTOCOL</code>, <code>IN_BYTES</code>, <code>IN_PKTS</code>, <code>FIRST_SWITCHED</code>, <code>LAST_SWITCHED</code>, and <code>TCP_FLAGS</code> — the same primitives that CICFlowMeter expands into a richer ML feature vector. NetFlow is collected alongside syslog from routers, firewalls, and switches for security monitoring, so flow-based classifiers can be fed from existing network equipment without full packet capture.</p>
+</div>
 <p><strong>Real-world:</strong> CICFlowMeter is publicly available and widely used in network traffic research. It extracts features from pcap files or live network traffic, providing a ready-made feature set for ML-based traffic classification.</p>
 <div class="important-note">
   <p><strong>Q:</strong> Should I just use all 80+ features from CICFlowMeter directly? <strong>A:</strong> Do not use them blindly. Understand your use case, think through which features are relevant, and then select accordingly. Feature selection is critical — it impacts training speed, interpretability, and overfitting. Using all features adds noise, slows training, and makes the model harder to interpret. Select features that are relevant to your specific classification task.</p>
@@ -378,6 +385,42 @@ iptables --append INPUT --protocol tcp --dport 22 --jump DROP</code></pre>
     <li>Connection B: 30.0, 30.1, 29.9, 30.0, 30.1, 30.0 — nearly constant, periodic → likely C2 beaconing</li>
   </ul>
   <p>The standard deviation of inter-arrival times is a simple feature that captures this distinction. Connection A has high variance (bursty); Connection B has near-zero variance (periodic). More sophisticated approaches use Fourier analysis or autocorrelation to detect periodicity even when the beaconing interval drifts slightly.</p>
+</div>
+<div class="key-concept">
+  <p><strong>Formal Tool — Autocorrelation Function (ACF):</strong> Variance alone cannot separate a jittery beacon from bursty human traffic when the beacon interval drifts. Bin the traffic into fixed-width time slots and form the packet-count series \(x_1, x_2, \ldots, x_n\) with sample mean \(\bar{x}\). The lag-\(k\) autocorrelation is</p>
+  \[
+  \rho(k) = \frac{\sum_{t=k+1}^{n}(x_t-\bar{x})(x_{t-k}-\bar{x})}{\sum_{t=1}^{n}(x_t-\bar{x})^2}
+  \]
+  <p><strong>Detection rule:</strong> A periodic beacon produces sharp peaks in \(\rho(k)\) at multiples of its period, whereas bursty human traffic shows \(\rho(k)\) collapsing toward zero after lag 1. Standard ACF implementations plot lags against correlation and draw 95% confidence bands around zero (with the standard error given by Bartlett's formula), so only peaks crossing that band count as genuine periodicity.</p>
+  <p><strong>Worked trace:</strong> Over \(n = 121\) one-second bins (indexed \(0\) to \(120\)), compare a beacon active at \(t = 30, 60, 90, 120\) with irregular human activity at ten scattered bins. The 95% band is \(\pm 1.96/\sqrt{n} \approx \pm 0.18\):</p>
+  <table>
+    <thead>
+      <tr>
+        <th>Series</th>
+        <th>\(\rho(1)\)</th>
+        <th>\(\rho(30)\)</th>
+        <th>\(\rho(60)\)</th>
+        <th>Decision</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>Beacon (30 s period)</td>
+        <td>\(-0.03\)</td>
+        <td>\(0.74\)</td>
+        <td>\(0.49\)</td>
+        <td>Lag-30 and lag-60 peaks exceed the band → beaconing</td>
+      </tr>
+      <tr>
+        <td>Bursty human traffic</td>
+        <td>\(0.13\)</td>
+        <td>\(0.05\)</td>
+        <td>\(-0.04\)</td>
+        <td>No lag exceeds the band → no periodic beacon</td>
+      </tr>
+    </tbody>
+  </table>
+  <p>Autocorrelation therefore exposes periodic structure even when a single variance threshold cannot — a beacon's inter-arrival times are nearly constant, but it is the repeated correlation at the period lag that makes detection robust to jitter.</p>
 </div>
 <p><strong>Real-world:</strong> Detecting this periodicity is a powerful indicator of compromise without ever decrypting the traffic. Security tools compute inter-arrival time statistics and flag connections with suspiciously low variance or strong periodic components.</p>
 <h3 id="13.5.3-mtu-based-application-fingerprinting">13.5.3 MTU-Based Application Fingerprinting</h3>

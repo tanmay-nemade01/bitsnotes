@@ -754,6 +754,45 @@ flowchart LR
 </div>
 <p>If \(\mu\) goes from \(2\) to \(50\), the band gets stiff. A large gap is multiplied by a large \(\mu\), so the subtractive penalty is huge, and the local model stays closer to \(w^{t}\). A first guess was “updates become slower.” The correction is: not slower as the main story. The model becomes <em>closer</em> to the global \(w^{t}\). At \(\mu = 0\) it is ordinary FedAvg.</p>
 <p>Procedure each round: server sends the global model; client computes a data gradient; FedProx adds the penalty; the smaller effective step keeps weights nearer the global model; then the server averages.</p>
+
+<div class="important-note">
+  <p><strong>System Detail — FedProx also replaces a fixed local epoch count with a gradient-based stopping test.</strong> The proximal penalty is only half the method. The other half is the <em>γ-inexact solution</em>: instead of forcing every device to run the same number of local epochs, a device stops local training when the gradient of its <em>proximal objective</em> has shrunk enough. Write the local objective and its gradient as</p>
+  <p>\[ h_k(w; w^{t}) = F_k(w) + \frac{\mu}{2}\|w - w^{t}\|^{2}, \qquad \nabla h_k(w; w^{t}) = \nabla F_k(w) + \mu(w - w^{t}). \]</p>
+  <p>An iterate \(w^{*}\) counts as a \(\gamma\)-inexact solution when</p>
+  <p>\[ \bigl\|\nabla h_k(w^{*}; w^{t})\bigr\| \le \gamma \, \bigl\|\nabla h_k(w^{t}; w^{t})\bigr\|, \qquad \gamma \in [0,1]. \]</p>
+  <p>A smaller \(\gamma\) means a stricter stop and more local work. Letting \(\gamma_k^{t}\) differ by device \(k\) and round \(t\) is what lets a slow device send a short, partial update instead of being dropped — and the proximal term is what makes merging that partial update safe under non-IID data.</p>
+</div>
+<div class="example-box">
+  <p><strong>Worked stop test.</strong> At the broadcast \(w^{t}\) the gap is zero, so \(\|\nabla h_k(w^{t}; w^{t})\| = \|\nabla F_k(w^{t})\| = 10\). With the textbook setting \(\gamma = 0.9\), a device keeps stepping until the proximal gradient norm falls to \(9\) or below.</p>
+  <table>
+    <thead>
+      <tr>
+        <th>Device</th>
+        <th>Local work</th>
+        <th>Gradient norm at stop</th>
+        <th>FedAvg (fixed epochs)</th>
+        <th>FedProx (proximal)</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>Fast</td>
+        <td>Runs enough steps to converge</td>
+        <td>\(8.5 \le 9\) → stops</td>
+        <td>Included</td>
+        <td>Included</td>
+      </tr>
+      <tr>
+        <td>Slow (straggler)</td>
+        <td>Hits the clock first</td>
+        <td>\(9.3 \gt 9\) → partial</td>
+        <td>Dropped from the round</td>
+        <td>Partial update still aggregated</td>
+      </tr>
+    </tbody>
+  </table>
+  <p>The slow device's \(9.3\) is not yet a \(\gamma\)-inexact solution, but FedProx still merges it, and the proximal term keeps that partial model near \(w^{t}\). The framework also names FedAvg as its special case: \(\mu = 0\), an SGD local solver, and a constant \(\gamma\) across devices and rounds.</p>
+</div>
 <div class="warning-box">
   <p><strong>Scope:</strong> FedProx applies when local training is gradient-based and you can evaluate \(y-x\) each step. It does not store control variates. A huge \(\mu\) can freeze the client near \(w^{t}\) and starve local learning. A tiny \(\mu\) is almost FedAvg. The method also does not, by itself, fix adversarial clients; it only leashes distance.</p>
 </div>

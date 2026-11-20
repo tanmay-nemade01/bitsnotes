@@ -496,6 +496,24 @@
 </div>
 <p>So the box has not yet touched the fourth frame of a four-frame input at this stage. The first output number consumes frames 0, 1, 2. Sliding the box one frame forward consumes frames 1, 2, 3 and yields the next temporal output. That sliding continues to the end of the clip, producing one output per window.</p>
 <p>Checkout counters use the same rule: a scanner window of width \(K\) sliding over \(I\) items with step 1 reads \(I - K + 1\) distinct windows. Video convolution is that counter running in three axes at once.</p>
+
+<div class="key-concept">
+  <p><strong>General placement rule:</strong> The toy rule \(O = I - K + 1\) is one special case of a single formula that also covers stride, zero padding, and dilation. Along any one axis let \(I\) be the input extent, \(K\) the kernel extent, \(S\) the stride, \(P\) the padding added on each side, and \(D\) the dilation rate. The number of legal box placements is:</p>
+  <p>\[O = \left\lfloor \frac{I + 2P - \hat{K}}{S} \right\rfloor + 1, \qquad \hat{K} = K + (K - 1)(D - 1)\]</p>
+  <p>Here \(\hat{K}\) is the <em>effective kernel extent</em>. Dilation inserts \(D - 1\) gaps between successive kernel taps, so a 3-tap kernel at \(D = 2\) reaches \(3 + 2 = 5\) input positions while keeping exactly 3 weights; \(\hat{K}\) therefore replaces \(K\) in the numerator rather than adding parameters. Setting \(S = 1\), \(P = 0\), \(D = 1\) gives \(\hat{K} = K\) and \(O = \lfloor (I - K)/1 \rfloor + 1 = I - K + 1\), recovering the toy rule exactly.</p>
+  <p>The four dials separate cleanly. Stride \(S\) subsamples placements: \(S = 2\) keeps every second start and roughly halves \(O\). Padding \(P\) borders the input with zeros so the box can legally sit at the edges; \(P = \lfloor K/2 \rfloor\) with odd \(K\) and \(S = 1\) is the "same" setting that holds \(O = I\). Dilation \(D\) widens the box's reach at fixed weight cost, which is how a shallow temporal kernel can see across a longer span without paying the full \(K_t \times K_h \times K_w\) product. The floor function means several nearby input sizes can share the same \(O\) when \(S > 1\): any \(I\) in a window of width \(S - 1\) above a multiple gives the same count.</p>
+  <p>Applied axis by axis to a clip, the rule becomes three independent counts:</p>
+  <p>\[O_T = \left\lfloor \frac{T_{in} + 2P_t - \hat{K}_t}{S_t} \right\rfloor + 1, \quad O_H = \left\lfloor \frac{H_{in} + 2P_h - \hat{K}_h}{S_h} \right\rfloor + 1, \quad O_W = \left\lfloor \frac{W_{in} + 2P_w - \hat{K}_w}{S_w} \right\rfloor + 1\]</p>
+  <p>Because convolution arithmetic does not mix axes, each extent can be tuned independently: a temporal stride \(S_t = 2\) halves the time slots while a spatial dilation \(D_h = D_w = 2\) widens the spatial reach, leaving the weight count \(K_t \times K_h \times K_w\) unchanged. This is the formal version of the session's remark that stride skips placements and padding changes output size, now precise enough to program.</p>
+</div>
+
+<div class="example-box">
+  <p><strong>Worked output-size trace:</strong> Take a small clip of shape \(8 \times 8 \times 8\) in \(T \times H \times W\) order with a \(3 \times 3 \times 3\) kernel, temporal stride \(S_t = 2\), spatial strides \(S_h = S_w = 2\), one unit of padding on every side (\(P_t = P_h = P_w = 1\)), and spatial dilation \(D_h = D_w = 2\) while \(D_t = 1\). Count each axis separately.</p>
+  <p>Step 1, time: \(\hat{K}_t = 3 + (3 - 1)(1 - 1) = 3\), so \(O_T = \lfloor (8 + 2 \times 1 - 3)/2 \rfloor + 1 = \lfloor 7/2 \rfloor + 1 = 3 + 1 = 4\).</p>
+  <p>Step 2, height and width: \(\hat{K}_h = \hat{K}_w = 3 + (3 - 1)(2 - 1) = 5\), so \(O_H = O_W = \lfloor (8 + 2 \times 1 - 5)/2 \rfloor + 1 = \lfloor 5/2 \rfloor + 1 = 2 + 1 = 3\).</p>
+  <p>Step 3, assemble: the output map is \(4 \times 3 \times 3 = 36\) placements. The same clip with the toy settings \(S = 1\), \(P = 0\), \(D = 1\) gives \(O = (8 - 3 + 1)^3 = 6 \times 6 \times 6 = 216\) placements, so the strided, dilated box performs six times fewer placements.</p>
+  <p><strong>Final result:</strong> 36 output positions instead of 216, with the kernel still holding \(3 \times 3 \times 3 = 27\) weights in both cases. Stride and padding bought the saving by skipping and bordering; dilation bought a wider receptive span without buying a single extra weight. Dilation changes <em>where</em> the 27 weights look, not <em>how many</em> there are, which is why the parameter formula \(P = C_{out} \times C_{in} \times K_t \times K_h \times K_w + C_{out}\) is unaffected.</p>
+</div>
 <div class="key-takeaway">
   <p>One placement means element-wise multiply, sum within each slice, sum across slices, add one bias. The map size follows \(O = I - K + 1\) per axis, giving \(1 \times 2 \times 2\) here. With the toy fully worked, the next step is to see the loops that repeat this placement thousands of times and the hardware that decides how long that takes.</p>
 </div>
@@ -729,6 +747,22 @@
   <p><em>Factorization</em> here means replacing one \(K_t \times K_h \times K_w\) convolution with a spatial convolution of shape \(1 \times K_h \times K_w\) followed by a temporal convolution of shape \(K_t \times 1 \times 1\), with a rectified linear unit after each step. The spatial step reads appearance within frames; the temporal step reads change across the middle maps. An <em>intermediate channel count</em>, written \(M\), is the number of maps between the two steps. It is a design setting, not a learned weight, and choosing it is the core of the derivation below.</p>
 </div>
 <p>Compare the two routes side by side. The fused route runs one heavy convolution then one nonlinearity: one bend in the function. The split route runs a light spatial convolution, a first nonlinearity, a light temporal convolution, then a second nonlinearity: two bends. The split keeps the joint view because the temporal step still mixes frames, but it mixes compact middle maps rather than raw pixels, which is where the saving comes from.</p>
+
+<div class="important-note">
+  <p><strong>Complementary lever — channel grouping:</strong> Factorization shortens the kernel box; grouping shortens the number of input channels each filter must read. Both reduce the same parameter bill but attack different factors of \(P = C_{out} \times C_{in} \times K_t \times K_h \times K_w + C_{out}\), so they can be combined.</p>
+  <table>
+    <thead>
+      <tr><th>Variant</th><th>What is cut</th><th>Parameters (Cin=32, Cout=64, 3x3x3)</th><th>Weights vs. fused</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>Full 3D (baseline)</td><td>nothing</td><td>\(64 \times 32 \times 27 + 64 = 55{,}360\)</td><td>1x</td></tr>
+      <tr><td>Factorized (2+1)D, M=8</td><td>kernel volume</td><td>\((8 \times 32 \times 9 + 8) + (64 \times 8 \times 3 + 64) = 3{,}912\)</td><td>~0.07x (~14x fewer)</td></tr>
+      <tr><td>Grouped 3D, G=8</td><td>channel mixing</td><td>\(64 \times (32/8) \times 27 + 64 = 6{,}976\)</td><td>~0.13x (~8x fewer)</td></tr>
+    </tbody>
+  </table>
+  <p>A group count \(G\) splits the channels into \(G\) independent banks: each bank sees \(C_{in}/G\) inputs and produces \(C_{out}/G\) outputs, so the weight term falls by \(G\) while the bias tail stays \(C_{out}\). Both channel counts must be divisible by \(G\); at \(G = C_{in}\) with \(C_{out} = K\,C_{in}\) this is the <em>depthwise</em> convolution, where each input channel is convolved with its own filter set. Note the running layer in this lecture has \(C_{in} = 3\), which admits no nontrivial \(G\) alongside \(C_{out} = 64\), so the widened example above is used to show the lever; a real design may widen channels precisely to make grouping legal.</p>
+  <p>Read the two levers together: factorization replaces \(K_t K_h K_w\) with \(K_h K_w + K_t\) at the cost of an intermediate width \(M\), while grouping replaces \(C_{in}\) with \(C_{in}/G\) at the cost of losing cross-channel mixing. Stacking them multiplies the savings, but grouping removes information the fused box could have used, so it is a speed/accuracy trade rather than the free lunch supplied by the split's extra \(\mathrm{ReLU}\).</p>
+</div>
 <h3 id="8.7.2-parameter-math-of-the-split">8.7.2 Parameter Math of the Split</h3>
 <p>The verbal split was 2D with 3 by 3 by 1 is 9 parameters, then 1D with 1 by 1 by 3 is 3 parameters, totaling 12 against 27. In \(T \times H \times W\) order the spatial step is \(1 \times 3 \times 3\) and the temporal step is \(3 \times 1 \times 1\):</p>
 <div class="key-concept">

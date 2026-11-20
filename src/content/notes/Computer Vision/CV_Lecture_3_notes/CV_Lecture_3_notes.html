@@ -690,6 +690,10 @@
   <p><strong>Answer: about 227.9.</strong> Sense-check: the result sits much closer to white \(255\) than to the speck \(10\), so the speck is gone and the area looks smooth. The dominant surroundings decide the output. On a \(1024 \times 1024\) test pattern, \(11 \times 11\) and \(21 \times 21\) boxes smooth more strongly, but blur grows as well because edges also average.</p>
 </div>
 <p>Box filtering acts as a low pass operation: it keeps slow changes across space and softens abrupt spikes. Daily use needs no learned model. Skin smoothing for pimples and acne, general de-pixelation, and video call blur all use this averaging idea with static weights.</p>
+<div class="important-note">
+  <p><strong>Efficient implementation — summed-area table.</strong> A box average over a \(K \times K\) window naively costs \(K^{2}\) additions per pixel, so large boxes get expensive. Precompute a summed-area table (integral image) once: \(s(i,j) = \sum_{k \leq i} \sum_{l \leq j} F(k,l)\), built in one raster scan with the recursion \(s(i,j) = s(i-1,j) + s(i,j-1) - s(i-1,j-1) + F(i,j)\).</p>
+  <p>Any axis-aligned window sum then comes from four table lookups, \(S = s(i_{1},j_{1}) - s(i_{1},j_{0}-1) - s(i_{0}-1,j_{1}) + s(i_{0}-1,j_{0}-1)\), and dividing by the window area \(K^{2}\) gives the box-filtered value. Cost drops from \(O(K^{2})\) to \(O(1)\) per window, independent of kernel size, after one \(O(N)\) preprocessing pass. The table needs extra bits — roughly \(\log M + \log N\) more — so wide frames do not overflow the accumulator.</p>
+</div>
 <div class="warning-box">
   <p><strong>Scope:</strong> Box strength grows with window area. <strong>Assumption:</strong> noise is small and isolated relative to the window. A speck smaller than the window gets outvoted; a thick edge wider than the window survives but softens. Push the box too large and every edge turns to haze.</p>
 </div>
@@ -711,8 +715,25 @@
 <p>\[G_{\sigma}(x,y) = (1 / (2 \pi \sigma^{2})) e^{-(x^{2} + y^{2}) / (2 \sigma^{2})}\]</p>
 <p>Here \(\sigma\) is spread with variance \(\sigma^{2}\), so larger \(\sigma\) means wider blur, and \(\pi\) is the circle constant near \(3.1416\). The lead factor \(1/(2\pi\sigma^{2})\) keeps total volume at one so flat regions hold their level. Play with \(\sigma\) to tune smoothing strength: small \(\sigma\) sharpens the bell and protects detail, large \(\sigma\) flattens the bell toward box-like averaging.</p>
 <p>Reach grows with kernel width \(m\): for \(3 \times 3\) the reach is \(1\), for \(5 \times 5\) it is \(2\), for \(7 \times 7\) it is \(3\), for \(9 \times 9\) it is \(4\), for \(11 \times 11\) it is \(5\), where \(m\) is kernel width and reach is \((m-1)/2\). Shape reads as a bell in three dimensions with mean at center and standard deviation setting width. Gaussian smoothing is fuzzy rather than uniform: center keeps more weight, borders keep less.</p>
+<div class="important-note">
+  <p><strong>Efficient implementation — separable kernels.</strong> A 2D kernel \(K\) is separable when it factors as an outer product of a vertical and a horizontal 1D kernel, \(K = v h^{T}\). The Gaussian is separable because \(e^{-(x^{2}+y^{2})/2\sigma^{2}} = e^{-x^{2}/2\sigma^{2}} \, e^{-y^{2}/2\sigma^{2}}\), and the box kernel factors the same way. Convolving with \(K\) directly takes \(K^{2}\) multiply-adds per pixel, but two successive 1D passes take only \(2K\): an \(11 \times 11\) kernel drops from \(121\) to \(22\) operations per pixel, and a \(21 \times 21\) kernel from \(441\) to \(42\).</p>
+  <p>To test an arbitrary kernel, take its singular value decomposition: it is separable exactly when only the first singular value is non-zero. Libraries expose this as a dedicated separable-filter call, which is why large Gaussian blurs stay cheap on real hardware.</p>
+</div>
 <p>Real use pairs the shape with a task. Hubble deep space frames use low pass Gaussian steps to suppress unwanted noise before galaxy and star detection. Shading correction pairs a Gaussian low pass with division to flatten uneven light: blur a copy to estimate the light field, then divide the frame by it.</p>
 <p>Code mapping used here: box style blur with the cv2 blur call and Gaussian style blur with the Gaussian blur call. Repeated box passes keep smoothing the whole frame evenly. Gaussian passes keep center structure more while softening jagged pixel edges.</p>
+
+<div class="important-note">
+  <p><strong>Edge-preserving extension — the bilateral filter.</strong> Gaussian smoothing weights neighbours only by spatial distance, so it blurs an edge as readily as noise. The bilateral filter multiplies that spatial ("domain") kernel by a second "range" kernel depending on intensity similarity to the centre, so across a step the far side is down-weighted:</p>
+  <p>\[g(i,j) = \frac{\sum_{k,l} f(k,l)\,w(i,j,k,l)}{\sum_{k,l} w(i,j,k,l)}, \qquad w = \exp\left(-\frac{(i-k)^{2}+(j-l)^{2}}{2\sigma_{d}^{2}} - \frac{(f(i,j)-f(k,l))^{2}}{2\sigma_{r}^{2}}\right)\]</p>
+  <p>Here \(\sigma_{d}\) is the spatial spread (the role \(\sigma\) played above) and \(\sigma_{r}\) the intensity spread. A neighbour with intensity close to \(f(i,j)\) keeps near-full weight; one across a strong step is suppressed. Let \(\sigma_{r} \to \infty\) and the range term tends to \(1\), recovering ordinary Gaussian blur; let \(\sigma_{d} \to \infty\) and only intensity similarity matters. For colour images the range term uses the vector colour distance, since a change in any channel signals a material boundary.</p>
+</div>
+<div class="example-box">
+  <p><strong>Worked weight comparison at a step edge.</strong> Put the centre at intensity \(100\) on the bright side of a step, with one neighbour at \(100\) (same side, distance \(1\)) and another at \(20\) (other side, distance \(1\)); take \(\sigma_{d} = \sigma_{r} = 30\). The domain factors match: \(e^{-1/(2\cdot 900)} \approx 0.9994\). Range factors are \(e^{0} = 1\) and \(e^{-80^{2}/(2\cdot 900)} = e^{-3.56} \approx 0.0285\). Products are \(0.999\) against \(0.0285\): the cross-edge neighbour contributes about \(3\%\) as much, so the step survives while same-side noise still averages away. A plain Gaussian would weight both neighbours \(\approx 0.999\) and smear the step.</p>
+  <p><strong>Answer: the range gate cuts the cross-edge weight by roughly \(35\times\) here.</strong> Sense-check: the denominator \(\sum w\) keeps flat regions at their original level, just as the \(1/(2\pi\sigma^{2})\) volume normaliser did for the Gaussian. Practical guidance puts \(d = 5\) for real-time use and \(d = 9\) for heavy offline filtering.</p>
+</div>
+<div class="warning-box">
+  <p><strong>Pitfall — cost and impulse noise.</strong> The weights depend on image content, so the filter is space-variant and not separable: the two-pass trick above does not apply and large windows are slow. It also fails on isolated extreme impulses — a shot-noise pixel is very different from its neighbours, so the range kernel rejects it as "dissimilar" and the bad value survives. Use a median filter for impulse noise; use a bilateral filter when the goal is smoothing that keeps edges.</p>
+</div>
 <h3 id="3.8.3-noise-against-pattern-edges-and-hands-on-play">3.8.3 Noise Against Pattern Edges and Hands On Play</h3>
 <p>How do you tell a lone dust speck from a true edge before smoothing? Look for pattern. A \(3 \times 3\) demo with one \(150\) among similar values and steady neighbors shows structure: several aligned pixels share the range. A \(512 \times 512\) frame with isolated \(255\) dots and no repeat shows sporadic noise, likely sensor damage. Computers and eyes both use repeat and spread to judge. Smoothing keeps repeating strong structure and softens lone spikes. If a pattern vanishes under smoothing, it was weak to begin with.</p>
 <div class="example-box">
@@ -725,6 +746,49 @@
   <p><strong>Answer: about 65.5 for a spike that started at 255.</strong> Sense-check: the result lands inside the \(0\) to \(100\) neighborhood, so the spike drops toward its surroundings. Sharpness falls, but sporadic sensor noise falls more. True repeating edges survive because many aligned pixels support them; random lone spikes lack that support and fade.</p>
 </div>
 <p>This sets up edge and corner work. First order and second order partial derivatives respond strongly to steps, so prior smoothing stops lone spikes from faking edges. Weak edges are dropped and strong edges are kept for later stages. Hands-on: change the input image and rerun box blur and Gaussian blur in the shared notebook and repo. Try kernel sizes \(3 \times 3\), \(11 \times 11\), and \(21 \times 21\), and sweep sigma spread and variance. Watch noise fall and edges soften, then pick the smallest strength that cleans the frame. Every Instagram and Snapchat filter and every blur toggle in video calls is a static kernel of this family, not a deep model.</p>
+
+<div class="key-concept">
+  <p><strong>Formal definition — order statistics and the median.</strong> Sort the \(K = (2a+1)(2b+1)\) values in a window into an ordered sequence \(f_{(1)} \le f_{(2)} \le \cdots \le f_{(K)}\). An order-statistics (rank) filter returns one order statistic \(f_{(r)}\), or a fixed linear combination of them; the median filter takes the middle rank \(r = (K+1)/2\):</p>
+  <p>\[g(i,j) = \operatorname{median}\,\{\,f(i+s,j+t) \;:\; s \in \{-a,\dots,a\},\; t \in \{-b,\dots,b\}\,\} = f_{((K+1)/2)}\]</p>
+  <p>For an odd \(3 \times 3\) window \(K = 9\), so the output is the 5th smallest value. Because the output must be one of the input samples rather than a newly computed average, a single extreme sample cannot drag it: an impulse of \(255\) surrounded by eight values near \(50\) sorts to \(50, \dots, 50, 255\), whose median stays \(50\). This is a <em>nonlinear</em>, non-separable operator, so applying it to a sum differs from summing its outputs, \(\operatorname{med}(f_1 + f_2) \ne \operatorname{med}(f_1) + \operatorname{med}(f_2)\).</p>
+</div>
+<div class="example-box">
+  <p><strong>Worked trace — same patches, different operator.</strong> Reuse the two patches already in this section to compare the rank operator against the two linear ones. Dark speck \(10\) with eight neighbours \(255\): sorted values are \(10, 255, 255, 255, \mathbf{255}, 255, 255, 255, 255\), so the 5th (median) is \(255\); the box gave \(227.9\). Bright spike \(255\) among values near \(50\): sorted values are \(50, \dots, 50, 255\), so the median is \(50\); the Gaussian gave about \(65.5\).</p>
+  <p><strong>Answer: median \(255\) for the dark speck in white, and \(50\) for the bright spike among \(50\)s.</strong> Sense-check: both results are actual pixel values from the window, so no clipping or rounding is needed. The median discards an isolated extreme outright instead of merely diluting it, which is why it is the standard remedy for salt-and-pepper (shot) noise. The price: thin lines and sharp corners can be eroded, and a full re-sort costs \(O(K \log K)\) per pixel; a histogram-updated sliding window drops the outgoing column, inserts the incoming column, then walks cumulative counts to the median, making the shift \(O(1)\) amortised.</p>
+</div>
+<table>
+  <thead>
+    <tr>
+      <th>Filter</th>
+      <th>Output value</th>
+      <th>Isolated impulse</th>
+      <th>Edges and corners</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td>Box (uniform average)</td>
+      <td>New weighted mean</td>
+      <td>Diluted, not removed</td>
+      <td>Blurred</td>
+    </tr>
+    <tr>
+      <td>Gaussian</td>
+      <td>New weighted mean</td>
+      <td>Diluted; soft spot can remain</td>
+      <td>Blurred</td>
+    </tr>
+    <tr>
+      <td>Median (rank 5 of 9)</td>
+      <td>An existing pixel value</td>
+      <td>Removed outright</td>
+      <td>Mostly preserved; thin lines may erode</td>
+    </tr>
+  </tbody>
+</table>
+<div class="key-takeaway">
+  <p><strong>Takeaway:</strong> For impulsive (salt-and-pepper / shot) noise, rank filters beat averaging: the median keeps repeating structure and rejects lone extremes, at the cost of a nonlinear, non-separable operation and possible rounding of fine corners.</p>
+</div>
 <div class="warning-box">
   <p><strong>Scope:</strong> Smoothing helps only before detection, not instead of it. <strong>Assumption:</strong> the target pattern repeats across several pixels. Lone-pixel detail below the noise floor cannot be saved: any window strong enough to kill the noise also kills the lone pixel.</p>
 </div>

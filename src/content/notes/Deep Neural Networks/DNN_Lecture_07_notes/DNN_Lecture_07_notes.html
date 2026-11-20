@@ -770,6 +770,42 @@ L = -[y \log(\hat{y}) + (1-y)\log(1-\hat{y})]
 <div class="important-note">
 <p>Picture a river splitting into tributaries. Water flows downhill (forward pass). Now imagine tracing each drop of water back to its source (backward pass). The chain rule does exactly that — it breaks the total error into contributions from each upstream weight. Each weight gets blamed in proportion to how much it contributed to the wrong answer.</p>
 </div>
+
+<div class="important-note">
+<p><strong>Why backpropagation is computationally cheap — reverse-mode automatic differentiation:</strong> Section 7.5.3 expresses the gradient as a product of Jacobian matrices. For a scalar loss, the vector form is \(\nabla_x L = \left(\frac{\partial y}{\partial x}\right)^\top \nabla_y L\): one Jacobian–gradient product per node of the graph. Each local partial derivative \(\partial u^{(i)}/\partial u^{(j)}\) is evaluated only once and paired with a single multiplication and addition, so the entire backward pass costs \(O(\#\text{edges})\) — the same order as the forward pass, not one derivative computation per parameter.</p>
+<p>The order in which those Jacobians are multiplied determines the cost. For a four-stage composition \(A B C D\):</p>
+<div class="eqbox">
+\[
+\nabla_x L = A B C D \, v \quad \text{(reverse: right-to-left matrix–vector products)}
+\]
+</div>
+<p>Starting at the scalar loss on the right and sweeping left, every step is a matrix–vector product. This is <strong>reverse mode</strong> (backpropagation) — optimal for the \(f:\mathbb{R}^n\to\mathbb{R}\) training-loss case with millions of parameters and one output. Multiplying left-to-right would require matrix–matrix products; that is <strong>forward mode</strong>, which is cheaper only when the graph has more outputs than inputs.</p>
+<table>
+  <thead>
+    <tr>
+      <th>Mode</th>
+      <th>Product at each node</th>
+      <th>Efficient when</th>
+      <th>Memory cost</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td>Reverse mode (backprop)</td>
+      <td>\(\text{Jacobian}^\top \times\) upstream gradient</td>
+      <td>Many inputs, one scalar output (a loss)</td>
+      <td>Caches forward activations — grows with depth</td>
+    </tr>
+    <tr>
+      <td>Forward mode</td>
+      <td>\(\text{Jacobian} \times\) tangent vector</td>
+      <td>More outputs than inputs ("tall" Jacobians)</td>
+      <td>No full graph storage — independent of depth</td>
+    </tr>
+  </tbody>
+</table>
+<p>This is why a single <code>loss.backward()</code> sweep returns gradients for all \(n\) parameters at once: a forward-mode sweep would need roughly one pass per parameter, which cannot scale.</p>
+</div>
 <h3 class="subsection-title">7.5.4 Weight Updates</h3>
 <p>Once you have the gradient for each weight, you update it:</p>
 <div class="eqbox">
@@ -846,6 +882,18 @@ flowchart RL
 </div>
 <div class="key-takeaway">
 <p>Backpropagation is the chain rule applied to the entire network. The gradient at any weight is the product of all downstream derivatives along the path from that weight to the loss. The delta at the output (\(\hat{y} - y\) for BCE+Sigmoid) is the clean starting signal that then ripples backward through every layer.</p>
+</div>
+
+<div class="key-concept">
+<p><strong>Beyond first derivatives — Hessian–vector products:</strong> Backpropagation computes one gradient. Applying the same chain-rule machinery to the gradient itself yields second-order information. For a scalar loss \(f:\mathbb{R}^n\to\mathbb{R}\), the Hessian \(H = \nabla^2 f(x)\) is an \(n\times n\) matrix; with \(n\) equal to the parameter count (millions or billions), even storing \(H\) is infeasible, let alone inverting it.</p>
+<p>Krylov methods sidestep this: they require only the product of \(H\) with an arbitrary vector \(v\). That product is the gradient of a <em>scalar</em> function — the directional derivative of the gradient — so ordinary reverse-mode autodiff suffices:</p>
+<div class="eqbox">
+\[
+H v = \nabla_x\!\left[\big(\nabla_x f(x)\big)^\top v\right] = \nabla_x\, g(x), \qquad g(x) = \nabla_x f(x)\cdot v
+\]
+</div>
+<p>Since \(g:\mathbb{R}^n\to\mathbb{R}\), computing \(\nabla_x g\) takes a single reverse sweep. Evaluating this for \(v = e_1,\dots,e_n\) (standard basis vectors) reconstructs the Hessian row by row without ever storing the full matrix; a forward-over-reverse Jacobian–vector product is usually the cheapest implementation. Frameworks expose this directly — the documented behavior of <code>torch.autograd.functional.hessian</code> is to compute a "Jacobian of a Jacobian," with the inner Jacobian always in reverse-mode AD.</p>
+<p><strong>Takeaway:</strong> Curvature information is reachable with first-order tools. The prohibitive cost belongs to the explicit \(n\times n\) matrix, not to the Hessian–vector product — which is why curvature-based analysis remains practical for very large networks.</p>
 </div>
 <p><strong>Real-world &amp; domain connection:</strong> Backpropagation was popularized by Rumelhart, Hinton, and Williams in 1986, though the idea traces back to the 1960s.  Every deep learning framework today (PyTorch, TensorFlow, JAX) implements automatic differentiation — a generalization.  Of backpropagation that can compute gradients for arbitrary computational graphs, not just feed-forward networks. When you call <code>loss.backward()</code> in PyTorch, you are triggering the same chain-rule machinery described here, applied automatically to your specific network architecture.</p>
 

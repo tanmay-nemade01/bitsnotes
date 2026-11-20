@@ -783,6 +783,21 @@
   <p>\[ \text{transfers} = 2 \times (d + 1) \] where the “+1” is the final file itself — even if you quote “per directory plus file,” the file also needs its inode and its data block. For <code>cat /home/spiderman/hello.txt</code> \(d=2\) (home, spiderman) plus root handling gives the 8 counted above once root's pair is included. For <code>/home/ubuntu/sp/file_name.txt</code> \(d=3\) gives 8 in the simplified per-directory count, or 10 including root's pair — examiners accept either breakdown if you label what you include.</p>
   <p>Each transfer from disk to main memory is a disk operation. That is why even a simple <code>cat</code> can touch many disk structures before the first byte of user data is seen. Caching can reduce later repeats, but the first walk must materialize each inode and directory block.</p>
 </div>
+<div class="important-note">
+  <p><strong>Mechanism — what the “buffer cache” is, and why the second <code>cat</code> costs nothing at the disk.</strong> The cache named in the counting assumptions is a fixed pool of <em>buffers</em>: each buffer is an in-memory image of exactly one logical disk block, tagged in its header with the pair \( (\text{device}, \text{block number}) \). A given disk block may occupy at most one buffer at a time — two copies could otherwise be written back in the wrong order and leave the disk holding stale data.</p>
+  <p>Every buffer sits on a <em>hash queue</em> chosen by hashing the (device, block) pair, so a lookup scans one short list instead of the whole pool; a free buffer also sits on a <em>free list</em> kept in least-recently-used order. The retrieval cases are:</p>
+  <table>
+    <thead>
+      <tr><th>Case</th><th>Action in the buffer pool</th><th>Disk I/O</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>Block present and buffer free</td><td>Remove it from the free list, mark it busy, return it</td><td>none — cache hit</td></tr>
+      <tr><td>Block absent, free buffer available</td><td>Take the LRU buffer at the head of the free list, retag it with the new (device, block), move it to the new hash queue, then read</td><td>one read</td></tr>
+      <tr><td>Buffer busy or marked delayed-write</td><td>Wait, or flush the dirty buffer before reassigning it</td><td>write, then read</td></tr>
+    </tbody>
+  </table>
+  <p>Applied to the 8-transfer walk: the first <code>cat</code> misses on root, <code>home</code>, <code>spiderman</code> and <code>hello.txt</code>, so every inode and block pair is fetched from disk. On the second <code>cat</code> those pairs are already resident — directory and file blocks are hits in the buffer cache, and inode structures are hits in the parallel inode cache with the same hit/miss rule — so the disk transfers drop to zero while the namei walk itself is unchanged.</p>
+</div>
 <p>Real-world: on a modern ext4 host the block size may be \(1\,\text{K}\), \(2\,\text{K}\) or \(4\,\text{K}\) rather than classic \(1\,\text{K}\), and the inode number is 32-bit, but the “two per level” pattern stays identical — inode then block, lookup, next inode. Tools like <code>stat</code> and <code>debugfs</code> let you inspect the same inode numbers (<code>stat /home</code> shows <code>Inode: 13</code> in the demo's vintage numbering) without running the full walk by hand.</p>
 <div class="warning-box">
   <p><strong>Assumptions & scope.</strong></p>
@@ -1126,6 +1141,21 @@
 <div class="important-note">
   <p><strong>Why not just use the file name?</strong> Because names can vary (<code>/dev/sda</code> vs <code>/dev/disk/by-uuid/...</code>) but the major/minor pair is the kernel's stable dispatch key. The inode for the device-file stores this pair instead of block pointers — that is why <code>ls -li /dev</code> shows both inode number and major:minor together.</p>
 </div>
+<div class="example-box">
+  <p><strong>Worked dispatch — how major/minor becomes a driver call.</strong> The “which driver / which unit” idea is implemented with two arrays of function pointers: a <em>block device switch table</em> and a <em>character device switch table</em>. The major number is the array index; the minor number is handed to the selected routine as a parameter. A device special file is created by <code>mknod</code>, which stores the type and the \( (\text{major}, \text{minor}) \) pair in the inode in place of ordinary block pointers.</p>
+  <table>
+    <thead>
+      <tr><th>Opened file</th><th>Inode fields</th><th>Table indexed by major</th><th>Routine called (minor passed in)</th></tr>
+    </thead>
+    <tbody>
+      <tr><td><code>/dev/sda</code></td><td>b, \(8:0\)</td><td>block switch table[\(8\)]</td><td>driver open(minor \(=0\)) — whole disk</td></tr>
+      <tr><td><code>/dev/sda1</code></td><td>b, \(8:1\)</td><td>block switch table[\(8\)]</td><td>driver open(minor \(=1\)) — first partition</td></tr>
+      <tr><td><code>/dev/zero</code></td><td>c, \(1:5\)</td><td>character switch table[\(1\)]</td><td>driver open(minor \(=5\))</td></tr>
+    </tbody>
+  </table>
+  <p>Trace for <code>/dev/sda1</code>: namei resolves the path to the device inode; the kernel reads its type and extracts \(8:1\); because the type is <code>b</code> it indexes the block switch table with major \(8\), then calls that entry's open pointer with minor \(1\). Character devices take the identical route through the character table, which is how one major serves many units — the minor disambiguates them inside the driver. Afterwards the paths diverge exactly as in section 9.7: block reads go through the buffer cache to the driver's <code>strategy</code> routine, while character reads call the driver's <code>read</code> routine directly.</p>
+  <p><strong>Scope of the numbers:</strong> majors \(8\) (disk) and \(7\) (loop) are the familiar Linux assignments from <code>lsblk</code>; the minor values above are illustrative. The invariant is the dispatch rule — major selects the table entry, minor selects the unit.</p>
+</div>
 <h3 id="9.8.2-lsblk-list-block-devices">9.8.2 lsblk — List Block Devices</h3>
 <p><em>lsblk</em> stands for list block and reports only block devices. Its columns were walked one by one:</p>
 <ul>
@@ -1227,6 +1257,20 @@
     <li>Type list (<code>L</code>): includes <code>FAT12</code>, <code>XENIX</code>, <code>FAT16</code>, <code>FAT32</code>, <code>AIX</code>, <code>NTFS</code>, <code>ZFS</code> and many more — you scroll this list to set <code>Id</code> when creating a partition, but the exam only asks that <code>L</code> lists types and <code>p</code> prints the table.</li>
   </ul>
   <p><strong>Permission lesson:</strong> bare <code>fdisk -l</code> → <code>permission denied</code>. With <code>sudo fdisk -l</code> → full detail. That split is exactly the teaching moment: partition tables are privileged state, so inspection needs elevated rights.</p>
+</div>
+<div class="key-concept">
+  <p><strong>Foundational detail — why <code>fdisk</code> asks for a primary partition numbered 1–4.</strong> The <code>DOS</code> label printed by <code>fdisk -l</code> lives in sector \(0\), the first \(512\)-byte sector of the disk. An MBR label always contains exactly four partition slots, so a disk can have at most four <em>primary</em> partitions — a structural limit of the label, not an arbitrary choice by <code>fdisk</code>. To go beyond four, one slot is used as an <em>extended</em> partition that points to a chain of descriptors holding <em>logical</em> drives.</p>
+  <table>
+    <thead>
+      <tr><th>Kind</th><th>Where described</th><th>Linux name</th><th>Holds a filesystem directly?</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>Primary (1–4)</td><td>one slot in the MBR</td><td><code>sda1</code> … <code>sda4</code></td><td>yes</td></tr>
+      <tr><td>Extended</td><td>one MBR slot, pointing to a chain</td><td>e.g. <code>sda3</code></td><td>no — a container</td></tr>
+      <tr><td>Logical</td><td>descriptors in the extended chain</td><td><code>sda5</code>, <code>sda6</code>, …</td><td>yes</td></tr>
+    </tbody>
+  </table>
+  <p>Joining this to the \(2048\) you already memorized: sector \(0\) is consumed by the MBR and its four slots, sectors \(1\)–\(2047\) are the alignment reserve, and the first partition starts at \(2048\). At \(512\) bytes per sector that is \(2048 \times 512 = 1\,048\,576\) bytes \(= 1\) MiB of headroom — the default first-partition offset used by modern partitioning tools. When an interactive <code>n</code> prompt offers <code>p</code> (primary, 1–4) or <code>e</code> (extended), it is offering a choice among those four physical slots; the jump from <code>sda4</code> to <code>sda5</code> on a real host is the logical-drive chain, not a missing number.</p>
 </div>
 <p>The actual <code>p</code> run for <code>sda</code> echoed the earlier line: <code>sda1</code> starts at <code>2048</code>, occupies the bulk of the disk, shows as bootable, and carries its <code>Id</code> and system type. The number \(2048\) appears in both <code>fdisk -l</code> and <code>lsblk</code> narratives because the first partition is aligned to 1 MB — a modern default that avoids misaligned I/O on 4K-sector drives.</p>
 <p>Real-world: In practice most day-to-day inspection uses <code>lsblk</code> and <code>df</code>; <code>fdisk -l</code> is the lower-level view an administrator pulls when planning partitions. You would run <code>lsblk</code> to see “what is mounted where,” <code>df -h</code> to see “how full,” and <code>sudo fdisk -l</code> to see “how the disk is sliced at sector granularity” including the \(512\)-byte sector and \(2048\) start.</p>

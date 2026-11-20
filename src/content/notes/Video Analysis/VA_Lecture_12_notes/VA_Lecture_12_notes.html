@@ -422,6 +422,26 @@
 </div>
 <p>City traffic cameras use this loop each frame: predict a dozen car boxes, correct the ten that found detections, coast the two behind a bus on prediction alone, and drop them only after the max-age wait.</p>
 
+<h3 id="12.2.4-particle-filter-tracking-for-nonlinear-motion" class="subsection-title">12.2.4 Particle-Filter Tracking for Non-Linear Motion</h3>
+<div class="important-note">
+  <p>The Kalman filter of 12.2 is exact only when motion and measurement are linear with Gaussian doubt. A walker who turns sharply, or a cluttered background that throws several plausible boxes at one track, breaks that promise. A particle filter keeps many weighted motion guesses alive instead of one Gaussian blob, and it collapses back to the Kalman answer in the linear-Gaussian limit.</p>
+</div>
+<p>A <em>particle filter</em> (a Monte Carlo estimator that represents a probability distribution by a weighted sample set rather than one mean plus one covariance) carries \(N\) weighted full-state guesses \(\{(x_k^{(l)}, w_k^{(l)})\}_{l=1}^{N}\), where the textbook suggests \(N\) between 50 and 500. Each particle is one hypothesis such as "this walker is at pixel \((u,v)\) moving at \((\dot u,\dot v)\)", and its weight says how credible that hypothesis is. As \(N \to \infty\) the weighted set approaches the optimal Bayesian posterior, so accuracy is bought with sample count rather than with an analytic formula.</p>
+<div class="key-concept">
+  <p><strong>Formal Definition:</strong> with observations \(Z_k = \{z_1, \dots, z_k\}\), the posterior is approximated by \(p(x_k \mid Z_k) \approx \sum_{l=1}^{N} w_k^{(l)} \, \delta(x_k - x_k^{(l)})\), with \(\sum_{l=1}^{N} w_k^{(l)} = 1\). The cycle mirrors Kalman predict-update. Predict: propagate each particle through the dynamic model, \(x_k^{(l)} \sim p(x_k \mid x_{k-1}^{(l)})\), using constant velocity or constant acceleration. Update: score each particle by the observation likelihood, \(w_k^{(l)} \propto w_{k-1}^{(l)} \, p(z_k \mid x_k^{(l)})\), then normalize \(w_k^{(l)} \leftarrow w_k^{(l)} / \sum_j w_k^{(j)}\). Estimate: \(\hat x_k = \sum_{l=1}^{N} w_k^{(l)} x_k^{(l)}\), the weighted mean (or the single highest-weight particle).</p>
+  <p>Resampling suppresses dead hypotheses. Track the effective sample size \(N_{\text{eff}} = 1 / \sum_{l=1}^{N} (w_k^{(l)})^2\); when \(N_{\text{eff}} \le N_{\text{thres}}\), draw \(N\) replacements with probabilities \(w_k^{(l)}\) and reset all weights to \(1/N\). Low-weight particles vanish and high-weight ones are copied, so computation returns to the promising regions of state space.</p>
+</div>
+<div class="example-box">
+  <p><strong>Worked trace:</strong> three 1-D position particles after prediction sit at \(x = 100, 102, 104\) with equal weights \(1/3\), and the detection lands at \(z = 103\). Use a Gaussian likelihood \(p(z \mid x) \propto \exp(-(z-x)^2 / (2\sigma^2))\) with \(\sigma = 2\).</p>
+  <p>Step 1, likelihoods: \(\exp(-9/8) \approx 0.325\) for \(x=100\), and \(\exp(-1/8) \approx 0.882\) for both \(x=102\) and \(x=104\).</p>
+  <p>Step 2, normalized weights: sum \(= 2.089\), giving \(w = (0.156,\; 0.422,\; 0.422)\).</p>
+  <p>Step 3, estimate: \(\hat x = 100(0.156) + 102(0.422) + 104(0.422) \approx 102.53\), which sits closest to the two credible guesses. Effective size \(N_{\text{eff}} = 1/(0.156^2 + 2 \times 0.422^2) \approx 2.63\), above a threshold of 1.5, so no resampling this frame. A sharper peak next frame would drop \(N_{\text{eff}}\) and trigger it.</p>
+</div>
+<p>The same idea appears in vision as <em>condensation</em> (conditional-density propagation): each particle is a whole contour with thickness set by its weight, rather than a single point. It was proposed for cluttered contour tracking and is described as simpler and more general than Kalman filtering, because multiple hypotheses survive together. That is why it rides out short-lived occlusions: less likely states remain in the pool for a few frames instead of being discarded by one Gaussian update. A related variant represents several objects with one shared distribution, so the machinery is not restricted to a single target.</p>
+<div class="warning-box">
+  <p><strong>Scope:</strong> robustness is paid for by \(O(N)\) work per track per frame, versus the constant-cost Kalman update, which is why SORT keeps Kalman for its speed budget. Weight collapse (one particle taking nearly all the mass) starves the rest and is the classic failure mode; resampling fixes it only if the true state still has some support. Appearance must also be re-checked periodically or the particle cloud drifts onto the wrong look. Use this machinery where motion is genuinely non-linear or clutter is multi-modal, not as a blanket replacement for the fast loop above.</p>
+</div>
+
 <h2 id="12.3-hungarian-matching-with-iou-and-track-management" class="section-title">12.3 Hungarian Matching with IOU and Track Management</h2>
 <h3 id="12.3.1-iou-cost-and-assignment" class="subsection-title">12.3.1 IOU Cost and Assignment</h3>
 <div class="important-note">
@@ -505,6 +525,53 @@
 </div>
 <div class="key-takeaway">
   <p><strong>Recap:</strong> Hungarian matching links predictions to detections by best total IOU, and max-age entry-exit logic decides birth after leftovers and death after long silence. <strong>Bridge:</strong> motion-only links still swap look-alikes and die in crowds, so the next section adds a memory of looks, the DeepSORT gallery plus gated motion-appearance cost with cascade priority for fresh tracks.</p>
+</div>
+
+<h3 id="12.3.4-alternative-data-association-jpdaf-and-mht" class="subsection-title">12.3.4 Alternative Data Association: JPDAF and MHT</h3>
+<p>The Hungarian step above commits to one hard pairing per frame. That is a deliberate simplification, not the only option. When two nearly identical detections could both belong to a track, keeping the ambiguity rather than forcing a choice leads to two classical frame-by-frame alternatives, both named in the original DeepSORT paper as the traditional approaches.</p>
+<div class="key-concept">
+  <p><strong>JPDAF</strong> (joint probabilistic data association filter) forms <em>one</em> state hypothesis by weighting each measurement by its association likelihood. With \(\beta_{i,j}\) the probability that detection \(j\) originated from track \(i\), and \(j=0\) denoting clutter or no detection, the single fused observation fed to the Kalman update is \(\hat z_i = \sum_{j=0}^{m} \beta_{i,j} z_j\), with \(\sum_{j=0}^{m} \beta_{i,j} = 1\). No hard decision is made; every nearby box contributes in proportion to its likelihood.</p>
+  <p><strong>MHT</strong> (multiple hypothesis tracking) instead keeps <em>all</em> plausible hypothesis trees, each a complete assignment history across frames, scores them by accumulated likelihood, and prunes to the best \(K\) branches so the tree stays tractable. Ambiguity is deferred to later frames, when more evidence can resolve it.</p>
+</div>
+<table>
+  <thead>
+    <tr>
+      <th>Method</th>
+      <th>Hypotheses kept</th>
+      <th>Per-track update</th>
+      <th>Complexity</th>
+      <th>Weakness</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td>Hungarian (SORT, 12.3)</td>
+      <td>One hard assignment</td>
+      <td>One matched detection</td>
+      <td>\(O(n^3)\) in box count</td>
+      <td>Commits early at crossings</td>
+    </tr>
+    <tr>
+      <td>JPDAF</td>
+      <td>One soft (weighted) state</td>
+      <td>Likelihood-weighted blend of all boxes</td>
+      <td>Moderate, one update per track</td>
+      <td>Can merge two close objects</td>
+    </tr>
+    <tr>
+      <td>MHT</td>
+      <td>Many assignment trees, pruned</td>
+      <td>One update per surviving branch</td>
+      <td>Grows until pruning bounds it</td>
+      <td>Implementation and memory cost</td>
+    </tr>
+  </tbody>
+</table>
+<div class="example-box">
+  <p><strong>Worked contrast:</strong> two tracks \(T_1, T_2\) and two close detections \(d_1, d_2\). Hungarian scores \(T_1 \leftrightarrow d_1\) and \(T_2 \leftrightarrow d_2\) highest and locks that pair. JPDAF instead assigns, say, \(\beta_{1,1}=0.7\), \(\beta_{1,2}=0.2\), \(\beta_{1,0}=0.1\) for \(T_1\) and \(\beta_{2,1}=0.1\), \(\beta_{2,2}=0.8\), \(\beta_{2,0}=0.1\) for \(T_2\), so \(\hat z_1 = 0.7 d_1 + 0.2 d_2\) and the update feels both boxes. MHT keeps the branch \((T_1\!\to\! d_1,\, T_2\!\to\! d_2)\) with score \(0.7 \times 0.8 = 0.56\) and the crossed branch with score \(0.2 \times 0.1 = 0.02\), then prunes the weak one. Same frame, three different attitudes to uncertainty: commit, blend, or defer.</p>
+</div>
+<div class="warning-box">
+  <p><strong>Scope:</strong> the paper notes that JPDAF and MHT achieve their performance at increased computational and implementation complexity, while SORT's single-hypothesis Hungarian plus IOU runs at high frame rate and, on standard detections, ranked on average higher than MHT on the MOT benchmark. Soft association is therefore not a free upgrade: when two people stand shoulder to shoulder, JPDAF's weighted blend can pull both tracks toward the same spot. Choose these methods when ambiguity must be preserved across frames and the budget allows it, not for the light traffic cases where 12.1 favors SORT.</p>
 </div>
 
 <h2 id="12.4-deepsort-appearance-gallery-and-cascade-matching" class="section-title">12.4 DeepSORT Appearance Gallery and Cascade Matching</h2>

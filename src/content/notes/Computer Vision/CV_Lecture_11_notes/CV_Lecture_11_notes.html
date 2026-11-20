@@ -582,9 +582,19 @@
   <p><strong>Worked mini-example — gray balls with rim faults.</strong> Take gray balls on a plain floor: big balls near strength 50, mid balls near 130, and small balls near 210. Ideal bars peak at 50, 130, and 210. Place cuts at \(T_1 = 90\) and \(T_2 = 170\). Rule: strength below 90 means big, 90 to 170 means mid, above 170 means small. A rim pixel on the edge of a big ball reads 95 because it mixes ball plus floor. The hard cut forces it to mid, even though it belongs to the big ball rim. That forced rim label shifts the outline by one pixel. Over many rim pixels the shape error accumulates. <strong>Bold answer: cuts at 90 and 170 label cores right but force rim pixels wrong, so rim error is the cost of hard thresholds.</strong></p>
 </div>
 <p>Two faults bite fast. First, exact modes are hard to compute on raw values. Real values read 250, 251, 253, 254, 255 near one peak. Noise splits the top. The strict max jumps about. Smoothing with Gaussian kernels helps but leaves some noise. Small errors at edges add up. A pixel on the rim of a big ball shares a border with a mid ball. Hard cuts force it to one side. Forced labels on rims shift shapes. Balls cannot overlap in real space, so rim faults read as large shape faults.</p>
+<div class="key-concept">
+  <p><strong>Formal Definition — Otsu's optimal threshold:</strong> Rather than picking a cut by eye, test every candidate \(t\) and keep the one that makes the two resulting groups tightest. Normalize the histogram into class probabilities \(\omega\). Pixels with strength \(\le t\) form the background and the rest the foreground, with within-class variances \(\sigma_{\text{bg}}^2(t)\) and \(\sigma_{\text{fg}}^2(t)\).</p>
+  <p>\[\sigma_w^2(t) = \omega_{\text{bg}}(t)\,\sigma_{\text{bg}}^2(t) + \omega_{\text{fg}}(t)\,\sigma_{\text{fg}}^2(t), \qquad \hat{t} = \arg\min_{t}\,\sigma_w^2(t)\]</p>
+  <p>Minimizing the weighted within-class variance \(\sigma_w^2\) is equivalent to maximizing the between-class variance \(\sigma_{\text{bc}}^2(t) = \omega_{\text{bg}}(t)\omega_{\text{fg}}(t)\,(\mu_{\text{bg}}(t) - \mu_{\text{fg}}(t))^2\). This supplies the missing fixed rule: the cut comes from the histogram itself, needs no hand-set value, and extends to more than one threshold. It still assumes the histogram separates into distinct bands.</p>
+  <p><strong>Worked check:</strong> For levels \(0,1,2,3\) with probabilities \([0.4, 0.1, 0.1, 0.4]\), \(\sigma_w^2(0) \approx 0.35\), \(\sigma_w^2(1) = 0.16\), and \(\sigma_w^2(2) \approx 0.35\), so \(\hat{t} = 1\).</p>
+</div>
 <p>Second, counts drop space. A histogram counts values, not spots. One hundred orange pixels in one tiger hunk give the same bar as one hundred orange pixels strewn about. The bar alone cannot say they form one closed object. Tree green versus grass green shows the same gap. Same green bar, different spots and sources. Space must join color.</p>
 <div class="warning-box">
   <p><strong>Scope:</strong> Histogram cuts assume each object owns a distinct strength band and light stays even. <strong>Assumption:</strong> modes stay apart and thresholds sit in true valleys. When bands overlap or light drifts across the photo, one global cut cannot fit all spots, so local cuts or richer cues must join.</p>
+</div>
+<div class="important-note">
+  <p><strong>Local (adaptive) threshold:</strong> A global cut assumes even light across the photo. When illumination drifts, one \(T\) cannot fit every spot. Adaptive thresholding makes the cut position dependent: a global threshold is \(T = T(f)\), while a local threshold is \(T = T(f, f_c)\), where \(f_c\) is the local image part used to set it.</p>
+  <p>One construction splits the image into subimages, finds a threshold independently in each, and interpolates a threshold from neighboring subimages where none can be found; each subimage is then thresholded by its own value. A common implementation sets \(T(x, y)\) from the mean, or Gaussian-weighted mean, of a \(\text{blockSize} \times \text{blockSize}\) neighborhood around \((x, y)\) minus a constant \(C\). This supplies the local cuts a single global histogram cannot give, but it introduces a neighborhood size and \(C\), and it reacts to local texture as well as to illumination.</p>
 </div>
 <div class="warning-box">
   <p>Do not chase the exact top bar as the true mode. Noise makes tops jump among 250, 251, and 253. Do not read a tall bar as one object either. Tall bars count values, not closed spots. Both traps push toward brittle cuts.</p>
@@ -606,6 +616,58 @@
 <p>This doubt is the bridge to the rest of the lecture. Histograms drop \((x, y)\). Later vectors bring \((x, y)\) back.</p>
 <div class="key-takeaway">
   <p>Histograms turn strengths into bars, modes into peaks, and valleys into cuts. Tiger bands prove the promise, gray balls prove rim faults, and strewn orange proves lost space. Next, K-means lets hubs adapt instead of fixing cuts by hand.</p>
+</div>
+
+<h3 id="11.5.5-region-based-segmentation-growing-merging-and-splitting" class="subsection-title">11.5.5 Region-Based Segmentation: Growing, Merging and Split-and-Merge</h3>
+<div class="key-concept">
+  <p><strong>Formal Definition — homogeneous regions:</strong> A region-based method builds regions directly from pixels instead of slicing the histogram. Let \(H(R)\) be a binary test of whether region \(R\) is homogeneous, using gray level, color, texture, or shape. A valid partition requires \(H(R_i) = \text{TRUE}\) for every region, and \(H(R_i \cup R_j) = \text{FALSE}\) whenever adjacent regions \(R_i\) and \(R_j\) are joined. A region is <em>maximal</em> when it fails the test against every neighbor: no adjacent pair can merge without breaking homogeneity.</p>
+  <p>\[H(R_i) = \text{TRUE}, \qquad H(R_i \cup R_j) = \text{FALSE} \quad (R_i \text{ adjacent to } R_j)\]</p>
+</div>
+<p><strong>Region merging</strong> starts from many small regions — single pixels or \(2 \times 2\), \(4 \times 4\), \(8 \times 8\) blocks — then repeatedly joins adjacent pairs passing the homogeneity test, recomputing each region description after a join. <strong>Region splitting</strong> starts from the whole image and recursively divides any region failing \(H\) into four children, usually on a pyramid grid. <strong>Split-and-merge</strong> alternates both on a quadtree: split non-homogeneous nodes, merge four siblings with similar homogeneity values, and stop when every leaf is homogeneous. Each leaf is one region, so the leaf count is the region count.</p>
+<table>
+  <thead>
+    <tr>
+      <th>Strategy</th>
+      <th>Start state</th>
+      <th>Operation</th>
+      <th>Failure mode</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td>Region merging</td>
+      <td>Single pixels or small blocks</td>
+      <td>Join adjacent homogeneous pairs</td>
+      <td>Order dependent: an early merge can block a later valid one</td>
+    </tr>
+    <tr>
+      <td>Region splitting</td>
+      <td>Whole image</td>
+      <td>Recursively split failing regions into four</td>
+      <td>A fine chessboard looks homogeneous at coarse scale and never splits</td>
+    </tr>
+    <tr>
+      <td>Split-and-merge</td>
+      <td>Any pyramid level</td>
+      <td>Split failing nodes, merge similar siblings</td>
+      <td>Square-region assumption forces blocky borders</td>
+    </tr>
+  </tbody>
+</table>
+<div class="warning-box">
+  <p><strong>Pitfall — merge order and leftover specks:</strong> Merging depends on traversal order, because an early join changes a region's mean and can prevent a later legal join with a different neighbor. After any region-growing pass, tiny regions that cannot merge under \(H\) remain as segmentation noise; the standard cleanup repeatedly finds the smallest region and merges it into its most similar neighbor until all regions exceed a preset size. This is the same fix-later spirit as merging over-split basins in mean shift.</p>
+</div>
+
+<h3 id="11.5.6-watershed-segmentation-from-gradient-basins" class="subsection-title">11.5.6 Watershed Segmentation from Gradient Basins</h3>
+<div class="key-concept">
+  <p><strong>Formal Definition — catchment basins and watershed lines:</strong> Treat the gradient magnitude of the image as a topographic surface: region interiors are low-gradient valleys and region borders are high-gradient ridges. A <em>catchment basin</em> is the set of pixels connected to a local minimum by a path whose gradient value decreases monotonically at every step. <em>Watershed lines</em> are the ridges separating adjacent basins, and they become the region boundaries. This is region growing driven by altitude rather than by a color band.</p>
+</div>
+<p>An efficient flooding implementation sorts pixels by increasing gray level and scans them in order with a first-in-first-out queue. Processing levels upward, it computes for each existing basin its geodesic influence zone — the still-unlabeled pixels closer to that basin than to any other — labels queued pixels by the basin whose zone contains them, and marks pixels lying between two zones as watershed. Pixels matching no existing zone start a new basin. Building the level list from a histogram makes the sort linear in the pixel count.</p>
+<div class="example-box">
+  <p><strong>Worked trace — two touching coins:</strong> A threshold plus distance transform gives sure-foreground seeds at the two coin centers and a sure-background band far from both coins; the annulus between them is unknown. Flooding from the two seeds expands both basins until their influence zones meet at the touching rim. That rim is marked as a watershed boundary instead of being assigned to either coin, so the two touching objects split along a thin dam. Supplying the unknown band as unlabeled and the sure regions as labeled seeds is what makes that split possible.</p>
+</div>
+<div class="warning-box">
+  <p><strong>Pitfall — severe over-segmentation:</strong> Raw flooding produces hundreds or thousands of basins from noise and small gradient dips, so one object becomes many pieces. Marker-controlled flooding fixes this by allowing only the supplied seeds to start basins; equivalently, post-processing can merge every region below a size threshold into its nearest neighbor. Flat plateaus are a second trap: pixels equidistant from two basins give thick watershed lines in the discrete grid, so ordered-distance rules are needed. Unlike K-means and mixture models, the flood needs no hand-set group count, but the marker choice still controls how many groups survive — the same fix-later trade-off as mean-shift bandwidth.</p>
 </div>
 
 <h2 id="11.6-k-means-clustering-for-segmentation">11.6 K-Means Clustering for Segmentation</h2>

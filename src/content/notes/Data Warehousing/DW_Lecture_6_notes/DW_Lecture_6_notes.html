@@ -969,6 +969,30 @@ Target Dimensional Column:  Calculated_Age: 39  (and Age_Group_Bucket: "35-44")
 </div>
 <p><strong>Real-World & Domain Connection:</strong> Multinational telecommunications and financial service providers (such as Vodafone or global retail banks) execute extensive transformation pipelines daily, converting multi-byte international customer names, standardizing address fields, and imputing missing credit ratings across millions of customer accounts before loading analytical data marts.</p>
 
+<h3 class="subsection-title" id="6.3.9">6.3.9 Error Event Schema and Audit Dimension: Dimensionalizing Data Quality</h3>
+<div class="key-concept">
+<p><strong>Formal Definition — Error Event Schema:</strong> Instead of funnelling every transformation failure into a flat exception file, the error event schema models quality violations as a star schema. Its primary fact table has the grain <em>one row per error thrown by any quality screen anywhere in the ETL pipeline</em>, with conformed <code>Date</code>, <code>Batch</code> (or processing step for streamed data), and <code>Screen</code> dimensions, a full date/time stamp, and a <code>Severity_Score</code>.</p>
+</div>
+<div class="example-box">
+<p><strong>Two-Grain Error Capture:</strong> A second, lower-grain <em>Error Event Detail Fact</em> table records the individual table, field, record identifier, and precise error condition behind each violation. A single complex multi-field rule breach therefore yields one row in the error event fact and several in the detail fact, joined by the shared surrogate <code>Error_Event_Key</code>:</p>
+<p>\[ N_{\text{detail}} = \sum_{e=1}^{N_{\text{error}}} m_e \]</p>
+<p>where \(m_e\) is the number of fields failing in error \(e\).</p>
+</div>
+<table>
+<thead>
+<tr><th>Structure</th><th>Grain / Architectural Role</th><th>Representative Columns</th></tr>
+</thead>
+<tbody>
+<tr><td>Error Event Fact</td><td>One row per screen-thrown error</td><td>Error_Event_Key (PK), Date/FK, Batch/FK, Screen/FK, Error_Date/Time, Severity_Score</td></tr>
+<tr><td>Error Event Detail Fact</td><td>One row per failing field in a record</td><td>Error_Event_Key/FK, Table_Key, Field_Key, Record_Identifier_Key, Error_Condition</td></tr>
+<tr><td>Screen Dimension</td><td>Defines the screen rule, its code location, and its exception action</td><td>Screen_Key (PK), Screen_Type, ETL_Module, Exception_Action</td></tr>
+<tr><td>Audit Dimension</td><td>Attaches load-time quality metadata to fact rows</td><td>Audit_Key (PK), Overall_Quality_Rating, Validation_Flag, Out_Of_Bounds_Flag, Screen_Failed_Flag, ETL_Master_Version_Number</td></tr>
+</tbody>
+</table>
+<div class="important-note">
+<p><strong>Audit Dimension — Metadata Elevated to Data:</strong> The ETL back room assembles audit dimension rows representing distinct quality states of a load. On a perfectly clean batch, one audit row (all flags clear) is attached to every fact row loaded; each anomalous condition, such as an out-of-bounds discount, creates an additional audit row. Because the fact table stores <code>Audit_Key</code> as a foreign key, BI tools can filter or group historical facts by data-quality state without parsing raw log files, and the <code>Screen Dimension</code> records whether a screen should halt the batch, divert the row to suspense, or merely tag it.</p>
+</div>
+
 <h2 class="section-title" id="6.4">6.4 Data Loading Mechanics, Surrogate Keys, and Lookup Tables</h2>
 <h3 class="subsection-title" id="6.4.1">6.4.1 Fundamentals of Data Loading: Initial Load, Incremental Load, and Full Refresh</h3>
 <div class="important-note">
@@ -1379,6 +1403,36 @@ Final Target Fact Table Record:  [ Date_SK: 20220826, Cust_SK: 88412, Sales_Amou
   <p>This allows reporting tools to join the sales fact table to the date dimension three times simultaneously without duplicating physical disk storage.</p>
 </div>
 <p><strong>Real-World & Domain Connection:</strong> In enterprise healthcare and insurance DW systems (such as hospital network analytics or insurance claim platforms), patient demographic changes (moves, insurance plan switches) are tracked via SCD Type 2 dimension tables using CRC-32 change detection to ensure historical billing audits remain accurate over multi-year periods.</p>
+
+<h3 class="subsection-title" id="6.5.9">6.5.9 Late-Arriving Facts and Dimensions: The Late Arriving Data Handler</h3>
+<div class="key-concept">
+<p><strong>Formal Definition — Late Arriving Data:</strong> The ideal dimensional pipeline assumes a measurement and its full contemporary dimension context arrive together, so dimensions are loaded first and their current surrogate keys are substituted into the fact row. A <em>late-arriving fact</em> is a measurement whose event occurred under an <em>older</em> dimension version than the one now marked current; a <em>late-arriving dimension</em> is a context whose natural key reaches the fact stream before its descriptive dimension row exists. Both violate the "dimensions before facts" invariant of section 6.5.1 and require a dedicated exception path.</p>
+</div>
+<div class="important-note">
+<p><strong>Historical Key Resolution for a Late-Arriving Fact:</strong> The loader must not use the current-row surrogate key. It searches the Type 2 dimension's effective-date history for the version that was active at the event instant:</p>
+<p>\[ \text{SK}_{\text{resolved}} = \arg\max_{i}\,\{\,T_{\text{eff},i} \;\mid\; T_{\text{eff},i} \le T_{\text{event}} < T_{\text{exp},i} \,\} \]</p>
+<p>Subsequent semi-additive balances (daily inventory, account balances) in later fact rows may also need restatement, and in a compliant environment the correction is routed through the compliance subsystem because stored history is being altered.</p>
+</div>
+<table>
+<thead>
+<tr><th>Situation</th><th>Detection Condition</th><th>Required ETL Handling</th><th>Effect on Fact Foreign Key</th></tr>
+</thead>
+<tbody>
+<tr><td>Late-arriving fact</td><td>\(T_{\text{event}} &lt; T_{\text{eff,current}}\)</td><td>Time-travel lookup over SCD 2 effective-date bounds; restate later semi-additive rows</td><td>Fact correctly references the historical SK</td></tr>
+<tr><td>Retroactive Type 2 change</td><td>New version has \(T_{\text{eff}}\) earlier than the current row</td><td>Insert revised row with a new SK, reset effective bounds, scan forward and restate affected facts</td><td>Destructive UPDATE of subsequent fact keys</td></tr>
+<tr><td>Dimension natural key not yet loaded</td><td>Fact carries NK absent from the dimension lookup</td><td>Create a placeholder row carrying the known NK with dummy attributes; later Type 1 overwrite fills details</td><td>No fact-key rewrite (recommended)</td></tr>
+<tr><td>Missing / inapplicable key</td><td>NULL or blank source key</td><td>Point to the predefined <code>-1</code> "Unknown / Not Applicable" member</td><td>Fact loads with sentinel SK</td></tr>
+</tbody>
+</table>
+<div class="example-box">
+<p><strong>Worked Trace — Placeholder Row Eliminates Fact Restatement:</strong> A real-time sales fact arrives at 09:14 carrying customer natural key <code>C-771</code> (not yet in the Customer dimension) and an amount of 4,500 monetary units.</p>
+<p><strong>Step 1:</strong> The pipeline inserts placeholder row <code>Customer_SK = 991337</code> with <code>Customer_NK = 'C-771'</code> and dummy descriptive attributes, then loads the fact immediately with <code>Cust_SK = 991337</code>.</p>
+<p><strong>Step 2:</strong> At 11:02 the customer master feed supplies the real attributes. Because the fact already references SK 991337, the pipeline performs a single Type 1 overwrite of the placeholder row; no fact row is touched.</p>
+<p><strong>Step 3 (contrast):</strong> Had the fact been mapped to the <code>-1</code> sentinel instead, recovery would require locating and rewriting every matching fact row: \[ N_{\text{updates}} = \sum_{k=1}^{N_{\text{fact}}} \mathbf{1}\big[\text{Cust\_SK}_k = -1\big] \] an \(O(N_{\text{fact}})\) scan that also invalidates pre-computed aggregates. The placeholder strategy confines the correction to one dimension row: \(O(1)\).</p>
+</div>
+<div class="warning-box">
+<p><strong>Pitfall:</strong> Never resolve a delayed fact against the <em>current</em> dimension row simply because it is convenient. Doing so misattributes historical revenue to the wrong customer version and silently corrupts SCD 2 trend analysis; the effective-date predicate above is mandatory.</p>
+</div>
 
 <h2 class="section-title" id="6.6">6.6 Fact Table Loading, Referential Integrity, and Query Optimization</h2>
 <h3 class="subsection-title" id="6.6.1">6.6.1 Fact Table Loading Pipeline and Referential Integrity (RI) Verification</h3>

@@ -597,6 +597,14 @@
   </svg>
   <p class="text-xs text-slate-500 mt-2"><strong>Figure:</strong> Four layers of plain causal stacking reach 5 time points (L + 1); the same four layers with dilation rates 1, 2, 4, 8 reach 15 past points plus the current sample (2^L − 1).</p>
 </div>
+
+<div class="key-concept">
+  <p><strong>Formal derivation — why dilation compounds.</strong> Let layer \(\ell\) use kernel width \(k_\ell\), dilation \(d_\ell\) and stride \(s_\ell\), and let \(R_\ell\) be the number of input samples feeding one output at that layer. Starting from \(R_0 = 1\), each layer adds \((k_\ell - 1)\,d_\ell\) samples, scaled by every earlier stride:</p>
+  <p>\[ R_\ell = R_{\ell-1} + (k_\ell - 1)\,d_\ell \prod_{j=1}^{\ell-1} s_j, \qquad R_0 = 1 \]</p>
+  <p>WaveNet keeps stride one throughout, so the product drops out: \(R_L = 1 + \sum_{\ell=1}^{L}(k_\ell - 1)d_\ell\). With kernel width \(k = 2\) and the doubling schedule \(d_\ell = 2^{\ell-1}\), the geometric sum collapses to:</p>
+  <p>\[ R_L = 1 + \sum_{\ell=1}^{L} 2^{\ell-1} = 1 + (2^{L} - 1) = 2^{L} \]</p>
+  <p><strong>Worked extension.</strong> Four layers give \(R_4 = 2^4 = 16\) samples — the 15 past points plus the current one from the figure. Roughly a thousand samples of context (about 64 ms at a 16 kHz sampling rate) need only \(L = 10\): \(R_{10} = 1024\). Widening the kernel to \(k = 3\) with the same doubling dilation instead gives \(R_L = 1 + 2(2^{L} - 1) = 2^{L+1} - 1\), or \(2047\) at \(L = 10\) — the same compounding principle with a wider per-layer step. This is the mechanism behind the claim that tens of thousands of samples become reachable at modest depth: \(L = 15\) already yields \(32{,}768\) samples. Without dilation the sum would be merely \(R_L = L + 1\), which is why the exponential schedule is the decisive trick.</p>
+</div>
 <h3 id="5.5.4-training-deep-stacks-residual-connections">5.5.4 Training Deep Stacks: Residual Connections</h3>
 <p>Wide receptive fields demand many layers, and many layers invite the classic failure. Class worked through it Socratically:</p>
 <div class="important-note">
@@ -730,6 +738,51 @@
   <p><strong>Final verdict:</strong> gated PixelCNN reaches 3.03 against 3.14 for standard PixelCNN and PixelRNN. Relatively small — but at these near-the-floor values the gap matters, and structured autoregression with the right masking beats generic mixture modeling again. Sense check: both figures sit far below the mixture baselines, so the ranking is about masking quality among autoregressive models.</p>
 </div>
 <p>Next sessions continue the lineage — PixelCNN++ and further refinements — with recommended blog posts covering the details.</p>
+
+<h3 id="5.6.5-imagegpt-autoregressive-pixels-with-a-transformer" class="subsection-title">5.6.5 ImageGPT: Autoregressive Pixels with a Transformer Decoder</h3>
+<div class="important-note">
+  <p><strong>Beyond masked convolutions:</strong> The autoregressive contract does not require a convolutional backbone. ImageGPT (iGPT) applies the same GPT-style transformer decoder used for text to images: the image is unrolled into a long sequence of pixels and the model predicts each pixel from all preceding ones, \(p(x_i \mid x_1, \ldots, x_{i-1})\) with pixels in place of words. Generation walks the ordering exactly as in Section 5.2.4 — the top-left pixel is drawn first, then each subsequent pixel is sampled from its conditional distribution and fed back into the network, working along the rows to the bottom-right.</p>
+</div>
+<p>Two design details make the comparison concrete. Dense attention compares every position with every other, so cost grows quadratically with pixel count; the largest iGPT model (about 6.8 billion parameters) could therefore only operate on \(64 \times 64\) images. To shorten the sequence, the original 24-bit RGB space was quantized to a 9-bit palette, giving \(2^9 = 512\) possible colour tokens at each position — the same device as the softmax over discrete outcomes in the two-variable toy model of Section 5.2.3, only with a larger alphabet. Like PixelCNN, ImageGPT receives no built-in two-dimensional structure: it learns a distinct positional encoding per pixel and must discover from data that a pixel relates to its left neighbour and to the pixel above it.</p>
+<table>
+  <thead>
+    <tr>
+      <th>Aspect</th>
+      <th>Standard PixelCNN</th>
+      <th>Gated PixelCNN</th>
+      <th>ImageGPT</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td>Backbone</td>
+      <td>Masked 2D convolution</td>
+      <td>Vertical + horizontal masked streams</td>
+      <td>Transformer decoder with causal attention</td>
+    </tr>
+    <tr>
+      <td>Ordering</td>
+      <td>Raster scan, left-to-right row-by-row</td>
+      <td>Raster scan, left-to-right row-by-row</td>
+      <td>Raster scan over the unrolled pixel sequence</td>
+    </tr>
+    <tr>
+      <td>Per-pixel output</td>
+      <td>Categorical over discrete pixel values</td>
+      <td>Categorical over discrete pixel values</td>
+      <td>512-way softmax after 9-bit colour quantization</td>
+    </tr>
+    <tr>
+      <td>Main cost driver</td>
+      <td>Masked kernel footprint</td>
+      <td>Two stacked 1D streams</td>
+      <td>Quadratic attention over a long pixel sequence</td>
+    </tr>
+  </tbody>
+</table>
+<div class="key-takeaway">
+  <p><strong>Takeaway:</strong> ImageGPT trades the spatial inductive bias of PixelCNN for a domain-agnostic sequence model plus scale. The reference text notes this generality costs far more training compute than contemporary convolutional self-supervised methods — the same parallelism-versus-data tension flagged in Section 5.3.2. The autoregressive factorization itself is untouched: identical chain rule, identical NLL training, identical serial sampling.</p>
+</div>
 <div class="key-takeaway">
   <p>Next, we zoom out to video generation, diffusion teasers, and study guidance.</p>
 </div>

@@ -977,6 +977,36 @@
   <p><strong>Q:</strong> Is the point of sub-population and slicing only for analysis purposes? <strong>A:</strong> No, it is a model testing technique. Remember the testing pyramid: the base is data testing, the middle is model testing, and the top is system testing. Slicing falls under model testing. We do not just test the bottom layer and stop — every stage has its own testing. Slicing is how we verify that the model performs fairly across all subgroups, not just on average.</p>
 </div>
 
+<h3 id="12.9.5-precision-recall-tradeoff-roc-curves-and-auc">12.9.5 Precision–Recall Trade-off, ROC Curves, and AUC</h3>
+<p>Section 12.9.2 treated precision and recall as fixed numbers computed from one confusion matrix. In practice a binary classifier does not emit a hard label — it emits a continuous score \(s \in [0,1]\), and a decision <em>threshold</em> \(\tau\) turns that score into a class: predict positive when \(s \ge \tau\), negative otherwise. Changing \(\tau\) slides the operating point along a precision–recall trade-off — a dimension the single-threshold F1 number hides.</p>
+<div class="key-concept">
+  <p><strong>Formal setup.</strong> Let \(s_i\) be the model's score for example \(i\) and \(\tau\) the threshold. At each \(\tau\) we recompute the confusion matrix and hence two rates:</p>
+  <p>\[ \text{TPR}(\tau) = \text{recall} = \frac{TP}{TP+FN}, \qquad \text{FPR}(\tau) = \frac{FP}{FP+TN} \]</p>
+  <ul>
+    <li><strong>Lower \(\tau\)</strong> → more examples called positive → TP rises but FP rises too: <em>recall increases, precision decreases</em>.</li>
+    <li><strong>Higher \(\tau\)</strong> → more selective → FP falls but FN rises: <em>precision increases, recall decreases</em>.</li>
+  </ul>
+  <p>The <strong>ROC curve</strong> plots \(\text{TPR}(\tau)\) against \(\text{FPR}(\tau)\) as \(\tau\) sweeps from 0 to 1; the <strong>AUC</strong> (area under the ROC curve) collapses the whole curve to one number in \([0,1]\): <strong>1.0</strong> is a perfect ranking, <strong>0.5</strong> is random guessing. The related average precision is the <em>area under the precision–recall curve</em>.</p>
+</div>
+<div class="example-box">
+  <p><strong>Worked threshold sweep — cancer screening (scores are model confidences).</strong></p>
+  <table>
+    <thead>
+      <tr><th>Threshold \(\tau\)</th><th>TP</th><th>FP</th><th>FN</th><th>Precision</th><th>Recall</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>0.50</td><td>90</td><td>180</td><td>10</td><td>0.33</td><td>0.90</td></tr>
+      <tr><td>0.70</td><td>80</td><td>80</td><td>20</td><td>0.50</td><td>0.80</td></tr>
+      <tr><td>0.90</td><td>55</td><td>20</td><td>45</td><td>0.73</td><td>0.55</td></tr>
+    </tbody>
+  </table>
+  <p>Moving from \(\tau=0.50\) to \(\tau=0.90\) raises precision from 0.33 to 0.73 but cuts recall from 0.90 to 0.55 — the trade-off made explicit. For screening we accept more false alarms (\(\tau=0.50\)) because a missed cancer costs far more than an extra diagnostic; a spam filter would pick a high \(\tau\) instead.</p>
+  <p>Scikit-learn computes these directly: <code>roc_curve(y, scores)</code> gives the ROC points, <code>roc_auc_score(y, scores)</code> the AUC, and <code>average_precision_score(y, scores)</code> the area under the precision–recall curve.</p>
+</div>
+<div class="warning-box">
+  <p><strong>Caveat — a high AUC is not a license to deploy.</strong> AUC evaluates the model at <em>all</em> thresholds, including operating points you would never accept in practice (e.g. a recall range with unaffordable false alarms). If the application only tolerates a specific precision or recall band, pick \(\tau\) for that band and report the metrics at that threshold rather than relying on the threshold-free AUC alone.</p>
+</div>
+
 <h2 id="12.10-testing-model-training-vs-model-inference">12.10 Testing Model Training vs Model Inference</h2>
 <p>Understanding the difference between training testing and inference testing is essential. Combining them is analogous to combining functional and non-functional requirements in testing.</p>
 <div class="important-note">
@@ -1164,6 +1194,24 @@
   <p><strong>A/B testing (split traffic).</strong> Both v1.0 and v2.0 serve live users <em>simultaneously</em>; users are randomly split between them, and the outcomes (conversion, clicks, revenue) are compared. Both models are <em>visible to users</em> — so both can affect real customers. Most commonly used across industries.</p>
   <p><strong>Shadow deployment.</strong> v1.0 serves 100% of traffic. v2.0 silently receives <em>copies</em> of the same requests in the backend and logs its predictions — compared to v1.0's responses <em>internally, after the fact</em>. Users never see v2.0, so no user is ever exposed to a bad v2.0 — but you also cannot measure real user reaction to v2.0's outputs. Best for lower-stakes settings (e-commerce, pharmacies) and uncertain features; <strong>not recommended for banking</strong>, where the stakes are high and features are still under discovery.</p>
   <p><strong>Canary rollout.</strong> 1% of traffic goes to v2.0 while 99% stays on v1.0. If the 1% performs well, the share is increased gradually — bit by bit, like a canary carried into a coal mine to detect danger early. Granular, cautious, and used when small specific modules need testing with controlled risk.</p>
+</div>
+
+<h3 id="12.11.5-statistical-significance-in-ab-experiments">12.11.5 Statistical Significance in A/B Experiments</h3>
+<p>Section 12.11.4 explains how to <em>run</em> an A/B test; it does not explain how to decide whether the observed difference is real. Because user behaviour is noisy, a raw comparison of the two groups' averages can be pure chance — so production experimentation needs a statistical test, not just a dashboard of means.</p>
+<div class="example-box">
+  <p><strong>Why a raw gap misleads.</strong> Suppose 15% of 2,158 users in the control group correct their meeting-minutes summary, but only 10% of the <em>20</em> users in the treatment group do. Naively that is a "33% improvement" — yet with only 20 treated users the gap is well within random noise. The number of samples in each group and the size of the gap together determine how much confidence we can place in the result.</p>
+</div>
+<div class="key-concept">
+  <p><strong>The t-test and its output.</strong> The two-sample t-test asks whether two samples are likely drawn from populations with the same mean. Its null hypothesis is \(H_0: \mu_{\text{control}} = \mu_{\text{treatment}}\); the test statistic is</p>
+  <p>\[ t = \frac{\bar{x}_{\text{control}} - \bar{x}_{\text{treatment}}}{SE}, \qquad p = \Pr(\text{data this extreme} \mid H_0) \]</p>
+  <p>where \(SE\) is the standard error of the difference in means. The <strong>p-value</strong> is the probability of seeing a gap at least this large <em>if there were no real difference</em>: a small p-value (below a chosen threshold such as 5% or 1%) is evidence against \(H_0\). The same fit reports a <strong>confidence interval</strong> on the difference in means and an <strong>effect size</strong>; mature experimentation dashboards show effect size and confidence together, not a bare percentage.</p>
+  <p>In code: <code>from scipy import stats; stats.ttest_ind(control, treatment)</code> returns the t-statistic and p-value, and <code>.confidence_interval(0.95)</code> gives the interval on the difference of means.</p>
+</div>
+<div class="important-note">
+  <p><strong>Sample size, power, and duration.</strong> More samples and larger effects make a difference easier to detect; statistical power analysis can, in theory, compute the required group size. In practice teams expose a smallish slice (roughly 0.5–10% of users) to the treatment and run until results are significant. Experiments must also run for several hours or days — ideally at least a week — to smooth daily/weekly usage cycles and to outlast <em>novelty effects</em>, where users engage simply because the feature is new. Minimising exposure matters: every extra treated user risks a worse experience if the variant is bad.</p>
+</div>
+<div class="warning-box">
+  <p><strong>Pitfalls.</strong> (1) Declaring a winner from a tiny treatment group — the 20-user example above. (2) Stopping the moment a metric looks good ("peeking") before novelty effects fade. (3) Running several experiments at once without accounting for interaction effects — overlapping experiments need multi-factorial designs or must assign each user to at most one condition. (4) Treating statistical significance as business significance: a tiny but significant lift may not justify the change.</p>
 </div>
 
 <h2 id="12.12-security-for-machine-learning">12.12 Security for Machine Learning</h2>

@@ -493,6 +493,29 @@
     <li><strong>Scope:</strong> Naive Bayes is especially strong for text-like, high-dimensional, sparse features (spam filters, sentiment) where independence is a workable approximation and where other classifiers would need far more data.</li>
   </ul>
 </div>
+<div class="key-concept">
+  <p><strong>Formal definition — add-one (Laplace) smoothing.</strong> The zero-likelihood problem flagged above occurs because one unseen feature value makes \(P(X_i \mid C_k) = 0\), collapsing the entire score product. Add-one smoothing replaces every raw likelihood count with that count plus one, and every class total with that total plus the number of distinct values \(v_i\) the feature can take:
+  \[
+  \hat{P}(X_i = x \mid C_k) = \frac{\text{count}(X_i = x,\, C_k) + 1}{\text{count}(C_k) + v_i}
+  \]
+  The \(+1\) makes every likelihood strictly positive, so no query can ever receive a zero score. Because the same constant is applied to every class, the ranking of classes is nearly always unchanged — it only prevents the catastrophic case where one unseen value erases an otherwise strong class. Setting the additive parameter to \(0\) recovers the raw-count scores computed in Section 14.2.5; a value of \(1\) is the default in production categorical Naive Bayes implementations.</p>
+</div>
+
+<div class="key-concept">
+  <p><strong>Extension — Gaussian Naive Bayes for continuous features.</strong> The count-based likelihoods used for Play Tennis assume each feature is categorical. When a feature \(X_i\) is continuous (temperature, vibration amplitude, transaction amount), a pivot table of counts no longer applies because almost every observed value is unique. Gaussian Naive Bayes instead models the class-conditional likelihood as a normal distribution fitted separately inside each class \(C_k\):
+  \[
+  P(X_i = x \mid C_k) = \frac{1}{\sqrt{2\pi\sigma_{ik}^2}}\,\exp\!\left(-\frac{(x - \mu_{ik})^2}{2\sigma_{ik}^2}\right)
+  \]
+  where \(\mu_{ik}\) and \(\sigma_{ik}^2\) are the mean and maximum-likelihood variance \(\frac{1}{N_k}\sum_{j=1}^{N_k}(x_{ij}-\mu_{ik})^2\) of feature \(i\), computed from only the \(N_k\) training rows labelled \(C_k\). With \(n\) continuous features the naive independence assumption leaves the score form unchanged, \(\hat{C} = \arg\max_{C_k}\, P(C_k)\prod_{i=1}^n P(x_i \mid C_k)\); only the estimation of each factor changes — a density evaluated at the query value replaces a count fraction.</p>
+  <p><strong>Worked computation.</strong> A binary classifier predicts equipment failure from one continuous feature \(x\) = vibration amplitude (mm/s), with four training rows per class. Class \(C_1\) (Fail) has amplitudes \(2, 3, 4, 5\), giving \(\mu_1 = 3.5\), \(\sigma_1^2 = 1.25\); class \(C_0\) (Healthy) has \(6, 7, 8, 9\), giving \(\mu_0 = 7.5\), \(\sigma_0^2 = 1.25\). Classes are balanced, so \(P(C_1) = P(C_0) = 0.5\). For the query \(x = 4\):
+  \[
+  P(4 \mid C_1) = \frac{1}{\sqrt{2\pi(1.25)}}\,e^{-(4-3.5)^2/(2\cdot1.25)} \approx 0.357 \times 0.905 \approx 0.323
+  \]
+  \[
+  P(4 \mid C_0) = \frac{1}{\sqrt{2\pi(1.25)}}\,e^{-(4-7.5)^2/(2\cdot1.25)} \approx 0.357 \times e^{-4.9} \approx 0.357 \times 0.0074 \approx 0.0027
+  \]
+  The unnormalized scores are \(s_1 = 0.5 \times 0.323 \approx 0.162\) and \(s_0 = 0.5 \times 0.0027 \approx 0.0013\), so the model predicts <strong>Fail</strong>: the query lies near the Fail mean and about \(3.13\) standard deviations (\(\sigma = \sqrt{1.25}\)) below the Healthy mean. Unlike the categorical case, a never-seen numeric value never forces a zero likelihood because the Gaussian density is strictly positive — so Laplace smoothing is not required for these features.</p>
+</div>
 <div class="warning-box">
   <p><strong>Pitfalls:</strong></p>
   <ul>
@@ -610,6 +633,45 @@
   <p><strong>Sense-check:</strong> Gini reaches its maximum \(0.5\) for the 50/50 bags (1 and 3) regardless of total size, Entropy reaches \(1.0\) there too, and both drop to \(0\) for the pure bag. The two metrics are different numbers but always rank nodes the same way — which is why a tree built with Gini and a tree built with Entropy usually look nearly identical.</p>
 </div>
 <p><strong>Which to use?</strong> Gini is cheaper to compute (no logarithms) and is the default in many libraries (including Spark MLlib and scikit-learn's CART). Entropy is more sensitive to small probability differences. For this course both are examinable as single-node calculations.</p>
+
+<div class="important-note">
+  <p><strong>Algorithm families — the impurity measure is only one design choice.</strong> The Gini and Entropy formulas just computed sit inside a family of tree inducers that differ in their split criterion, node branching and stopping rule. The companion textbook compares the classic algorithms as follows:</p>
+  <table>
+    <thead>
+      <tr>
+        <th>Algorithm</th>
+        <th>Origin</th>
+        <th>Splitting criterion</th>
+        <th>Branching &amp; data</th>
+        <th>Pruning</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>ID3</td>
+        <td>Quinlan (1986)</td>
+        <td>Information gain (entropy reduction)</td>
+        <td>Multi-way splits; discrete attributes</td>
+        <td>Original form stops on purity; later versions add statistical post-pruning</td>
+      </tr>
+      <tr>
+        <td>C4.5</td>
+        <td>Quinlan (1993)</td>
+        <td>Information gain</td>
+        <td>Multi-way splits; also accepts continuous and incomplete data</td>
+        <td>Bottom-up pruning that estimates node error statistically or uses a validation set</td>
+      </tr>
+      <tr>
+        <td>CART</td>
+        <td>Breiman et al. (1984)</td>
+        <td>Gini impurity (entropy also supported)</td>
+        <td>Binary splits only; discrete and continuous data</td>
+        <td>Weakest-link removal by cost–complexity \(R_\alpha(T) = R(T) + \alpha|\widetilde{T}|\), developed in Section 14.3.5</td>
+      </tr>
+    </tbody>
+  </table>
+  <p>These are not rival definitions of impurity; they are different choices inside the same greedy recipe of Section 14.3.3. The library normally fixes them for you: the scikit-learn documentation lists "Tree algorithms: ID3, C4.5, C5.0 and CART" and states that scikit-learn uses an optimized version of CART — which is why its default criterion is Gini and its trees are binary.</p>
+</div>
 <h3 id="14.3.3-evaluating-split-quality-via-weighted-impurity">14.3.3 Evaluating Split Quality via Weighted Impurity</h3>
 <p>A single node's impurity is not enough — a split produces <em>several</em> child nodes, and the tree must compare whole splits. When a candidate decision rule splits a parent dataset of \(N\) samples into child subsets \(S_1, S_2, \dots, S_m\) containing \(N_1, N_2, \dots, N_m\) samples, the overall effectiveness of the split is determined by its weighted average impurity: \[ \text{Impurity}_{\text{split}} = \sum_{j=1}^m \frac{N_j}{N} \cdot \text{Impurity}(S_j) \] where \(\frac{N_j}{N}\) represents the proportion of samples routed to child node \(S_j\), and \(\text{Impurity}(S_j)\) is the Gini or Entropy value of child node \(S_j\).</p>
 <p>The weighting matters: a child holding 70 of the 100 samples contributes far more to the average than a child holding 5. Lower weighted split impurity indicates a superior decision threshold.</p>
@@ -658,6 +720,14 @@
     <li><strong>Greedy, not global:</strong> the tree optimizes one split at a time, so the best root split does not guarantee the globally best tree — later splits can only work with what earlier splits left behind.</li>
     <li><strong>Perfect splits are rare:</strong> real datasets almost never admit a \(0.00\) impurity split, so trees usually stop with small-but-nonzero impurity and use majority vote at the leaves.</li>
   </ul>
+</div>
+<div class="key-concept">
+  <p><strong>Formal definition — information gain.</strong> Gini and Entropy score a single node's impurity; <em>information gain</em> scores a whole split by how much of the parent's entropy it removes:
+  \[
+  \text{Gain}(D, A) = H(D) - \sum_{j=1}^{m} \frac{N_j}{N}\, H(S_j)
+  \]
+  where \(H(D)\) is the parent's Entropy and the summation is precisely the weighted-impurity term of this section recomputed with \(H\) in place of Gini. Because \(H(D)\) is fixed for a given parent, maximizing gain is algebraically identical to minimizing the weighted child impurity — the same greedy rule already in use, written as a reduction rather than a remainder. This is the split criterion behind ID3 and CART tree induction, which is why a library's <code>entropy</code> criterion is described as selecting for information gain.</p>
+  <p><strong>Worked calculation — gain of the Play Tennis root split.</strong> The parent (9 Yes, 5 No) has \(H(D) = -\tfrac{9}{14}\log_2\tfrac{9}{14} - \tfrac{5}{14}\log_2\tfrac{5}{14} \approx 0.940\). The Outlook children have \(H(\text{Overcast}) = 0\) and \(H(\text{Rain}) = H(\text{Sunny}) \approx 0.971\), so the weighted child entropy is \(\tfrac{4}{14}(0) + \tfrac{5}{14}(0.971) + \tfrac{5}{14}(0.971) \approx 0.694\), giving \(\text{Gain}(D,\text{Outlook}) = 0.940 - 0.694 \approx 0.247\). The parent term is common to every candidate feature, so the smallest weighted child entropy always means the largest gain — consistent with Outlook winning as the root in Section 14.3.4.</p>
 </div>
 <h3 id="14.3.4-step-by-step-decision-tree-construction-on-play-tennis-dataset">14.3.4 Step-by-Step Decision Tree Construction on Play Tennis Dataset</h3>
 <div class="example-box">
@@ -733,6 +803,19 @@ flowchart TD
   <li><strong>Maximum Tree Depth (<code>maxDepth</code>)</strong>: Hard limit on the maximum depth or distance from root to terminal leaf (e.g. limiting tree depth to 20 levels). Depth is the tree's "generation count" — every extra level lets the tree split further, so capping depth caps how finely it can memorize.</li>
   <li><strong>Minimum Instances per Node (<code>minInstancesPerNode</code>)</strong>: Stopping threshold that halts node splitting if a child subset contains fewer than a specified minimum number of sample records (e.g. 50 samples). When splitting stops early, the terminal leaf prediction is assigned via majority voting (mode) across the remaining samples — a leaf with 100 samples, 80 of them Yes, predicts Yes even though it is not perfectly pure.</li>
 </ol>
+<div class="important-note">
+  <p><strong>Two families of overfitting control — pre-pruning and post-pruning.</strong> The hyperparameters just described are <em>pre-pruning</em>: they stop the grower before a split is committed. The complementary strategy, <em>post-pruning</em>, grows the full tree first and then removes branches that do not earn their keep.</p>
+  <table>
+    <thead>
+      <tr><th>Strategy</th><th>When it acts</th><th>Mechanism</th><th>Trade-off</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>Pre-pruning</td><td>During growth</td><td>Halt at a depth limit, minimum node size, or minimum impurity decrease</td><td>Cheap, but can stop a branch before a later useful split appears</td></tr>
+      <tr><td>Post-pruning</td><td>After full growth</td><td>Cut back weakest subtrees via a validation set or a cost–complexity penalty \(R_\alpha(T) = R(T) + \alpha\,|\widetilde{T}|\)}</td><td>More compute, but the decision uses the completed tree</td></tr>
+    </tbody>
+  </table>
+  <p>The cost–complexity form trades the tree's error \(R(T)\) against its size \(|\widetilde{T}|\) through \(\alpha\): a larger \(\alpha\) yields a smaller tree. C4.5-style pruning instead estimates node error statistically or uses a held-out validation set. Both pursue the same goal as <code>maxDepth</code> — a tree that generalizes rather than memorizes — from the opposite end of the growth process.</p>
+</div>
 <p>Real-world: In Big Data systems handling datasets with up to 90,000 features and millions of records, single-machine tree construction suffers from memory exhaustion. Distributed computing engines like Apache Spark MLlib split feature evaluation across cluster nodes to construct decision trees efficiently — which is why the tree algorithms in this lecture are discussed alongside Spark throughout the course.</p>
 <h3 id="14.3.6-student-questions-and-answers">14.3.6 Student Questions and Answers</h3>
 <div class="important-note">

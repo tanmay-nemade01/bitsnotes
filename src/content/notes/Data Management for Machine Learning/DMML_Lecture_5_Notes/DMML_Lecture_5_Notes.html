@@ -553,6 +553,34 @@
 <div class="key-concept">
   <p><strong>Snowflake schema (definition):</strong> a warehouse design in which one central <em>fact table</em> (the numeric, measurable events — sales, orders, transactions) connects to multiple <em>dimension tables</em> (the descriptive context — customer, product, date, location) that are normalized into further related tables, so the design branches outward like a snowflake. The compact alternative is the star schema, where dimensions stay denormalized in single tables; the snowflake trades some query simplicity for less redundancy.</p>
 </div>
+<div class="key-concept">
+  <p><strong>Slowly Changing Dimension (SCD), Type 2:</strong> a warehouse modeling technique that preserves the history of a dimension whose attributes change over time. Rather than overwriting the row (Type 1), a Type 2 dimension adds a <em>new row</em> for each change together with an effective date, an expiration date, and a current-row flag; fact rows then join to the version of the dimension that was valid at the time of the event.</p>
+  <table>
+    <thead>
+      <tr>
+        <th>CustomerId</th>
+        <th>CustomerCountry</th>
+        <th>ValidFrom</th>
+        <th>Expired</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>100</td>
+        <td>USA</td>
+        <td>2019-05-01</td>
+        <td>2020-06-20</td>
+      </tr>
+      <tr>
+        <td>100</td>
+        <td>UK</td>
+        <td>2020-06-20</td>
+        <td>2199-12-31</td>
+      </tr>
+    </tbody>
+  </table>
+  <p><strong>Worked reading:</strong> customer 100 moved from USA to UK on 2020-06-20. An order dated 2020-07-12 joins to the <code>UK</code> row, because <code>ValidFrom &le; order date &lt; Expired</code>, so the analyst attributes it to the location <em>at the time of the order</em> — history a plain full-refresh overwrite would erase. The far-future expiry marks the current row and avoids <code>NULL</code> edge cases in queries.</p>
+</div>
 <div class="warning-box">
   <p><strong>Pitfalls:</strong></p>
   <ul>
@@ -933,6 +961,36 @@
   <p><strong>ETL vs ELT (definitions):</strong> the two differ only in the order of the final two steps. ETL — Extract, Transform, Load — extracts from the sources, transforms in a staging area, and then loads into the warehouse: all mapping, transformation, conversions, and applications happen <em>before</em> the data lands. ELT — Extract, Load, Transform — extracts and loads raw data into the warehouse first, then transforms it inside the warehouse for the analytic purpose.</p>
 </div>
 <div class="important-note">
+  <p><strong>Pattern detail — EtLT (the "lowercase t"):</strong> the ETL/ELT split is not strictly binary. A widely used subpattern performs a small, non-business transformation between <em>extract</em> and <em>load</em> — called <strong>EtLT</strong> because its lowercase <code>t</code> is deliberately lighter than the uppercase <code>T</code> of full transformation. These are context-free operations that do not encode business logic: deduplicating records, parsing URL parameters into components, and masking or obfuscating sensitive data. Masking is often done here for legal or security reasons, as early in the pipeline as possible; deduplication and parsing reduce the volume and clean the shape of data before a high-volume warehouse load.</p>
+  <table>
+    <thead>
+      <tr>
+        <th>Pattern</th>
+        <th>Where transformation happens</th>
+        <th>What the transform expresses</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>ETL</td>
+        <td>Staging area, before the warehouse</td>
+        <td>Full business logic and data modeling (uppercase T)</td>
+      </tr>
+      <tr>
+        <td>EtLT</td>
+        <td>Between extract and load</td>
+        <td>Lightweight, non-contextual cleanup: deduplicate, parse URLs, mask PII (lowercase t)</td>
+      </tr>
+      <tr>
+        <td>ELT</td>
+        <td>Inside the warehouse, after load</td>
+        <td>Full business logic and modeling, using the warehouse's compute</td>
+      </tr>
+    </tbody>
+  </table>
+  <p><strong>Worked reading:</strong> a pipeline landing clickstream events can drop exact duplicates and replace an email field with a masked value during ingestion (EtLT), while the meaningful modeling — attributing revenue to customers — is still done later in the warehouse (ELT). The pattern therefore composes with ELT rather than competing with it: the lowercase t prepares the load, the uppercase T answers the business question.</p>
+</div>
+<div class="important-note">
   <p><strong>Intuition — cooking before or after delivery:</strong> ETL is a restaurant that fully cooks the dish before it is delivered — the customer receives a finished plate and cannot change it. ELT is a grocery service that delivers raw ingredients to the customer's kitchen, where the cooking happens on demand — the customer can prepare the ingredients any way they want. The analogy breaks on cost: transforming in the warehouse (ELT) only became practical when cloud warehouses became cheap enough to store raw data and powerful enough to transform it at scale.</p>
 </div>
 <h3 id="5.10.2-when-to-choose-which">5.10.2 When to Choose Which</h3>
@@ -1045,6 +1103,37 @@
 <p>For stream pipelines you need a proper data flow model. <strong>Kappa</strong> is one architecture: in the Apache ecosystem, Kappa relies on a <em>unified</em> streaming and storage layer — a single system that handles both the live stream and the stored data, so the same pipeline code processes real-time events and historical replay. For building good data pipeline implementations, <strong>Apache Flink</strong> and <strong>Apache Spark</strong> are available. The professor announced that the full pipeline implementation — this data pipeline implementation material from the current session's syllabus — will be covered in the next session, after which the course moves on to the next contact session's topics. His closing note on pacing: every session, learning two, three, or four topics or subtopics well is more than enough.</p>
 <div class="key-concept">
   <p><strong>Kappa architecture (definition):</strong> a streaming architecture built on a unified log-based system that handles both the live stream and the stored data — one pipeline that processes real-time events and can replay the stored log for historical processing. Implementation tools named for stream pipelines: Apache Flink and Apache Spark.</p>
+</div>
+<div class="warning-box">
+  <p><strong>Pitfall — at-least-once delivery and duplicate processing:</strong> streaming platforms are distributed systems, so a message (or a captured CDC change) can be delivered <em>more than once</em>. Under <strong>at-least-once</strong> delivery the same event may reach a consumer twice — for example, the consumer processes a salary update completely but fails just before acknowledging it, so the platform replays it. A pipeline that appends one row per event would now record the salary change twice; that is a silent data-quality bug, not a crash.</p>
+  <p><strong>Mechanism — the idempotent consumer:</strong> a transformation is <em>idempotent</em> when applying it once produces exactly the same result as applying it many times. Designing transformations this way, together with checkpointing of consumer offsets, is what makes duplicate delivery harmless. The distinction is concrete:</p>
+  <table>
+    <thead>
+      <tr>
+        <th>Operation on the same change event</th>
+        <th>Replay behavior</th>
+        <th>Idempotent?</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><code>INSERT</code> a new salary row each time</td>
+        <td>A duplicate row appears on every replay</td>
+        <td>No</td>
+      </tr>
+      <tr>
+        <td><code>UPSERT</code> keyed by employee id (set the latest salary)</td>
+        <td>Re-applying the same value leaves the row unchanged</td>
+        <td>Yes</td>
+      </tr>
+      <tr>
+        <td>Increment a counter by one</td>
+        <td>The count drifts upward on every replay</td>
+        <td>No</td>
+      </tr>
+    </tbody>
+  </table>
+  <p><strong>Sense-check:</strong> this is the streaming counterpart of the CDC trigger in 5.12.2 — capturing only salary changes is useful, but the change feed is only trustworthy if replaying a change cannot duplicate its effect. Note that <em>exactly-once</em> delivery is largely a semantic ideal in distributed systems; idempotent consumers are the practical guarantee engineers rely on.</p>
 </div>
 <div class="key-takeaway">
   <p><strong>Recap + bridge:</strong> stream processing handles continuous, real-time, temporal data — ride-hailing, traffic, satellite, sensor, video, and audio; CDC streams changes onward under the publisher–subscriber model of RSS (with triggers to customize the feed); and architectures like Kappa unify live and stored data on one log, with Flink and Spark as the implementation tools. The full pipeline implementation is covered in the next session.</p>

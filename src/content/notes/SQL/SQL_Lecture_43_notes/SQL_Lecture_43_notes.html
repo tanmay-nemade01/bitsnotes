@@ -412,6 +412,22 @@
   <pre><code>CREATE ROLE role_name WITH NOSUPERUSER NOCREATEDB NOCREATEROLE NOLOGIN;</code></pre>
   <p>Two extra role properties appear in the admin preview and matter here. <code>INHERIT</code> means the role picks up rights from groups it belongs to and is on by default. The connection cap \[ \text{CONNECTION LIMIT} = -1 \] means no cap on concurrent sign-ins for that role, where \(-1\) is the marker for unlimited.</p>
 </div>
+
+<!-- Supplement: per-role session defaults (companion: The Art of PostgreSQL, pp. 282-283) -->
+<div class="important-note">
+  <p><strong>Role properties beyond the five flags — per-role session defaults.</strong> A role also carries session defaults for configuration parameters. The companion builds three logins from one parent role with <code>IN ROLE app INHERIT</code> and then gives each a different setting, for example <code>ALTER USER critical SET synchronous_commit TO remote_apply;</code>, so the siblings keep the same inherited object privileges yet "host a different set of settings." The general form is <code>ALTER ROLE <em>name</em> [ IN DATABASE <em>db</em> ] SET <em>parameter</em> = <em>value</em></code>, with <code>RESET</code> and <code>RESET ALL</code> restoring the system default.</p>
+  <table>
+    <thead>
+      <tr><th>Setting source</th><th>When it applies</th><th>Reach</th></tr>
+    </thead>
+    <tbody>
+      <tr><td><code>ALTER ROLE analyst SET ...</code></td><td>Next login only</td><td>That role in every database</td></tr>
+      <tr><td><code>ALTER ROLE analyst IN DATABASE hr SET ...</code></td><td>Next login only</td><td>That role in <code>hr</code> alone; overrides the row above</td></tr>
+      <tr><td><code>SET LOCAL ...</code> inside a transaction</td><td>Immediately, until commit or rollback</td><td>Current transaction only; overrides both login defaults</td></tr>
+    </tbody>
+  </table>
+  <p><strong>Worked trace.</strong> <code>ALTER ROLE tech SET statement_timeout = '30s';</code> caps long queries for every fresh <code>tech</code> session. In a per-role setup like 43.10, <code>ALTER ROLE sales IN DATABASE hr SET app.username = 'sales';</code> pre-seeds the marker that the <code>current_setting</code> policy reads, so the app need not type <code>SET</code> by hand — but a pooled app behind one login (43.11) still needs a per-checkout <code>SET</code>, since every checkout is the same role. Two rules matter: the default is read at login, so a mid-session <code>SET ROLE</code> does not re-apply it, and a role-specific setting in <code>hr</code> outranks the all-database role setting.</p>
+</div>
 <p>A first group called <code>hr</code> was built with no superuser power, no database build power, no role build power, and no sign-in. A second group called <code>programmers</code> was built the same way. After building, a refresh of the login and group roles node in the admin tool shows both roles with the group icon. Opening properties and then the definition view confirms the stored flags: no sign-in, no superuser, no role build, no database build.</p>
 <div class="example-box">
   <p><strong>Worked example — two group roles with no powers.</strong> Setup: a privileged account on a server with several databases.</p>
@@ -462,6 +478,23 @@ GRANT programmers TO linda;</code></pre>
     <li>Confirm in the admin tool membership tab that each user lists its group.</li>
   </ol>
   <p><strong>Sense-check:</strong> sign-in still fails until the group itself gets <code>CONNECT</code> in the next section — membership alone grants no database pass; it only routes future group grants to the member.</p>
+</div>
+
+<!-- Supplement: role membership mechanics — INHERIT, SET ROLE, ADMIN option (companion pp. 282-283) -->
+<div class="key-concept">
+  <p><strong>How membership actually conveys rights.</strong> The <code>GRANT group TO user</code> form above and the compact <code>IN ROLE</code> form in the companion create the same membership: <code>CREATE ROLE critical WITH LOGIN IN ROLE app INHERIT;</code> builds a sign-in role and enrolls it in <code>app</code> in one statement. That membership has three independent controls, of which inheritance is only one:</p>
+  <table>
+    <thead>
+      <tr><th>Control</th><th>Effect on the member</th><th>Why it matters here</th></tr>
+    </thead>
+    <tbody>
+      <tr><td><code>INHERIT</code> attribute (on by default)</td><td>Ordinary object privileges of the group apply automatically at login</td><td>Why <code>john</code> inherits <code>hr</code> table rights without any switch</td></tr>
+      <tr><td><code>SET ROLE app;</code> / <code>RESET ROLE;</code></td><td>Temporarily adopts the group identity; its privileges apply while the login's own are set aside</td><td>How a <code>NOINHERIT</code> member reaches group rights</td></tr>
+      <tr><td><code>WITH ADMIN OPTION</code></td><td>Member can grant or revoke membership in that group for others</td><td>Delegation power — withhold it from ordinary users</td></tr>
+    </tbody>
+  </table>
+  <p><strong>Worked trace from the companion hierarchy.</strong> Take <code>app</code> holding <code>SELECT ON jobs</code> and build <code>critical</code> as <code>CREATE ROLE critical WITH LOGIN NOINHERIT IN ROLE app;</code>. Signing in as <code>critical</code> gives its own <code>LOGIN</code> but not <code>app</code>'s table rights, so <code>SELECT * FROM jobs</code> is denied. <code>SET ROLE app;</code> makes the same query pass; <code>RESET ROLE;</code> restores the original rights.</p>
+  <p><strong>Attribute boundary (a common misconception):</strong> <code>LOGIN</code>, <code>SUPERUSER</code>, <code>CREATEDB</code>, and <code>CREATEROLE</code> are never inherited the way table rights are — a member must <code>SET ROLE</code> to a role holding one to exercise it. PostgreSQL 16 and later let each grant override the defaults with <code>WITH INHERIT TRUE/FALSE</code> and <code>WITH SET TRUE/FALSE</code>, so a chain of memberships can be broken at a chosen link without changing the role attribute.</p>
 </div>
 <div class="warning-box">
   <p><strong>Scope:</strong> <code>GRANT group TO user</code> passes membership, not object rights directly. The member gains whatever the group holds, now and in the future, as long as <code>INHERIT</code> is on. <strong>Assumption:</strong> the demo runs each revoke as a superuser or database owner. An ordinary role cannot revoke rights it does not own.</p>

@@ -755,6 +755,42 @@ int main()
   <p>Sense-check: exactly one process is created by the <code>fork()</code>, so a single run of this program yields two processes — the parent (which prints <code>Child Complete</code> after waiting) and the child (which becomes <code>ls</code>). The error branch exists so a failed creation cannot silently run the child's code.</p>
   <p>Observations from real Linux behavior: the ID of the child process is usually one more than the ID of the parent process, and we cannot know in advance which process executes first — it depends on the scheduling done by the operating system. At the end, the parent waits for the child, and then both terminate. It is also possible that the parent waits for the child to complete, then resumes and completes itself — both behaviors happen, and we do not control which.</p>
 </div>
+
+<div class="important-note">
+  <p><strong>System Detail — how a real <code>fork()</code> avoids copying (copy-on-write):</strong> the "duplicate address space" picture describes the <em>logical</em> result — the child gets its own address space and, at the instant of the call, sees exactly what the parent sees. Modern kernels implement that result with <em>copy-on-write (COW)</em>: the parent and child initially share the same physical pages, with each page-table entry marked read-only and flagged COW. A write to such a page traps to the kernel, which allocates a fresh frame, copies the old contents into it, repoints the writer's page-table entry, and only then allows the store to proceed. Pages that are never written — notably the executable <em>text</em> section — remain shared for the whole lifetime of both processes.</p>
+  <p><strong>Worked trace:</strong> suppose the parent has three pages — code <code>C</code>, global data <code>D</code>, and stack <code>S</code> — and calls <code>fork()</code>. Immediately afterward both page tables point at the same three physical frames. If the child writes to <code>S</code>, the kernel copies that one frame to a new frame <code>S'</code>, maps <code>S'</code> into the child, and clears the COW flag on the child's entry; <code>C</code> and <code>D</code> stay shared. Four physical frames are used, not six. And if the child calls <code>exec()</code> right away — the common shell pattern above — no data or stack page is ever copied at all.</p>
+  <table>
+    <thead>
+      <tr>
+        <th>Variant</th>
+        <th>Address space at creation</th>
+        <th>Parent behavior</th>
+        <th>When it pays off</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>Traditional <code>fork()</code></td>
+        <td>Full physical copy of the parent's pages</td>
+        <td>Continues concurrently</td>
+        <td>Rarely — wasteful when <code>exec()</code> follows immediately</td>
+      </tr>
+      <tr>
+        <td><code>fork()</code> with COW</td>
+        <td>Separate page tables, shared physical pages until a write</td>
+        <td>Continues concurrently</td>
+        <td>Default on Linux, Windows, and Solaris</td>
+      </tr>
+      <tr>
+        <td><code>vfork()</code></td>
+        <td>Child borrows the parent's address space; no page-table copy</td>
+        <td>Suspended until the child calls <code>exec()</code> or exits</td>
+        <td>Child calls <code>exec()</code> at once; extremely cheap</td>
+      </tr>
+    </tbody>
+  </table>
+  <p><strong>Caution:</strong> because <code>vfork()</code> shares the parent's memory with no COW protection, a child that modifies any variable other than the one holding the return value, or that returns from the calling function before <code>exec()</code> or <code>_exit()</code>, can corrupt the parent's state — undefined behavior under POSIX. COW <code>fork()</code> carries no such restriction, which is why it is the preferred mechanism in modern code.</p>
+</div>
 <h3 id="3.9.3-creating-a-process-in-windows-with-createprocess">3.9.3 Creating a Process in Windows with CreateProcess</h3>
 <p>Windows also creates separate processes, with a different mechanism. Before creating the child, memory has to be allocated: if the memory already exists, the space is emptied before the start of the child process. Variables for the <em>startup information</em> and the <em>process information</em> are allocated zeroed memory, and their size is determined so the memory can be allocated. Then the <code>CreateProcess</code> function creates the child process.</p>
 <p>The two structures explain the steps: <code>STARTUPINFO</code> specifies properties of the new process (window size, appearance, handles to standard input and output), and <code>PROCESS_INFORMATION</code> receives a handle and the identifiers of the newly created process and its thread. The program calls <code>ZeroMemory()</code> on both structures before <code>CreateProcess()</code> runs — that is the "allocated zeroed memory" the professor describes. Unlike <code>fork()</code>, <code>CreateProcess()</code> expects no fewer than ten parameters, and the new program is loaded into the child's address space at creation time, not after.</p>

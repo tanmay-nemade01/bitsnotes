@@ -291,6 +291,29 @@
   <p><strong>Scope:</strong> reservoir sampling answers "give me a uniform random sample" but does not answer "how large must the sample be?" The right size depends on the downstream use — the confidence needed, the answer's precision — and the stream's expected length, which in a never-ending stream is unknown by definition. The same memory-pressure question (how much state is enough?) returns in every algorithm in this lecture, and it is the reason later techniques reach for hashing and probabilistic data structures instead of raw storage.</p>
 </div>
 <p>One direction mentioned for dealing with such problems is using different hashing techniques to accommodate some of these issues. Hash-based methods replace "store the element and compare it" with "store a compact image of the element," which is how the later topics (count dictionaries, decaying windows, and the bloom filter preview at the end of this lecture) survive on bounded memory.</p>
+
+<div class="example-box">
+  <p><strong>Worked calculation — putting a number on "how large must the sample be?":</strong> the open question of this section has a quantitative answer once we fix a target accuracy. Suppose a fraction \(p\) of the stream's events are of the type we care about, and our uniform sample holds \(k\) elements. Let \(X\) be the number of matching elements in the sample; each element is an independent Bernoulli(\(p\)) draw, so \(X \sim \text{Binomial}(k, p)\) and the sample proportion is \(\hat{p} = X/k\). The binomial model gives \(\mathbb{E}[\hat{p}] = p\) and \(\operatorname{Var}(\hat{p}) = \frac{p(1-p)}{k} \leq \frac{1}{4k}\), because \(p(1-p) \leq 1/4\) for every \(p \in [0,1]\).</p>
+  <p><strong>Chebyshev bound:</strong> for any \(\epsilon > 0\), the distribution-free inequality \(P(|\hat{p} - p| \geq \epsilon) \leq \operatorname{Var}(\hat{p})/\epsilon^2\) yields</p>
+  <p>\[ P(|\hat{p} - p| \geq \epsilon) \leq \frac{1}{4k\epsilon^2} \]</p>
+  <p>Requiring this failure probability to be at most \(\delta\) gives the sample-size rule \(k \geq \frac{1}{4\epsilon^2 \delta}\). For \(\epsilon = 0.05\) (a ±5% answer) and \(\delta = 0.05\) (95% confidence): \(k \geq 1/(4 \times 0.0025 \times 0.05) = 2000\). A reservoir of 2000 elements — not the whole stream — suffices for that accuracy, which is precisely the memory-pressure trade-off this lecture keeps revisiting.</p>
+  <table>
+    <thead>
+      <tr>
+        <th>Tolerance \(\epsilon\)</th>
+        <th>Failure probability \(\delta\)</th>
+        <th>Minimum sample \(k \geq 1/(4\epsilon^2\delta)\)</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr><td>0.10</td><td>0.10</td><td>250</td></tr>
+      <tr><td>0.05</td><td>0.05</td><td>2000</td></tr>
+      <tr><td>0.01</td><td>0.05</td><td>50,000</td></tr>
+    </tbody>
+  </table>
+  <p><strong>Without replacement:</strong> when the sample is drawn from a finite population of \(N\) events, the variance picks up the finite-population correction \(\operatorname{Var}(\hat{p}) = \frac{p(1-p)}{k}\cdot\frac{N-k}{N-1} \leq \frac{p(1-p)}{k}\). Sampling without replacement is therefore never worse than the with-replacement case — the same "no replacement" setting used for the \(1/M\) argument in Section 13.4.</p>
+  <p><strong>Reading the result:</strong> the error falls only as \(1/\sqrt{k}\), so halving the tolerance \(\epsilon\) quadruples the required reservoir size. The companion statistical treatment notes that sharper concentration bounds (Chernoff bounds) tighten this further; Chebyshev is used here because it needs only a finite variance and no distributional assumption.</p>
+</div>
 <div class="warning-box">
   <p><strong>Pitfalls:</strong></p>
   <ul>
@@ -567,6 +590,37 @@
   <p><strong>Recap:</strong> the decaying window scores each tracked tag with \(S_t = (1 - C) \cdot S_{t-1} + w_t\), so the newest match weighs 1 and every older event shrinks by repeated multiplication with \(1 - C\) — equal counts lose to better recency, and that is the trend signal. This weighted-sum idea is a counting scheme with memory; the next section moves from "how popular" to "have I seen this before?" — the membership question, where sampling and probability replace the scan.</p>
 </div>
 <p>The real-world anchor of this section is trend detection: hashtag monitors decide which topic is trending right now, and streaming dashboards use the same exponentially decaying weights to keep rolling percentiles fresh. References treat the general idea as "forward decay," a monotone time-decay model for streaming systems.</p>
+
+<h3 id="13.3.6-exponentially-biased-reservoir-sampling">13.3.6 Exponentially Biased Reservoir Sampling</h3>
+<p>The decaying window answers "how popular is this tag right now?" by shrinking an <em>old event's weight</em>. A complementary question is "which events should I keep in a fixed-size sample at all?" A uniform reservoir (Section 13.1) keeps every past position equally likely, so as the stream grows, recent events become a smaller and smaller fraction of the sample. The companion treatment proposes <em>exponentially biased sampling</em> (Aggarwal, VLDB 2006): keep a single, variable-size reservoir whose retention probability favours newer events, giving recency sensitivity without maintaining several overlapping live windows.</p>
+<div class="key-concept">
+  <p><strong>Mechanism (bias rate \(p\)):</strong> fix a bias rate \(p\) with an exponential functional form and set the target capacity \(s = \lceil 1/p \rceil\). On each arrival, remove a uniformly random resident with probability \(|R|/s\) (so removal is certain once the sample is full), then insert the new element:</p>
+  <p>\[ \Pr[\text{remove an old element}] = \min\!\left(1, \frac{|R|}{s}\right), \qquad s = \left\lceil \frac{1}{p} \right\rceil \]</p>
+  <p>The removal probability grows with the fill level, which both bounds memory at roughly \(s\) and biases the contents toward recent arrivals: an item must survive one such lottery per subsequent event.</p>
+</div>
+<div class="example-box">
+  <p><strong>Worked trace and the link to the decay factor.</strong> Take \(p = 0.1\), so \(s = \lceil 1/0.1 \rceil = 10\). While \(|R| < 10\), an arrival is added with probability \(1 - |R|/10\), so the sample grows; once \(|R| = 10\), every arrival evicts one uniformly random resident and inserts itself. In steady state, an element that arrived \(a\) steps ago survives each step with probability \(1 - 1/10 = 0.9\), hence</p>
+  <p>\[ \Pr[\text{an a-step-old item remains in } R] = \left(1 - \frac{1}{s}\right)^a = 0.9^{a} \approx e^{-a/s} \]</p>
+  <p>This is exactly the factor \(0.9^{a} = (1-C)^a\) that Section 13.3.3 uses to decay an event's <em>weight</em> with \(C = 0.1\): the same exponential law governs both how fast an old event's score fades and how fast an old event disappears from a biased sample. The age at which retention falls to \(1/e\) is \(s = 10\) steps, the analogue of the decaying window's memory.</p>
+</div>
+<table>
+  <thead>
+    <tr>
+      <th>Property</th>
+      <th>Uniform reservoir (Algorithm R)</th>
+      <th>Exponentially biased reservoir</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr><td>Selection goal</td><td>Every past element equally likely</td><td>Recent elements favoured exponentially</td></tr>
+    <tr><td>Memory</td><td>Fixed \(k\), independent of stream length</td><td>Bounded near \(s = \lceil 1/p \rceil\), fills gradually</td></tr>
+    <tr><td>Update rule</td><td>Replace with probability \(k/n\)</td><td>Evict with probability \(|R|/s\), then insert</td></tr>
+    <tr><td>Survival of an \(a\)-old item</td><td>Age-independent \(k/t\) at time \(t\)</td><td>\((1 - 1/s)^a \approx e^{-a/s}\)</td></tr>
+  </tbody>
+</table>
+<div class="warning-box">
+  <p><strong>Trade-off:</strong> the bias buys recency at a cost — the sample takes time to fill after startup, and older events are eventually evicted rather than merely down-weighted, so a query about long-term behaviour sees less history than it would in a uniform reservoir. The decaying window keeps a score for every tracked tag instead of dropping items; biased sampling keeps only a shrinking, recency-oriented subset. Which one to use depends on whether the downstream task needs the full weighted history or just a current snapshot.</p>
+</div>
 
 <h2 id="13.4-membership-and-frequency">13.4 Membership and Frequency</h2>
 <h3 id="13.4.1-the-membership-operation">13.4.1 The Membership Operation</h3>

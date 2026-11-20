@@ -1025,6 +1025,16 @@
 <div class="key-concept">
   <p><strong>The sensor as a waiter.</strong> While a normal operator does work, a sensor does nothing visible except <em>wait for a condition</em>: a file to appear in a landing directory (file-success dependency), a clock to reach a time (time-based), an external task or DAG to complete, an API to respond. When the condition is met, the sensor succeeds and the downstream tasks proceed; until then, the flow holds. That is how a pipeline expresses "I cannot start until <em>something else</em> — possibly in another system — has happened."</p>
 </div>
+
+<div class="important-note">
+  <p><strong>Sensor detail — poke vs. reschedule mode.</strong> A sensor is idle for most of its life, so orchestration frameworks let you choose <em>how</em> it waits. In <strong>poke mode</strong> (the default), the sensor holds a worker slot for its entire runtime, checking repeatedly until the condition is met. In <strong>reschedule mode</strong>, the sensor releases the worker slot between checks and is scheduled to run again later, so that slot can serve other tasks while it sleeps.</p>
+  <p><strong>The trade-off is latency versus worker capacity.</strong> A condition checked every few seconds is best left in poke mode — the cost of re-scheduling on every check outweighs the idle slot. A condition checked every minute or longer (a file arriving, a partner feed landing) should use reschedule mode, otherwise a handful of long-waiting sensors can occupy every worker and starve the rest of the DAG. A waiting sensor should also carry a <code>timeout</code>: without one, a sensor whose event never arrives keeps its DAG run waiting indefinitely.</p>
+</div>
+
+<div class="key-concept">
+  <p><strong>Formal detail — dependencies can cross DAG boundaries.</strong> When a task in one workflow must wait for a task (or an entire run) in another, the orchestrator can express that with an <em>external task sensor</em>: it names the upstream DAG, optionally a specific upstream task, and succeeds only when that upstream run has completed. This is how a weekly reporting DAG waits on a daily ingestion DAG without merging the two graphs.</p>
+  <p><strong>The boundary condition is the schedule.</strong> Because each DAG runs on its own clock, the waiting DAG must say <em>which</em> run of the other DAG it means; when the two schedules differ, the sensor is given a time offset (an execution delta) so it checks the correct earlier run. When DAGs are coupled by shared data and run on the same schedule, keeping them in one graph is simpler — splitting is justified by different schedules, different owning teams, or a DAG that has grown too large to maintain.</p>
+</div>
 <h3 id="10.12.4-dependencies-upstream-and-downstream">10.12.4 Dependencies: Upstream and Downstream</h3>
 <p>Dependencies build the relationship between one job and another job. For example, <em>extra data</em> is the dependency for the <em>internal API load incremental</em> — those are the dependencies; it is like an <strong>edge to a node</strong>. The key part is <strong>how tasks relate to each other</strong> — upstream and downstream tasks — that is what dependencies are.</p>
 <div class="key-concept">
@@ -1053,6 +1063,30 @@
 <div class="key-concept">
   <p><strong>The scheduler decides; the executor does.</strong> The <strong>scheduler</strong> monitors all the tasks and the whole DAG: it spins up the sub-process, checks whether it is completed, what is waiting, and so on — it looks at every DAG, every task, and every dependency, and decides <em>what is ready to run right now</em>. The <strong>executor</strong> is the mechanism that actually <em>runs</em> the task instances the scheduler has decided are ready: on one machine, on a pool of local workers, across a cluster via a message broker, or inside Kubernetes pods. The separation matters because it lets a pipeline's <em>decisions</em> (scheduler) and its <em>muscle</em> (executor) scale independently: the same DAG can move from a single machine to a cluster by changing only the executor.</p>
 </div>
+
+<div class="key-concept">
+  <p><strong>Formal detail — how the scheduler expresses "when."</strong> A DAG's schedule is not free text: in Airflow the <code>schedule_interval</code> is written in <em>crontab format</em>, the same five-field notation the Unix <code>cron(8)</code> daemon has used for decades. Each entry is five time-and-date fields followed by the command to run; a field may be a single value, a range, a list, or a step, and the field order and allowed values are fixed:</p>
+  <table>
+    <thead>
+      <tr>
+        <th>Field</th>
+        <th>Position</th>
+        <th>Allowed values</th>
+        <th>Example token</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr><td>minute</td><td>1st</td><td>0–59</td><td><code>*</code>, <code>*/5</code></td></tr>
+      <tr><td>hour</td><td>2nd</td><td>0–23</td><td><code>0</code>, <code>8-11</code></td></tr>
+      <tr><td>day of month</td><td>3rd</td><td>1–31</td><td><code>1,15</code></td></tr>
+      <tr><td>month</td><td>4th</td><td>1–12 (or names)</td><td><code>jan-mar</code></td></tr>
+      <tr><td>day of week</td><td>5th</td><td>0–7 (0 or 7 = Sunday)</td><td><code>1-5</code></td></tr>
+    </tbody>
+  </table>
+  <p>An asterisk stands for "first–last" (every value), <code>*/5</code> in the minute field means every fifth minute, and <code>1-5</code> in the day-of-week field means Monday through Friday. The lecture's "once a day at midnight" is <code>0 0 * * *</code> (the nickname <code>@daily</code> means exactly that), and the traffic feed's "every five minutes" from 10.10 is <code>*/5 * * * *</code> — the same intentions the note states in words, now in the syntax the scheduler actually parses.</p>
+  <p><strong>Pitfall — the two "day" fields are OR-ed, not AND-ed.</strong> A job runs when minute, hour, and month match <em>and at least one of</em> day-of-month or day-of-week matches. When both are restricted, either match fires: <code>30 4 1,15 * 5</code> runs at 04:30 on the 1st and 15th of every month <em>and</em> every Friday. Trying to pin one exact date by restricting both fields is a classic scheduling bug. Note also that wall-clock times skipped by a daylight-saving transition never fire, while a repeated time can fire twice — a concrete reason the time-zone discipline of 10.10 matters at the scheduler level too.</p>
+</div>
+
 <h3 id="10.13.2-logging-and-sla">10.13.2 Logging and SLA</h3>
 <p><strong>Logging:</strong> we have to <strong>log every task</strong>. Look for the <strong>SLA</strong> — the <em>service level agreement</em>: at what time it has to complete — and <strong>retry</strong>: we want to have a <strong>retry if some job does not run</strong>.</p>
 <div class="key-concept">
@@ -1096,6 +1130,26 @@
   </ol>
   <p>If a tool does these five things, it is an orchestration tool — regardless of its name or vendor.</p>
 </div>
+
+<div class="important-note">
+  <p><strong>System detail — how "generating alerts" is actually implemented.</strong> The fifth duty above is not abstract: a production orchestrator gives each DAG a notification path that fires on state transitions. In Airflow the DAG object accepts <code>email</code>, <code>email_on_failure</code>, and <code>email_on_retry</code> parameters so the scheduler mails the owner when a run fails or is retried; the same parameters can be set on an individual task when only that task should notify. A task can also send a message anywhere through a dedicated operator, or through a custom Python script run by a <code>BashOperator</code>.</p>
+  <table>
+    <thead>
+      <tr>
+        <th>Mechanism</th>
+        <th>Scope</th>
+        <th>Fires when</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr><td>DAG/task <code>email_on_failure</code>, <code>email_on_retry</code></td><td>Whole DAG or one task</td><td>A failed or retried state transition</td></tr>
+      <tr><td><code>EmailOperator</code> task</td><td>Any point in the graph</td><td>Wherever the task is placed in the DAG</td></tr>
+      <tr><td>Slack / Teams / custom-script operators</td><td>Any point in the graph</td><td>Same placement flexibility as <code>EmailOperator</code></td></tr>
+    </tbody>
+  </table>
+  <p><strong>Configuration mechanics.</strong> Outbound mail is wired through the tool's config: the <code>[email]</code> section sets <code>email_backend</code> (by default <code>airflow.utils.email.send_email_smtp</code>), <code>from_email</code>, and optional <code>subject_template</code> / <code>html_content_template</code> files rendered with Jinja; SMTP credentials can be stored in an <code>smtp_default</code> connection instead of the config file. Success, failure, and retry callbacks all use that one backend, so a single configuration change re-routes every alert. This is the implementable form of the trigger–alert–human chain of 10.15: the orchestrator detects a terminal state, the alert reaches the owner, and a human makes the judgment call.</p>
+</div>
+
 <h3 id="10.14.2-operator-native-and-container-native-tools">10.14.2 Operator-Native and Container-Native Tools</h3>
 <p>The data orchestration tool should be <strong>operator native</strong>: it should have <strong>predefined templates</strong> — a filtering template, a sourcing template. <strong>Power BI</strong> is a great example of connectors: data can come from AWS, from a URL source, from JDBC, from ODBC, from CSV, from sensors and real-time streams — thousands of connectors, even <strong>MongoDB</strong> — JSON files, Excel, XML, APIs. Whatever tool you choose, it needs proper templates to connect to different sources. Tools should also be <strong>container native</strong>: depending on what you carry — a web service or a JSON file — it can be orchestrated through <strong>Kubernetes</strong> or any other tool. Microsoft people use <strong>AKS</strong> (Azure Kubernetes Service) to manage Kubernetes: the infrastructure is managed by Microsoft, and you build whatever image you want inside the package and provide the main image.</p>
 <div class="key-concept">

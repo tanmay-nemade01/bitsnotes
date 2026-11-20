@@ -497,6 +497,53 @@
 }</code></pre>
   <p>JSON is the most common because it is human-readable and self-describing, but it is not the only player: <strong>AVRO</strong> is a compact binary format that wins where size and schema evolution matter; <strong>XML</strong> is older and heavier; a plain <strong>TXT</strong> file is the simplest possible container (one record per line). The takeaway for now: the format is a design choice, and the course makes it concrete when PySpark arrives.</p>
 </div>
+<div class="key-concept">
+  <p><strong>Formal mechanism — how AVRO actually achieves schema evolution.</strong> Unlike tag-numbered formats (Thrift, Protocol Buffers), an Avro binary record carries <em>no field names and no type tags</em>: it is just field values concatenated in schema order. Decoding therefore requires the schema that was used to write the record — the <strong>writer's schema</strong> — while the schema the application expects is the <strong>reader's schema</strong>. Avro does not require the two to be identical, only <em>compatible</em>; the library resolves them side by side.</p>
+  <p><strong>Resolution rules</strong> (from the Avro specification's <em>Schema Resolution</em> section):</p>
+  <table>
+    <thead>
+      <tr>
+        <th>Situation (writer → reader)</th>
+        <th>Avro's rule</th>
+        <th>Compatibility</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>Field order differs</td>
+        <td>Fields are matched <strong>by name</strong>, not by position</td>
+        <td>Both directions</td>
+      </tr>
+      <tr>
+        <td>Writer has a field the reader lacks</td>
+        <td>The writer's value is <strong>ignored</strong></td>
+        <td>Both directions</td>
+      </tr>
+      <tr>
+        <td>Reader has a field the writer lacks, with a <code>default</code></td>
+        <td>The reader fills in its <strong>default value</strong></td>
+        <td>Both directions</td>
+      </tr>
+      <tr>
+        <td>Reader field missing from writer, with <strong>no</strong> <code>default</code></td>
+        <td>An error is signalled</td>
+        <td>Broken</td>
+      </tr>
+      <tr>
+        <td>Field renamed</td>
+        <td>Reader supplies the old name as an <code>alias</code>; the writer's schema is rewritten against it</td>
+        <td>Backward only</td>
+      </tr>
+      <tr>
+        <td>Compatible type promotion, e.g. \( \text{int} \to \text{long} \)</td>
+        <td>The value is promoted during resolution</td>
+        <td>Both directions</td>
+      </tr>
+    </tbody>
+  </table>
+  <p><strong>Which direction is which:</strong> a change is <em>backward compatible</em> when old data (old writer) is readable by new code (new reader) — adding a field that has a default does this; it is <em>forward compatible</em> when new data (new writer) is readable by old code (old reader) — removing a field that has a default does this. A field without a default breaks whichever direction would otherwise need the missing value. Nullability is explicit: a field may be null only through a union such as <code>union {null, long}</code>, and a <code>null</code> default is legal only when <code>null</code> is the first branch of that union.</p>
+  <p><strong>Where the writer's schema lives:</strong> it cannot be shipped inside every record — the schema would be larger than the encoded payload, wasting the space saving. An Avro object container file stores the writer's schema once in its header; the single-object encoding used for long-lived records embeds an 8-byte CRC-64 fingerprint of the schema so a reader can locate the matching definition. This is the concrete reason AVRO stays compact while still permitting the schema to evolve.</p>
+</div>
 <h3 id="2.3.5-student-questions-and-answers">2.3.5 Student Questions and Answers</h3>
 <div class="important-note">
   <p><strong>Q:</strong> These infinitely long tables — are they temporary? Are they stored in a permanent table? Can they be retired later? When the system is off, do they still persist, or are they persisting only in RAM?</p>
@@ -836,6 +883,37 @@
 <p>In the traditional system all of this was individual rows: these are all individual rows. In the big data model, each row becomes an entity, and every node in the graph can carry different attributes — the relations are defined record to record, not once at the schema level.</p>
 <div class="key-concept">
   <p><strong>The one-sentence difference:</strong> ER declares relationships once, at the schema level, and every row must fit the mold; the node graph defines relationships record to record — P1's edge to P2 can carry "proposing", while P3's edge carries "same location", with no global schema deciding what an edge may be.</p>
+</div>
+<div class="important-note">
+  <p><strong>Formal structure — the property graph model behind the node graph.</strong> The example above is an instance of the <em>property graph</em> model (the model used by Neo4j and described in the companion data-model literature). It gives the informal "node + relation + attributes" picture a precise contract:</p>
+  <table>
+    <thead>
+      <tr>
+        <th>Element</th>
+        <th>Required parts</th>
+        <th>Role in the P1 / P2 example</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>Vertex (node / entity)</td>
+        <td>Unique identifier + a collection of key–value properties; zero or more labels</td>
+        <td>P1 and P2, each carrying name, age and location</td>
+      </tr>
+      <tr>
+        <td>Edge (relationship / arc)</td>
+        <td>Unique identifier + tail vertex + head vertex + exactly one <em>type</em> (label) + key–value properties</td>
+        <td>The directed link P1 → P2 of type <code>proposing</code></td>
+      </tr>
+      <tr>
+        <td>Traversal</td>
+        <td>From any vertex, follow incoming or outgoing edges, then repeat</td>
+        <td>Ask whom P1 has proposed to across the event history</td>
+      </tr>
+    </tbody>
+  </table>
+  <p><strong>Why this matters for the streaming data model:</strong> any vertex may be connected to any other — no schema declares which kinds of things may be associated. Two consequences follow. First, relations are <em>first-class, typed and property-bearing</em>: the edge itself holds "proposing" and its attributes, so the relationship is data rather than a foreign-key join reconstructed at query time — exactly the "relation is the content" claim above. Second, the model is <em>schema-optional</em>: structure is attached per record as the application evolves instead of being frozen once in a table definition. That is the formal reason the big data model can persist the inference "P1 and P2 are proposing" without first altering a global schema to make room for it.</p>
+  <p><strong>Storage intuition:</strong> the whole graph reduces to two tables — <code>vertices(vertex_id, properties)</code> and <code>edges(edge_id, tail_vertex, head_vertex, label, properties)</code> — with indexes on both <code>tail_vertex</code> and <code>head_vertex</code> so a traversal runs efficiently in either direction. The node graph is therefore not "schema-less"; it is <em>schema-per-record</em>, which is the property the append-only event model exploits.</p>
 </div>
 <h3 id="2.8.3-instances-as-messages-not-fixed-schema-rows">2.8.3 Instances as Messages, Not Fixed-Schema Rows</h3>
 <p>When we say each instance is an entity, we do not store the instances as a single table with a fixed schema — because these are messages now. Say a person named Ram and a person named Sita are sending text messages to each other; you want to process and analyze these events. Each single instance is a message. If you start loading those messages using the traditional model, the messages become rows and you end up with an entire table — and that is a bottleneck, because the write operations may not be faster.</p>

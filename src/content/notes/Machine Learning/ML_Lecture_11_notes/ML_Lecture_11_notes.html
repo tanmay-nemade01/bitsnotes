@@ -450,6 +450,20 @@ KNN is suitable when:
 - Slow at query time — to find the nearest neighbors, the algorithm must compute the distance to all \(n\) training examples and then sort them
 - Must store all training data — since nothing happens during training, all data must be available at prediction time
 
+<div class="important-note">
+**Mechanics — exact nearest-neighbour search with a kd-tree:** The brute-force cost flagged above is not inevitable. A *kd-tree* is a binary tree that recursively partitions the parameter space along the data axes, storing instances at leaves and routing a query with axis tests at internal nodes. At a split on axis \(j\) at value \(s\), every point on the far side is at least \(|q_j - s|\) away; if that lower bound already exceeds the current best radius, the whole subtree is pruned without another distance computation.
+
+**Worked trace:** Six 2-D points \(A(2,3), B(5,4), C(9,2), D(4,7), E(8,1), F(7,6)\). Root split \(x=6\) → left \(\{A,B,D\}\), right \(\{C,E,F\}\). Left split \(y=4\) → \(B\) at the node, \(A\) below, \(D\) above. Right split \(y=2\) → \(C\) at the node, \(E\) below, \(F\) above. Query \(q=(8,5)\): visit \(C\) (\(d^2=10\)), then \(F\) (\(d^2=2\), best \(=\sqrt{2}\)). The left subtree has \(x\le 6\), giving the lower bound \(|8-6|=2>\sqrt{2}\) → pruned; \(E\) has \(y\le 2\), giving \(|5-2|=3>\sqrt{2}\) → pruned. **Two distance evaluations instead of six, with the same answer.**
+
+| Search strategy | Per-query cost | When it wins |
+|-----------------|----------------|--------------|
+| Brute force | \(O(DN)\) | Small \(N\) (\(N\lesssim 30\)) or very large \(D\) |
+| kd-tree | \(O(\log N)\) distance evaluations for small \(D\) | Low-dimensional data (\(D<20\)); build cost amortised over many queries |
+| Ball tree | \(\approx O(D\log N)\) | Higher-dimensional data; prunes nested hyperspheres using the triangle inequality |
+
+**Pitfall:** Axis-aligned kd-trees degrade toward \(O(DN)\) as \(D\) grows — one manifestation of the curse of dimensionality. Production libraries fall back to brute force when \(D>15\) or \(k\ge N/2\), and use a `leaf_size` (default 30) below which a leaf is scanned directly. These are the `algorithm` / `leaf_size` switches mentioned in the library note at the end of this lecture.
+</div>
+
 > **Q:** Are there scenarios where KNN is better suited for regression than other methods?
 > **A:** Yes — when the data does not follow a linear pattern. If the data is wavy or curvy, standard linear regression cannot fit a single straight line through all of it. Locally weighted regression (a form of KNN for continuous outputs) fits multiple local models, capturing the actual trend in the data.
 
@@ -969,6 +983,26 @@ If you visualize the kernel output as a function of distance from the center: wh
 | Computation at query | Must scan all training data | Only \(K\) kernel evaluations needed |
 | Training | None (lazy) | Two-stage: choose centers, then learn weights |
 | When to pick | Small datasets, fast training needed | Larger datasets, want a compact trained model |
+
+<div class="key-concept">
+**Formal detail — why the output weights are cheap to train:** Fix the \(K\) centres \(\{x_u\}\) and widths \(\sigma_u\), and define the hidden-layer responses \(\phi_u(x)=\exp\!\left(-\frac{d(x,x_u)^2}{2\sigma_u^2}\right)\). Stacking the responses for \(N\) training points gives a matrix \(\Phi\in\mathbb{R}^{N\times K}\) with \(\Phi_{iu}=\phi_u(x_i)\), so the network output is \(\hat{\mathbf{f}}=\Phi\mathbf{w}+w_0\mathbf{1}\). Minimising the global squared error \(E=\frac{1}{2}\lVert\mathbf{f}-\Phi\mathbf{w}\rVert^2\) sets \(\partial E/\partial\mathbf{w}=0\), giving the *normal equations*
+
+\[
+\Phi^{\mathsf{T}}\Phi\,\mathbf{w}=\Phi^{\mathsf{T}}\mathbf{f}
+\qquad\Longrightarrow\qquad
+\mathbf{w}^{*}=(\Phi^{\mathsf{T}}\Phi)^{-1}\Phi^{\mathsf{T}}\mathbf{f}.
+\]
+
+**Two-stage training:** Stage 1 fixes the hidden layer — choose \(K\), the centres \(x_u\), and widths \(\sigma_u\); Stage 2 solves the linear system above for \(\mathbf{w}\). Because the kernels are held fixed in Stage 2, the output weights come from a single linear solve rather than iterative backpropagation.
+
+| Centre-placement strategy | Consequence |
+|---------------------------|-------------|
+| One Gaussian per training example (\(K=N\)) | Fits the training data *exactly*; \(\Phi\) is \(N\times N\), so memory grows quadratically and the solve becomes impractical beyond roughly a thousand points |
+| Random subset / uniform grid of centres | Compact model, \(K\ll N\); query cost depends only on \(K\) |
+| Cluster centres from unsupervised clustering of the *inputs only* | Concentrates kernels where data is dense; target values \(f(x_i)\) never enter centre selection, only the output weights |
+
+**Universal approximation:** With sufficiently many Gaussian kernels and independently chosen widths, this form can approximate any continuous function to arbitrary accuracy. **Pitfall:** a width that is too small makes the kernel matrix ill-conditioned and the fit unstable; the width (shape parameter) is normally chosen by cross validation, and a smoothing term \(\lambda I\) can be added to \(\Phi^{\mathsf{T}}\Phi\) for a regularised least-squares solve.
+</div>
 
 ---
 

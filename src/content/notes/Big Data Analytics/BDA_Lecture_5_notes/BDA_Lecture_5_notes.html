@@ -762,6 +762,30 @@ java.net.ConnectException: Connection refused</code></pre>
 <p>\[ R(\text{EU} \mid \text{Sales}) = \frac{w_{\text{EU}}}{w_{\text{NA}} + w_{\text{EU}}} = \frac{30}{30 + 30} = 50\% \quad \text{of Sales capacity} \] \[ R(\text{EU} \mid \text{cluster}) = 50\% \times 15\% = 7.5\% \]</p>
 <p>The hierarchy means sub-queue weights are always <strong>relative to their siblings</strong> within the same parent, and the parent's share is relative to its own siblings. This recursive structure allows arbitrarily deep organizational modeling.</p>
 
+<div class="important-note">
+  <p><strong>Mechanism — Rules-Based Queue Placement (Fair Scheduler).</strong> Defining queues is only half the story: the scheduler must also decide <em>which queue</em> each submitted application lands in. The Fair Scheduler does this with an ordered <code>queuePlacementPolicy</code> rule chain in <code>fair-scheduler.xml</code>. Each rule either places the app, rejects it, or <em>continues</em> to the next rule; the last rule must be one that cannot continue. Every rule accepts a <code>create</code> flag (<code>true</code> by default) — with <code>create="false"</code>, a rule that would name a non-existent queue falls through to the next rule.</p>
+  <pre><code>&lt;queuePlacementPolicy&gt;
+  &lt;rule name="specified" /&gt;
+  &lt;rule name="primaryGroup" create="false" /&gt;
+  &lt;rule name="default" queue="dev.eng" /&gt;
+&lt;/queuePlacementPolicy&gt;</code></pre>
+  <table>
+    <thead>
+      <tr><th>Rule</th><th>Placement action</th><th>Typical role</th></tr>
+    </thead>
+    <tbody>
+      <tr><td><code>specified</code></td><td>Uses the queue the client requested; continues if none was given</td><td>Honor explicit <code>mapreduce.job.queuename</code></td></tr>
+      <tr><td><code>user</code></td><td>Queue named after the submitting user (periods → <code>_dot_</code>)</td><td>Per-user fair sharing</td></tr>
+      <tr><td><code>primaryGroup</code></td><td>Queue named after the user's primary OS group</td><td>Departmental queues</td></tr>
+      <tr><td><code>nestedUserQueue</code></td><td>User queue created under a parent returned by a nested rule</td><td>Large hierarchical deployments</td></tr>
+      <tr><td><code>default</code></td><td>Fallback queue named in its <code>queue</code> attribute</td><td>Catch-all (must be last)</td></tr>
+      <tr><td><code>reject</code></td><td>Refuses the application outright</td><td>Hard admission control</td></tr>
+    </tbody>
+  </table>
+  <p><strong>Worked trace.</strong> User <code>alice</code> (primary group <code>research</code>) submits without a queue name: <code>specified</code> continues → <code>primaryGroup</code> looks for <code>research</code>; because it is <code>create="false"</code> and no such queue exists, it continues → <code>default</code> places the app in <code>dev.eng</code>. If <code>research</code> had existed, the app would have gone there instead.</p>
+  <p>Two related <code>yarn-site.xml</code> flags, <code>yarn.scheduler.fair.user-as-default-queue</code> (default <code>true</code>) and <code>yarn.scheduler.fair.allow-undeclared-pools</code> (default <code>true</code>), provide a cruder alternative when no rule chain is declared; both are <em>ignored</em> once a <code>queuePlacementPolicy</code> is present.</p>
+</div>
+
 <h3 id="5.4.4-zero-weight-queues-and-best-effort-jobs">5.4.4 Zero-Weight Queues and Best Effort Jobs</h3>
 <div class="key-concept">
   <p>A queue configured with <strong><code>weight = 0.0</code></strong> receives zero guaranteed cluster resources during normal operation. It will <strong>never</strong> receive containers while higher-priority queues (weight \(> 0\)) have active pending tasks. However, when all weighted queues are completely idle and cluster capacity sits unutilized, the Fair Scheduler allocates available containers to the zero-weight queue. This creates a <strong>best-effort</strong> execution tier.</p>
@@ -895,6 +919,29 @@ java.net.ConnectException: Connection refused</code></pre>
 </ul>
 <p>The <code>max-capacity</code> on <code>dev</code> is the key safety valve: without it, if <code>prod</code> has no running jobs, <code>dev</code> could consume 100% of the cluster, and a sudden production job would have to wait for the scheduler to reclaim resources. With <code>max-capacity = 75%</code>, at least 25% is always available for <code>prod</code> bursts.</p>
 
+<div class="important-note">
+  <p><strong>Guardrails — Per-User and Per-Application Limits.</strong> Queue capacity percentages prevent one <em>department</em> from monopolizing the cluster, but they do not stop a single heavy user or a flood of applications from swamping a queue from within. The Capacity Scheduler therefore layers four independent limits on top of <code>capacity</code> / <code>maximum-capacity</code>:</p>
+  <table>
+    <thead>
+      <tr><th>Property (per queue path)</th><th>Default</th><th>Effect when exceeded</th></tr>
+    </thead>
+    <tbody>
+      <tr><td><code>minimum-user-limit-percent</code></td><td>100 (no limit)</td><td>Caps a single user's share of the queue; the effective cap tightens as more users become active</td></tr>
+      <tr><td><code>user-limit-factor</code></td><td>1</td><td>Multiple of queue capacity one user may acquire; <code>&gt; 1</code> lets a lone user borrow idle capacity</td></tr>
+      <tr><td><code>maximum-applications</code></td><td>10000 (cluster-wide)</td><td>Hard cap on concurrent running + pending apps; further submissions are <em>rejected</em></td></tr>
+      <tr><td><code>maximum-am-resource-percent</code></td><td>0.1 (10%)</td><td>Limits resources spent on Application Masters; extra apps stay <code>ACCEPTED</code> until an AM slot frees</td></tr>
+    </tbody>
+  </table>
+  <p><strong>Worked computation — <code>minimum-user-limit-percent = 25</code>.</strong> The enforced per-user ceiling is <code>max(25%, 100% / u)</code> for <code>u</code> active users — the configured value is the <em>minimum</em> (tightest) limit and the active user count sets the upper (looser) limit:</p>
+  <ul>
+    <li>1 active user → <code>max(25%, 100%) = 100%</code> — a lone user may use the whole queue.</li>
+    <li>2 active users → <code>max(25%, 50%) = 50%</code> maximum per user.</li>
+    <li>3 active users → <code>max(25%, 33.3%) ≈ 33%</code> maximum per user.</li>
+    <li>4 or more active users → <code>max(25%, 25% or less) = 25%</code> — the configured minimum becomes the binding cap.</li>
+  </ul>
+  <p>Queue ACLs (<code>acl_submit_applications</code>, <code>acl_administer_queue</code>) complete the model by restricting <em>who</em> may submit to or kill applications in a queue; they are inherited from the parent queue unless overridden. Together these knobs bound both the <em>amount</em> of resource and the <em>number</em> of competitors, which is why the Capacity Scheduler is preferred for SLA-critical multi-tenant clusters.</p>
+</div>
+
 <h3 id="5.4.7-dominant-resource-fairness-drf-multi-dimensional-resource-fairness">5.4.7 Dominant Resource Fairness (DRF) — Multi-Dimensional Resource Fairness</h3>
 <div class="key-concept">
   <p><strong>Dominant Resource Fairness (DRF)</strong> extends fairness beyond a single resource dimension. When clusters have multiple resource types (CPU cores <strong>and</strong> memory), simply dividing "resources" equally is insufficient — one job might be memory-intensive while another is CPU-intensive. DRF ensures fairness by looking at each application's <strong>dominant resource</strong> — the resource dimension where the application consumes the largest fraction of the cluster's total supply.</p>
@@ -943,6 +990,10 @@ java.net.ConnectException: Connection refused</code></pre>
   <li>App B: half as many containers × (6 CPU, 100 GB each) — it's a CPU-heavy workload that gets fewer containers because each one demands significant CPU.</li>
 </ul>
 <p>This ensures neither application dominates the cluster on any single resource dimension, which is the hallmark of true multi-resource fairness.</p>
+
+<div class="important-note">
+  <p><strong>Configuration — DRF is not enabled by default.</strong> The equal-dominant-share computation above describes DRF's goal, but YARN schedulers do not activate it automatically. By default, resource calculations consider <em>memory only</em> and ignore CPU, even though every container declares both dimensions. Multi-dimensional fairness must be switched on explicitly: for the Capacity Scheduler set <code>yarn.scheduler.capacity.resource-calculator</code> to <code>org.apache.hadoop.yarn.util.resource.DominantResourceCalculator</code> in <code>capacity-scheduler.xml</code>; for the Fair Scheduler set the top-level <code>defaultQueueSchedulingPolicy</code> element of the allocation file to <code>drf</code>. Without this configuration, a "fair" cluster is fair in memory alone.</p>
+</div>
 
 <h3 id="5.4.8-comparison-of-yarn-schedulers">5.4.8 Comparison of YARN Schedulers</h3>
 <table>
@@ -1410,6 +1461,22 @@ INFO mapreduce.ImportJobBase: Retrieved 220000 records.</code></pre>
   <p><strong>A:</strong> Sqoop's purpose is to extract data from an RDBMS and write it directly to HDFS blocks. Reducers are required for data aggregation, sorting, or joining—none of which are needed during a raw data transfer. Launching Reducer tasks would introduce unnecessary network shuffle overhead (all mapper output would need to be transferred across the network to reducer nodes). Map-only jobs allow each mapper to write directly to local HDFS blocks in parallel, maximizing I/O throughput.</p>
 </div>
 
+<h3 id="5.5.9-sqoop-incremental-imports-and-saved-jobs">5.5.9 Sqoop Incremental Imports and Saved Jobs</h3>
+<div class="key-concept">
+  <p><strong>Incremental Import:</strong> Re-importing an entire table on every run is wasteful. Sqoop's incremental mode fetches only rows <em>newer</em> than the last import by comparing a designated <code>--check-column</code> against a threshold <code>--last-value</code> (the maximum check-column value seen in the previous run).</p>
+  <table>
+    <thead>
+      <tr><th>Argument</th><th>Role</th></tr>
+    </thead>
+    <tbody>
+      <tr><td><code>--check-column</code></td><td>Column examined for new rows; must be numeric or a timestamp, not a string type such as <code>VARCHAR</code>.</td></tr>
+      <tr><td><code>--incremental</code></td><td><code>append</code> for tables with ever-increasing row IDs (new rows only), or <code>lastmodified</code> when existing rows may be updated and a last-modified timestamp column is available.</td></tr>
+      <tr><td><code>--last-value</code></td><td>Threshold from the previous import; only rows whose check column exceeds it are transferred.</td></tr>
+    </tbody>
+  </table>
+  <p>At the end of every run Sqoop prints the <code>--last-value</code> to use next time. For a recurring schedule, encapsulate the command in a <strong>saved job</strong> (<code>sqoop job --create ... --exec ...</code>): the saved job stores and advances the last value automatically, which is the preferred mechanism for periodic incremental imports.</p>
+</div>
+
 <h2 id="5.6-flume-unstructured-streaming-log-ingestion-framework">5.6 Flume: Unstructured Streaming Log Ingestion Framework</h2>
 <div class="important-note">
   <p><strong>The Streaming Data Problem.</strong> Most enterprise data is not sitting neatly in relational databases waiting to be bulk-exported. Web servers generate continuous access logs, mobile apps emit event streams, IoT sensors produce telemetry, and social media platforms broadcast real-time feeds. This data is unstructured or semi-structured, arrives as a never-ending stream rather than in discrete batches, and is distributed across many machines. Apache Sqoop cannot address this problem — it is designed for structured batch extraction from RDBMS. Apache Flume was built specifically to solve the complementary challenge: reliably collecting, aggregating, and delivering high-volume streaming event data into Hadoop-based storage systems in near real time.</p>
@@ -1615,6 +1682,58 @@ INFO mapreduce.ImportJobBase: Retrieved 220000 records.</code></pre>
     </tr>
   </tbody>
 </table>
+<div class="key-concept">
+  <p><strong>HDFS Sink File-Format and Serialization Knobs.</strong> The HDFS Sink row above names the supported formats only in passing. The on-disk format is actually selected by <code>hdfs.fileType</code>, and a wrong choice silently produces files that downstream engines cannot read:</p>
+  <table>
+    <thead>
+      <tr>
+        <th>Property</th>
+        <th>Default</th>
+        <th>Allowed values / consequence</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><code>hdfs.fileType</code></td>
+        <td><code>SequenceFile</code></td>
+        <td><code>SequenceFile</code>, <code>DataStream</code> (uncompressed plain text), or <code>CompressedStream</code> (requires <code>hdfs.codeC</code>)</td>
+      </tr>
+      <tr>
+        <td><code>hdfs.writeFormat</code></td>
+        <td><code>Writable</code></td>
+        <td><code>Writable</code> (body stored as <code>BytesWritable</code>) or <code>Text</code>. Set to <code>Text</code> before creating files that Hive or Impala must read — otherwise those files cannot be read by either engine.</td>
+      </tr>
+      <tr>
+        <td><code>hdfs.codeC</code></td>
+        <td>unset</td>
+        <td>Compression codec when <code>fileType = CompressedStream</code>: <code>gzip</code>, <code>bzip2</code>, <code>lzo</code>, <code>lzop</code>, or <code>snappy</code></td>
+      </tr>
+      <tr>
+        <td><code>hdfs.batchSize</code></td>
+        <td>100</td>
+        <td>Events written to the file before it is flushed to HDFS; must stay below the channel's <code>transactionCapacity</code></td>
+      </tr>
+      <tr>
+        <td><code>serializer.compressionCodec</code></td>
+        <td>unset</td>
+        <td>Used with the Avro event serializer; e.g. <code>snappy</code> compresses the Avro container written by the sink</td>
+      </tr>
+    </tbody>
+  </table>
+  <p><strong>Worked configuration — Avro files for Hive.</strong> An event is represented as an Avro record with exactly two fields: <code>headers</code> (an Avro map of string → string) and <code>body</code> (a byte array).</p>
+  <pre><code>agent.sinks.k1.type = hdfs
+agent.sinks.k1.hdfs.path = hdfs://namenode/flume/weblog/%Y-%m-%d
+agent.sinks.k1.hdfs.fileType = DataStream
+agent.sinks.k1.hdfs.writeFormat = Text
+agent.sinks.k1.hdfs.codeC = snappy
+agent.sinks.k1.hdfs.useLocalTimeStamp = true
+# For Avro container files instead:
+agent.sinks.k1.hdfs.fileType = CompressedStream
+agent.sinks.k1.serializer = org.apache.flume.sink.hdfs.AvroEventSerializer\$Builder
+agent.sinks.k1.serializer.compressionCodec = snappy</code></pre>
+  <p><strong>Why it matters:</strong> with the default <code>hdfs.fileType = SequenceFile</code> and <code>hdfs.writeFormat = Writable</code>, the sink emits Hadoop-specific binary records. A plaintext/Hive-readable dataset requires <code>DataStream</code> + <code>Text</code>; a schema-carrying, language-portable dataset requires the Avro serializer. Timestamp escape sequences such as <code>%Y-%m-%d</code> are resolved from each event's <code>timestamp</code> header unless <code>hdfs.useLocalTimeStamp = true</code> — which is why the Timestamp interceptor described below is often attached to the Source.</p>
+</div>
+
 <div class="key-concept">
   <p><strong>Interceptors: Inline Event Transformers.</strong> Interceptors are components attached to a Source that can inspect, modify, or drop events <strong>before</strong> they enter the Channel. They form a chained processing sequence on the Source side. Common interceptors include:</p>
   <table>

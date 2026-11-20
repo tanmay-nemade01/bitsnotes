@@ -533,12 +533,81 @@
 </div>
 <h3 id="9.7.4-timesformer-block-and-the-study-finding">9.7.4 TimeSformer block and the study finding</h3>
 <p>The study behind the pick is the paper asking if space-time attention is all you need. The TimeSformer study is the named source for the five-way attention test. It tests space only, joint time and space, divided space-time, sparse, and axial forms side by side. Divided space-time tests best. The finding is that divided space-time works best.</p>
+
+<div class="important-note">
+  <p><strong>Study detail — positional embeddings are not optional:</strong> The same TimeSformer study also ablated the positional-embedding signal while holding divided space-time attention fixed. Three variants were compared: no positional embedding, a space-only embedding indexed per spatial patch, and a joint space-time embedding. Video-level top-1 accuracy:</p>
+  <table>
+    <thead>
+      <tr>
+        <th>Positional embedding</th>
+        <th>Kinetics-400 (top-1 %)</th>
+        <th>Something-Something-V2 (top-1 %)</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>None</td>
+        <td>75.4</td>
+        <td>45.8</td>
+      </tr>
+      <tr>
+        <td>Space-only</td>
+        <td>77.8</td>
+        <td>52.5</td>
+      </tr>
+      <tr>
+        <td>Space-time</td>
+        <td>78.0</td>
+        <td>59.5</td>
+      </tr>
+    </tbody>
+  </table>
+  <p>The space-time embedding wins on both sets. Space-only nearly matches it on Kinetics-400 (77.8 against 78.0) but collapses on Something-Something-V2 (52.5 against 59.5), because Kinetics-400 is largely a spatial, scene-biased benchmark while Something-Something-V2 demands fine temporal reasoning. Dropping position information altogether costs 2.6 points on Kinetics-400 and 13.7 points on Something-Something-V2 against the space-time model. This is why the earlier warning about losing order without positional codes is more than a rule of thumb: under attention, order is supplied only by the added embedding, and a space-only code cannot carry frame order.</p>
+</div>
 <p>The block order for divided space-time runs like this. Input tokens arrive as tubelets. First a space attention pass over the frame. Then add the residual link and normalize. Then a time attention pass across frames. Then add and normalize again. Then a feed forward net. Repeat the whole block 12 times or 18 times. The last output feeds later steps like a classification head.</p>
 <p>In short, each patch looks at all other patches in its own frame \(T\). And each patch looks at its own spot across all other frames. Space means within frame \(T\) only while time means slot \(P\) across frames. One drawing showed the whole frame where it meant one patch slot across frames, and the fix is that space means within-frame links only while time means same-slot links across frames. The attention count drops. The math for the split counts was shown as direct.</p>
 <p>With supervised labels in hand, data hunger stays the top worry. Labels for that much video cost a lot. Marked video is scarce. That gap drives masked autoencoders for video, called Video MAE. Video MAE points to self-supervised learning on unlabeled video where marked data is scarce. It learns from unlabeled video with no marks needed. The details were left for the next session.</p>
 <h3 id="9.7.5-student-questions-and-answers">9.7.5 Student Questions and Answers</h3>
 <div class="important-note">
   <p><strong>Q:</strong> With so many tokens facing each other the work blows up. Can we sample, like even tokens face even tokens and odd face odd? Sample even tokens with even odd with odd. <strong>A:</strong> Yes. That sampling idea is the next form, called sparse attention. Sampling idea becomes sparse strided axial attention forms. Space can shrink to a local window and time can shrink to a strided subset. Axial splits can go further by handling height, width, and time apart.</p>
+</div>
+
+<h3 id="9.7.6-complementary-video-transformer-factorizations-vivit" class="subsection-title">9.7.6 Complementary Video Transformer Factorizations (ViViT)</h3>
+<p>TimeSformer is one answer to the token-count problem. A second, independent line of work reaches the same goal by factorizing the transformer encoder itself rather than only the attention neighborhood. It extracts non-overlapping space-time tubes, the same tubelet idea of Section 9.6, but then offers four distinct encoder arrangements, which makes the design space explicit.</p>
+<div class="key-concept">
+  <p>Four factorized video-transformer arrangements, with \(n_t\) time indices and \(n_h \times n_w\) spatial tokens per frame:</p>
+  <table>
+    <thead>
+      <tr>
+        <th>Variant</th>
+        <th>Mechanism</th>
+        <th>Attention-pair order</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>Model 1 — joint space-time</td>
+        <td>One encoder over all \(n_t n_h n_w\) tokens</td>
+        <td>\(O((n_t n_h n_w)^{2})\)</td>
+      </tr>
+      <tr>
+        <td>Model 2 — factorized encoder</td>
+        <td>Spatial encoder per frame, then temporal encoder over frame tokens (transformer late fusion)</td>
+        <td>\(O((n_h n_w)^{2} + n_t^{2})\)</td>
+      </tr>
+      <tr>
+        <td>Model 3 — factorized self-attention</td>
+        <td>Within each block: spatial MSA then temporal MSA (the divide of Section 9.7.2)</td>
+        <td>\(O((n_h n_w)^{2} + n_t^{2})\)</td>
+      </tr>
+      <tr>
+        <td>Model 4 — factorized dot-product</td>
+        <td>Half the heads attend over space, half over time, then concatenate</td>
+        <td>\(O((n_h n_w)^{2} + n_t^{2})\)</td>
+      </tr>
+    </tbody>
+  </table>
+  <p>Models 1 and 3 correspond to the joint and divided schemes already met in this section. The genuinely different mechanisms are <em>factorized encoder</em> (Model 2), which stacks two separate encoders so a per-frame representation is formed before any temporal mixing — the transformer analogue of the two-stream late mean — and <em>factorized dot-product attention</em> (Model 4), which splits the heads of a single block instead of splitting the block or the encoder. Both cut the pair count from quadratic in the full token count to a sum of a spatial and a temporal square, the same saving the divided form obtains.</p>
 </div>
 
 

@@ -885,6 +885,50 @@
     <div class="important-note">
       <p><strong>The professor's translation ladder:</strong> keyspace → database; column family → table; column → attribute with a data type (int, text, double, boolean, blob, timestamp, and collections like list, set, map). The nesting is exactly three levels deep: a keyspace holds column families, a column family holds columns. In CQL (Cassandra Query Language) the old term "column family" is written as <code>CREATE TABLE</code> — the underlying storage model stays column-family oriented.</p>
     </div>
+    <div class="key-concept">
+      <p><strong>Formal Definition — the CQL primary key:</strong> every table has exactly one <code>PRIMARY KEY</code>, and the <em>order</em> of its columns splits it into two jobs. The <em>partition key</em> is the first component — one column, or several wrapped in extra parentheses for a <em>composite partition key</em>; a hash of it decides which node holds the row. The columns that follow are <em>clustering columns</em>, which order the rows <em>inside</em> one partition on disk.</p>
+      <pre><code>PRIMARY KEY (a)          -- a is the partition key; no clustering columns
+PRIMARY KEY ((a, b), c)  -- (a,b) is the composite partition key; c is the clustering column</code></pre>
+      <p>All rows sharing a partition key land on the same replica nodes, so naming the full partition key keeps a query's node contacts few — but an unbalanced key also creates a read/write hotspot. Pick the key to match the query pattern.</p>
+    </div>
+    <div class="key-concept">
+      <p><strong>Formal Definition — CQL collection columns:</strong> a <em>collection</em> is one column that holds several values of the same type together. CQL defines three collection types, each with a distinct ordering and duplicate policy:</p>
+      <table>
+        <thead>
+          <tr>
+            <th>Type</th>
+            <th>Ordering on read</th>
+            <th>Duplicates</th>
+            <th>Element addressing</th>
+            <th>Best fit</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><code>set&lt;T&gt;</code></td>
+            <td>Sorted (alphabetical for text)</td>
+            <td>No — unique values only</td>
+            <td>By value</td>
+            <td>Phone numbers, email IDs, labels</td>
+          </tr>
+          <tr>
+            <td><code>list&lt;T&gt;</code></td>
+            <td>By position, as entered</td>
+            <td>Yes — repeats allowed</td>
+            <td>By index (positional edits read before writing)</td>
+            <td>Ordered preferences where sequence matters</td>
+          </tr>
+          <tr>
+            <td><code>map&lt;K,V&gt;</code></td>
+            <td>Sorted by key</td>
+            <td>Unique keys</td>
+            <td>By key — each element queryable and modifiable</td>
+            <td>Timestamped data, e.g. <code>map&lt;timestamp, text&gt;</code></td>
+          </tr>
+        </tbody>
+      </table>
+      <p><strong>When to use:</strong> denormalize a <em>small, bounded</em> set of related values into one column — a user's phone numbers or email IDs — instead of building the separate many-to-one tables an RDBMS would require. <strong>When to refrain:</strong> never use a collection for data with unbounded growth, such as "all messages posted by a user" or "all events captured by a sensor"; model those as a separate table with a compound primary key so the values live in clustering columns. Prefer <code>set</code> over <code>list</code> unless element order genuinely matters: positional list edits read before writing, and append/prepend updates are not idempotent, so a retry after a timeout can double-append.</p>
+    </div>
     <h3 id="4.9.4-the-write-path-commit-log-memtable-and-sstable">4.9.4 The write path: commit log, memtable, and SSTable</h3>
     <div class="key-concept">
       <p><strong>Purpose:</strong> make writes fast and safe on distributed, commodity hardware — a write must be acknowledged quickly but must never be lost if the machine crashes mid-way.</p>
@@ -910,6 +954,12 @@
       </ol>
       <p><strong>Final answer:</strong> acknowledged = commit log; fast in-memory service = memtable; durable immutable storage = SSTable; \(RF = 3\) guarantees two spare copies. Sense-check: every stage exists to decouple <em>speed</em> (memory writes) from <em>safety</em> (log + replicas) — a write is confirmed quickly, yet a crash at any point can be recovered.</p>
     </div>
+    <div class="example-box">
+      <p><strong>Worked example — deletion and expiry in an append-only store:</strong> because an SSTable is immutable, a <code>DELETE</code> cannot erase bytes from it. Cassandra writes a <em>tombstone</em> — a deletion marker with a timestamp — which masks older values during reads and is reclaimed only later during compaction. Expiry is the same idea with a deadline: the client attaches a time-to-live in seconds at write time.</p>
+      <pre><code>INSERT INTO userlogin (userid, password) VALUES (1, 'infy') USING TTL 30;
+SELECT TTL(password) FROM userlogin WHERE userid = 1;   -- remaining seconds (e.g. 18)</code></pre>
+      <p><strong>Final answer:</strong> tombstones make deletion possible without mutating an SSTable, and TTL attaches an automatic expiry to a value. The table option <code>default_time_to_live</code> sets the default TTL in seconds, and <code>gc_grace_seconds</code> controls how long a tombstone is retained before garbage collection.</p>
+    </div>
     <h3 id="4.9.5-the-read-path-and-consistency-levels">4.9.5 The read path and consistency levels</h3>
     <p>For a read, the client can connect to <em>any node</em> and read the data. The <em>consistency level</em> decides when a read is returned. If I read from one node and return, my read performance increases. But if I set it so that "this many nodes in the cluster have the same value", it should read from that many nodes and then return — some performance goes down. The setting says how many replicas should contain the same copy before I say "this is the value I want to return".</p>
     <p>Walk through a worked example with a seven-node cluster: I say that <em>four</em> nodes have the same copy before returning a read. If I am reading from a single node, it has to check three more nodes; if those three more nodes have the same copy, return that read value — otherwise don't. I can also configure it the other way: whatever read value I have, I return it. So the read behavior depends entirely on the consistency you have configured. The same logic applies to writes: whether you want the write to be successful as soon as it hits one particular node, or you want a certain number of nodes to successfully write this update before confirming that the write is successful.</p>
@@ -924,6 +974,9 @@
       <p><strong>Contrast — consistency ONE:</strong> with level ONE, the same read returns whatever node A has, immediately, without contacting any other node — highest read performance, but possibly stale data. <strong>Final answer:</strong> the consistency level is a dial: 1 node = fastest but weakest guarantee; \(n\) nodes = stronger guarantee at the cost of latency. Sense-check: raising the level adds network round-trips, so performance falls exactly as the guarantee rises — the AP trade-off made visible inside a single read.</p>
     </div>
     <p>There is also <em>read repair</em>: if the data at a particular node is corrupted, there is a <em>gossip protocol</em> that can be leveraged to repair the corrupted things. That protocol is not a part of the course syllabus, but you could go through it once — Google it — to see exactly what it is.</p>
+    <div class="important-note">
+      <p><strong>System Detail — why a read does not open every SSTable:</strong> one partition is usually spread across several immutable SSTables, so the engine must decide which files to touch. Alongside each SSTable Cassandra keeps a small in-memory <em>Bloom filter</em> — a fast, space-efficient probabilistic structure that answers "could this key be here?". A "no" is definite, so the disk read is skipped; a "yes" may be a false positive, so the partition index and data file are still checked. The table option <code>bloom_filter_fp_chance</code> sets the target false-positive probability, trading a little memory for fewer wasted reads.</p>
+    </div>
     <h3 id="4.9.6-quorum-consistency">4.9.6 Quorum consistency</h3>
     <p>You can set the consistency level to \(1, 2, 3\), up to any number \(n\) — the number of nodes that must have the same value before the write is considered successful. Write consistency \(1\): as soon as the write hits one node, the write is considered okay. But what if that single node dies? That is where consistency is compromised — and that is exactly why we call this an AP database. You can also configure the other extreme: until \(n\) number of copies all have the same value, the write is not considered successful — and then performance goes down. The same \(1..n\) choices apply to reads.</p>
     <p>There is also the <em>quorum</em> option: when the <em>majority</em> of the nodes in the cluster have the same value, then the read or write can succeed. When the majority of nodes have been successfully written, the write is successful. So you can follow quorum consistency rather than a hard number \(n\) — the standard, balanced choice.</p>
@@ -985,6 +1038,21 @@
         <li><code>DESCRIBE TABLE student;</code> — prints the table definition back.</li>
       </ol>
       <p><strong>Final answer:</strong> an SQL user recognizes every statement, yet the storage underneath is column-family oriented and the cluster semantics are Cassandra's. Sense-check: familiar syntax + unfamiliar engine = the "not exactly SQL" feeling the professor described.</p>
+    </div>
+    <div class="example-box">
+      <p><strong>Worked example — a distributed counter column:</strong> a counter is a special column holding a 64-bit signed integer on which only two operations are supported — increment and decrement. It answers "how many times has this book been issued to this student?" without a race-prone read-modify-write cycle.</p>
+      <pre><code>CREATE TABLE library_book (
+      book_name varchar,
+      stud_name varchar,
+      counter_value counter,
+      PRIMARY KEY (book_name, stud_name)
+    );
+
+    UPDATE library_book SET counter_value = counter_value + 1
+      WHERE book_name = 'Fundamentals of Business Analytics'
+        AND stud_name = 'jeet';</code></pre>
+      <p>Run the increment twice for Jeet and the stored value is 2; the same statement for another student creates a separate row with value 1. The counter does not exist until its first increment, which is applied as if the prior value were 0 — there is no <code>SET counter_value = 5</code> statement.</p>
+      <p><strong>Final answer:</strong> counters are incremented atomically at the replica, but they carry hard limits — they cannot be part of the <code>PRIMARY KEY</code>, every non-key column of a counter table must itself be a counter, they do not support expiration (TTL), and a deleted counter must not be incremented again. <strong>Critical pitfall:</strong> a counter update is <em>not idempotent</em> — if the client times out or loses its connection, it cannot know whether the increment landed, so blindly retrying may over-count.</p>
     </div>
     <h3 id="4.9.11-ebay-cassandra-at-marketplace-scale">4.9.11 eBay: Cassandra at marketplace scale</h3>
     <p><strong>Real-world:</strong> A major case study of Cassandra is <strong>eBay</strong>. eBay is a marketplace with <strong>100 million active buyers</strong>, <strong>200+ million items</strong>, around <strong>2 billion page views</strong>, <strong>80 billion database calls</strong>, and multi-terabyte storage capacity. That is the volume of data being dealt with. There is no transactional data, no joins, no integrity constraints of the key kind. It is a multi-data-center deployment with 400+ million hits and 200+ million leads.</p>

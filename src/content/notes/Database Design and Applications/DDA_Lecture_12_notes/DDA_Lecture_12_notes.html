@@ -389,9 +389,46 @@
     <li><strong>Tamper-resistance</strong> — protecting both historical data and the code itself, even from the system's owner. A block cannot be edited in place; the only operation is appending a new, verifiable block, and any alteration to an old block breaks the chain's consistency check and is detected by every participant.</li>
   </ul>
 </div>
+<div class="key-concept">
+  <p><strong>Mechanics — how "tamper-evidence" is actually enforced:</strong> a blockchain is an append-only linked list in which every forward pointer is a <em>hash-validated pointer</em>. Block \(B_i\) stores its payload plus the pair <code>(pointer to \(B_{i-1}\), \(H(B_{i-1})\))</code>; the first block \(B_0\) is the <em>genesis block</em> and has no predecessor.</p>
+  <p>\[B_i = \langle \text{data}_i,\;(ptr_{i-1},\,H(B_{i-1}))\rangle\]</p>
+  <p><strong>Why rewriting history is detectable.</strong> If an adversary alters the data in block \(B_i\), its hash changes from \(H(B_i)\) to \(H(B_i')\). The next block \(B_{i+1}\) still stores the old value \(H(B_i)\), so verification catches the mismatch. Hiding the edit therefore forces recomputation of the hash stored in \(B_{i+1}\), then in \(B_{i+2}\), and so on to the chain tip — a cost that grows with every block added after the tampered one.</p>
+  <p><strong>The hash must be cryptographic, not the bucket hash of §12.5.</strong> It needs (i) <em>preimage resistance</em> — given \(h(x)\), finding \(x\) is infeasible — and (ii) <em>collision resistance</em> — finding \(x \neq y\) with \(h(x)=h(y)\) is infeasible. With SHA-256's \(2^{256}\)-sized output space, the chance that a modified block collides with the recorded hash is \(1/2^{256}\), effectively zero. Collision resistance is what turns the pointer chain into an integrity check.</p>
+  <p><strong>The same compression works inside a block:</strong> the transactions are paired and hashed repeatedly until one <em>Merkle root</em> remains in the block header. A light node keeping only this root can verify that a transaction is included using a short Merkle path of \(O(\log n)\) sibling hashes, without storing the whole chain — this is the concrete mechanism behind the "proper trail of evidence" bullet above.</p>
+</div>
 <p>The history is concrete: the first Bitcoin blockchain came into being in 2009, and Ethereum in 2015 (the two dates were run together in the discussion; the standard dates are Bitcoin's blockchain going live in 2009, and Ethereum launching in 2015). Since then there has been steady advancement in blockchain technology.</p>
 <h3 id="12.3.3-a-slow-database-that-keeps-changing">12.3.3 A Slow Database That Keeps Changing</h3>
 <p>Looked at as a database, blockchain is itself one — and an early one was considered a very slow database, block-level, without much more than that. The slowness is structural, not accidental: distributing every record to many parties and verifying every block by consensus costs far more than one machine reading its own disk. The paradigm is now changing with Solana, consensus-based chains, and other blockchains coming into the picture.</p>
+<div class="important-note">
+  <p><strong>System detail — why the chain is slow, and how designs differ:</strong> the cost is the consensus protocol, the blockchain's analogue of a distributed commit protocol. A simple majority vote fails in a public ledger because an attacker can create many cheap nodes (a <em>Sybil attack</em>) and control the vote, so the mechanisms make that majority expensive to buy.</p>
+  <table>
+    <thead>
+      <tr>
+        <th>Mechanism</th>
+        <th>Who appends the next block</th>
+        <th>Cost / Sybil defence</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>Proof of work (Bitcoin)</td>
+        <td>The first miner to find a nonce with <code>H(header || nonce) &lt; target</code></td>
+        <td>Intentionally hard puzzle; safe while an adversary holds less than half the network's hash power, at the price of very large energy use</td>
+      </tr>
+      <tr>
+        <td>Proof of stake</td>
+        <td>A validator chosen by the currency it owns or has locked as stake</td>
+        <td>No energy-intensive puzzle; an attacker must acquire a majority of the stake instead of the hash power</td>
+      </tr>
+      <tr>
+        <td>Byzantine consensus (permissioned chains)</td>
+        <td>A node selected by a Byzantine-fault-tolerant message-passing algorithm</td>
+        <td>Tolerates a bounded fraction of malicious nodes; needs controlled membership, since it does not by itself stop Sybil attacks</td>
+      </tr>
+    </tbody>
+  </table>
+  <p><strong>Difficulty and forks.</strong> The target is retargeted as hash power changes so block production stays steady — Bitcoin aims for roughly one block every ten minutes. Two miners can solve a block almost simultaneously, producing a <em>fork</em>; the <em>longest-chain rule</em> makes nodes follow the chain with the most accumulated work and discard the shorter branch's blocks as orphaned. A <em>soft fork</em> is backward-compatible (older nodes accept the new blocks), while a <em>hard fork</em> is not and can split the network into two chains. The slowness is therefore the price paid for agreement among parties who do not trust one another.</p>
+</div>
 <p>Even inside the blockchain industry the designs differ deeply:</p>
 <ul>
   <li><strong>Solana</strong> handles its data with proof of history — a way of producing a verifiable order of events without full two-way communication at every step — so the way it creates trust and stores data is its own.</li>
@@ -451,6 +488,23 @@
   <p><strong>Assumptions & scope of the index payoff:</strong> the index wins only when the workload is read-heavy and the indexed attribute is actually queried. If the workload is mostly inserts and updates, every write must also update the index structures — an extra cost on the hottest path. The breakeven logic is explicit: creation and maintenance cost up front; heavy <em>usage</em> pays it back. An index nobody queries is a standing bill, not an asset. Similarly, an index helps point lookups and narrow range queries; a query that touches most rows (e.g., "average of all marks") is still best served by scanning.</p>
 </div>
 <p>What type of index to apply — B+ tree, bitmap, hash, sparse, dense, clustering — is a secondary front: once you understand the problem, you also need to know how to solve it.</p>
+<div class="example-box">
+  <p><strong>Worked detail — the "bitmap" prescription from the doctor analogy:</strong> a bitmap index is built on a <em>single</em> attribute but is designed to make queries over <em>several</em> attributes cheap. It works when the attribute has few distinct values (low cardinality) — the lecture's "bitmap for low-cardinality attributes." Records are numbered \(0,1,2,\dots\); for each value \(v_j\) of attribute \(A\) there is one bit vector with as many bits as records, and bit \(i\) is \(1\) exactly when record \(i\) has value \(v_j\).</p>
+  <p><strong>Setup.</strong> Five instructor records with <code>gender ∈ {m, f}</code> and <code>income_level ∈ {L1,…,L5}</code>. Writing each bitmap left-to-right for records \(0\) through \(4\):</p>
+  <table>
+    <thead>
+      <tr><th>Bitmap</th><th>rec 0</th><th>rec 1</th><th>rec 2</th><th>rec 3</th><th>rec 4</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>gender = f</td><td>0</td><td>1</td><td>1</td><td>0</td><td>1</td></tr>
+      <tr><td>income = L2</td><td>0</td><td>1</td><td>0</td><td>0</td><td>0</td></tr>
+      <tr><td>intersection</td><td>0</td><td>1</td><td>0</td><td>0</td><td>0</td></tr>
+    </tbody>
+  </table>
+  <p><strong>Query.</strong> <code>WHERE gender = 'f' AND income_level = 'L2'</code>: fetch the two bitmaps and intersect them with a bitwise AND.</p>
+  <p>\[01101 \;\wedge\; 01000 \;=\; 01000\]</p>
+  <p>Only bit \(1\) survives, so exactly record \(1\) is retrieved. Each single-attribute selection would otherwise touch many blocks; the intersection is a few machine-word bitwise operations, and only the surviving rows need to be fetched. Bitmaps are thus compact for low-cardinality attributes and fast for multi-key selections — but if the result is dense (most bits set), a full scan is still cheaper, the same "usage pays back the cost" logic as the rest of this section.</p>
+</div>
 <div class="important-note">
   <p><strong>The professor's analogy — doctor and prescription:</strong> a doctor not only diagnoses the problem but also prescribes the solution. Understanding why indexing exists (the diagnosis: seeks dominate) is only half the skill; knowing which index to apply (the prescription: B+ tree here, hash there, bitmap for low-cardinality attributes) is the other half. The course deliberately covers both halves.</p>
 </div>

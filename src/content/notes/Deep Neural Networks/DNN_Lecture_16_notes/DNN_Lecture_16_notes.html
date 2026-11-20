@@ -910,6 +910,20 @@
 <p>If \(d_{\text{model}} = 512\), then \(p_i \in \mathbb{R}^{512}\) — same shape as the word embedding, so they add directly.</p>
 </div>
 
+<div class="important-note">
+<p><strong>Why This Formula? — Relative-Position Structure.</strong> The sinusoidal encoding is not an arbitrary choice. Group the even/odd components at frequency \(\omega_j = 10000^{-2j / d_{\text{model}}}\) into the pair \(\mathbf{p}_i^{(j)} = (p_{i,2j},\, p_{i,2j+1})\).</p>
+
+<p>Using the angle-addition identities \(\sin(a+b) = \sin a \cos b + \cos a \sin b\) and \(\cos(a+b) = \cos a \cos b - \sin a \sin b\), the pair at position \(i+\delta\) is a linear transform of the pair at position \(i\):</p>
+
+<p>\[ \begin{bmatrix} p_{i+\delta,\,2j} \\ p_{i+\delta,\,2j+1} \end{bmatrix} = \underbrace{\begin{bmatrix} \cos(\delta \omega_j) & \sin(\delta \omega_j) \\ -\sin(\delta \omega_j) & \cos(\delta \omega_j) \end{bmatrix}}_{\text{pure rotation by } \delta \omega_j} \begin{bmatrix} p_{i,\,2j} \\ p_{i,\,2j+1} \end{bmatrix} \]</p>
+
+<p>The \(2 \times 2\) matrix is a pure rotation: it depends only on the offset \(\delta\) and the frequency index \(j\), <em>not</em> on the absolute position \(i\).</p>
+
+<p><strong>Why this matters.</strong> (1) Because a fixed displacement is a linear function of the encoding, one attention head can learn a single query–key operation that implements "look \(\delta\) tokens back" uniformly at every position, so relative-position attention becomes easy to learn. (2) The encoding is a smooth trigonometric function rather than a per-position lookup table, so it can extrapolate to sequences longer than any seen during training — something learned absolute embeddings do not guarantee.</p>
+
+<p><strong>Scope.</strong> This property belongs to the <em>absolute sinusoidal</em> scheme of the original transformer. Learned absolute embeddings (as used by ViT in Section 16.10) and relative-position variants do not inherit it automatically.</p>
+</div>
+
 <div class="example-box">
 <p><strong>Worked Example — Positional Encoding for Position 3.</strong></p>
 
@@ -2150,6 +2164,41 @@
 <ul>
 <li><strong>MT5</strong> — multilingual T5 covering 101 languages.</li>
 </ul>
+
+<div class="example-box">
+<p><strong>Worked Example — T5 Span Corruption with Sentinel Tokens.</strong> Unlike BERT's single-token <code>[MASK]</code>, T5 corrupts <em>consecutive spans</em> and trains the decoder to regenerate only the dropped tokens. Consider the original sentence "I love this red car."</p>
+
+<div class="table-wrapper">
+<table>
+<thead>
+<tr>
+<th>View</th>
+<th>Token sequence</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Original text</td>
+<td><code>I love this red car</code></td>
+</tr>
+<tr>
+<td>Corrupted encoder input</td>
+<td><code>I &lt;X&gt; this &lt;Y&gt;</code></td>
+</tr>
+<tr>
+<td>Decoder target</td>
+<td><code>&lt;X&gt; love &lt;Y&gt; red car &lt;Z&gt;</code></td>
+</tr>
+</tbody>
+</table>
+</div>
+
+<p><strong>Reading the trace.</strong> "love" forms one corrupted span, so it is replaced by the unique sentinel <code>&lt;X&gt;</code>. "red" and "car" are adjacent, so they share a <em>single</em> sentinel <code>&lt;Y&gt;</code> rather than receiving two. The target lists the recovered spans in order, each introduced by its matching sentinel and terminated by the final sentinel <code>&lt;Z&gt;</code>.</p>
+
+<p><strong>Why this design.</strong> Predicting only the dropped tokens — rather than reconstructing the entire sequence — shortens the target and lowers pre-training compute. Reusing one sentinel per span forces the model to infer how many tokens each corruption removed. At full scale T5 is pre-trained on roughly 1000 billion tokens of C4 (the Colossal Clean Crawled Corpus); this same span-corruption objective is what makes its text-to-text unification possible.</p>
+
+<p><strong>Note on the numbers.</strong> Real pre-training drops about 15% of tokens; this five-word sentence corrupts three words purely to make the sentinel mechanics visible. The mechanism, not the corruption rate, is what the example illustrates.</p>
+</div>
 
 <h3 class="subsection-title">16.8.4 Example Use Cases for Encoder-Decoder</h3>
 

@@ -290,6 +290,34 @@
 </ol>
 <p>The name "micro-batch" is the clue: it is batch processing applied to tiny, frequent batches instead of huge nightly jobs. Micro-batch processing is the middle ground between true one-at-a-time streaming and large batch processing. Small batches of tuples are processed together, the batches are processed in strict order, and if anything in a batch fails, the entire batch is replayed. This ordering and replay behaviour is exactly what lets micro-batch engines give stronger accuracy guarantees than naive one-at-a-time processing. Spark's classic streaming engine works precisely this way: it cuts the incoming stream into micro-batches and runs each micro-batch through the same batch engine.</p>
 <div class="important-note">
+  <p><strong>How fine can the batch get? Micro-batch versus one-at-a-time processing:</strong> the sliding-scale picture of Section 10.2.2 hides a real trade-off. In <em>one-at-a-time</em> processing each tuple is tracked individually as it arrives, which keeps latency minimal but spends bookkeeping effort on every record. In <em>micro-batch</em> processing the tracking is done once per batch, so far fewer resources are consumed per tuple and throughput rises — at the cost of a small, fixed coordination overhead per batch that raises latency. General micro-batch engines therefore carry a latency on the order of hundreds of milliseconds to seconds, while gaining higher throughput than one-at-a-time processing precisely because the tracking granularity is the batch, not the tuple.</p>
+  <table>
+    <thead>
+      <tr>
+        <th>Execution mode</th>
+        <th>Unit of work</th>
+        <th>End-to-end latency</th>
+        <th>Fault-tolerance guarantee</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>One-at-a-time (continuous) processing</td>
+        <td>Single record handled as it arrives</td>
+        <td>As low as ~1 ms</td>
+        <td>At least once</td>
+      </tr>
+      <tr>
+        <td>Micro-batch processing (Spark's default)</td>
+        <td>Small batch of records processed as one job</td>
+        <td>As low as ~100 ms</td>
+        <td>Exactly once</td>
+      </tr>
+    </tbody>
+  </table>
+  <p>Spark exposes both modes through the same DataFrame query: the default micro-batch engine cuts the stream into small batch jobs to reach roughly 100 ms with exactly-once guarantees, while Continuous Processing (introduced in Spark 2.3) drives records through long-running operators for roughly 1 ms latency with at-least-once guarantees. Choosing a mode is a deliberate latency-versus-guarantee decision, not a change to the application logic — the "reduce the batch size" intuition has a hard floor at the micro-batch boundary, beyond which you switch execution model rather than merely shrinking a window.</p>
+</div>
+<div class="important-note">
   <p><strong>Q:</strong> The console application demo where we created producers and consumed messages, that was a publish-subscribe thing. Was that different, or was it in Spark context only? <strong>A:</strong> That was the Kafka setup, the demo part where producers produce to the console. Later on we will also see how the messages sent by Kafka are handled by Spark, so the Spark integration with Kafka will be covered separately. The division of labour behind the answer: Kafka is the message queue, Spark is the computation. Kafka's job is to hold and hand over messages; Spark's job is to run the actual computation on those messages. Whenever the class builds streaming applications, the real-time messages flowing in get computed by Spark itself, not by Kafka.</p>
 </div>
 <h3 id="10.1.2-where-streaming-is-useful">10.1.2 Where Streaming Is Useful</h3>
@@ -846,6 +874,40 @@ print(result)</code></pre>
 <p>A transformation is wide when the operation depends upon data frames from other partitions. Concretely: suppose the data set has two columns, and it is distributed. On machine one we have one data frame, on another machine we have a second data frame, on a third machine a third data frame. All of them have the same columns, but they hold different instances. When you do some computation that requires combining results from all these partitions, you need a wide transformation. Wherever that kind of reshuffling of the individual data frames across partitions is required, the transformation is called wide. Operations like <code>group by</code> or <code>order by</code> require output from the other partitions as well, so they are wide transformations.</p>
 <div class="key-concept">
   <p><strong>The wide rule, one sentence:</strong> a transformation is <em>wide</em> when each output partition may depend on data from several input partitions, so the engine must move data between machines — a <em>shuffle</em> (reshuffling of the individual data frames across partitions). <code>group by</code> and <code>order by</code> are the named examples: the total for Chennai cannot be computed from one machine's slice alone; the rows scattered across every partition must first be brought together.</p>
+</div>
+<div class="important-note">
+  <p><strong>What actually crosses the network during a wide transformation:</strong> the "reshuffle" described above is not one fixed procedure. In a dataflow engine such as Spark, connecting two operators can be done in several ways, and the engine inserts expensive work — especially sorting — only where a particular join or grouping actually requires it:</p>
+  <table>
+    <thead>
+      <tr>
+        <th>Join / exchange strategy</th>
+        <th>Partitioning behaviour</th>
+        <th>Shuffle cost</th>
+        <th>When it is chosen</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>Sort-merge join (repartition and sort by key)</td>
+        <td>Both inputs repartitioned by join key and sorted</td>
+        <td>Full shuffle of both sides plus sort</td>
+        <td>Default for large equi-joins; needed where order matters</td>
+      </tr>
+      <tr>
+        <td>Shuffled hash join (partition, skip sorting)</td>
+        <td>Both inputs partitioned by key; hash table built locally</td>
+        <td>Full shuffle, no sort</td>
+        <td>Partitioning matters but record order is irrelevant</td>
+      </tr>
+      <tr>
+        <td>Broadcast hash join</td>
+        <td>Small side copied to every worker; large side stays put</td>
+        <td>No shuffle of the large side</td>
+        <td>One input small enough to fit in memory</td>
+      </tr>
+    </tbody>
+  </table>
+  <p>The textbook contrast is exactly this: sorting is inserted only where it is required, the smaller input can be broadcast to every partition so the large input never moves, and a partitioned hash join keeps the partition-to-partition routing but skips the sort because building a hash table randomises order anyway. Spark exposes these choices through join-strategy hints (<code>BROADCAST</code>, <code>MERGE</code>, <code>SHUFFLE_HASH</code>) and a broadcast size threshold (<code>spark.sql.autoBroadcastJoinThreshold</code>, 10 MB by default); with Adaptive Query Execution it can even convert a planned sort-merge join into a broadcast or shuffled hash join once runtime statistics reveal the true input sizes. This is why "wide" is a property of the <em>logical</em> dependency: the physical engine may still avoid a full shuffle when one side is small enough to broadcast.</p>
 </div>
 <h3 id="10.9.4-worked-example-group-by-across-partitions">10.9.4 Worked Example: Group By Across Partitions</h3>
 <p>Suppose machine 1 holds a partial data frame with city and amount columns: Chennai has 2000 and Hyderabad has 5500. Another machine holds another partial data frame with the same columns: again Chennai, and then Bangalore. Because the frames are distributed, the full data for any single city is split across machines. When you apply <code>group by</code> followed by <code>sum</code>, you need to calculate the total of all Chennai rows, the total of all Bangalore rows, and so on. But that requires reshuffling these individual data frames across partitions: the Chennai rows scattered on both machines must come together. Wherever that kind of reshuffling is required, the transformation is wide.</p>

@@ -413,6 +413,19 @@ flowchart TD
 </div>
 <p>Formally, a composite type \(C\) represents the Cartesian product of its attribute domains: \[ C = T_1 \times T_2 \times \dots \times T_n \] where \(C\) is the composite tuple type and \(T_i\) is the data type of the \(i\)-th attribute for \(i \in \{1, \dots, n\}\).</p>
 <p>An individual value \(c \in C\) is an ordered tuple of attribute values: \[ c = (v_1, v_2, \dots, v_n) \quad \text{where } v_i \in T_i \cup \{\text{NULL}\} \] Composite types can serve as column data types in relational tables. They can also serve as argument types or return types in user-defined stored functions and procedures.</p>
+<div class="key-concept">
+  <p><strong>Formal Definition — Every Table Has an Implicit Row Type:</strong> When PostgreSQL executes <code>CREATE TABLE</code>, it automatically creates a composite type with the <em>same name as the table</em> to represent that table's row type. If a table has columns \(A_1, \dots, A_n\) with data types \(T_1, \dots, T_n\), the implicit row type is the same Cartesian product defined above, but without the table's attached constraints.</p>
+  <p>Formally, let \(\tau_{\text{row}}(T)\) denote the implicit composite type of table \(T\): \[ \tau_{\text{row}}(T) = \prod_{i=1}^{n} T_i, \qquad \mathcal{C}(\tau_{\text{row}}(T)) = \varnothing \] where \(\mathcal{C}\) is the set of constraints attached to the type (empty for an implicit row type), even though \(\mathcal{C}(T) \neq \varnothing\) for the table itself.</p>
+  <p>A table name (or alias) used as an expression in a query is therefore a reference to the composite value of the current row. The following query returns one composite-valued column rather than a scalar:</p>
+  <pre><code>CREATE TABLE inventory_item (
+    name         TEXT,
+    supplier_id  INTEGER,
+    price        NUMERIC CHECK (price &gt; 0)
+);
+SELECT c FROM inventory_item c;  -- ("fuzzy dice", 42, 1.99)</code></pre>
+  <p>Ordinary qualified-column syntax is field selection applied to this implicit composite value: <code>inventory_item.price</code> selects the <code>price</code> field of the row's composite value, and <code>c.*</code> expands that value back into its individual columns.</p>
+  <p><strong>Important restriction:</strong> because a composite type carries no constraints of its own, the <code>NOT NULL</code>, <code>CHECK</code>, and foreign-key constraints declared in the table definition do <em>not</em> apply when a value of the implicit composite type is used outside the table (for example as a function argument). To enforce them on the type itself, create a domain over the composite type and attach the desired <code>CHECK</code> constraints to that domain.</p>
+</div>
 <h3 id="10.2.2-defining-composite-types-and-table-schema">10.2.2 Defining Composite Types and Table Schema</h3>
 <p>To create a composite type, use the <code>CREATE TYPE ... AS</code> command, specifying each field name and its corresponding data type.</p>
 <div class="example-box">
@@ -429,6 +442,23 @@ flowchart TD
     address address
 );</code></pre>
   <p>The <code>address</code> column now holds composite records rather than primitive scalars. PostgreSQL treats this column as a composite object, preventing developers from accidentally altering the column directly to an incompatible primitive type such as integer without explicit conversion.</p>
+</div>
+<div class="example-box">
+  <p><strong>Worked Example — Typed Tables Bound to a Composite Type:</strong> Instead of declaring columns one by one in <code>CREATE TABLE</code>, a typed table takes its entire structure from a previously defined stand-alone composite type:</p>
+  <pre><code>CREATE TYPE rate_t AS (
+    currency TEXT,
+    validity DATERANGE,
+    value    NUMERIC
+);
+
+CREATE TABLE rate OF rate_t (
+    EXCLUDE USING gist (currency WITH =, validity WITH &amp;&amp;)
+);</code></pre>
+  <p>The table <code>rate</code> inherits exactly the column names and data types of <code>rate_t</code>; new columns cannot be added, but defaults and table-level constraints may be supplied. Here the <code>EXCLUDE</code> constraint enforces that no two rows share the same currency with overlapping validity intervals:</p>
+  \[ \forall r_1 \neq r_2 \in \text{rate}:\ \neg\big( r_1.\text{currency} = r_2.\text{currency}\ \wedge\ r_1.\text{validity} \cap r_2.\text{validity} \neq \varnothing \big) \]
+  <p>Because <code>EXCLUDE</code> is implemented with a GiST index and the <code>&amp;&amp;</code> range-overlap operator, the database rejects a second overlapping row for the same currency rather than relying on application-level checks.</p>
+  <p><strong>Lifecycle coupling:</strong> the typed table is <em>dependent</em> on its type. Altering or dropping <code>rate_t</code> with <code>CASCADE</code> propagates to <code>rate</code>, so schema evolution must account for every typed table bound to the type.</p>
+  <p><em>Sense-check:</em> defining the composite type once and deriving multiple typed tables from it centralizes the column structure, while each derived table can add its own defaults and table-level integrity rules.</p>
 </div>
 <h3 id="10.2.3-data-insertion-using-the-row-constructor">10.2.3 Data Insertion Using the ROW Constructor</h3>
 <p>When inserting data into a composite column, use the SQL standard <code>ROW(...)</code> constructor. The constructor bundles comma-separated scalar values into a composite record matching the type definition.</p>

@@ -1119,6 +1119,39 @@
   </table>
   <p>The decision rule: there is no globally "best" index — the workload decides. Range-heavy workloads (the real world: trains, hotels, student lists) point to the B+ tree; AND/OR-heavy predicate workloads point to bitmap; exact single-value fetches can use hashing; stable data suits multi-level.</p>
 </div>
+<div class="example-box">
+  <p><strong>Textbook extension — what a bitmap index actually stores, and why AND is cheap.</strong> The scenario map names bitmap indexes as the specialist for conjunction/disjunction predicates; here is the mechanism behind that claim. A bitmap index on an attribute \(A\) stores <strong>one bit string per distinct value</strong> of \(A\): with the records numbered \(0,1,\dots,n-1\), bit \(i\) of the bitmap for value \(v_j\) is 1 exactly when record \(i\) has \(A = v_j\), and 0 otherwise. Numbering must be stable and directly addressable — fixed-size records on consecutive blocks let record number \(i\) translate into a block number plus an in-block offset.</p>
+  <table>
+    <thead>
+      <tr>
+        <th>record \(i\)</th>
+        <th>0</th>
+        <th>1</th>
+        <th>2</th>
+        <th>3</th>
+        <th>4</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>bitmap: gender = m</td>
+        <td>1</td><td>0</td><td>0</td><td>1</td><td>0</td>
+      </tr>
+      <tr>
+        <td>bitmap: gender = f</td>
+        <td>0</td><td>1</td><td>1</td><td>0</td><td>1</td>
+      </tr>
+      <tr>
+        <td>bitmap: income level = L2</td>
+        <td>0</td><td>1</td><td>0</td><td>0</td><td>0</td>
+      </tr>
+    </tbody>
+  </table>
+  <p><strong>Worked computation.</strong> For <code>WHERE gender = 'f' AND income_level = 'L2'</code>, fetch the two stored bitmaps and AND them bitwise:</p>
+  <p>\[01101 \land 01000 = 01000\]</p>
+  <p>Bit 1 is the only survivor, so record 1 is the sole match — located by the index and fetched with a single random read, without scanning the relation. An OR predicate substitutes bitwise OR and needs no extra index structure. A <code>COUNT(*)</code> over the same predicate never touches the rows at all: count the 1-bits in the intersection (1 here). This is the concrete meaning of the "AND/OR niche" in the scenario map.</p>
+  <p><strong>Why it is compact, and where it fails.</strong> A record occupies tens to hundreds of bytes but contributes a single bit to each bitmap, so one bitmap is typically under 1% of the relation's size; an eight-value attribute needs eight bitmaps, together roughly 1% of the relation. The trade-off is the low-cardinality requirement: a single-key selection such as <code>gender = 'f'</code> alone hardly benefits, because roughly half the records qualify and nearly every block must still be read. Bitmaps repay their space only when several low-cardinality predicates combine — exactly the AND/OR workload the scenario map assigns them.</p>
+</div>
 <div class="important-note">
   <p><strong>Professor analogy — index choice is like normalization choice.</strong> BCNF is better than 3NF, 4NF better than BCNF, 5NF (PJNF) better than 4NF — yet the stricter forms cost more effort to create and preserve, shrinking the reward-to-effort ratio. Indexes are the same: the "best" structure is the one whose benefits justify its maintenance cost <em>for that scenario</em>. No structure wins everywhere; each wins where the workload pays for it.</p>
 </div>

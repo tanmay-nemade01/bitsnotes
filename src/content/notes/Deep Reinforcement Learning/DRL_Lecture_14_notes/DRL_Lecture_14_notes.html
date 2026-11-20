@@ -496,6 +496,24 @@
   <p><strong>Professor's classroom analogy:</strong> "A teacher evaluates 100 students. I set a paper and expect the class average to be about 70%. A student scored 90%. I measure your performance with respect to the class average. That is a baseline. But if I say Raja scored 90, and I expect somebody else to score 85, how was he scoring with respect to him? That is not a baseline — you are comparing with a specific other person."</p>
 </div>
 <p>If the baseline depended on the action, it would not factor out of the gradient sum, and the zero-gradient proof above would fail. The baseline would then distort the gradient direction.</p>
+<div class="example-box">
+  <p><strong>Worked diagnostic — the mean-return (trajectory-centred) baseline:</strong> Before a value network has been learned, a simple action-independent choice is the mean of the sampled returns in an episode:</p>
+  <p>\[ b = \frac{1}{T}\sum_{k=0}^{T-1} G_k(\tau) \]</p>
+  <p>Because \(b\) is a single scalar for the whole trajectory (it does not depend on \(a\)), the proof in Section 14.4.3 still gives \(\mathbb{E}[b \, \nabla_\theta \ln \pi(A_t \mid S_t; \theta)] = 0\) — the estimator stays unbiased. Its purpose is to <em>centre</em> the returns so that both positive and negative quality signals occur.</p>
+  <p><strong>Numerical trace (\(\gamma = 1\), rewards \(R_1=-2, R_2=-5, R_3=-3, R_4=-4\)):</strong></p>
+  <table>
+    <thead>
+      <tr><th>Step \(t\)</th><th>Return \(G_t\)</th><th>Uncentred</th><th>\(G_t - b\)</th><th>Centred</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>0</td><td>\(-14\)</td><td>discourage</td><td>\(-4.75\)</td><td>discourage</td></tr>
+      <tr><td>1</td><td>\(-12\)</td><td>discourage</td><td>\(-2.75\)</td><td>discourage</td></tr>
+      <tr><td>2</td><td>\(-7\)</td><td>discourage</td><td>\(+2.25\)</td><td>reinforce</td></tr>
+      <tr><td>3</td><td>\(-4\)</td><td>discourage</td><td>\(+5.25\)</td><td>reinforce</td></tr>
+    </tbody>
+  </table>
+  <p>Here \(b = (-14 - 12 - 7 - 4)/4 = -9.25\). With no baseline, every return is negative, so every action is pushed down and learning proceeds only by "less bad" actions being discouraged less. After centring, the two better actions receive positive advantages and are actively reinforced — a stronger, two-sided learning signal. The symmetric problem arises in all-positive-reward environments.</p>
+</div>
 <div class="key-concept">
   <p><strong>The most useful baseline choice:</strong> the <em>value of the state</em> \(V_\pi(s)\). This is the expected return from state \(s\) under the current policy — the "average" performance you expect from that state. Using \(V_\pi(s)\) as the baseline gives us the advantage function.</p>
 </div>
@@ -788,6 +806,26 @@
 </div>
 <div class="key-takeaway">
   <p><strong>Recap:</strong> Actor-critic methods replace Monte Carlo returns with bootstrapped TD estimates: \(\delta = R + \gamma V(S';w) - V(S;w)\). The critic is embedded in the quality signal (not just a baseline), enabling step-by-step updates without waiting for episode end. A2C is the standard name for one-step advantage actor-critic. The tradeoff: lower variance but biased (depends on critic accuracy). Next: extending these ideas to continuous action spaces.</p>
+</div>
+
+<h3 id="14.5.8-entropy-regularization" class="subsection-title">14.5.8 Entropy Regularization</h3>
+<div class="key-concept">
+  <p><strong>Motivation:</strong> A policy can converge prematurely to a nearly deterministic action distribution and stop discovering better alternatives. The fix is to augment the objective with the <em>entropy</em> of the policy's action distribution, which rewards diversity rather than confidence.</p>
+  <p>For a discrete policy, the Shannon entropy at state \(s\) is:</p>
+  <p>\[ H\bigl(\pi(\cdot \mid s; \theta)\bigr) = -\sum_a \pi(a \mid s; \theta) \, \ln \pi(a \mid s; \theta) \]</p>
+  <p>The augmented objective adds an entropy bonus weighted by \(\beta \ge 0\):</p>
+  <p>\[ J(\theta) = \mathbb{E}_{\tau \sim \pi_\theta}\left[\sum_{t=0}^{T} \bigl(r_t + \beta \, H(\pi(\cdot \mid S_t; \theta))\bigr)\right] \]</p>
+  <p>Differentiating adds one extra term to the policy gradient:</p>
+  <p>\[ \nabla_\theta J(\theta) = \mathbb{E}\left[\sum_{t=0}^{T} \Bigl(\nabla_\theta \ln \pi(A_t \mid S_t; \theta)\,\bigl(G_t - b(S_t)\bigr) + \beta \, \nabla_\theta H(\pi(\cdot \mid S_t; \theta))\Bigr)\right] \]</p>
+</div>
+<div class="example-box">
+  <p><strong>Worked calculation — why the bonus fights premature convergence:</strong> Take a 3-action state. A peaked policy \(\pi = [0.98, 0.01, 0.01]\) has:</p>
+  <p>\[ H = -(0.98 \ln 0.98 + 2 \times 0.01 \ln 0.01) \approx 0.0198 + 0.0921 = 0.1119 \]</p>
+  <p>A uniform policy \(\pi = [\tfrac13, \tfrac13, \tfrac13]\) has \(H = -3 \times \tfrac13 \ln \tfrac13 = \ln 3 \approx 1.0986\).</p>
+  <p>With \(\beta = 0.01\), the bonus contributes \(\beta H \approx 0.0011\) versus \(\approx 0.0110\). In the loss \(-\hat{A}_t \ln \pi - \beta H\), the peaked policy pays a larger \(-\beta H\) penalty, so gradient descent flattens it. As training matures, \(\beta\) is usually annealed toward zero so exploitation can take over.</p>
+</div>
+<div class="warning-box">
+  <p><strong>Pitfall — entropy is not a substitute for the baseline:</strong> The baseline \(b(S_t)\) changes only the <em>variance</em> of the estimator (Section 14.4.3), whereas the entropy term changes the <em>objective itself</em> and therefore the optimum the policy converges to. Setting \(\beta\) too large keeps the policy near-uniform and prevents it from exploiting what it has learned; setting it to zero loses the exploration benefit.</p>
 </div>
 
 <h2 id="14.6-continuous-action-spaces">14.6 Continuous Action Spaces</h2>

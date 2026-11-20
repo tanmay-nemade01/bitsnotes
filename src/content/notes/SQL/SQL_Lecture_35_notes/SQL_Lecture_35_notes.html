@@ -1113,6 +1113,46 @@ EXECUTE PROCEDURE generic_cancel_op();</code></pre>
 </div>
 <p>Real-world: mature teams review every new trigger against this four-habit list plus a load test on production-sized writes before it ships, and they schedule periodic trigger audits because estates drift.</p>
 
+<div class="example-box">
+  <p><strong>Worked Concurrency Race — a Summary Counter in a Trigger:</strong> A naive <code>AFTER INSERT ... FOR EACH ROW</code> counter trigger runs <code>UPDATE twcache.daily_counters SET rts = rts + 1 WHERE day = current_date</code> and, when no row is found, inserts the day's first row. Two transactions interleave: (1) T1 updates and finds nothing; (2) T2 updates and also finds nothing because T1 has not inserted yet; (3) T2 inserts the first row of the day; (4) T1 inserts too and fails with a primary-key <code>UNIQUE_VIOLATION</code>. No SQL statement was written wrong — the <em>update-then-insert gap</em> is the defect.</p>
+  <p><strong>Canonical Fix:</strong> Wrap the pair in a labeled <code>&lt;&lt;insert_update&gt;&gt; LOOP</code> inside the worker: attempt the <code>UPDATE</code> and <code>EXIT</code> when <code>FOUND</code>; otherwise try the <code>INSERT</code> and <code>EXIT</code> on success; catch <code>WHEN UNIQUE_VIOLATION THEN</code> with an empty handler so the loop retries. The retry re-runs the update, which now finds the row the competing transaction committed, so each event is counted exactly once. The same trigger also serializes every writer onto one hot row, which is why the lean write path below prefers handing the work outside.</p>
+  <p><strong>Takeaway:</strong> Correctness and cost are separate: the retry fixes lost/duplicate counts, but a single hot counter row still caps throughput. Sense-check: without the retry, the second transaction of a new day is the one that fails.</p>
+</div>
+
+<h3 id="35.15.2-asynchronous-notification-with-pg-notify-and-listen" class="subsection-title">35.15.2 Asynchronous Notification with pg_notify and LISTEN</h3>
+<div class="important-note">
+  <p>The lean-write-path advice needs a concrete mechanism. PostgreSQL's <code>NOTIFY</code>/<code>LISTEN</code> lets a thin trigger hand a payload to an outside worker instead of doing the heavy work inside the firing transaction.</p>
+</div>
+<div class="key-concept">
+  <p><strong>Formal Definition:</strong> <code>NOTIFY channel [, payload]</code> posts a notification event to every session that has executed <code>LISTEN channel</code> on the same database; <code>pg_notify(channel, payload)</code> is the function form used when the channel name or payload is computed at run time. Notifications are <em>transactional</em>: a notify issued inside a transaction is delivered only after that transaction commits, so a rolled-back write emits nothing. The payload must be shorter than <strong>8000 bytes</strong>; larger data belongs in a table with only a row key sent in the notification.</p>
+</div>
+<pre><code>CREATE OR REPLACE FUNCTION twcache.tg_notify_counters()
+RETURNS trigger LANGUAGE plpgsql AS
+-- declare channel text := TG_ARGV[0];
+-- body block:
+--   PERFORM (
+--     WITH payload(messageid, rts, favs) AS (
+--       SELECT NEW.messageid,
+--              CASE NEW.action WHEN 'rt' THEN 1 WHEN 'de-rt' THEN -1 ELSE 0 END,
+--              CASE NEW.action WHEN 'fav' THEN 1 WHEN 'de-fav' THEN -1 ELSE 0 END
+--     )
+--     SELECT pg_notify(channel, row_to_json(payload)::text) FROM payload
+--   );
+--   RETURN NULL;</code></pre>
+<pre><code>CREATE TRIGGER notify_counters
+AFTER INSERT ON tweet.activity
+FOR EACH ROW
+EXECUTE PROCEDURE twcache.tg_notify_counters('tweet.activity');</code></pre>
+<div class="example-box">
+  <p><strong>Worked Trace:</strong> A listener session first runs <code>LISTEN "tweet.activity";</code> and commits. Seven activity rows are inserted — <code>(33,'rt'), (33,'rt'), (33,'de-rt'), (33,'fav'), (33,'de-fav'), (33,'rt'), (33,'fav')</code>. Each insert wakes the <code>AFTER</code> trigger, which converts the action into a delta (<code>'rt'</code> → <code>rts = 1</code>, <code>'de-rt'</code> → <code>rts = -1</code>) and calls <code>pg_notify</code> with a JSON payload such as <code>{"messageid":33,"rts":1,"favs":0}</code>. The listener receives one asynchronous notification per distinct payload only after the inserting transaction commits; a single daemon process then updates the counters, bypassing the concurrency race above entirely.</p>
+</div>
+<div class="warning-box">
+  <p><strong>Pitfalls:</strong> Expecting immediate delivery — notifications are held until commit, so notify-based applications keep transactions short. Exceeding the 8000-byte payload limit — store the data in a table and send only its key. Forgetting to <code>LISTEN</code> and commit the listening session before the writer runs. A notifier that also listens on its own channel doing redundant work — compare the notification's server PID with the session's own PID to ignore its own echo.</p>
+</div>
+<div class="key-takeaway">
+  <p><strong>Takeaway:</strong> A thin <code>AFTER</code> trigger plus <code>pg_notify</code> moves heavy materialization off the write path; <code>LISTEN</code> sessions consume payloads after commit, under an 8000-byte per-notification ceiling with all-or-nothing transactional delivery.</p>
+</div>
+
 <h2 id="35.16-event-triggers">35.16 Event Triggers</h2>
 <h3 id="35.16.1-how-event-triggers-differ">35.16.1 How event triggers differ</h3>
 <div class="important-note">

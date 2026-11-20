@@ -830,6 +830,64 @@ flowchart LR
 </div>
 <p>In the real world, extendible hashing is the classic choice for files that must support exact-match lookup while the data volume is unpredictable — the textbook case being large keyed files (like customer or subscriber tables) whose sizes grow in spurts. Because a lookup costs one directory read plus one block read, and because growth never reorganizes the whole file, it behaves like static hashing's speed without static hashing's fixed-size commitment. When the HealthTrack assignment asks you to justify hash-based indexing for your schema, this is the mechanism you are describing: direct equality access that can grow with your data.</p>
 
+<h3 id="11.8.5-linear-hashing-the-directory-free-alternative">11.8.5 Linear Hashing: The Directory-Free Alternative</h3>
+<div class="key-concept">
+  <p><strong>Formal definition — a second dynamic scheme.</strong> Extendible hashing is not the only way to grow a hash file. <em>Linear hashing</em> grows the file one bucket at a time with <strong>no directory at all</strong>. Start with \(M\) buckets \(0, 1, \ldots, M-1\) and the initial hash function \(h_i(K) = K \bmod M\). On an overflow, split the bucket named by the <em>split pointer</em> \(n\) (initially \(0\)): keep the original bucket and append a new bucket \(M\) at the end of the file, redistributing the split bucket's records with \(h_{i+1}(K) = K \bmod 2M\). Then increment \(n\). Successive splits walk the buckets in linear order \(0, 1, 2, \ldots\), regardless of which bucket actually overflowed.</p>
+  <p>The scheme works because of one invariant: a record that hashed to bucket \(b\) under \(h_i\) hashes to either \(b\) or \(b+M\) under \(h_{i+1}\). In general the function family is</p>
+  <p>\[h_{i+j}(K) = K \bmod (2^{j} M), \qquad j = 0, 1, 2, \ldots\]</p>
+  <p>To retrieve \(K\), compute \(m = h_{i+j}(K)\); if \(m &lt; n\) the bucket has already been split, so recompute \(m = h_{i+j+1}(K)\). When \(n\) reaches the current bucket count, every bucket uses the next function, \(n\) resets to \(0\), and the address space has doubled. Splits may be triggered by an actual overflow or by watching the load factor \(\ell = \frac{r}{\mathrm{bfr} \times N}\) — the textbook suggests splitting above \(0.9\) and merging below \(0.7\), so the file can shrink as well as grow.</p>
+</div>
+<div class="example-box">
+  <p><strong>Worked trace — linear hashing with \(M = 4\), bucket capacity 2.</strong> Initially buckets 0–3 use \(h_i(K) = K \bmod 4\) and \(n = 0\).</p>
+  <ol>
+    <li>Insert 4 → \(4 \bmod 4 = 0\) → bucket 0 = {4}; insert 8 → bucket 0 = {4, 8} (full).</li>
+    <li>Insert 22 → \(22 \bmod 4 = 2\) → bucket 2 = {22}; insert 26 → bucket 2 = {22, 26} (full).</li>
+    <li>Insert 30 → \(30 \bmod 4 = 2\) → bucket 2 overflows. But the split pointer is at bucket <em>0</em>, so split bucket 0, not the overflowing bucket: redistribute {4, 8} with \(K \bmod 8\) → 4 goes to bucket 4, 8 stays in bucket 0. Append bucket 4, set \(n = 1\); key 30 waits in bucket 2's overflow chain until its turn comes.</li>
+  </ol>
+  <p><strong>Retrieval after the split:</strong> buckets 1, 2, 3 still use mod 4; buckets 0 and 4 use mod 8. For \(K = 4\): \(4 \bmod 4 = 0 &lt; n = 1\), so recompute \(4 \bmod 8 = 4\) → bucket 4, correct. For \(K = 8\): \(8 \bmod 4 = 0 &lt; 1\), recompute \(8 \bmod 8 = 0\) → bucket 0, correct. For \(K = 22\): \(22 \bmod 4 = 2\) is not below \(n\), so bucket 2 is addressed directly, correct.</p>
+  <p><strong>Sense-check:</strong> one hash computation (at most two while the computed bucket is below \(n\)) plus one bucket read — static hashing's speed with dynamic growth, and no directory to search.</p>
+</div>
+<div class="important-note">
+  <p><strong>Comparison — the two dynamic hashing schemes.</strong></p>
+  <table>
+    <thead>
+      <tr>
+        <th>Dimension</th>
+        <th>Extendible hashing</th>
+        <th>Linear hashing</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>Access structure</td>
+        <td>Directory of \(2^{d_g}\) bucket pointers</td>
+        <td>None — only the split pointer \(n\)</td>
+      </tr>
+      <tr>
+        <td>Which bucket splits</td>
+        <td>Only the overflowing bucket</td>
+        <td>The bucket at the split pointer, in linear order</td>
+      </tr>
+      <tr>
+        <td>Growth step</td>
+        <td>Local split; directory doubles when \(d_l = d_g\)</td>
+        <td>One bucket appended per split; \(h_{i+j} = K \bmod (2^j M)\)</td>
+      </tr>
+      <tr>
+        <td>Disk accesses per lookup</td>
+        <td>Two — directory, then bucket</td>
+        <td>One — two only while the computed bucket is below \(n\)</td>
+      </tr>
+      <tr>
+        <td>Space overhead</td>
+        <td>Directory, up to \(2^k\) entries</td>
+        <td>Negligible</td>
+      </tr>
+    </tbody>
+  </table>
+  <p><strong>Takeaway:</strong> extendible hashing pays for a directory to split <em>only</em> the busy bucket; linear hashing pays nothing for a directory but spreads splits across all buckets in turn. Both avoid the whole-file reorganization that static hashing needs.</p>
+</div>
+
 
 
 

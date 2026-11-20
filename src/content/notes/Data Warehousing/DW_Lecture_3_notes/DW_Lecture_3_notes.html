@@ -830,6 +830,37 @@
   </ul>
 </div>
 
+<div class="important-note">
+  <p><strong>Advanced Dimension Technique — Audit Dimensions (Data-Lineage Metadata):</strong> A named Kimball dimension pattern that attaches ETL-processing metadata directly to fact rows. At load time a single <em>audit dimension</em> row is created, encoding the data-quality and environment context under which the batch of fact rows was built; the fact table then carries one <code>Audit_Key</code> foreign key referencing it. Because the audit context is modeled as an ordinary conformed dimension, BI tools may filter or group any report by data-quality indicators without altering the fact schema.</p>
+  <p><strong>Typical Audit Dimension Attributes</strong> (Kimball's deliberately "modest" starting design):</p>
+  <table>
+    <thead>
+      <tr><th>Attribute</th><th>Source</th><th>Purpose</th></tr>
+    </thead>
+    <tbody>
+      <tr><td><code>Quality_Indicator</code></td><td>Error event schema</td><td>Flags records with known data-quality violations.</td></tr>
+      <tr><td><code>Out_Of_Bounds_Indicator</code></td><td>Error event schema</td><td>Marks measures outside configured plausibility limits.</td></tr>
+      <tr><td><code>Amount_Adjusted_Flag</code></td><td>Error event schema</td><td>Records whether the ETL layer corrected the measure.</td></tr>
+      <tr><td><code>Cost_Allocation_Version</code></td><td>ETL back-room status table</td><td>Version of the cost-allocation rules applied.</td></tr>
+      <tr><td><code>Foreign_Currency_Version</code></td><td>ETL back-room status table</td><td>Version of the currency-conversion rules used.</td></tr>
+    </tbody>
+  </table>
+  <p><strong>Worked Query:</strong> To audit this morning's invoice report, add <code>Out_Of_Bounds_Indicator</code> to the standard report's filter — the "instrumented" query instantly separates normal rows from abnormal rows linked to a suspect <code>Foreign_Currency_Version</code>, delivering compliance traceability through a single dimension join.</p>
+</div>
+
+<div class="warning-box">
+  <p><strong>Pitfall — Late-Arriving Facts and Dimensions (Temporal Context Mismatch):</strong> The star schema assumes a fact row and its dimension context arrive together. Two failure modes break that assumption:</p>
+  <ol>
+    <li><strong>Late-Arriving Fact:</strong> The measurement row is delayed, so the dimension row that is "current" at load time is not the one that was effective when the event actually occurred. The loader must resolve the surrogate key whose Type-2 validity interval contains the <em>event</em> timestamp —
+    \[
+    t_{\text{event}} \in [\,\text{Effective\_From},\ \text{Effective\_To}\,)
+    \]
+    using \( t_{\text{event}} \), not the load timestamp; otherwise the measure is attributed to the wrong customer/product version.</li>
+    <li><strong>Late-Arriving Dimension:</strong> The fact arrives before its descriptive context (e.g., a real-time inventory-depletion row carrying only a natural key). A placeholder dimension row is inserted with the unresolved natural key and generic "Unknown" values for its descriptive columns; when the true context arrives, the placeholder is corrected by a <strong>Type-1 overwrite</strong>. For retroactive Type-2 attribute changes, a new version row is inserted and the already-loaded fact rows must be <strong>restated</strong>.</li>
+  </ol>
+  <p><strong>Worked Trace:</strong> A sale of \( \$250 \) logged at \( t_{\text{event}} = \text{2026-03-10} \) loads on <code>2026-03-18</code>, after the customer's region changed on <code>2026-03-15</code>. Looking up the key current at load time misattributes the sale to the new region; resolving the key valid on 2026-03-10 attributes it to the correct (old) region. In parallel, a placeholder customer row keyed <code>CX-8821</code> is overwritten in place once its real name and region finally arrive.</p>
+</div>
+
 <h3 class="subsection-title">3.5.6 Assumptions, Scope, and Student Q&A</h3>
 
 <div class="warning-box">

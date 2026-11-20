@@ -329,6 +329,10 @@ FROM metals_temp;</code></pre>
   </ol>
   <p>Files read: 1 of 3. Files skipped: 2 of 3. Sense-check: weight 1 lives in bucket 1 from the distribution table above, so the plan finds it without touching the other files.</p>
 </div>
+<div class="key-concept">
+  <p><strong>Bucketing's second payoff — efficient sampling.</strong> Besides <code>WHERE</code> pruning, bucketing lets Hive sample a fraction of a large table without scanning all of it. The <code>TABLESAMPLE</code> clause restricts a query to selected buckets: <code>SELECT * FROM bucketed_users TABLESAMPLE(BUCKET 1 OUT OF 4 ON id);</code> reads roughly one-quarter of the rows. Bucket numbers are 1-based, so this returns the first of four buckets. When the column named in <code>TABLESAMPLE</code> matches the table's <code>CLUSTERED BY</code> column, Hive applies <em>input pruning</em> and scans only the required hash partitions; sampling a non-bucketed table with <code>ON rand()</code> instead forces a full scan of every input split.</p>
+  <p><strong>Why it matters:</strong> Sampling is indispensable while developing or refining a query on a huge dataset — you iterate on a representative fraction, then run the finished query on the full table. It is approximate by design, so it should not be used when an exact answer is required.</p>
+</div>
 <div class="warning-box">
   <p><strong>Pitfalls:</strong></p>
   <ul>
@@ -466,6 +470,22 @@ FROM metals_temp;</code></pre>
 <div class="warning-box">
   <p><strong>Assumptions & scope:</strong> The two-step view (cross product, then filter) is the <em>relational definition</em> of a join. Real engines never materialize the full cross product for large tables — they use hash joins, merge joins, or (in Hive) map-side joins to avoid it. The definition stays correct, though: an inner join's output is always the subset of \(T_A \times T_B\) whose rows satisfy the equality predicate. Hive only supports <em>equijoins</em> — the join predicate must use equality (<code>=</code>), not <code><</code>, <code>></code>, or <code>BETWEEN</code>.</p>
 </div>
+<div class="key-concept">
+  <p><strong>Advanced — bucketed map-side and sort-merge-bucket (SMB) joins.</strong> Section 8.1 treated bucketing as a <em>single-table</em> lookup optimization, but the same physical layout makes a <em>join</em> cheaper too. If two tables are bucketed on the join column into \(N\) buckets, bucket \(i\) of the left table can only match rows in bucket \(i\) of the right table, because both sides hash the same key to the same bucket. A mapper processing bucket \(i\) therefore reads only the corresponding right-side bucket instead of scanning the whole right table, and the join completes as a <em>map-side join</em> with no reduce phase — the join key never has to be shuffled across the cluster.</p>
+  <p><strong>Sort-merge-bucket (SMB) join:</strong> If each bucket is additionally sorted on the join key (<code>CLUSTERED BY (id) SORTED BY (id ASC) INTO 4 BUCKETS</code>), the mapper merges two already-sorted streams in linear time instead of building an in-memory hash table; the two tables' bucket counts need only be multiples of each other, not equal. Hive enables these with:</p>
+  <pre><code>SET hive.optimize.bucketmapjoin = true;
+SET hive.auto.convert.sortmerge.join = true;
+SET hive.optimize.bucketmapjoin.sortedmerge = true;</code></pre>
+  <table>
+    <thead><tr><th>Strategy</th><th>What must be true</th><th>Reduce phase?</th></tr></thead>
+    <tbody>
+      <tr><td>Reduce-side join (default)</td><td>Any equijoin; keys shuffled to reducers</td><td>Yes</td></tr>
+      <tr><td>Bucketed map join</td><td>Both tables bucketed on the join key</td><td>No</td></tr>
+      <tr><td>SMB map join</td><td>Bucketed <em>and</em> sorted on the join key</td><td>No</td></tr>
+    </tbody>
+  </table>
+  <p>Constraints: this only helps equijoins on the bucketed column, both tables must be compatibly bucketed, and a <code>FULL OUTER JOIN</code> cannot be converted because both sides must be streamed. Without compatible bucketing Hive falls back to the shuffle-based reduce-side join described above — which is why choosing the join column as the bucketing column pays off twice.</p>
+</div>
 <h3 id="8.2.2-hive-hql-join-syntax-and-execution">8.2.2 Hive HQL Join Syntax and Execution</h3>
 <p>In Hive QL, explicit table qualifications (<code>table_name.column_name</code>) resolve column ambiguities when joining multiple tables that share identical column identifiers.</p>
 <p>Consider two normalized Hive tables:</p>
@@ -581,6 +601,21 @@ GROUP BY shop_name;</code></pre>
   </table>
   <p>Sense-check: the join stage must run first because <code>shop_name</code> exists only after <code>metal_shops</code> is joined in; the aggregation stage then collapses all transactions of a shop into one row. That ordering is why Hive emits two chained MapReduce jobs.</p>
 </div>
+<div class="key-concept">
+  <p><strong>Controlling reducers: Hive's four sort/distribute clauses.</strong> The stages below rely on the shuffle to bring matching keys together, and Hive exposes four clauses to control it. Confusing them is a common source of wrong results:</p>
+  <table>
+    <thead>
+      <tr><th>Clause</th><th>What it guarantees</th><th>Reducers</th></tr>
+    </thead>
+    <tbody>
+      <tr><td><code>ORDER BY</code></td><td>Total order across the whole output</td><td>One reducer (a bottleneck); strict mode requires <code>LIMIT</code></td></tr>
+      <tr><td><code>SORT BY</code></td><td>Order only within each reducer's output</td><td>Many; final result only partially ordered</td></tr>
+      <tr><td><code>DISTRIBUTE BY</code></td><td>Same key to the same reducer, but not sorted</td><td>Controls partitioning only</td></tr>
+      <tr><td><code>CLUSTER BY</code></td><td><code>DISTRIBUTE BY</code> plus <code>SORT BY</code> on one column</td><td>Partition and sort together</td></tr>
+    </tbody>
+  </table>
+  <p>Example: <code>DISTRIBUTE BY year SORT BY year ASC, temperature DESC</code> sends a year's rows to one reducer and sorts them there, so a follow-up query or nested subquery can exploit the grouping — the same "stage feeds the next" idea as this section's two chained jobs.</p>
+</div>
 <div class="warning-box">
   <p><strong>Pitfalls:</strong></p>
   <ul>
@@ -653,6 +688,21 @@ GROUP BY shop_name;</code></pre>
   </li>
 </ol>
 <p>The Leader acknowledges a write operation as successful to the client <em>only after</em> a quorum of nodes confirms writing the update to memory and disk. Subsequent reads served by any node return the updated consistent state. Because every write is committed to disk on a quorum before being acknowledged, a minority failure can never lose the latest state.</p>
+<div class="key-concept">
+  <p><strong>The client-observable contract — ZooKeeper's five guarantees.</strong> The quorum and ZAB mechanics above produce a precise contract that every client may rely on, whichever ensemble server it connects to:</p>
+  <table>
+    <thead><tr><th>Guarantee</th><th>Formal meaning</th></tr></thead>
+    <tbody>
+      <tr><td>Sequential consistency</td><td>Updates from one client are applied in the order sent; no client ever observes a later value followed by an earlier one.</td></tr>
+      <tr><td>Atomicity</td><td>An update either fully succeeds or fully fails — no partial result is ever visible.</td></tr>
+      <tr><td>Single system image</td><td>A client sees the same state after reconnecting to a different server in the same session; a lagging server refuses connections until it catches up.</td></tr>
+      <tr><td>Durability (reliability)</td><td>Once applied, an update persists until overwritten and survives server failures.</td></tr>
+      <tr><td>Timeliness</td><td>A client's view is current within a bounded time (tens of seconds); a server that cannot meet the bound shuts down.</td></tr>
+    </tbody>
+  </table>
+  <p><strong>Global ordering via <code>zxid</code>:</strong> every update to the znode tree receives a monotonically increasing 64-bit ZooKeeper transaction ID. A smaller <code>zxid</code> means an earlier update in ZooKeeper's total order — this single source of ordering is what lets clients build higher-level primitives such as locks and leader election.</p>
+  <p><strong>The stale-read boundary:</strong> reads are served from a server's local in-memory replica and do not join the global write order, so ZooKeeper does <em>not</em> promise simultaneously consistent cross-client views. If client A writes value <code>a'</code> and then tells client B to read, B may still see <code>a</code>; B must call <code>sync</code> on the znode first, which forces its server to catch up with the Leader before the read is served.</p>
+</div>
 <h3 id="8.4.3-znode-types-and-notification-watches">8.4.3 ZNode Types and Notification Watches</h3>
 <p>ZooKeeper structures stored data in a hierarchical tree format similar to a Unix file system. Each node in the tree is called a <strong>ZNode</strong> (ZooKeeper Node), identified by a slash-delimited path (such as <code>/app/hadoop/master</code>). Each ZNode can store small configuration datasets (typically under a few kilobytes).</p>
 <pre><code>                      / (Root)
@@ -784,6 +834,19 @@ GROUP BY shop_name;</code></pre>
 </ol>
 <div class="important-note">
   <p><strong>How the pieces connect to earlier lectures:</strong> ZooKeeper is the coordinator that elects the HMaster (the active/passive pattern from section 8.4). HDFS at the bottom is the storage layer from the Hadoop lectures — HBase adds a real-time, random-access layer on top of HDFS's batch-oriented files. The RegionServer is where the data actually lives; the HMaster only manages metadata, which is why data paths bypass it.</p>
+</div>
+<div class="important-note">
+  <p><strong>Inside a RegionServer — the write path.</strong> The <code>put</code> operations of section 8.5.4 do not write straight into an HDFS data file. A write arriving at a RegionServer is first appended to a <em>commit log</em> (the Write-Ahead Log, or WAL) that lives on HDFS, and then inserted into an in-memory <strong>MemStore</strong>. Because the WAL is on HDFS it survives a RegionServer crash: when the HMaster notices the server's ZooKeeper znode has expired, it splits the dead server's WAL by region, and each reassigned region replays its not-yet-persisted edits before reopening for reads and writes.</p>
+  <p><strong>Flush, read, and compaction.</strong> When a MemStore fills, its contents are flushed to disk as a new <strong>HFile</strong> (one StoreFile is written per MemStore flush). On a read, the RegionServer consults the MemStore first, then the flush files from newest to oldest, stopping once enough versions are found. A background process <em>compacts</em> the flush files once their number passes a threshold, rewriting many small files as one and discarding versions beyond the configured maximum plus deleted or expired cells; a separate process splits a region when its files grow past the configured maximum size. This is the concrete mechanism behind the "local compaction" named in the RegionServer role above.</p>
+</div>
+<div class="important-note">
+  <p><strong>How a <code>get</code> actually finds its RegionServer.</strong> Section 8.5.4 says a row-key lookup "routes directly to the specific RegionServer hosting that key range," but that route is resolved through a three-hop catalog lookup:</p>
+  <ol>
+    <li>The client contacts ZooKeeper to learn the location of the catalog table <code>hbase:meta</code>, which stores the current state and location of every user-space region.</li>
+    <li>It queries <code>hbase:meta</code> for the region whose key range contains the requested Row Key — the entry with the largest start key less than or equal to that row key.</li>
+    <li>It contacts that RegionServer directly (never the HMaster) and issues the read or write.</li>
+  </ol>
+  <p><strong>Caching and invalidation:</strong> three round-trips per operation would be prohibitive, so the client caches the region locations and start/stop keys it learns, along with the <code>hbase:meta</code> location itself; later lookups for nearby rows resolve locally. When a region splits or moves, or a RegionServer dies, the cached entry goes stale: the request fails, the client re-queries <code>hbase:meta</code> for the new location, and if even the <code>hbase:meta</code> region moved it re-consults ZooKeeper. This is the concrete reason the HMaster stays off the data path — it assigns regions and detects failures, while clients talk straight to RegionServers.</p>
 </div>
 <h3 id="8.5.3-hbase-multi-dimensional-sparse-data-model">8.5.3 HBase Multi-Dimensional Sparse Data Model</h3>
 <p>HBase organizes data into a 4-dimensional sparse mapping sorted lexicographically by Row Key:</p>

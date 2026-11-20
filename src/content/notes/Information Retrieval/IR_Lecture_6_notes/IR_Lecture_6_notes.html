@@ -389,6 +389,20 @@
   <p>That is about 1.2 gigabytes before space for sorting buffers and dictionary structures. The product is plain arithmetic from the two stated inputs, 12 bytes and 100 million records, so no outside fact is needed. Holding all of that plus sort workspace in RAM is not workable on an ordinary machine. That limit calls for a method that sorts in pieces.</p>
 </div>
 <p>Standard form note: the reference text counts a term identifier plus document identifier pair as \(4 + 4 = 8\) bytes with no frequency field, which gives \(100{,}000{,}000 \times 8 = 0.8\) gigabytes. The lecture count adds a 4-byte frequency field and reaches 1.2 gigabytes. Both forms point the same way: the sort does not fit. Keep the lecture 12-byte form for exam math and know the 8-byte book form as the lean pair form.</p>
+<div class="example-box">
+  <p><strong>Worked cost — why an unoptimized on-disk sort is hopeless:</strong> The size sketch above shows the pairs do not fit in RAM. Price the naive alternative: sort all \(T\) term identifier and document identifier pairs with an ordinary algorithm that keeps data on disk, assuming \(T \log_2 T\) comparisons and two disk seeks per comparison. Use RCV1's \(T = 100{,}000{,}000\) tokens and the same hardware baseline as 6.1, seek \(s = 5 \times 10^{-3}\) seconds and one low-level in-memory operation \(p = 10^{-8}\) seconds.</p>
+  <p>Step 1 — comparisons. Since \(10^{8} \approx 2^{26.58}\):</p>
+  <p>\[ \log_2 T = \log_2(10^{8}) = 8 \log_2 10 \approx 26.58 \]</p>
+  <p>\[ C = T \log_2 T \approx 10^{8} \times 26.58 = 2.66 \times 10^{9} \text{ comparisons} \]</p>
+  <p>Step 2 — each comparison reads two records from disk, so two seeks are charged per comparison:</p>
+  <p>\[ N_{seek} = 2C \approx 5.32 \times 10^{9} \text{ seeks} \]</p>
+  <p>Step 3 — multiply by the seek cost:</p>
+  <p>\[ \begin{aligned} t_{disk} &= N_{seek} \times s \\ &\approx (5.32 \times 10^{9}) \times (5 \times 10^{-3}) \\ &\approx 2.66 \times 10^{7} \text{ seconds} \end{aligned} \]</p>
+  <p>Step 4 — put that in human units: \(2.66 \times 10^{7} / 3600 \approx 7{,}400\) hours, or \(7{,}400 / 24 \approx 308\) days, close to ten months of nonstop sorting.</p>
+  <p>Step 5 — the in-memory contrast with \(p = 10^{-8}\) seconds per operation:</p>
+  <p>\[ t_{RAM} \approx (2.66 \times 10^{9}) \times 10^{-8} \approx 26.6 \text{ seconds} \]</p>
+  <p><strong>Final result:</strong> the same comparison count costs about <strong>\(2.66 \times 10^{7}\) seconds on disk</strong> versus about <strong>27 seconds in RAM</strong>, a gap of roughly six orders of magnitude. This is the quantitative reason BSBI sorts each block in memory and pays only a few large sequential writes and merges: it replaces billions of random seeks with bounded, sequential disk work.</p>
+</div>
 <div class="warning-box">
   <p><strong>Scope:</strong> BSBI pays when the pair file is near or past RAM size. If the whole pair file plus sort buffers fit with room to spare, plain in-memory sort is simpler and faster. BSBI also assumes a static collection that can be sliced into blocks and merged once at the end.</p>
 </div>
@@ -575,6 +589,41 @@
   <p>Step 3 — invert: each inverter groups by term, sorts document identifiers, and writes final postings. A query for information, which starts with I in G to P, is then directed to the second store, which holds documents holding that term. <strong>Map splits to parsers and partitions to inverters both hold: 8 splits to 8 parsers, 3 partitions to 3 inverters.</strong></p>
 </div>
 <p>Index construction in words is two phases. First, parse documents and generate term and document pairs. Second, group all pairs for the same term and create posting lists. Input data is split into N splits sized so work spreads well and with low overhead. The map phase maps splits into key and value pairs of form (term identifier, document identifier). The reduce phase groups, sorts, and writes postings. In the small book demo with two documents, map emits (C, D2), (died, D2), (C, D1), (came, D1), (C, D1) for a Caesar text, and reduce groups C to D1, D1, D2 with counts, then writes postings with frequencies.</p>
+<div class="key-concept">
+  <p><strong>Formal MapReduce schema:</strong> The map and reduce phases are not informal labels but a typed key–value contract. A map takes one pair and emits a list of pairs; the framework collects every value sharing a key, sorts them, and hands that one key with its value list to a reduce. Both the input and the output are lists of key–value pairs, so jobs can be chained.</p>
+  <table>
+    <thead>
+      <tr>
+        <th>Stage</th>
+        <th>Generic signature</th>
+        <th>Effect in inverted-index construction</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>Map</td>
+        <td>\((k_1, v_1) \rightarrow \text{list}(k_2, v_2)\)</td>
+        <td>One input split yields \((termID, docID)\) pairs</td>
+      </tr>
+      <tr>
+        <td>Shuffle / group</td>
+        <td>all \(v_2\) for one \(k_2\) collected into one list</td>
+        <td>All document identifiers for a term land at one inverter</td>
+      </tr>
+      <tr>
+        <td>Reduce</td>
+        <td>\((k_2, \text{list}(v_2)) \rightarrow \text{list}(k_3, v_3)\)</td>
+        <td>Sorted document list is written as a posting list</td>
+      </tr>
+      <tr>
+        <td>Chaining</td>
+        <td>output list becomes the next job's input list</td>
+        <td>A later job converts term partitions into document partitions</td>
+      </tr>
+    </tbody>
+  </table>
+  <p><strong>Architectural scope:</strong> this build is only one job in a sequence. In the 2004 Google indexing system five to ten such MapReduce jobs ran in order; the term-partitioned output produced here was subsequently converted into a document-partitioned index for serving. Because every stage exposes a key–value list interface, failures and slow workers can be reassigned by the master without changing the schema.</p>
+</div>
 <div class="important-note">
   <p><strong>Q:</strong> Where does shuffling fit, is it in the inverter region before reduce?</p>
   <p><strong>A:</strong> Shuffling in the usual MapReduce sense happens right before the reduce step, when segment files move to their inverters. The response given is that exact placement in this setup needs a read-back, but the working idea is the same. Once segment terms are ready, idle parsers can be reassigned as inverters, and idle inverters can serve as parsers, because all of these are machines under master control. The master can reassign either way to keep parallel workers busy.</p>

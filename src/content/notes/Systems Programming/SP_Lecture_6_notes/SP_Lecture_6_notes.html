@@ -586,6 +586,18 @@ mv source ... directory      # move one or more sources into a directory</code><
     <li><strong>Scope: no copy retained.</strong> There is no backup unless you make one first. This is by design for reorganization and archiving.</li>
   </ul>
 </div>
+
+<div class="important-note">
+  <p><strong>System Detail — what <code>mv</code> calls underneath:</strong> A rename expressed by <code>mv</code> is carried out by the <code>rename()</code> / <code>renameat()</code> system call (defined by ISO C for files, extended by POSIX.1 to directories and symbolic links). Its contract explains the "instant pointer update" behaviour observed in the demo.</p>
+  <ul>
+    <li><strong>Atomic replacement:</strong> if the destination name already exists, the kernel replaces it <em>atomically</em> — there is no instant at which another process opening the destination finds it missing. That is the guarantee behind <code>mv new.conf app.conf</code>: a reader sees either the old config or the new one, never a half-written or absent file. A brief window can still exist in which both names refer to the same file.</li>
+    <li><strong>Failure safety:</strong> if the rename fails for any reason, an existing destination is left in place — the operation never destroys the target on error.</li>
+    <li><strong>Same-file no-op:</strong> when source and destination are hard links to the same inode, <code>rename()</code> does nothing and reports success, so an accidental <code>mv a b</code> on one file is harmless.</li>
+    <li><strong>Cross-filesystem boundary (<code>EXDEV</code>):</strong> the syscall refuses paths on different mounted filesystems. This is exactly the "copy then delete" case described above: <code>mv</code> falls back to copy-and-unlink, which is neither atomic nor constant-time. Even two mount points of the same underlying filesystem count as different for this check.</li>
+    <li><strong>Permissions:</strong> write and execute permission are required on both the source and destination directories, because one directory entry is removed and another created.</li>
+  </ul>
+  <p><strong>Boundary condition:</strong> renaming a directory requires the destination to be absent or an empty directory, and a directory cannot be moved into a path prefixed by itself. These restrictions are enforced by the syscall itself, not by <code>mv</code>.</p>
+</div>
 <div class="warning-box">
   <p><strong>Pitfalls — what trips beginners</strong></p>
   <ul>
@@ -809,6 +821,40 @@ pwd         # prints where you now are; use after every cd while learning</code>
   </ul>
 </div>
 <p>Real-world and domain connection: build and deploy checks use <code>cmp</code> to verify that a deployed binary matches the built artifact, that a restored config is byte-identical to the known-good backup, or that a copy operation succeeded before deeper comparison. Continuous integration often runs <code>cmp</code> as a fast gate before expensive <code>diff</code> or checksum steps. Its developer-oriented speed is why the lecture labels it a developer's tool for current vs backup validation.</p>
+
+<div class="example-box">
+  <p><strong>Beyond the default report — <code>cmp</code> as a script gate:</strong> The first-mismatch behaviour described above is the <em>default</em> mode. The standard also defines two flags that change how the result is delivered, and these are what make <code>cmp</code> usable as an automation gate.</p>
+  <table>
+    <thead>
+      <tr>
+        <th>Invocation</th>
+        <th>Standard output</th>
+        <th>How the caller decides</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><code>cmp a b</code></td>
+        <td><code>a b differ: byte N, line M</code> at the first mismatch; silent if identical</td>
+        <td>Read the message, or test the exit status</td>
+      </tr>
+      <tr>
+        <td><code>cmp -s a b</code></td>
+        <td>Nothing at all — whether the files match or differ</td>
+        <td><strong>Exit status only:</strong> <code>0</code> identical, <code>1</code> different, <code>&gt;1</code> error</td>
+      </tr>
+      <tr>
+        <td><code>cmp -l a b</code></td>
+        <td>One line per differing byte: byte number (decimal) and both bytes (octal)</td>
+        <td>Enumerates <em>every</em> differing byte, not just the first</td>
+      </tr>
+    </tbody>
+  </table>
+  <p><strong>Worked gate — regeneration in a build rule:</strong> a classic makefile uses <code>cmp -s</code> to avoid copying a generated header when its contents did not change:</p>
+  <pre><code>cmp -s new.h old.h || cp new.h old.h</code></pre>
+  <p>Reading: <code>cmp -s</code> prints nothing but sets status <code>0</code> when the files match and <code>1</code> when they differ; the <code>||</code> copies only on a difference. Because the copy is skipped for identical contents, the destination's timestamp is preserved and dependent targets are not rebuilt needlessly — the lecture's "silence means sameness" rule promoted into a build decision.</p>
+  <p><strong>Related trap:</strong> with <code>-s</code> an I/O error is silent too, and whether an error message is emitted is implementation-defined, so a script that must distinguish "different" from "error" checks for status <code>&gt;1</code>. Use <code>-l</code> when the question is no longer "are they equal?" but "exactly which bytes changed?"</p>
+</div>
 <h3 id="6.5.1-worked-computation-cmp-on-results.txt">6.5.1 Worked Computation — cmp on results.txt</h3>
 <div class="example-box">
   <p><strong>Trace — proving the stop rule</strong></p>
@@ -850,6 +896,17 @@ pwd         # prints where you now are; use after every cd while learning</code>
   </ul>
   <p>Sorted requirement: input files must be sorted lexically (or numerically with <code>sort -n</code> before). Without sorting, <code>comm</code> still runs but column alignment appears wrong because the algorithm assumes ordered merges. The worksheet 4.5 files that were not sorted or were created with <code>touch</code> versus <code>cat</code> redirection produced that "looks wrong" effect — yet the command was correct, the input order was not.</p>
   <p>Empty column cue: if a file has nothing unique, its column is empty — output starts with a TAB offset rather than text. Empty first column is not an error; it means nothing is unique in file1.</p>
+</div>
+
+<div class="important-note">
+  <p><strong>System Detail — why <code>comm</code> must read sorted input:</strong> <code>comm</code> is a single-pass three-way merge, not a full search. It advances one pointer into each file and compares only the two current lines. Once a line in the first file sorts <em>ahead</em> of the current line in the second, the algorithm concludes that this line cannot occur later in the second file and never looks back. Unsorted input therefore does not merely look odd — the same value can be reported as unique when it is actually common.</p>
+  <p><strong>Worked failure trace</strong> (the classic California/Florida case): file1 begins <code>California</code>, file2 begins <code>Florida</code>.</p>
+  <ol>
+    <li>The heads are compared: <code>California</code> versus <code>Florida</code>. Since <code>C</code> sorts before <code>F</code>, <code>California</code> is written to column 1 as unique to file1 and the file1 pointer advances.</li>
+    <li>The decisive assumption: because <code>Florida</code> is the current head of file2, <code>comm</code> concludes that no line starting with a letter before <code>F</code> can appear later in that file. A <code>California</code> occurring further down file2 is therefore never reached and the line is misclassified as unique instead of common.</li>
+    <li>The same false-unique pattern repeats for every out-of-order line, so the columns stop partitioning the union correctly. Sorting both inputs first makes the monotonic-advance assumption true and the three columns exact.</li>
+  </ol>
+  <p><strong>Locale boundary condition:</strong> "sorted" means sorted in the <em>same collating sequence</em> that <code>comm</code> uses — if the lines are not ordered according to the current locale's collating sequence, the results are unspecified. Two files merged under different <code>LC_COLLATE</code> settings can therefore misreport common lines even when each file looks sorted. The portable remedy is to sort and compare under one locale: <code>LC_ALL=C sort f1 &gt; f1.s</code>, <code>LC_ALL=C sort f2 &gt; f2.s</code>, then <code>LC_ALL=C comm f1.s f2.s</code>.</p>
 </div>
 <div class="example-box">
   <p><strong>Worked examples — from <code>results</code> to <code>num1/num2</code> to column suppression</strong></p>

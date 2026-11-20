@@ -437,6 +437,14 @@
   <p>Picture a market where every stallholder shouts their price at once. The loudest honest stall wins the customer, and the mutterers get ignored. Thresholding works that way: each box shouts its confidence score, and only shouts above the cutoff stay on the table. The picture breaks when two stalls sell different goods at equal volume, because one cutoff cannot crown two winners in one cell.</p>
 </div>
 <p>Once all boxes exist, each with a confidence score, we cut the weak ones. Keep a box only when its score beats a cutoff such as 0.5, 0.6, or 0.7, and drop the rest. This cutoff technique is called non-maximal suppression. After thresholding, only the strong boxes remain, and each surviving cell is read as belonging to its top class, for example bicycle, with the dog boxes for that cell ignored.</p>
+<div class="key-concept">
+  <p><strong>From cutoff to non-maximum suppression:</strong> A score cutoff drops weak boxes, yet several strong boxes can still cluster on the same object. To collapse them to a single box, detectors apply <em>non-maximum suppression</em> (NMS). It runs class by class and greedily: sort the surviving boxes by class confidence, keep the highest-scoring box, then discard any other box whose intersection over union with a kept, higher-scoring box exceeds a threshold \(A\), commonly \(A = 0.5\).</p>
+  <p>The rule is "high overlap with a better-scoring neighbor means delete," while a high-scoring box whose neighbors overlap little survives. The cutoff and NMS work together: the cutoff removes boxes that are probably empty, while NMS removes duplicate boxes that are probably the same object.</p>
+</div>
+<div class="warning-box">
+  <p><strong>Pitfall — one global NMS threshold for close objects:</strong> A single IoU threshold \(A\) cannot tell a duplicate box from a genuinely adjacent object. With \(A = 0.4\), two neighboring objects of the same class are treated as one and the lower-confidence box is deleted even though both detections were correct; raise \(A\) and that case is fixed, but duplicate boxes of the same object may then fail to merge.</p>
+  <p><strong>Soft-NMS variant:</strong> Rather than deleting overlapping boxes, soft NMS decays each neighbor's confidence by a Gaussian factor \(e^{-\mathrm{IoU}^2/\sigma}\) with \(\sigma \approx 0.5\), then prunes by a separate score threshold. Strongly overlapping boxes lose most of their score while non-overlapping ones keep it, so nearby same-class objects survive, at the cost of one extra tuning knob.</p>
+</div>
 <div class="warning-box">
   <p><strong>Scope:</strong> Fixed thresholding assumes one global cutoff separates true boxes from junk, so it holds when scores split cleanly and breaks on cluttered scenes where true and false boxes score alike. <strong>Assumption:</strong> Each cell predicts one class mix shared by both its boxes, so the strongest class takes the cell and weaker classes in the same cell vanish even when their boxes fit well.</p>
 </div>
@@ -517,6 +525,13 @@
 <div class="key-concept">
   <p><em>Boosting</em> means raising the confidence of the box that best overlaps a ground-truth label toward 1, while <em>starving</em> means pulling the confidence of boxes over empty ground toward 0. With the score \(s = P(\text{object}) \times P(\text{class} \mid \text{object})\), training drives \(s \to 1\) on matched boxes and \(s \to 0\) on empty ones, so only cells the network trusts keep high scores.</p>
 </div>
+<div class="key-concept">
+  <p><strong>Formal mechanism — the YOLO v1 loss:</strong> Boost and starve are not separate rules but two halves of one objective. A ground-truth box is assigned to the cell holding its center, and when a cell predicts \(B &gt; 1\) boxes it is paired with the one box whose IoU with that ground truth is highest. Writing \(\mathbb{1}_{ij}^{\mathrm{obj}}\) for "box \(j\) of cell \(i\) is responsible" and \(\mathbb{1}_{ij}^{\mathrm{noobj}}\) for "box \(j\) covers empty ground," the multi-part loss is:</p>
+  <p>\[ \mathcal{L} = \lambda_{\mathrm{coord}}\sum_{i=0}^{S^2}\sum_{j=0}^{B}\mathbb{1}_{ij}^{\mathrm{obj}}\big[(x_i-\hat{x}_i)^2 + (y_i-\hat{y}_i)^2\big] \]</p>
+  <p>\[ \qquad + \lambda_{\mathrm{coord}}\sum_{i=0}^{S^2}\sum_{j=0}^{B}\mathbb{1}_{ij}^{\mathrm{obj}}\big[(\sqrt{w_i}-\sqrt{\hat{w}_i})^2 + (\sqrt{h_i}-\sqrt{\hat{h}_i})^2\big] \]</p>
+  <p>\[ \qquad + \sum_{i,j}\mathbb{1}_{ij}^{\mathrm{obj}}(C_i-\hat{C}_i)^2 + \lambda_{\mathrm{noobj}}\sum_{i,j}\mathbb{1}_{ij}^{\mathrm{noobj}}(C_i-\hat{C}_i)^2 + \sum_i \mathbb{1}_i^{\mathrm{obj}}\sum_{c}(p_i(c)-\hat{p}_i(c))^2 \]</p>
+  <p>The five terms are, in order, center error, size error, confidence on matched boxes, confidence on empty boxes, and class error. The paper sets \(\lambda_{\mathrm{coord}} = 5\) and \(\lambda_{\mathrm{noobj}} = 0.5\): the coordinate weight pulls responsible boxes toward their labels, while the half-weight on empty-box confidence stops the many blank cells from burying the gradient of the few useful ones — precisely the starve half. Using \(\sqrt{w}\) and \(\sqrt{h}\) instead of \(w\) and \(h\) stops large boxes from dominating the size term, and class error is penalized only when \(\mathbb{1}_i^{\mathrm{obj}} = 1\), which is why the conditional class probability is learned only from cells that hold an object.</p>
+</div>
 <p>Empty predictions get the opposite treatment. During mean average precision practice, some predictions had no ground truth behind them: a box was predicted where training labels marked nothing. The fix is to pull the confidence of such boxes down. With an object chance of 0.2 and a bicycle-given-object chance of 0.4, the product is small:</p>
 <p>\[ 0.2 \times 0.4 = 0.08 \]</p>
 <p>Work it through: \(0.2 \times 0.4 = 0.08\), or 8 percent. The stated training goal is unambiguous: over successive iterations the network drives this confidence score toward 0 so no prediction survives there. Only cells we are sure about keep high scores of the form \(P(\text{object}) \times P(\text{class} \mid \text{object})\).</p>
@@ -568,6 +583,45 @@
   <p><em>Darknet</em> is the C++ neural-network framework the first YOLO versions ran on, while <em>PyTorch</em> is the Python framework the family moved to from v5 onward, bringing easier training, simpler code, and a wide model zoo. The move matters because researchers could then fine-tune, export, and deploy with a few commands instead of hand-wired C++ builds.</p>
 </div>
 <p>Today the family looks very different from the v1 grid. Current models handle keypoint detection and many more classes with much simpler training. There is even a segment-anything model riding the wave of generative AI and transformer design, and daily call counts show how heavily industry uses YOLO.</p>
+<div class="important-note">
+  <p><strong>Beyond the single coarse grid:</strong> YOLO v1 detects on the final, lowest-resolution feature map, which section 14.5 traced to its weak localization. Two ideas from the standard single-shot literature target exactly that. A <em>feature pyramid network</em> (FPN) adds a top-down pathway with lateral \(1 \times 1\) connections: deep, semantically rich maps are upsampled by nearest neighbour and added element-wise to shallower, higher-resolution maps, so every scale carries both fine location and strong meaning, and \(3 \times 3\) convolutions smooth the merge. A detection head with shared weights then reads each pyramid level.</p>
+</div>
+<table>
+  <thead>
+    <tr>
+      <th>Design choice</th>
+      <th>YOLO v1</th>
+      <th>Single-shot successor (RetinaNet)</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td>Feature source</td>
+      <td>Final, lowest-resolution map only</td>
+      <td>FPN levels P3–P7, multi-scale</td>
+    </tr>
+    <tr>
+      <td>Box parameterization</td>
+      <td>Absolute \(x, y\) center plus \(w, h\) per cell</td>
+      <td>Small deltas \(\Delta x, \Delta y, \Delta w, \Delta h\) relative to 9 anchor boxes per location</td>
+    </tr>
+    <tr>
+      <td>Training signal</td>
+      <td>Sum-squared error with \(\lambda_{\mathrm{coord}}, \lambda_{\mathrm{noobj}}\)</td>
+      <td>Focal loss for classification plus smooth \(L_1\) for box regression</td>
+    </tr>
+    <tr>
+      <td>Why it helps</td>
+      <td>Simple and fast</td>
+      <td>Anchors keep regressed values near zero; focal loss down-weights the flood of easy background examples</td>
+    </tr>
+  </tbody>
+</table>
+<div class="key-concept">
+  <p><strong>Focal loss:</strong> Dense one-stage detectors face extreme foreground/background imbalance (roughly 1:1000). With \(p_t\) the model's probability of the true class, standard cross-entropy is \(\mathrm{CE}(p_t) = -\log p_t\); the focal loss adds a modulating factor:</p>
+  <p>\[ \mathrm{FL}(p_t) = -(1-p_t)^{\gamma}\log p_t \]</p>
+  <p>with focusing parameter \(\gamma \ge 0\), found best at \(\gamma = 2\). Since \((1-p_t)^{\gamma} \to 0\) as \(p_t \to 1\), well-classified easy negatives contribute almost no loss, while misclassified examples with small \(p_t\) keep essentially the full cross-entropy. At \(\gamma = 0\) the focal loss reduces to ordinary cross-entropy. Applied over all anchors without hard-negative mining, this let a simple one-stage detector match two-stage accuracy.</p>
+</div>
 <p>Model sizes span a ladder. The YOLO 8 nano model is only about 6 MB, small enough for any edge device. Above it sit small, medium, large, and extra large models. Large and extra large are the most accurate but pay a speed cost, while the 8N nano is less accurate and much faster, with some variants reaching around 225 FPS. Training extras include bounding box loss curves and learning rate schedules, each variant tuned differently. There are YOLO builds for segmentation, classification, plain detection, and OBB, where OBB means oriented bounding boxes, tilted rectangles aimed at driver-assistance units.</p>
 <div class="warning-box">
   <p><strong>Scope:</strong> Nano and small models hold where speed and size matter, as on edge devices, and break where fine detail decides, as in dense small-object scenes that want large or extra large builds. <strong>Assumption:</strong> The ladder assumes a GPU is available for the big rungs, so large-model accuracy numbers do not transfer to CPU-only boards.</p>

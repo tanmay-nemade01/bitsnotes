@@ -527,6 +527,29 @@
 <div class="warning-box">
   <p><strong>Why SQL is the wrong answer for text search.</strong> A SQL database can search text with a LIKE clause, but it scans records one by one and cannot rank results by relevance. A search database builds an inverted index — a map from every word to the documents containing it — so a 20-keyword query is answered by intersecting word lists in milliseconds, with relevance ranking, fuzzy matching, and synonyms. That is why the answer pattern is short and deliberate: <em>search databases, NoSQL, Elasticsearch</em>.</p>
 </div>
+<div class="example-box">
+  <p><strong>Worked mechanism — what "search databases, NoSQL, Elasticsearch" actually does.</strong> The lecture's one-line answer hides a concrete data structure. A search engine tokenizes each document into terms and stores, for each term, the list of document IDs containing it — its <em>postings list</em>:</p>
+  <p>\[ \text{postings}(t) = \{\, d \mid t \in \text{terms}(d) \,\} \]</p>
+  <p>Take \(D_1\) = "the quick brown fox jumped over the lazy dog" and \(D_2\) = "Quick brown foxes leap over lazy dogs in summer". After tokenizing and sorting, the index is:</p>
+  <table>
+    <thead>
+      <tr><th>Term</th><th>Postings list</th></tr>
+    </thead>
+    <tbody>
+      <tr><td><code>brown</code></td><td>\(D_1, D_2\)</td></tr>
+      <tr><td><code>fox</code> / <code>foxes</code></td><td>\(D_1\) / \(D_2\)</td></tr>
+      <tr><td><code>jumped</code> / <code>leap</code></td><td>\(D_1\) / \(D_2\)</td></tr>
+      <tr><td><code>lazy</code></td><td>\(D_1, D_2\)</td></tr>
+      <tr><td><code>quick</code> / <code>Quick</code></td><td>\(D_1\) / \(D_2\)</td></tr>
+    </tbody>
+  </table>
+  <p><strong>Step 1 — intersection.</strong> A query is not a table scan; it is a set intersection of postings lists:</p>
+  <p>\[ \text{answer}(\text{quick} \land \text{brown}) = \text{postings}(\text{quick}) \cap \text{postings}(\text{brown}) = \{D_1, D_2\} \]</p>
+  <p><strong>Step 2 — ranking.</strong> Count the matched terms per document: \(D_1\) matches 2, \(D_2\) matches 1, so \(D_1\) ranks higher. Twenty keywords become a few list intersections plus a count — which is exactly why a SQL <code>LIKE</code> scan loses.</p>
+  <p><strong>Step 3 — normalization, the subtle part.</strong> Raw tokens split "Quick" from "quick" and "fox" from "foxes", so a required-term query <code>+Quick +fox</code> matches nothing. Lowercasing ("Quick" → "quick"), stemming ("foxes" → "fox", "dogs" → "dog"), and synonym mapping ("jumped", "leap" → "jump") collapse them into one vocabulary — but the <em>same</em> normalization must be applied to the query string and to the indexed text, or the terms never meet.</p>
+  <p><strong>Step 4 — fuzzy tolerance.</strong> Lucene stores its term dictionary in a sorted, SSTable-like file with a small in-memory finite-state automaton over term characters; that automaton can be transformed into a Levenshtein automaton, which finds words within a given edit distance (one insertion, deletion, or substitution). That is the mechanism behind the "fuzzy matching and synonyms" attributed to search databases.</p>
+  <p><strong>Sense-check:</strong> the inverted index turns text search into set operations over postings lists, ranking into a match count, and fuzzy matching into normalization plus edit-distance automata — every phrase in the lecture's short answer now has a named mechanism.</p>
+</div>
 <p>Real-world: log analysis also calls for search databases. You have very big transaction logs, customer click logs, network logs, real-time monitoring, and anomaly detection — in these cases do not say "I use a SQL database"; that is not good. Elasticsearch-type tools handle keyword matching across the whole body of text.</p>
 <h3 id="8.3.4-time-series-graph-and-other-stores">8.3.4 Time-Series, Graph, and Other Stores</h3>
 <p>One important thing is temporal data — we deal with a lot of temporal data, time series data. Whenever you have high velocity data and you are also interested in the time, a time-series database fits. The train journey from Amsterdam to Luxembourg provided a vivid example: lots of temporal data was carried — the location data over time as the train moved, the temperature changing, weather changes at different times, rain at certain times. All those changes are temporal data.</p>
@@ -731,6 +754,15 @@
   <p><strong>A:</strong> Event ordering can get disturbed. When a change data capture (CDC) fires because there is a change in data, and another change happens for the same record, two events are fired and both are put into an asynchronous queue — and there is no predictability about which will come out first. That is why out-of-order delivery happens. Duplicate delivery also occurs: some banks send the same message twice, which confuses customers into thinking they paid twice.</p>
   <p><strong>Why out-of-order happens.</strong> Change data capture reads the database's change log and emits one event per change. Two rapid changes to the same record produce two events; in an asynchronous queue with multiple workers, event 2 can be consumed before event 1. The events themselves are fine — their order is not. Streams must handle duplicates (at-least-once delivery) and reordering, exactly as the train-ticket story shows: email, then a verification call, then the SMS, then the balance — the events arrived, but not in the order anyone expected.</p>
 </div>
+<div class="key-concept">
+  <p><strong>Formal Definition — idempotency.</strong> An <em>idempotent</em> consumer is one for which the outcome of processing a message once is identical to the outcome of processing it multiple times. Paired with delivery semantics, it is how a stream handles the duplicates described above:</p>
+  <ul>
+    <li><strong>At-least-once delivery</strong> — a message may be consumed more than once: by several subscribers, or by the same subscriber repeatedly. Duplicates are expected, not exceptional.</li>
+    <li><strong>Exactly-once delivery</strong> — after the subscriber acknowledges the message, it disappears and is not delivered again. In strict terms this is a semantic debate: an asynchronous system cannot truly guarantee it (the classic Two Generals Problem), so treat "exactly-once" as a claim to scrutinize, not assume.</li>
+    <li><strong>The acknowledgment trap</strong> — even under an "exactly-once" claim, a consumer can fully process a message and then fail just before acknowledging it. The message is effectively processed twice; only an idempotent consumer handles that gracefully.</li>
+  </ul>
+  <p><strong>Practical form.</strong> Give each event a stable identifier (an event ID or idempotency key) and make the write idempotent — an upsert, or a check-and-set against a seen-ID store — so a duplicate collapses to a single effect. This is the same reason payment APIs hand clients an idempotency key: a retried request must not create a second charge, and a redelivered event must not create a second ledger row.</p>
+</div>
 <p>Real-world: CDC-based event systems using asynchronous queues can deliver events out of order; banks such as some Indian banks have been observed sending duplicated confirmation messages.</p>
 <h3 id="8.5.5-time-to-live-ttl">8.5.5 Time to Live (TTL)</h3>
 <p>Time to live is one of the very critical parameters. In networking, a network packet — a TCP/IP packet or a UDP datagram — carries a TTL that decides how long the packet may travel, often around 30, 40, or 38 seconds; the network routers decrement it. In streaming, TTL is how long you preserve the event record. An extremely short TTL, milliseconds or seconds, might cause most messages to disappear before processing. A very long TTL may create a backlog, and some intruder — a hacker — may come and mess with your data, and many unprocessed messages result in a long wait time.</p>
@@ -893,6 +925,26 @@
 </table>
 <div class="important-note">
   <p><strong>Why the same names repeat on both sides.</strong> Kafka, JDBC, and object stores appear as sources <em>and</em> destinations because pipelines chain: one pipeline's destination is the next pipeline's source. Data flows from system to system through the same interfaces, which is why a stable contract and stable schema matter at every hop — a change at hop one propagates to all downstream hops.</p>
+</div>
+<div class="example-box">
+  <p><strong>Worked mechanics — what "destination: Snowflake schema warehouse model" actually means.</strong> The source/destination table names the endpoints; the data lands through a staged bulk load, not a row-by-row insert.</p>
+  <p><strong>Step 1 — stage, then validate.</strong> Files are first placed in object storage (an S3 bucket or an internal/external stage), then one command copies them into the target table: <code>COPY INTO analytics.orders FROM @ext_stage/ FILE_FORMAT = (TYPE = CSV) VALIDATION_MODE = RETURN_ERRORS ON_ERROR = SKIP_FILE;</code>.</p>
+  <p>With <code>VALIDATION_MODE = RETURN_ERRORS</code> the command tests the staged files for parsing and conversion errors <em>without</em> loading anything — the warehouse-level twin of the pre-ingestion checks in section 8.8. The file must parse into the declared columns and types before it is admitted.</p>
+  <p><strong>Step 2 — choose the error policy.</strong> <code>ON_ERROR</code> is where "reject, flag, skip" becomes executable:</p>
+  <table>
+    <thead>
+      <tr><th>ON_ERROR policy</th><th>Behavior</th></tr>
+    </thead>
+    <tbody>
+      <tr><td><code>ABORT_STATEMENT</code></td><td>Any bad file aborts the entire load; nothing lands.</td></tr>
+      <tr><td><code>SKIP_FILE</code></td><td>The bad file is skipped; the rest of the batch loads.</td></tr>
+      <tr><td><code>CONTINUE</code></td><td>Good rows load; rejected rows go to an error table for the <code>N - X</code> investigation.</td></tr>
+    </tbody>
+  </table>
+  <p>One bad file need not block the rest of the batch.</p>
+  <p><strong>Step 3 — land incrementally with a staging table and an upsert.</strong> For a differential extract (section 8.5.2), load the new file into a staging table, deduplicate against the target key, then <code>MERGE</code>: matched keys update, unmatched keys insert. A retried load that runs the same <code>MERGE</code> again is idempotent (section 8.5.4) — the second pass updates the same rows instead of duplicating them.</p>
+  <p><strong>Step 4 — reconcile the count.</strong> After loading, query the target for rows inserted and updated and compare with the file's declared count — the <code>N - X</code> investigation from section 8.9 applied at the destination.</p>
+  <p><strong>Sense-check:</strong> every abstract phrase in the source/destination list now has a concrete mechanism — stage → validate → load with an error policy → upsert → audit — and the validation and idempotency ideas from earlier sections reappear as load-time mechanics rather than as new topics.</p>
 </div>
 
 <h2 id="8.7-data-contracts-lineage-and-governance">8.7 Data Contracts, Lineage, and Governance</h2>

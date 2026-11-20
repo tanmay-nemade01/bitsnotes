@@ -646,6 +646,27 @@ row i   :  X X ?              ? = target; left neighbors are fine
 <p>Every variant so far gathers past information through convolutions. Even with the 2D-mask broken into 1D pieces and many layers stacked, the reachable past stays limited unless the network grows very deep — each layer extends reach by only a few pixels. <strong>Self-attention</strong> removes that ceiling.</p>
 <p>Convolution couples each site to a fixed window — a three-by-three or five-by-five mask, a bounded extent of information no matter what the content is. Self-attention, especially in transformer form, lets every position consult every other position through matrix-vector multiplications: each site emits a <em>query</em> ("what am I looking for?"), every other site offers a <em>key</em> ("what do I contain?"), and query-key matches — scaled and passed through a softmax — decide how much of each site's <em>value</em> (its content) flows back. Distance plays no role: pixel 5 can attend to pixel 500 as easily as to its neighbor.</p>
 <p>Applied to an autoregressive model, it wears a mask: <strong>masked attention</strong> zeroes access to the future, enforcing causality — before the softmax over keys, any key sitting at or after the current position is set so it receives zero weight. Masking supplies the order in which information operates — and that order remains a designer's choice, exactly as before. Whatever autoregressive structure you design dictates the masking strategy that guarantees causality.</p>
+
+<div class="key-concept">
+  <p><strong>Formal definition — masked scaled dot-product attention.</strong> Collect the per-pixel features into query, key and value matrices \(Q, K, V\), with key/query dimension \(d_k\). One attention head computes</p>
+  <p>\[ \mathrm{Attention}(Q,K,V) \;=\; \mathrm{softmax}\!\left(\frac{QK^{\top}}{\sqrt{d_k}} + M\right) V \]</p>
+  <p>The three operations, in order:</p>
+  <ol>
+    <li><strong>Score:</strong> \(S = QK^{\top}/\sqrt{d_k}\), so \(S_{ij}\) measures how well query \(i\) matches key \(j\); the division by \(\sqrt{d_k}\) counteracts the growth of dot-product variance with dimension and keeps the softmax out of its saturated, small-gradient regime.</li>
+    <li><strong>Mask:</strong> add \(M_{ij} = 0\) if key \(j\) is permitted for query \(i\), and \(M_{ij} = -\infty\) otherwise. Since \(e^{-\infty}=0\), a forbidden key gets exactly zero weight after the row-wise softmax — causality is enforced <em>inside</em> the normalization, not patched on afterwards.</li>
+    <li><strong>Mix:</strong> multiply the resulting non-negative, row-normalized weights by \(V\); each output is a convex combination of value vectors from permitted positions only.</li>
+  </ol>
+  <p>Under raster-scan order, key \(j\) is permitted iff it precedes query \(i\) in the scan, giving a lower-triangular mask for a 1D sequence and a block-lower-triangular one for an image (an entire earlier row becomes visible at once). Multi-head attention runs this computation in parallel with several learned projections; the same mask applies to every head, so every head stays causal while specializing on different dependencies.</p>
+</div>
+
+<div class="example-box">
+  <p><strong>Worked trace — a future key contributes exactly zero.</strong> Take three positions with scalar keys \(k = [1,\,0,\,-1]\), values \(v = [10,\,20,\,30]\), and a query \(q = 1\) at position 2 (with \(d_k = 1\), so no rescaling).</p>
+  <p>Step 1, raw scores: \(s = qk = [1,\,0,\,-1]\).</p>
+  <p>Step 2, apply the causal mask for a query at position 2: keys 1 and 2 are allowed, key 3 is the future and gets \(-\infty\), so \(s = [1,\,0,\,-\infty]\).</p>
+  <p>Step 3, exponentiate: \([e^{1}, e^{0}, e^{-\infty}] = [2.718,\,1,\,0]\), with normalizer \(Z = 3.718\).</p>
+  <p>Step 4, weights and output: \(a = [0.731,\,0.269,\,0]\), hence \(\mathrm{out} = 0.731(10) + 0.269(20) + 0(30) = \mathbf{12.69}\).</p>
+  <p>Sense check: drop the mask and the same scores give \([0.665,\,0.245,\,0.090]\) and \(\mathrm{out} \approx 14.25\) — the future value 30 leaks in with about 9% weight. The masked version provably cannot leak regardless of what the learned weights are, which is the attention analogue of the hard-zeroed convolution taps in Section 6.2.1.</p>
+</div>
 <p>There is a practical bonus. Encoding a fancy custom ordering as a zero-one kernel pattern for masked convolution is cumbersome — you must redesign the 0/1 layout by hand for each new ordering, and verify no tap leaks. Doing it with attention is much easier, because the choice point is explicit everywhere: for each query site you simply declare which keys it may read — flip one boolean per pair, done.</p>
 <div class="key-concept">
   <p>The transformer toolbox carries over wholesale: multi-head self-attention — several attention computations in parallel, each free to hunt for a different kind of dependency — plus the usual feed-forward blocks from the earlier deep-learning treatment all apply here, with the single standing rule that no future information may leak.</p>

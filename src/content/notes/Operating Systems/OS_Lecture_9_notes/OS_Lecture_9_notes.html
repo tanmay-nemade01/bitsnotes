@@ -377,6 +377,51 @@
   </svg>
   <p class="text-xs text-slate-500 mt-2"><strong>Figure:</strong> The two-disk-drive deadlock as a resource allocation graph — D1 → P1 and D2 → P2 (assignment edges), P1 → D2 and P2 → D1 (request edges): a closed loop of holding and waiting.</p>
 </div>
+<h3 id="9.1.6-reusable-and-consumable-resources">9.1.6 Reusable and Consumable Resources</h3>
+<div class="key-concept">
+  <p><strong>Two categories of resources.</strong> Every example so far has involved a <em>reusable</em> resource: one that can be safely used by only one process at a time and is <em>not depleted</em> by that use. A process obtains a unit, later releases it, and another process reuses it — processors, I/O channels, main and secondary memory, devices, and data structures such as files, databases, and semaphores. A <em>consumable</em> resource is one that can be created (produced) and destroyed (consumed): there is typically no fixed limit on its count, and once a consuming process acquires it, it ceases to exist — interrupts, signals, messages, and information in I/O buffers. The distinction matters because the "hold a resource while waiting" recipe of Section 9.1.1 assumes a reusable resource, whereas a deadlock around consumable resources is a cycle of blocked receives rather than a cycle of held devices.</p>
+  <table>
+    <thead>
+      <tr>
+        <th>Property</th>
+        <th>Reusable resource</th>
+        <th>Consumable resource</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>Lifetime</td>
+        <td>Acquired, used, then released intact for reuse</td>
+        <td>Produced by one process, consumed (destroyed) by another</td>
+      </tr>
+      <tr>
+        <td>Count</td>
+        <td>Fixed number of instances; exhaustion causes waiting</td>
+        <td>No fixed limit in principle; an unblocked producer may create more</td>
+      </tr>
+      <tr>
+        <td>Examples</td>
+        <td>CPU, I/O channels, memory, files, tape drives, semaphores</td>
+        <td>Interrupts, signals, messages, data in I/O buffers</td>
+      </tr>
+      <tr>
+        <td>Typical deadlock shape</td>
+        <td>Hold-and-wait over non-shareable instances (the two-disk-drive cycle)</td>
+        <td>Two processes blocked in <code>receive</code>, each awaiting a message the other would send</td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+<div class="example-box">
+  <p><strong>Worked trace — a deadlock over consumable resources.</strong> P and Q communicate with blocking receives: P executes <code>receive(Q)</code> before it will <code>send(Q, m<sub>P</sub>)</code>, and Q executes <code>receive(P)</code> before it will <code>send(P, m<sub>Q</sub>)</code>.</p>
+  <ol>
+    <li>P reaches <code>receive(Q)</code>: no message from Q is pending, so P blocks. P holds no reusable resource at all.</li>
+    <li>Q reaches <code>receive(P)</code>: no message from P is pending, so Q blocks as well.</li>
+    <li>Neither process ever reaches its <code>send</code>, so the message the other is waiting for is never produced. Both waits are permanent.</li>
+  </ol>
+  <p>This is why the general definition in Section 9.1.1 speaks of waiting for an event that only another blocked process can trigger — the event need not be the release of a device. Here the withheld resource is a message that would cease to exist once received.</p>
+  <p><em>Sense-check:</em> the ring exists only because both receives block. If <code>receive</code> were non-blocking, or carried a timeout, one process would fall through to its <code>send</code>, produce the message, and unblock the other — the deadlock dissolves without preempting any device.</p>
+</div>
 <div class="key-takeaway">
   <p><strong>Recap + bridge.</strong> A deadlock is a set of processes, each holding a resource and waiting to acquire a resource held by another member of the set — the "holding and waiting" pair is the heart of the topic, and the traffic jam is its everyday face. Next we ask: what exactly has to be true for such a circle to form? The answer is the four necessary conditions of a deadlock.</p>
 </div>
@@ -702,6 +747,49 @@
     <li><strong>Thinking ignoring means "no code runs".</strong> Ignoring does not remove the deadlock risk — it pushes it to application developers, who must use timeouts, lock ordering, or transactions to survive.</li>
     <li><strong>Assuming detection is free.</strong> Detection-and-recovery pays a price: the detection scans themselves cost time, and recovery (aborting processes, rolling back transactions) can destroy work done since the deadlock formed.</li>
   </ul>
+</div>
+<h3 id="9.4.3-an-integrated-deadlock-strategy">9.4.3 An Integrated Deadlock Strategy</h3>
+<div class="key-concept">
+  <p><strong>Strategy chosen per resource class.</strong> Prevention, avoidance, and detection-and-recovery each have strengths and weaknesses, so a real system need not commit to a single one. The integrated approach works in three steps: (1) group the system's resources into a number of <em>resource classes</em>; (2) apply the linear resource-ordering rule of Section 9.5.4 to prevent circular wait <em>between</em> classes; (3) within each class, use the algorithm most appropriate to that class.</p>
+  <table>
+    <thead>
+      <tr>
+        <th>Resource class</th>
+        <th>Examples</th>
+        <th>Strategy within the class</th>
+        <th>Why it fits</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>Swappable space</td>
+        <td>Blocks of secondary storage used for swapping</td>
+        <td>Prevention by requesting all needed space up front; avoidance is also possible</td>
+        <td>The maximum storage requirement is often known in advance</td>
+      </tr>
+      <tr>
+        <td>Process resources</td>
+        <td>Assignable devices (tape drives), files</td>
+        <td>Avoidance using declared maximums; ordering within the class is also possible</td>
+        <td>Processes can reasonably declare these needs ahead of time</td>
+      </tr>
+      <tr>
+        <td>Main memory</td>
+        <td>Pages or segments assigned to processes</td>
+        <td>Prevention by preemption</td>
+        <td>A preempted process is simply swapped out, freeing space and breaking the wait</td>
+      </tr>
+      <tr>
+        <td>Internal resources</td>
+        <td>I/O channels</td>
+        <td>Prevention by resource ordering</td>
+        <td>Few, stable instances make a fixed rank easy to maintain</td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+<div class="key-takeaway">
+  <p><strong>Takeaway — pay each strategy's price only where it is worth paying.</strong> Ordering between classes kills the cross-class circular wait at its source (Section 9.5.4), while the per-class choice avoids forcing one mechanism onto every resource: main memory is preemptable, so preemption is cheap there; process resources have declareable maximums, so avoidance is affordable; internal resources are few enough to order. This is the practical synthesis of Sections 9.4–9.6 — a system can be safe without being conservative everywhere.</p>
 </div>
 <div class="key-takeaway">
   <p><strong>Recap + bridge.</strong> There are three ways to handle a deadlock: prevent it (make it impossible), detect it and recover, or ignore it — and prevention and avoidance differ in the a priori information they need. Next we examine prevention in detail: how each of the four conditions can be attacked, and what the attack costs.</p>

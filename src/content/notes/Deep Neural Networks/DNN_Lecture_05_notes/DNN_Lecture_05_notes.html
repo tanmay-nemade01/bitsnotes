@@ -810,6 +810,42 @@ z &= \log\left(\frac{\hat{y}}{1 - \hat{y}}\right) \quad &\text{(take natural log
     </ol>
     <p>MSE fails both requirements for classification. It is not the most natural convex form for binary targets. And it penalizes all errors roughly proportionally to squared distance. It does not exponentially punish confidence mistakes.</p>
   </div>
+
+  <div class="key-concept">
+    <p><strong>Formal Foundation — Why cross-entropy and not classification error?</strong> The metric we actually care about &mdash; the 0&ndash;1 (misclassification) loss &mdash; cannot be optimized directly by gradient descent. For one instance it is \(L_{0/1} = \mathbb{1}[\hat{y} \neq y]\). This function is piecewise constant: its derivative is \(0\) almost everywhere and undefined at the threshold, so gradient descent receives no usable direction from it.</p>
+    <p>Learning is usually cast as <em>empirical risk minimization</em> &mdash; minimizing the average loss over the training set:</p>
+    <div class="equation">
+      \[J(\theta) = \frac{1}{N}\sum_{i=1}^{N} L\bigl(f(\mathbf{x}^{(i)};\theta),\, y^{(i)}\bigr)\]
+    </div>
+    <p>Substituting \(L_{0/1}\) gives a non-differentiable objective, and exactly minimizing <em>expected</em> 0&ndash;1 loss is intractable (exponential in the input dimension) even for a linear classifier. The remedy is a <em>surrogate loss</em>: a smooth, differentiable proxy that is optimized in place of the true objective.</p>
+    <table>
+      <thead>
+        <tr>
+          <th>Property</th>
+          <th>0&ndash;1 loss</th>
+          <th>Negative log-likelihood (cross-entropy)</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>Derivative w.r.t. scores</td>
+          <td>Zero / undefined almost everywhere</td>
+          <td>Well defined: \(\hat{y} - y\)</td>
+        </tr>
+        <tr>
+          <td>Optimization</td>
+          <td>Intractable in expectation</td>
+          <td>Convex for a linear model; gradient descent works</td>
+        </tr>
+        <tr>
+          <td>Confidence information</td>
+          <td>Discarded (right / wrong only)</td>
+          <td>Retained &mdash; keeps improving after training error reaches zero</td>
+        </tr>
+      </tbody>
+    </table>
+    <p>Binary cross-entropy is precisely the negative log-likelihood of the Bernoulli model \(P(y=1\mid\mathbf{x})=\hat{y}\). Optimizing it keeps pushing the classes apart even after every training label is already correct, which is why test-set 0&ndash;1 error often keeps falling long after training-set 0&ndash;1 error has hit zero.</p>
+  </div>
   <h3 class="subsection-title">5.6.2 The Two Components</h3>
   <p>Binary classification has two ways to be wrong:</p>
   <ol>
@@ -1270,6 +1306,43 @@ w_1^{\text{new}} &= -0.25 - 0.5 \cdot (-2.1933) = -0.25 + 1.0966 = 0.8466
       <li><strong>F1 score</strong> is the go-to single-number summary for imbalanced datasets. It is experimentally proven to give reasonably informed results even when one class dominates.</li>
     </ul>
   </div>
+
+  <div class="important-note">
+    <p><strong>Beyond a single F1 &mdash; threshold curves and abstention.</strong> Precision, recall, and F1 are computed at one fixed decision threshold (default \(0.5\)). Because the classifier outputs a score \(\hat{y}=P(y=1\mid\mathbf{x})\), lowering the threshold admits more positives: recall rises while precision typically falls. Plotting precision against recall as the threshold sweeps from \(1\) down to \(0\) gives the <em>precision&ndash;recall (PR) curve</em>; the total area beneath it is another common single-number summary.</p>
+    <table>
+      <thead>
+        <tr>
+          <th>Strategy</th>
+          <th>What it optimizes</th>
+          <th>When it is appropriate</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>Accuracy / error rate</td>
+          <td>Overall fraction correct</td>
+          <td>Roughly balanced classes, symmetric mistake costs</td>
+        </tr>
+        <tr>
+          <td>Cost-weighted error</td>
+          <td>\(c_{FP}\cdot FP + c_{FN}\cdot FN\)</td>
+          <td>Asymmetric costs &mdash; blocking a legitimate email is costlier than letting spam through</td>
+        </tr>
+        <tr>
+          <td>PR curve / area under PR</td>
+          <td>Precision&ndash;recall trade-off across thresholds</td>
+          <td>Rare positive class; ranking quality matters</td>
+        </tr>
+        <tr>
+          <td>Coverage with abstention</td>
+          <td>Accuracy on answered cases &times; fraction answered</td>
+          <td>A human operator can take over low-confidence cases</td>
+        </tr>
+      </tbody>
+    </table>
+    <p><strong>Coverage.</strong> In some deployments the model may refuse to decide when its confidence is low. <em>Coverage</em> is the fraction of examples for which the system produces a response. Coverage and accuracy trade off directly: refusing every input yields \(100\%\) accuracy at \(0\%\) coverage. A production target is therefore stated as both &mdash; for example, human-level accuracy while maintaining \(95\%\) coverage &mdash; rather than as accuracy alone.</p>
+    <p><strong>Takeaway:</strong> First choose the metric that reflects the real cost of mistakes, then tune the threshold or abstention rule on a validation set. A single accuracy number cannot express this trade-off.</p>
+  </div>
   <h3 class="subsection-title">5.8.9 Student Questions and Answers</h3>
   <div class="important-note">
     <p><strong>Q:</strong> The terminology of positive/negative — is it arbitrary?</p>
@@ -1426,6 +1499,34 @@ w_1^{\text{new}} &= -0.25 - 0.5 \cdot (-2.1933) = -0.25 + 1.0966 = 0.8466
       \[\nabla_W L = \frac{1}{B} \cdot X_{\text{batch}}^\top \cdot (\hat{Y} - Y)\]
     </div>
     <p>where \(X_{\text{batch}}\) is \(B \times d\), \(\hat{Y}\) is \(B \times K\) (softmax probabilities), and \(Y\) is \(B \times K\) (one-hot labels).</p>
+  </div>
+
+  <div class="key-concept">
+    <p><strong>Derivation — the softmax cross-entropy gradient.</strong> This section stated that \(\partial L / \partial z_k = \hat{y}_k - y_k\). Here is the missing algebra. Write the raw scores (logits) as \(o_1, \dots, o_K\) with \(\hat{y}_k = e^{o_k} / \sum_{j=1}^{K} e^{o_j}\). For a one-hot label the loss is \(L = -\sum_{k=1}^{K} y_k \log \hat{y}_k\). Substitute the softmax and split the logarithm:</p>
+    <div class="equation">
+      \[
+      \begin{aligned}
+      L &= -\sum_{k=1}^{K} y_k \log\left(\frac{e^{o_k}}{\sum_{j=1}^{K} e^{o_j}}\right) \\
+        &= \log\left(\sum_{j=1}^{K} e^{o_j}\right) - \sum_{k=1}^{K} y_k o_k
+      \end{aligned}
+      \]
+    </div>
+    <p>The last step uses \(\sum_{k} y_k = 1\), true for a one-hot (indeed any probability) label. Differentiate with respect to a single logit \(o_m\):</p>
+    <div class="equation">
+      \[
+      \begin{aligned}
+      \frac{\partial L}{\partial o_m}
+        &= \frac{e^{o_m}}{\sum_{j=1}^{K} e^{o_j}} - y_m \\
+        &= \hat{y}_m - y_m
+      \end{aligned}
+      \]
+    </div>
+    <p><strong>Why it matters.</strong> The \(\log\) cancels the \(\exp\) of the softmax exactly, so the error signal for every output neuron is simply predicted probability minus target indicator &mdash; structurally identical to the binary result derived in Section 5.6.4. This is why the batch gradient \(\nabla_W L = \frac{1}{B} X^\top (\hat{Y} - Y)\) needs no extra softmax-derivative factor.</p>
+    <p><strong>Numerical form.</strong> Evaluating \(\log\sum_j e^{o_j}\) directly can overflow for large logits. The equivalent shifted form uses \(c = \max_j o_j\):</p>
+    <div class="equation">
+      \[\log\sum_{j=1}^{K} e^{o_j} = c + \log\sum_{j=1}^{K} e^{o_j - c}\]
+    </div>
+    <p>This keeps every exponentiated value at most \(1\). It is the same max-subtraction trick noted in Section 5.9.6, now applied to the loss rather than to the probabilities.</p>
   </div>
   <h3 class="subsection-title">5.9.9 Student Questions and Answers</h3>
   <div class="important-note">

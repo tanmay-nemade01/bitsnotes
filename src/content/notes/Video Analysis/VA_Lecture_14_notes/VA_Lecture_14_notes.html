@@ -297,6 +297,51 @@
         <li>\(d\) is the total number of latent dimensions.</li>
       </ul>
       <p>When \(\mu_j = 0\) and \(\sigma_j^2 = 1\) for all dimensions, the term inside the parenthesis becomes \(1 + 0 - 0 - 1 = 0\), so \(\mathcal{L}_{\text{KL}} = 0\). If the encoder outputs extreme means or collapses variances toward zero, the penalty grows rapidly.</p>
+
+      <div class="important-note">
+        <p><strong>Discrete Latent Codes — Vector-Quantized VAE (VQ-VAE):</strong> The Gaussian VAE of this section constrains the posterior by pushing \(q_\theta(z \mid x)\) toward \(\mathcal{N}(0, I)\) with a KL penalty. An alternative way to constrain the latent space, widely used in video representation learning, is to make the code <em>discrete</em>: the encoder output \(z_e(x) \in \mathbb{R}^d\) is snapped to the nearest entry \(e_k\) of a learned codebook \(\mathcal{E} = \{e_1, \dots, e_K\} \subset \mathbb{R}^d\):</p>
+        <p>\[ k = \arg\min_{j \in \{1, \dots, K\}} \| z_e(x) - e_j \|_2, \qquad z_q(x) = e_k \]</p>
+        <p><strong>Training mechanics:</strong> The nearest-code lookup has no derivative, so the straight-through estimator copies the gradient from \(z_q\) back to \(z_e\). A codebook commitment term is added to the reconstruction loss:</p>
+        <p>\[ \mathcal{L} = \mathcal{L}_{\text{rec}} + \| \operatorname{sg}[z_e(x)] - e \|_2^2 + \beta \, \| z_e(x) - \operatorname{sg}[e] \|_2^2 \]</p>
+        <p>where \(\operatorname{sg}[\cdot]\) denotes the stop-gradient operator and \(\beta\) weights the commitment loss. Because the code indices are discrete, an autoregressive prior can be learned over them instead of assuming a static Gaussian, and the model sidesteps the posterior-collapse failure mode described earlier without weakening the reconstruction term.</p>
+        <table>
+          <thead>
+            <tr>
+              <th>Property</th>
+              <th>Gaussian VAE (this section)</th>
+              <th>VQ-VAE (discrete alternative)</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>Latent representation</td>
+              <td>Continuous mean \(\mu\) and variance \(\sigma^2\)</td>
+              <td>Index \(k\) into a learned codebook of \(K\) vectors</td>
+            </tr>
+            <tr>
+              <td>Prior</td>
+              <td>Fixed standard Gaussian \(\mathcal{N}(0, I)\)</td>
+              <td>Learned autoregressive prior over discrete codes</td>
+            </tr>
+            <tr>
+              <td>Gradient path</td>
+              <td>Reparameterization \(z = \mu + \sigma \odot \epsilon\)</td>
+              <td>Straight-through estimator through nearest-code lookup</td>
+            </tr>
+            <tr>
+              <td>Failure mode</td>
+              <td>Posterior collapse when \(\beta\) is large</td>
+              <td>Collapse avoided; under-use tracked by codebook perplexity</td>
+            </tr>
+            <tr>
+              <td>Anomaly signal</td>
+              <td>Reconstruction error + KL distance from the prior</td>
+              <td>Reconstruction error + quantization distance / rare-code frequency</td>
+            </tr>
+          </tbody>
+        </table>
+        <p><strong>Relevance to anomaly detection:</strong> A frame that falls outside the learned codebook either reconstructs poorly or selects rarely visited codes, supplying a complementary discrete anomaly signal to the continuous reconstruction-plus-KL score derived above.</p>
+      </div>
       <h3 id="14.1.2" class="subsection-title">14.1.2 Worked Examples</h3>
       <div class="example-box">
         <p><strong>Worked Example — Smile Manifold Anomaly Scoring:</strong> Consider a video anomaly detector trained exclusively on videos of people displaying normal smiles. The latent dimension is \(d = 2\), the balancing weight is \(\beta = 1.0\), and the decision threshold is \(\tau = 0.10\).</p>
@@ -1262,6 +1307,40 @@
         <li><strong>Soft Transitions (Gradual Transitions):</strong> Optical effects such as fades, dissolves, and wipes that unfold over 10 to 30 frames.</li>
       </ul>
       <p>Shot boundaries are identified by monitoring inter-frame feature discrepancies. The standard technique computes the normalized color histogram difference between consecutive frames: \[ d_{\text{hist}}(f_t, f_{t+1}) = \frac{1}{2}\sum_{b=1}^B |H_t(b) - H_{t+1}(b)| \] where \(H_t(b)\) is the normalized color histogram of frame \(t\) across \(B\) bins (\(\sum_b H_t(b) = 1\)). When \(d_{\text{hist}}(f_t, f_{t+1})\) exceeds an empirical boundary threshold \(\tau_{\text{shot}}\), a hard cut is flagged. For gradual dissolves, sliding-window difference metrics or edge change ratios (ECR) detect sustained, low-magnitude variations. Trivial micro-shots (under 15 frames) are discarded, and near-identical consecutive shots are merged.</p>
+
+      <div class="important-note">
+        <p><strong>Compressed-Domain Shortcut — DC Images:</strong> The histogram cutoff above assumes every decoded frame is available, which forces a full bitstream decode. A cheaper route builds a <em>DC image</em> directly from compressed coefficients: for each \(8 \times 8\) intra-coded block, the DC coefficient of the 2D DCT equals one quarter of the sum of the 64 pixel intensities, so one DC image pixel is the block mean:</p>
+        <p>\[ \bar{I}_{8\times8} = \frac{1}{64}\sum_{x=0}^{7}\sum_{y=0}^{7} I(x,y) = \frac{1}{4}\,C(0,0) \]</p>
+        <p>Retaining only \(C(0,0)\) per block produces a thumbnail at \(1/8\) height and \(1/8\) width — \(1/64\) of the pixels — while preserving most of the scene layout. Shot boundaries are then found with the same histogram statistic applied to consecutive DC images:</p>
+        <p>\[ d_{\text{DC}}(t) = \frac{1}{2}\sum_{b=1}^{B} \left| H_t^{\text{DC}}(b) - H_{t+1}^{\text{DC}}(b) \right| \]</p>
+        <p><strong>Twin-comparison rule for gradual transitions:</strong> A single cutoff cannot separate a hard cut from the slow build of a dissolve or wipe. Twin comparison uses two thresholds: \(\tau_{\text{low}}\) flags the onset of a gradual transition and \(\tau_{\text{high}}\) marks its completion, so the span between them is treated as one soft transition instead of many micro-shots:</p>
+        <p>\[ \text{state}(t) = \begin{cases} \text{abrupt cut} & d_{\text{DC}}(t) > \tau_{\text{high}} \\ \text{gradual onset} & \tau_{\text{low}} < d_{\text{DC}}(t) \le \tau_{\text{high}} \\ \text{stable} & d_{\text{DC}}(t) \le \tau_{\text{low}} \end{cases} \]</p>
+        <p>Codec dependence is the price of the shortcut: later standards such as H.264/AVC use multiple reference pictures and deblocking filters, so DC coefficients alone become less reliable and detectors switch to intra-partitioning maps read from the same compressed stream.</p>
+        <table>
+          <thead>
+            <tr>
+              <th>Method</th>
+              <th>Samples per frame</th>
+              <th>Full frame decode</th>
+              <th>Gradual transitions</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>Full-frame histogram difference (above)</td>
+              <td>\(H \times W\) pixels</td>
+              <td>Required</td>
+              <td>Sliding window or edge-change ratio</td>
+            </tr>
+            <tr>
+              <td>DC-image histogram difference</td>
+              <td>\(H/8 \times W/8\) pixels</td>
+              <td>Not required; only DC coefficients extracted</td>
+              <td>Twin-comparison dual thresholds</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
       <div class="important-note">
         <p><strong>Analogy — Photographing a Tourist Landmark (The Flower and Friend):</strong> Imagine a traveler visiting an alpine botanical garden.</p>
         <ul>

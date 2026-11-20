@@ -896,6 +896,39 @@ SELECT REGEXP_REPLACE(source_text, 'pattern', 'replacement', 'flags');</code></p
   <p><strong>A:</strong> Because two pieces were missing. The replacement text was empty as planned, but the pattern named only part of the target or the run lacked <code>g</code>. With <code>g</code> absent, only the first hit changes. With braces absent, only one digit changes. Add the right class plus <code>g</code> plus the right count, and the full run clears in one pass.</p>
 </div>
 
+<h3 id="28.7.6-back-references-in-patterns-and-the-apparent-minus-valid-method">28.7.6 Back-References in Patterns and the Apparent-Minus-Valid Method</h3>
+<p>So far <code>\1</code> has appeared only on the <em>replacement</em> side of <code>REGEXP_REPLACE</code>. PostgreSQL also accepts a back-reference <em>inside the pattern</em>: <code>\n</code> matches exactly the text that an earlier numbered capture group already matched. A replacement back-reference replays captured text into the output; a pattern back-reference instead forces two pieces of the input to be identical.</p>
+<div class="key-concept">
+  <p><strong>Formal Definition:</strong> A back-reference <code>\n</code> (with <code>n</code> from 1 to 9) matches the same string previously matched by the <code>n</code>-th parenthesized subexpression. That subexpression must fully precede the reference, and groups are numbered by the order of their opening parentheses. The pattern <code>([bc])\1</code> therefore matches <code>bb</code> and <code>cc</code> but not <code>bc</code> or <code>cb</code>. The same <code>\1</code> written in a <em>replacement</em> inserts the captured text, which is the name-swap use seen earlier — identical notation, two different sides of the call.</p>
+</div>
+<p>That "make the repetition identical" property turns a back-reference into a compact data-quality test. Define two patterns: a broad <em>apparent</em> pattern that admits every candidate shape, and a strict <em>valid</em> pattern that admits only well-formed candidates. Anything matching the first but not the second is malformed.</p>
+<div class="example-box">
+  <p><strong>Worked Trace — inconsistent phone separators.</strong> A comment column holds free text such as <code>989-387-4321</code>, <code>989-387.5359</code>, and <code>989 313-5351</code>. A number is acceptable only when both separators are the same character.</p>
+  <pre><code>-- Pattern A (apparent): 3 digits, a separator, 3 digits, a separator, 4 digits
+-- Pattern B (valid):    the same separator must repeat, enforced by \1
+SELECT note_text
+FROM employee_comment
+WHERE note_text ~ '[0-9]{3}[-. ][0-9]{3}[-. ][0-9]{4}'
+  AND regexp_replace(note_text,
+        '[0-9]{3}([-. ])[0-9]{3}\1[0-9]{4}', '***', 'g')
+      ~ '[0-9]{3}[-. ][0-9]{3}[-. ][0-9]{4}';</code></pre>
+  <p>Step through it. Pattern A admits <code>989-387.5359</code> (dash then dot), so the row survives the first test. Pattern B captures the first separator in <code>([-. ])</code> and <code>\1</code> demands that exact character again; dash then dot fails, so <code>REGEXP_REPLACE</code> leaves the string untouched and the second test still succeeds — the row is flagged. A well-formed <code>989-387-4321</code> is erased to <code>***</code>, so it no longer matches and is not flagged.</p>
+  <p><strong>Result:</strong> rows with mixed separators are reported while rows holding only correctly formatted numbers drop out. The <code>g</code> flag matters here: a cell holding one good number and one bad one must have <em>all</em> good numbers stripped before the second scan, or the good one would mask the bad one.</p>
+</div>
+<table>
+  <thead>
+    <tr><th>Role</th><th>Pattern</th><th>What it establishes</th></tr>
+  </thead>
+  <tbody>
+    <tr><td>Apparent set</td><td><code>[0-9]{3}[-. ][0-9]{3}[-. ][0-9]{4}</code></td><td>Defines the candidate universe; admits mixed separators</td></tr>
+    <tr><td>Valid set</td><td><code>[0-9]{3}([-. ])[0-9]{3}\1[0-9]{4}</code></td><td><code>\1</code> forces both separators to be identical</td></tr>
+    <tr><td>Flagged set</td><td>apparent minus valid</td><td>Candidates left after valid ones are replaced</td></tr>
+  </tbody>
+</table>
+<div class="key-takeaway">
+  <p><strong>Takeaway:</strong> A back-reference makes a pattern self-consistent — it is the tool for "this piece must equal that piece". Pair a broad apparent pattern with a strict back-referenced pattern, subtract the well-formed matches with <code>REGEXP_REPLACE(..., 'g')</code>, and what remains is the malformed data. Oracle and Snowflake spell the Boolean test <code>REGEXP_LIKE</code>; PostgreSQL uses the tilde operator, but the back-reference and the subtraction strategy carry over unchanged.</p>
+</div>
+
 <h2 id="28.8-regexp-split-to-table-function">28.8 REGEXP_SPLIT_TO_TABLE Function</h2>
 <h3 id="28.8.1-splitting-a-delimited-string-into-rows">28.8.1 Splitting a Delimited String into Rows</h3>
 <p>A <em>REGEXP_SPLIT_TO_TABLE</em> — a function that cuts a string on each regex hit and returns each piece as its own row — is written:</p>

@@ -404,9 +404,91 @@ RDD-B  →  filter(x =&gt; x &gt; 5)  →  RDD-C</code></pre>
   <p><strong>Trace of laziness:</strong> suppose the program says <code>rddB = rddA.map(f)</code> and then <code>rddC = rddB.filter(g)</code>, and nothing else. At that moment <em>no data has moved</em> — the engine has only recorded two planned steps in the lineage graph. Only when an action arrives — say <code>rddC.count()</code> or <code>rddC.saveAsTextFile("out")</code> — does the engine walk the graph, run <code>f</code> on every element of <code>rddA</code>, run <code>g</code> on the results, and produce the answer. The action is the trigger that turns the recipe into a cooked dish. This is why lazy evaluation can reorder and merge work: the engine sees the whole recipe before lighting the stove.</p>
 </div>
 <p>Persistence deserves one more line because it is the feature that makes <em>iteration</em> fast. If a job will reuse an intermediate RDD several times, a program can cache it — marking it so that after the first computation, its partitions stay in memory instead of being recomputed from the lineage every time. Recomputing a ten-step lineage for each reuse would be wasteful; caching turns the first computation into the only one. The same choice drives interactive queries: cache the loaded dataset once, and every query runs against memory.</p>
+
+<div class="key-concept">
+  <p><strong>Formal Definition — the two operation categories:</strong> Every RDD operation belongs to one of two classes. A <em>transformation</em> creates a new RDD from an existing one and is <em>lazy</em>: it only records the function in the lineage graph and computes nothing until an action runs. An <em>action</em> triggers a job on the RDD and returns a non-RDD value to the driver program (or writes to external storage), which is what finally forces evaluation.</p>
+  <p><strong>Return-type rule:</strong> inspect what the call returns. If the result is an <code>RDD[...]</code>, the call is a transformation; if it is any other type, it is an action. This is the reliable way to classify an unfamiliar operator from the API documentation.</p>
+  <table>
+    <thead>
+      <tr>
+        <th>Property</th>
+        <th>Transformation</th>
+        <th>Action</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>Return type</td>
+        <td><code>RDD</code></td>
+        <td>Value (<code>Int</code>, <code>Array</code>, …) or a write</td>
+      </tr>
+      <tr>
+        <td>When it computes</td>
+        <td>Lazily — only recorded in lineage</td>
+        <td>Immediately — launches a job</td>
+      </tr>
+      <tr>
+        <td>Effect on lineage</td>
+        <td>Adds a node to the graph</td>
+        <td>Traverses the graph; adds nothing</td>
+      </tr>
+      <tr>
+        <td>Representative operators</td>
+        <td><code>map</code>, <code>flatMap</code>, <code>filter</code>, <code>union</code>, <code>distinct</code>, <code>sample</code>, <code>groupByKey</code>, <code>reduceByKey</code>, <code>join</code>, <code>coalesce</code></td>
+        <td><code>reduce</code>, <code>collect</code>, <code>count</code>, <code>first</code>, <code>take</code>, <code>fold</code>, <code>aggregate</code>, <code>saveAsTextFile</code></td>
+      </tr>
+    </tbody>
+  </table>
+  <pre><code>val lines  = sc.textFile(path)              // base RDD from external data
+val words  = lines.flatMap(_.split(" "))     // RDD → transformation (lazy)
+val pairs  = words.map(w =&gt; (w, 1))          // RDD → transformation (lazy)
+val counts = pairs.reduceByKey(_ + _)        // RDD → transformation (lazy)
+counts.collect()                             // Array → ACTION: the job runs now</code></pre>
+  <p>Operators on key-value RDDs such as <code>reduceByKey</code> and <code>join</code> live in a separate API view (<code>PairRDDFunctions</code> in Scala, <code>JavaPairRDD</code> in Java), automatically attached once the elements are tuples — but they obey the same transformation/action rule.</p>
+</div>
 <h3 id="7.4.7-the-limitations-of-rdds">7.4.7 The Limitations of RDDs</h3>
 <p>For structured data, RDDs do not exploit any optimizer, and in that case it is better to use a DataFrame or a Dataset. RDDs were typically for unstructured data, where you do not put a structure on it; with a DataFrame you try to put a structure on it; with a Dataset you keep type checking at compile time, which is why it is the safer thing. RDDs are in-memory JVM objects, they are garbage collected, and they carry serialization and deserialization overheads. Also, since data that cannot fit in memory is pushed onto the disk and that slows performance, machines need to have enough memory given the data size and the kind of analysis we are going to do. These are the limitations, but in comparison to Hadoop there are advantages as well.</p>
 <p>The first limitation is a design trade-off, not a bug. RDDs deliberately skip schema and query optimization, so for tidy, structured data they leave speed on the table — the engine cannot reorder and prune work it knows nothing about. The second limitation is physical: an RDD's objects live in the JVM heap, so they are created, garbage collected, and serialized, and all of that costs CPU. The third limitation is the one from section 7.3.6 in reverse: the whole design assumes data fits in memory, so clusters must be sized to the data, or performance pays for the spill.</p>
+
+<div class="important-note">
+  <p><strong>Engineering detail — two serialization axes:</strong> the overhead named above splits into <em>data</em> serialization (shuffling records between executors, and writing cached partitions) and <em>function/closure</em> serialization (shipping the code of each task to the executor). The serializer choice governs the first axis; the closure rules govern the second.</p>
+  <table>
+    <thead>
+      <tr>
+        <th>Aspect</th>
+        <th>Java serialization (default)</th>
+        <th>Kryo serialization</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>Mechanism</td>
+        <td><code>ObjectOutputStream</code>; classes implement <code>Serializable</code> / <code>Externalizable</code></td>
+        <td>Kryo library; no interface required, but registration recommended</td>
+      </tr>
+      <tr>
+        <td>Speed / size</td>
+        <td>Flexible but often slow, with large byte formats</td>
+        <td>Typically ~10× faster and more compact</td>
+      </tr>
+      <tr>
+        <td>Where it applies</td>
+        <td>Network transfers between nodes and serialized RDD storage</td>
+        <td>Same paths; since Spark 2.0 also used internally for simple-type shuffles</td>
+      </tr>
+      <tr>
+        <td>Cost of skipping registration</td>
+        <td>—</td>
+        <td>Full class name is stored with each object, which is wasteful</td>
+      </tr>
+    </tbody>
+  </table>
+  <pre><code>val conf = new SparkConf().setAppName("app").setMaster(master)
+conf.set("spark.serializer", "org.apache.spark.serializer.KryoSerializer")
+conf.registerKryoClasses(Array(classOf[WeatherRecord]))
+val sc = new SparkContext(conf)</code></pre>
+  <p><strong>Function axis:</strong> user functions are serialized by Spark even in local mode, so a non-serializable closure is caught early in development — but an accidental reference from a closure to a non-serializable object (or capturing a whole outer object just to reach one field) fails a task on the cluster. The fix is to copy the needed field into a local variable before the closure, or to use a broadcast variable for a shared read-only value.</p>
+</div>
 <div class="warning-box">
   <p><strong>Pitfalls:</strong></p>
   <ul>
@@ -415,6 +497,36 @@ RDD-B  →  filter(x =&gt; x &gt; 5)  →  RDD-C</code></pre>
     <li>Forgetting the memory budget. The in-memory promise has a precondition: the cluster's RAM must hold the working set, or spillover quietly erodes the speed advantage.</li>
   </ul>
 </div>
+
+<h3 id="7.4.8-shared-variables-broadcast-and-accumulators">7.4.8 Shared Variables: Broadcast Variables and Accumulators</h3>
+<p>An RDD is not the only piece of state a Spark program shares across the cluster. A function shipped to remote workers normally receives its own serialized copy of every variable it references, so a large read-only lookup table would be copied once per task, and updates made on a worker never propagate back to the driver. To cover the two common patterns this default cannot serve, Spark provides two limited <em>shared variables</em>: broadcast variables and accumulators.</p>
+<div class="important-note">
+  <p><strong>Mechanism — broadcast variable:</strong> <code>sc.broadcast(v)</code> wraps a value so it is serialized once and cached in the memory of each executor rather than resent with every task; tasks read it through <code>value</code>. It suits a read-only lookup table used by many tasks — the same role as MapReduce's distributed cache, but held in memory. Communication is strictly one-way: a worker cannot push a change back into a broadcast variable.</p>
+</div>
+<div class="important-note">
+  <p><strong>Mechanism — accumulator:</strong> <code>sc.accumulator(0)</code> creates a counter that tasks may only <em>add</em> to. Because addition is associative and commutative, the partial totals computed in parallel combine safely; workers cannot read the running value, and only the driver reads the final total through <code>value</code> after the job. This is the safe escape hatch for the side-counting that RDD immutability otherwise forbids — for example, tallying records that failed a filter while the main transformation continues.</p>
+</div>
+<table>
+  <thead>
+    <tr>
+      <th>Property</th>
+      <th>Broadcast variable</th>
+      <th>Accumulator</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td>Flow</td>
+      <td>Driver → executors; cached read-only</td>
+      <td>Executors → driver; add-only</td>
+    </tr>
+    <tr>
+      <td>Use</td>
+      <td>Share a large lookup table once</td>
+      <td>Counters and sums read after the job</td>
+    </tr>
+  </tbody>
+</table>
 <div class="key-takeaway">
   <p><strong>Recap:</strong> The RDD is Spark's fundamental data structure — a distributed, immutable, partitionable collection of objects. It keeps data in memory, evaluates lazily until an action triggers, rebuilds lost partitions through a recorded lineage graph, and processes data in coarse-grained whole-dataset operations. Structured work is better served by DataFrame (schema) and Dataset (type safety), but every abstraction rests on the RDD foundation.</p>
 </div>

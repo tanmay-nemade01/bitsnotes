@@ -358,6 +358,23 @@ ADD COLUMN email VARCHAR(100) UNIQUE;</code></pre>
   <p>The rename-table shape is <code>ALTER TABLE old_name RENAME TO new_name;</code>. Old rows, columns, and rules stay attached to the new name. Nothing is copied and nothing is lost.</p>
 </div>
 <p>Across systems this verb is stable, with one extra spelling to know. PostgreSQL, MySQL 8, Snowflake, and Databricks all accept <code>ALTER TABLE persons RENAME TO users;</code>. MySQL also offers the older stand-alone form <code>RENAME TABLE persons TO users;</code>, which can rename several tables at once. Oracle accepts the <code>ALTER TABLE ... RENAME TO ...</code> form too. Keep the lecture form; reach for <code>RENAME TABLE</code> only when you must move several MySQL tables in one step.</p>
+
+<div class="important-note">
+  <p><strong>Advanced Pattern — rebuild and swap instead of backfilling in place:</strong> On a large populated table, the safe route of adding a nullable column and then filling it with an <code>UPDATE</code> can substantially increase the table's size, because the old row versions remain. The companion workflow avoids that cost by building a fresh table that already contains the populated column, then swapping the names so the copy becomes the live table and the original becomes the backup. A rename changes only the catalog entry for the name and has no effect on stored data, so promotion is effectively instantaneous.</p>
+</div>
+<div class="example-box">
+  <p><strong>Worked three-rename swap on the persons table.</strong> Suppose every existing person must gain a <code>reviewed_on</code> timestamp:</p>
+  <pre><code>CREATE TABLE persons_new AS
+SELECT *, '2026-09-22 00:00:00'::timestamp AS reviewed_on
+FROM persons;
+
+BEGIN;
+ALTER TABLE persons     RENAME TO persons_old;
+ALTER TABLE persons_new RENAME TO persons;
+ALTER TABLE persons_old RENAME TO persons_backup;
+COMMIT;</code></pre>
+  <p>The first rename frees the original name, the second promotes the rebuilt table, and the third parks the original under a backup name. Wrapping the three renames in one transaction means no other session observes an intermediate, missing-table state. <strong>Final result:</strong> <code>SELECT * FROM persons;</code> shows <code>reviewed_on</code> already filled on every row, with no mass <code>UPDATE</code> and no row-version bloat. MySQL compresses the idea into one atomic statement, <code>RENAME TABLE persons TO persons_old, persons_new TO persons;</code>, echoing the stand-alone form noted above.</p>
+</div>
 <div class="warning-box">
   <p><strong>Scope:</strong> a rename changes the name only. Views, stored code, and app queries that still use the old name will fail until they are updated. <strong>Assumption:</strong> no other object already uses the new name.</p>
 </div>
@@ -380,6 +397,57 @@ ADD COLUMN email VARCHAR(100) UNIQUE;</code></pre>
 <p>Then a full read shows the shape again:</p>
 <pre><code>SELECT * FROM persons;</code></pre>
 <p>The result lists personid, firstname, lastname, nationality, email, and age, with age currently stored as variable character text of length 10. That text-typed age sets up the cast lesson in the next section.</p>
+
+<div class="important-note">
+  <p><strong>System Detail — metadata edits versus full table rewrites:</strong> Dropping a column does not physically remove its bytes. PostgreSQL only marks the column as deleted in its internal catalog, hides it from every later query, and stores a null there on subsequent inserts and updates. The <code>DROP</code> therefore returns quickly, but the on-disk file does not shrink at once: the space is reclaimed gradually as rows are rewritten, or immediately if a later command forces a full table rewrite. This is why the lecture pairs each reshape with a fresh <code>SELECT *</code> — the visible shape changes immediately even when the physical storage has not.</p>
+  <table>
+    <thead>
+      <tr>
+        <th>ALTER TABLE form</th>
+        <th>Physical work on a populated table</th>
+        <th>Cost</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><code>RENAME TO</code>, <code>RENAME COLUMN</code></td>
+        <td>Catalog entry only; stored data untouched</td>
+        <td>Instant on any table size</td>
+      </tr>
+      <tr>
+        <td><code>ADD COLUMN</code> with no default, or with a constant (non-volatile) default</td>
+        <td>Default evaluated once and stored as metadata, returned for old rows</td>
+        <td>Fast; no row rewrite</td>
+      </tr>
+      <tr>
+        <td><code>ADD COLUMN</code> with a volatile default, an identity, or a stored generated column</td>
+        <td>Entire table and all indexes rewritten</td>
+        <td>Slow; up to \(2\times\) disk space temporarily</td>
+      </tr>
+      <tr>
+        <td><code>DROP COLUMN</code></td>
+        <td>Catalog mark only; bytes remain until rows are rewritten</td>
+        <td>Instant; space not reclaimed immediately</td>
+      </tr>
+      <tr>
+        <td><code>SET DATA TYPE</code> with <code>USING</code></td>
+        <td>Normally a full rewrite plus index rebuild; skipped only when the cast leaves contents unchanged and the types are binary-coercible</td>
+        <td>Usually the most expensive reshape here</td>
+      </tr>
+      <tr>
+        <td><code>ADD CHECK</code> / <code>SET NOT NULL</code></td>
+        <td>Scans all existing rows to verify the rule, but no rewrite</td>
+        <td>Scan cost grows with row count</td>
+      </tr>
+      <tr>
+        <td><code>ADD UNIQUE</code></td>
+        <td>Builds the backing lookup index and checks distinctness</td>
+        <td>Index build; no heap rewrite</td>
+      </tr>
+    </tbody>
+  </table>
+  <p><strong>Takeaway:</strong> these forms can be combined in one <code>ALTER TABLE</code> statement, which folds several scans or rewrites into a single pass over the table — the same reason section 7.2.2 adds nationality and email with two clauses at once.</p>
+</div>
 <div class="example-box">
   <p>Trace the rename-then-drop loop on the same roster. Start from persons with an age column. Run <code>ALTER TABLE persons RENAME TO users;</code> and refresh: users appears, persons is gone, rows unchanged. Run <code>ALTER TABLE users RENAME TO persons;</code> and refresh: persons is back. Run <code>ALTER TABLE persons RENAME COLUMN age TO personage;</code> and refresh: the column reads personage with values in place. Run <code>ALTER TABLE persons DROP COLUMN personage;</code> and the column is gone from the shape and from every row. Add it back with <code>ALTER TABLE persons ADD COLUMN age VARCHAR(10);</code> and read with <code>SELECT *;</code>. <strong>Seeing users flip back to persons, then personage vanish, then age return as text, proves each verb worked.</strong></p>
 </div>

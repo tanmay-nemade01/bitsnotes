@@ -482,6 +482,11 @@
   <li><strong>Recommendation</strong> — the data has a column of users, a column of items (the things being recommended), and a column of rewards or ratings. A recommendation system trains on these three columns.</li>
   <li><strong>Graph analytics</strong> — you supply a DataFrame of vertices and a DataFrame of edges, and these go into the training.</li>
 </ul>
+<div class="key-concept">
+  <p><strong>Formal Definition — Collaborative Filtering:</strong> The recommendation data shape above (user, item, rating) is consumed by a family of algorithms called <em>collaborative filtering</em>: predicting a user's preferences from the preferences of a group of users rather than from the items' own attributes. The companion text calls it "social navigation" — people lean on the judgment of others when choosing information or products.</p>
+  <p><strong>User–item matrix and approaches.</strong> Preferences are arranged as a matrix whose rows are users, columns are items, and entries are ratings; the goal is to fill the missing entries. Two broad families exist: <em>memory-based</em> methods (user-based or item-based) that find similar users or items with a similarity score, and <em>model-based</em> methods that learn a predictive model. Matrix factorization is a model-based approach: each user and each item is described by a small set of <em>latent factors</em>, and a missing rating is predicted from their interaction.</p>
+  <p><strong>In Spark MLlib:</strong> the scalable implementation is <code>ALS</code> (Alternating Least Squares) — matrix factorization that alternately solves for the user-factor and item-factor matrices, each step a least-squares problem parallelized across the cluster. It is one of MLlib's core algorithm families alongside classification, regression, and clustering, and it uses exactly the user / item / rating column layout introduced above.</p>
+</div>
 <table>
   <thead>
     <tr>
@@ -913,6 +918,25 @@ val scaled = scalerModel.transform(scaleDF) // pass 2: apply the learned statist
   <p><strong>Recap + bridge:</strong> The estimator toolkit contains everything that must scan the data first — QuantileDiscretizer (percentiles), StandardScaler (z-scores), MinMaxScaler (global min/max), StringIndexer (categories), OneHotEncoder (sparse binary vectors), CountVectorizer (vocabulary), and PCA (top features). With both toolkits in hand, the last section assembles the full modeling flow: create a model, <code>fit</code> on training data, evaluate on test data, and tune hyperparameters.</p>
 </div>
 <p>Real-world: PCA on MLlib is a common preprocessing step in industry — real systems with hundreds of feature variables use it to compress data to a handful of components before training, which is exactly the "MLlib as a preprocessing engine" role from section 16.1.</p>
+
+<h3 id="16.5.8-tf-idf-term-frequencyinverse-document-frequency">16.5.8 TF-IDF: Term Frequency–Inverse Document Frequency</h3>
+<p>CountVectorizer in 16.5.6 produces raw term counts, but a raw count over-rewards words that merely appear often ("a", "the", "of") and gives no credit to a rare word that actually distinguishes one document from another. <strong>TF-IDF</strong> rescales each count by how informative the term is across the entire corpus, turning a count vector into a weighted feature vector that is far more useful to a classifier.</p>
+<div class="key-concept">
+  <p><strong>Formal Definition:</strong> For a term \(t\), a document \(d\), and a corpus \(D\), term frequency is the count of \(t\) inside \(d\), while document frequency is \(DF(t,D) = |\{d \in D : t \in d\}|\), the number of documents containing \(t\). The classic textbook weighting multiplies the two:</p>
+  <p>\[ \text{TF-IDF}(t,d,D) = TF(t,d) \times \log\frac{|D|}{DF(t,D)} \]</p>
+  <p>A term that is frequent in one document but rare across the corpus therefore scores high, whereas a term present in every document is driven toward zero. Spark's official feature guide describes TF-IDF as a widely used text-mining vectorization method that reflects a term's importance to a document within its corpus, and explicitly notes that several variants of term and document frequency exist. Its own smoothed variant is \(IDF(t,D) = \log\frac{|D| + 1}{DF(t,D) + 1}\), where the \(+1\) terms prevent division by zero for a term seen in no document.</p>
+</div>
+<div class="example-box">
+  <p><strong>Worked calculation (companion text, Example 9.1):</strong> A document contains 1,000 words and the term "toys" appears 16 times, so \(TF = 16/1000 = 0.016\). The corpus holds \(10{,}000{,}000\) documents and "toys" appears in 1,000 of them, so \(IDF = \log_{10}(10{,}000{,}000/1{,}000) = \log_{10}(10{,}000) = 4\). Therefore</p>
+  <p>\[ \text{TF-IDF} = 0.016 \times 4 = 0.064 \]</p>
+  <p><strong>Sense-check:</strong> a term found in 1 document out of 10,000 receives four times its raw frequency as weight, while a term present in all 10 million documents receives \(IDF = \log_{10}(1) = 0\) and is erased entirely. Because almost all term weights are zero, the resulting vectors are stored sparsely — the same sparse-vector mechanism from 16.2.4 that makes high-dimensional text features practical.</p>
+</div>
+<div class="important-note">
+  <p><strong>Spark implementation — estimator plus transformer:</strong> Spark deliberately separates the two factors so either can be swapped. <code>HashingTF</code> is a <em>transformer</em>: it maps terms to indices of a fixed-length vector using the hashing trick (MurmurHash 3, default \(2^{18} = 262{,}144\) buckets) and counts their frequencies — one <code>transform</code> call, no data scan. <code>IDF</code> is an <em>estimator</em>: <code>idf.fit(featurizedData)</code> scans the corpus to learn document frequencies and returns an <code>IDFModel</code>, whose <code>transform</code> rescales each feature, down-weighting terms that are frequent across the corpus. <code>CountVectorizer</code> can replace <code>HashingTF</code> when an explicit vocabulary is wanted instead of hashed buckets. The full chain is <code>Tokenizer → HashingTF (or CountVectorizer) → IDF → learning algorithm</code> — exactly the fixed-rule-then-fit-then-transform rhythm classified in 16.3.</p>
+</div>
+<div class="warning-box">
+  <p><strong>Pitfalls:</strong> (1) Because <code>HashingTF</code> indexes terms with a hash function, two different terms can collide into the same bucket; increase <code>numFeatures</code> (a power of two maps features evenly across indices) to reduce collisions. (2) Spark's <code>.ml</code> does not segment raw text into words, so the <code>Tokenizer</code> of 16.4.6 must run before TF-IDF — never apply it to a raw string column. (3) Fit <code>IDF</code> on training data only; fitting it on the full corpus leaks test-set document frequencies into the features.</p>
+</div>
 
 <h2 id="16.6-model-training-hyperparameter-tuning-and-evaluation">16.6 Model Training, Hyperparameter Tuning, and Evaluation</h2>
 <div class="important-note">

@@ -272,6 +272,25 @@
   <p><strong>Pitfall:</strong> stacking too many views can hide heavy work. Two or three views that each hide a big join can turn one short outer query into a slow run. Keep nesting shallow for hot paths, and check run time when a view feeds another view.</p>
 </div>
 <p>Staff and payroll systems show the pattern in real life. They often expose a salary-free view of an employee table to developers, while a payroll group gets a wider view. The same base table serves both, with no copied data to drift out of sync. Marketing teams get masked email views in the same way, with the first two and last four characters kept and the middle hidden.</p>
+
+<div class="example-box">
+  <p><strong>Cross-engine depth — Snowflake secure views for row-level safety:</strong> a plain column-hiding view only drops columns. Snowflake's <code>SECURE</code> view goes further: it filters <em>rows</em> by the caller's identity and hides its own definition. This is the mechanism behind the "secure view form" noted earlier, and it answers a question a plain view cannot — how do two managers querying the same view see only their own staff?</p>
+  <p>Step 1 — an authorization table maps each department to the username allowed to see its rows (assume <code>employee(empid, emp_name)</code> and <code>empl_dept(empid, dept_id)</code> are already loaded):</p>
+  <pre><code>CREATE TABLE department AS
+SELECT * FROM (VALUES
+  (1, 'ACCOUNTING', 'JOHNSMITH'),
+  (2, 'FINANCE', 'ALANBEAU'),
+  (3, 'SHIPPING', 'JANEDOE')) AS d(dept_id, dept_name, auth_username);</code></pre>
+  <p>Step 2 — build the secure view; the filter compares the authorized user with the session's <code>CURRENT_USER()</code> (or <code>CURRENT_ROLE()</code> for role-driven rules):</p>
+  <pre><code>CREATE SECURE VIEW my_employees AS
+SELECT e.empid, e.emp_name, d.dept_name
+FROM employee e
+INNER JOIN empl_dept ed ON e.empid = ed.empid
+INNER JOIN department d ON ed.dept_id = d.dept_id
+WHERE d.auth_username = CURRENT_USER();</code></pre>
+  <p>Step 3 — the result is per caller. As ALANBEAU, <code>SELECT * FROM my_employees</code> returns only the two Finance employees; JOHNSMITH sees only Accounting; any other user sees no rows. The view's own <code>WHERE</code> is applied before the caller's predicates, so it cannot be probed to infer hidden rows.</p>
+  <p>Step 4 — the definition is sealed too. <code>SHOW VIEWS</code>, <code>GET_DDL('VIEW','my_employees')</code>, and the <code>INFORMATION_SCHEMA.VIEWS</code> text hide it from anyone who does not hold the owning role; <code>IS_SECURE</code> in that catalog marks the object as secure. The trade-off is that secure views forgo some optimizer rewrites and can run slower than plain views — use them for privacy, not for convenience views.</p>
+</div>
 <h3 id="23.1.3-student-questions-and-answers">23.1.3 Student Questions and Answers</h3>
 <div class="important-note">
   <p><strong>Q:</strong> If a view looks like a table, does it hold a copy of the rows?</p>
@@ -698,6 +717,37 @@ WHERE director_id = 39;</code></pre>
 <p>Four, the allowed write verbs are <code>INSERT</code>, <code>UPDATE</code>, and <code>DELETE</code>, each with a <code>WHERE</code> filter as needed. Reads use the same view name with plain <code>SELECT</code>.</p>
 <p>Five, the writer needs the matching right on the view itself. No right on the base table is needed when the view right is in place. That split is a strong safety gain. A user can be given write rights on a narrow view only, with no direct rights on the full table.</p>
 <p>Picture a mail slot cut into one door. Plain columns from one table are the open slot: letters pass through to the room behind. Aggregates, grouping, and second tables board the slot shut. The slot shape decides, not the person posting the letter.</p>
+
+<div class="important-note">
+  <p><strong>Cross-engine nuance — rule one is PostgreSQL-specific:</strong> the "single <code>FROM</code> entry" rule above is the PostgreSQL contract. MySQL takes a wider path: a view built from several tables with <em>inner joins only</em> (never an outer join or a <code>UNION</code>) can still be updatable when its query can be processed with the <code>MERGE</code> algorithm — but each statement may write columns from only <strong>one</strong> base table at a time.</p>
+  <table>
+    <thead>
+      <tr>
+        <th>Write path</th>
+        <th>PostgreSQL</th>
+        <th>MySQL</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>Multiple tables in the view</td>
+        <td>Blocks updates outright (one <code>FROM</code> entry only)</td>
+        <td>Permitted when tables are joined with <code>INNER JOIN</code> and the plan uses <code>MERGE</code></td>
+      </tr>
+      <tr>
+        <td>Columns touched per statement</td>
+        <td>One base table only by construction</td>
+        <td>One base table only — a <code>SET</code> list spanning two tables raises error 1393, "Can not modify more than one base table through a join view"</td>
+      </tr>
+      <tr>
+        <td>How updatability is decided</td>
+        <td>Structural rules checked against the query at write time</td>
+        <td>A flag set at <code>CREATE VIEW</code> time, exposed as <code>IS_UPDATABLE</code> in <code>INFORMATION_SCHEMA.VIEWS</code></td>
+      </tr>
+    </tbody>
+  </table>
+  <p>Worked contrast on a <code>customer_details</code> view joining <code>customer</code> to <code>address</code>: <code>UPDATE customer_details SET last_name = 'X' WHERE customer_id = 1</code> succeeds (customer columns only), and <code>UPDATE customer_details SET address = 'Y' WHERE customer_id = 1</code> succeeds on its own. Combining both column groups in a single <code>SET</code> list is rejected, even though each group is legal alone.</p>
+</div>
 <h3 id="23.7.3-worked-examples">23.7.3 Worked Examples</h3>
 <div class="example-box">
   <p>Build a narrow updatable view on directors with plain columns only:</p>
@@ -861,6 +911,37 @@ VALUES ('US', 'Clearwater');
 <p>A practical shape is to run the heavy work once, save it, and show the saved result with a delay note such as updated every two hours. Users get fast pages, and the delay is stated up front. Stock correlation over tens of thousands of symbols is a good fit: compute once, serve many reads, refresh on a beat.</p>
 <p>A materialized view also behaves much like a table after it is built. Indexes can be added, keys can be set, and upkeep verbs such as vacuum and analyze apply. That matters because these snapshots are often refreshed often.</p>
 <p>Across databases the refresh story splits. PostgreSQL refreshes on demand with <code>REFRESH MATERIALIZED VIEW</code>, and the concurrent form needs a unique index. Snowflake refreshes materialized views on its own in the background but charges storage plus upkeep. Databricks SQL offers materialized views with scheduled refresh pipelines. MySQL has no native materialized view at all, so teams there hand-roll snapshot tables. The lecture demo is the PostgreSQL on-demand form.</p>
+
+<div class="important-note">
+  <p><strong>Cross-engine depth — what "Snowflake refreshes on its own" actually means:</strong> unlike the PostgreSQL snapshot you refresh by hand, a Snowflake materialized view is a serverless, automatically maintained object — which changes both the freshness guarantee and the cost model.</p>
+  <table>
+    <thead>
+      <tr>
+        <th>Property</th>
+        <th>PostgreSQL (lecture default)</th>
+        <th>Snowflake</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>Refresh trigger</td>
+        <td>Explicit <code>REFRESH MATERIALIZED VIEW [CONCURRENTLY]</code> call</td>
+        <td>Background service maintains it after base-table DML; no refresh verb in the user's path</td>
+      </tr>
+      <tr>
+        <td>Freshness seen by readers</td>
+        <td>Cached rows, stale until the next refresh</td>
+        <td>Always current — if the view lags, Snowflake uses current portions and reads newer rows from the base table</td>
+      </tr>
+      <tr>
+        <td>Reader cost and upkeep</td>
+        <td>Plain refresh locks readers; concurrent needs a unique index</td>
+        <td>No user-managed lock or unique index; storage plus serverless maintenance credits billed per second</td>
+      </tr>
+    </tbody>
+  </table>
+  <p>Two practical consequences. First, you need not name the materialized view in a query: the optimizer can transparently rewrite a base-table (or plain-view) query to use it — visible in <code>EXPLAIN</code> or Query Profile — so existing reports speed up with no SQL change. Second, these views require Enterprise Edition and carry restrictions a PostgreSQL snapshot does not: a Snowflake materialized view may read only a single table (no joins), cannot contain window functions, <code>HAVING</code>, <code>ORDER BY</code>, or <code>LIMIT</code>, and must use deterministic expressions. Maintenance health is checked with <code>SHOW MATERIALIZED VIEWS</code> (<code>REFRESHED_ON</code>, <code>BEHIND_BY</code>) and controlled with <code>ALTER MATERIALIZED VIEW ... SUSPEND/RESUME</code>.</p>
+</div>
 <p>Click dashboards, market screens, and currency or commodity boards show the pattern in real life. They often read from materialized snapshots refreshed by a cron beat, rather than joining huge raw tables on each page hit.</p>
 <h3 id="23.9.2-creation-with-data-or-no-data">23.9.2 Creation with data or no data</h3>
 <p>The build pattern is:</p>

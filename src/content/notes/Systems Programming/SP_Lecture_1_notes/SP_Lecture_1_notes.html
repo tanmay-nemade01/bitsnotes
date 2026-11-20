@@ -592,6 +592,53 @@ done &lt; users.txt</code></pre>
     <li><strong>Assuming <code>gcc</code> is "just a compiler."</strong> On a Unix system, <code>gcc</code> is a driver that runs preprocessor → compiler → assembler → linker. Failing to separate those stages makes it hard to diagnose "compile succeeded but link failed."</li>
   </ul>
 </div>
+<div class="key-concept">
+  <p><strong>Inside the compiler — from token stream to opcodes:</strong> This section so far treats the compiler as a single "translate" arrow. The companion systems-software text opens that arrow into a pipeline of distinct functions, each consuming the previous one's output:</p>
+  <table>
+    <thead>
+      <tr>
+        <th>Phase</th>
+        <th>Input → output</th>
+        <th>What it decides</th>
+        <th>Machine-dependent?</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><strong>Lexical analysis (scanning)</strong></td>
+        <td>source characters → tokens</td>
+        <td>groups characters into identifiers, keywords, literals and operators; discards whitespace and comments</td>
+        <td>No</td>
+      </tr>
+      <tr>
+        <td><strong>Syntactic analysis (parsing)</strong></td>
+        <td>tokens → parse tree</td>
+        <td>checks the grammar (e.g., BNF) — is this a valid assignment or declaration?</td>
+        <td>No</td>
+      </tr>
+      <tr>
+        <td><strong>Semantic analysis</strong></td>
+        <td>parse tree → annotated tree</td>
+        <td>types and meaning — \(I := X + Y\) compiles to integer or floating-point opcodes depending on the declared types, even though both statements have identical syntax</td>
+        <td>No</td>
+      </tr>
+      <tr>
+        <td><strong>Optimization (via intermediate form)</strong></td>
+        <td>annotated tree → intermediate representation</td>
+        <td>register allocation and instruction reordering — far easier to analyze on an IR than on source or final machine code</td>
+        <td>Partly</td>
+      </tr>
+      <tr>
+        <td><strong>Code generation</strong></td>
+        <td>intermediate representation → machine opcodes</td>
+        <td>lowers each construct into the target ISA's instruction alphabet (the ~15–256 instructions of 1.4.3)</td>
+        <td>Yes</td>
+      </tr>
+    </tbody>
+  </table>
+  <p><strong>Worked trace of one statement:</strong> <code>sum = a + b;</code> → the scanner emits tokens <code>sum</code>, <code>=</code>, <code>a</code>, <code>+</code>, <code>b</code>, <code>;</code> → the parser builds an assignment node → the semantic phase resolves <code>a</code> and <code>b</code> as <code>int</code> and selects integer addition → the code generator emits a <code>LOAD</code> / <code>ADD</code> / <code>STORE</code> sequence for the target ISA.</p>
+  <p><strong>Phases are not the same as passes:</strong> these are <em>functions</em>, not necessarily separate trips over the source — a simple language can be compiled in a single pass, while a compiler doing heavy optimization makes several. The decisive observation is that the front half (scan, parse, semantic) is largely machine-independent and the real machine dependency lives in code generation and optimization. That split is exactly why the same C source can be recompiled for x86 or ARM in 1.7.2.</p>
+</div>
 <h3 id="1.5.2-assembler">1.5.2 Assembler</h3>
 <p>An <em>assembler</em> — a translator from assembly language to machine language — does not work from a high-level language. If you want to use an assembler as is, you need assembly language programming. In this course you will not get into full assembly language programming, but you will understand how the assembler works on any code. Assemblers are sometimes seen combined with interpreters and sometimes with compilers in explanations. That combination view is used to show why understanding assembler matters even if you do not write assembly day to day.</p>
 <div class="key-concept">
@@ -848,6 +895,37 @@ flowchart TB
 <p><em>Portability</em> — ability to move the system to different hardware with small changes — was key. At that time the main target was x86. Today ARM is also present, though not always prominent among Unix or Linux users. The M1 machine from Apple is basically ARM-based. You can port a Unix or Linux operating system to a different architecture with small changes. That is how it was built.</p>
 <p>The causal link is the 1973 C rewrite (see 1.6.1): a kernel in C is <em>hardware-shaped</em> only at a narrow seam (boot, page tables, drivers). Replace that seam, recompile, and you run on x86 or ARM. The M1 is the modern anchor — an ARM core running a Unix-descended OS with the same file, process, and shell abstractions you will use on x86 Ubuntu in the lab.</p>
 <p>Visual intuition: two engine bays (x86 and ARM) with different bolt patterns, but the same engine block (kernel in C) fits both with a different mounting plate (machine-dependent layer). The takeaway: <em>portability is not magic — it is C plus a thin abstraction layer.</em></p>
+<div class="important-note">
+  <p><strong>The standards layer — the application-portability axis:</strong> 1.7.2 explained <em>hardware</em> portability (C plus a thin machine layer). A second, distinct axis is <em>application</em> portability across Unix variants. It is established not by code but by published standards: the 1980s proliferation of Unix versions prompted standardization so that a program written on one system runs on another. This is the concrete reason 1.6.1 can treat "Unix" and "Linux" as interchangeable for course purposes.</p>
+  <table>
+    <thead>
+      <tr>
+        <th>Standard</th>
+        <th>Ratified</th>
+        <th>What it fixes</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><strong>ISO C (C89 / ANSI X3.159)</strong></td>
+        <td>1989 ANSI; 1990 ISO/IEC 9899</td>
+        <td>C language syntax, semantics and the standard library — source-level portability across operating systems, not only Unix</td>
+      </tr>
+      <tr>
+        <td><strong>IEEE POSIX.1 (1003.1)</strong></td>
+        <td>1988 first version; 1990 ISO/IEC 9945-1</td>
+        <td>the OS interface — the services a system must provide (the <code>open</code> / <code>read</code> / <code>fork</code> calls; shell utilities in 1003.2) so applications move among Unix environments</td>
+      </tr>
+      <tr>
+        <td><strong>Single UNIX Specification (SUS)</strong></td>
+        <td>XPG4v2 → SUSv2 (1997) → SUSv3 / POSIX.1-2001 → POSIX.1-2017</td>
+        <td>consolidates POSIX.1, POSIX.2 and X/Open standards; adds the XSI extension and defines the "UNIX" brand</td>
+      </tr>
+    </tbody>
+  </table>
+  <p><strong>Why this belongs here:</strong> the commands you are learning (<code>cat</code>, <code>grep</code>, <code>who</code>) and the calls of Module 5 (<code>open()</code>, <code>fork()</code>) are specified by these standards, so the same source and command syntax work on Ubuntu, CentOS, macOS and Solaris. Hardware portability moves the <em>system</em> to a new CPU; interface standards move the <em>application</em> across systems — together they complete the portability story started in 1.6.1.</p>
+  <p><strong>Boundary to keep straight:</strong> a standard specifies an <em>interface</em>, not an implementation — POSIX.1 deliberately leaves internals (scheduling, memory layout, drivers) unspecified. Interface portability is why a lab script transfers; the performance and behavioral details still depend on the particular kernel, which is what the rest of this course examines.</p>
+</div>
 <h3 id="1.7.3-modularity">1.7.3 Modularity</h3>
 <p><em>Modularity</em> — building as pluggable modules rather than one monolithic block from first line to last — lets tasks and activities be split into different modules that can be extended to do multiple things. That growth model explains how the system keeps adding capabilities without rewriting everything.</p>
 <p>Think <em>plugin, not rewrite</em>. A new file system type, a new scheduler policy, or a new device class arrives as a module that plugs into well-defined interfaces. Without modularity, each addition would require editing a single giant monolithic file from line one — brittle and unreviewable. With modularity, teams extend the system concurrently.</p>

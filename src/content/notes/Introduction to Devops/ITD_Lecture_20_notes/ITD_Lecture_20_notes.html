@@ -243,6 +243,21 @@ flowchart TB
 </div>
 <p><strong>Real-world & domain connection.</strong> This is the standard shape in the industry: Netflix and Amazon ship hundreds of services with per-team pipelines; Atlassian's BlobStore team keeps its microservice in a Git repository with short-lived feature branches and a Bamboo pipeline that reaches production about an hour after merging to master. In every case the same two facts hold: the architecture is built of small independently deployable units, and the organization is built of small autonomous teams with automated pipelines around each unit. One caution from practice: distributed teams must also manage inter-service dependencies — one team's deployment can block another's if the interfaces do not stay compatible.</p>
 
+<h3 id="20.1.6-content-addressable-and-immutable-storage-in-microservices">20.1.6 Content-Addressable and Immutable Storage in Microservices</h3>
+<div class="key-concept">
+  <p><strong>Design pattern — content-addressable storage.</strong> When a microservice owns bulk binary data, a robust way to store it is by its <em>content</em> rather than by a fixed location or a user-supplied name. BlobStore, the Atlassian microservice cited above, is at its core a <em>content-addressable</em> store: a producer (JIRA or Confluence) sends a blob together with a <em>logical key</em>; the service stores the blob in Amazon S3 under a key equal to the SHA-1 hash of the blob's bytes, \(h = \text{SHA-1}(B)\), and keeps the mapping <code>logical key → content hash</code> in DynamoDB. A consumer then reads a blob either by its logical key or directly by its content hash. Because the storage key is derived from the data itself, two producers uploading identical bytes converge on the same stored object — natural de-duplication — and a corrupted upload is detected because its bytes no longer hash to the key it is stored under.</p>
+</div>
+<div class="important-note">
+  <p><strong>Immutability and immutable APIs.</strong> The same design makes every write <em>append-only</em>: blobs and the records describing mapping changes are never overwritten or deleted — new "facts" are only added — so the store behaves like a single-ancestor version-control history. An immutable datastore in turn makes <em>immutable APIs</em> possible: for a given request the response is always identical, which is what makes responses safely cacheable, composable into simpler business logic, and easy to mock in tests. Immutability also underpins disaster recovery: retaining every historical copy until garbage collection makes point-in-time rollback straightforward, and S3 replication between regions removes the need for Atlassian's earlier custom inter-datacentre transfer.</p>
+</div>
+<div class="example-box">
+  <p><strong>Worked trace — storing and reading an attachment.</strong></p>
+  <p><strong>Step 1 — write.</strong> Confluence uploads attachment bytes <code>B</code> with logical key <code>ATT-42</code>. BlobStore computes \(h = \text{SHA-1}(B)\) and writes the object to S3 under the key <code>h</code>.</p>
+  <p><strong>Step 2 — map.</strong> It records <code>ATT-42 → h</code> in DynamoDB — the one seemingly mutable part, and even that is appended as a new fact rather than overwritten.</p>
+  <p><strong>Step 3 — read.</strong> A request for <code>ATT-42</code> looks up <code>h</code> in DynamoDB, then fetches the object at key <code>h</code> from S3. A second upload of identical bytes yields the same \(h\) and reuses the same object.</p>
+  <p><strong>Sense-check:</strong> the content hash is the single source of truth for identity — the logical key is only a friendly alias — so de-duplication, integrity checking, caching, and rollback all fall out of one mechanism.</p>
+</div>
+
 <h2 id="20.2-kubernetes">20.2 Kubernetes</h2>
 <h3 id="20.2.1-what-is-kubernetes">20.2.1 What Is Kubernetes?</h3>
 <div class="important-note">

@@ -740,6 +740,75 @@ v_t = \beta_2 v_{t-1} + (1 - \beta_2) (\nabla L(\theta_{t-1}))^2 \quad \text{(se
 </div>
 <strong>Real-World Connection:</strong> Adam (Kingma & Ba, 2014) is the default optimizer in PyTorch and TensorFlow. Nearly every transformer model — GPT, BERT, T5, LLaMA — uses either Adam or AdamW. The original Adam paper has over 150,000 citations, making it one of the most impactful papers in machine learning history. AdamW (Loshchilov & Hutter, 2017) is the standard for large language model pretraining. Its decoupled weight decay prevents the optimizer from silently under-regularizing parameters with large gradient histories.
 
+<h3 id="17.3.7-second-order-and-quasi-newton-methods" class="subsection-title">17.3.7 Second-Order and Quasi-Newton Methods</h3>
+<div class="important-note">
+<p>Every optimizer seen so far is <em>first-order</em>: it uses only the gradient \(\nabla J(\theta)\). A second-order method also uses the curvature of the loss surface, captured by the Hessian matrix \(H = \nabla^2_\theta J(\theta)\). It can therefore adapt not just the direction but the <em>geometry</em> of each step. This is the major family of optimizers omitted by the spoken lecture, and it remains the standard tool in scientific computing and classical numerical optimization.</p>
+</div>
+<div class="key-concept">
+<strong>Formal Definition — Newton's method:</strong> Take a second-order Taylor expansion of the objective around the current point \(\theta_0\):
+\[
+J(\theta) \approx J(\theta_0) + (\theta-\theta_0)^\top \nabla_\theta J(\theta_0) + \tfrac{1}{2}(\theta-\theta_0)^\top H (\theta-\theta_0)
+\]
+Setting the derivative of this local quadratic to zero gives the Newton update:
+\[
+\theta^{*} = \theta_0 - H^{-1}\nabla_\theta J(\theta_0)
+\]
+Interpretation: the gradient is pre-multiplied by the inverse Hessian \(H^{-1}\), which rescales each direction by the reciprocal of its curvature. For a locally quadratic function with positive-definite \(H\), Newton's method reaches the minimum in a single step — no learning-rate tuning required.
+</div>
+<div class="warning-box">
+<strong>Pitfall — indefinite curvature:</strong> Newton's method requires \(H\) to be positive definite. Near a saddle point the Hessian has both positive and negative eigenvalues, so \(H^{-1}\) can point the update <em>uphill</em>. The standard fix is to damp the Hessian by adding \(\alpha I\) to its diagonal (the Levenberg–Marquardt trick):
+\[
+\theta^{*} = \theta_0 - \left[H(\theta_0) + \alpha I\right]^{-1}\nabla_\theta J(\theta_0)
+\]
+As \(\alpha\) grows, the update converges to a plain gradient step divided by \(\alpha\), so damping trades curvature information for stability.
+</div>
+<p><strong>Quasi-Newton methods — avoiding the explicit inverse:</strong> Forming and inverting the \(k \times k\) Hessian costs \(O(k^2)\) memory and \(O(k^3)\) compute per step, which is impossible when \(k\) is in the millions. Quasi-Newton methods instead build an approximation \(M_t \approx H^{-1}\) from successive gradients using low-rank updates. BFGS (Broyden–Fletcher–Goldfarb–Shanno) chooses the descent direction \(\rho_t = M_t g_t\), performs a line search for the step size \(\varepsilon_t\), and updates \(\theta_{t+1} = \theta_t + \varepsilon_t \rho_t\).</p>
+<table>
+  <thead>
+    <tr>
+      <th>Method</th>
+      <th>Curvature used</th>
+      <th>Memory per step</th>
+      <th>Practical role</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td>SGD / Adam (first-order)</td>
+      <td>None (diagonal rescale in Adam)</td>
+      <td>\(O(k)\)</td>
+      <td>Default for large-scale deep learning</td>
+    </tr>
+    <tr>
+      <td>Newton</td>
+      <td>Exact Hessian inverse</td>
+      <td>\(O(k^2)\)</td>
+      <td>Small, smooth, well-conditioned problems</td>
+    </tr>
+    <tr>
+      <td>Damped Newton (LM)</td>
+      <td>Hessian + \(\alpha I\)</td>
+      <td>\(O(k^2)\)</td>
+      <td>Stabilizes indefinite curvature</td>
+    </tr>
+    <tr>
+      <td>BFGS</td>
+      <td>Approximate inverse Hessian \(M_t\)</td>
+      <td>\(O(k^2)\)</td>
+      <td>Fewer line-search refinements than conjugate gradients</td>
+    </tr>
+    <tr>
+      <td>L-BFGS</td>
+      <td>Implicit \(M_t\) from stored gradient pairs</td>
+      <td>\(O(k)\) for history size \(m\)</td>
+      <td>Limited-memory; exposed by SciPy and PyTorch</td>
+    </tr>
+  </tbody>
+</table>
+<div class="key-takeaway">
+<p><strong>Takeaway:</strong> Second-order methods exploit the Hessian to take curvature-aware steps and converge in far fewer iterations on well-conditioned, moderate-size problems, but their quadratic memory cost makes them impractical for million-parameter networks. L-BFGS keeps the quasi-Newton advantage with linear memory by storing only a short history of gradient differences — which is why it survives as a standard optimizer in numerical libraries even though first-order methods dominate deep learning.</p>
+</div>
+
 <h2 class="section-title">17.4 Learning Rate Schedules</h2>
 <div class="important-note">
 <strong>Hook:</strong> You pick a learning rate of 0.001. Training goes well for a while — the loss drops steadily. Then progress stalls. The optimizer is taking tiny steps around a minimum but cannot settle into it. If only the learning rate could start large (to explore) and shrink over time (to refine)... it can. That is what a learning rate schedule does.
@@ -930,6 +999,27 @@ v_t = \beta_2 v_{t-1} + (1 - \beta_2) (\nabla L(\theta_{t-1}))^2 \quad \text{(se
 - Early stopping implicitly regularizes by halting before overfitting sets in.
 </div>
 <p>A network with 10 layers of 100 neurons each has far too much capacity for 100 instances with 3 features. It will memorize. But with millions of instances, the same network is forced to abstract and generalize. More data is a form of implicit regularization.</p>
+<div class="key-concept">
+<strong>Foundational View — Regularization as MAP inference:</strong> A penalty term is not an arbitrary hack; it is exactly the negative log of a prior over the weights. By Bayes' rule, maximizing the posterior is equivalent to maximizing the data likelihood plus the log-prior:
+\[
+\theta_{\text{MAP}} = \arg\max_\theta \left[\log p(\mathcal{D}\mid\theta) + \log p(\theta)\right] = \arg\min_\theta \left[-\log p(\mathcal{D}\mid\theta) - \log p(\theta)\right]
+\]
+The choice of prior therefore <em>determines</em> which norm penalty the trained model implicitly uses.
+</div>
+<div class="important-note">
+<p><strong>L2 is a Gaussian prior.</strong> Assume each weight is drawn from a zero-mean Gaussian \(w_i \sim \mathcal{N}(0, \sigma^2)\). Its log-density is \(-w_i^2/(2\sigma^2) + \text{const}\), so the negative log-prior is proportional to \(\|w\|_2^2\). Minimizing the negative log-posterior is then identical to ridge regression / weight decay with \(\lambda = 1/\sigma^2\) when the penalty is written as \(\frac{\lambda}{2}\|w\|_2^2\):</p>
+\[
+-\log p(w\mid\mathcal{D}) = -\log p(\mathcal{D}\mid w) + \tfrac{\lambda}{2}\|w\|_2^2 + \text{const}
+\]
+<p>The Gaussian prior strongly discourages large weights but assigns non-zero density arbitrarily close to zero, so L2 shrinks weights without ever forcing them to be exactly zero.</p>
+<p><strong>L1 is a Laplace prior.</strong> If instead \(w_i \sim \text{Laplace}(0, b)\), then \(\log p(w_i) = -|w_i|/b - \log(2b)\). The negative log-prior is proportional to \(\|w\|_1\), giving Lasso-style regularization with \(\lambda = 1/b\):</p>
+\[
+-\log p(w\mid\mathcal{D}) = -\log p(\mathcal{D}\mid w) + \lambda\|w\|_1 + \text{const}
+\]
+</div>
+<div class="example-box">
+<strong>Why the prior shape controls sparsity:</strong> The Laplace density has a sharp cusp at zero, so its log-prior has a non-differentiable corner there and the optimum is frequently driven to <em>exactly</em> zero. The smooth Gaussian log-prior has zero slope at the origin, so its optimum settles near — but not at — zero. Concretely, for a diagonal positive-definite Hessian \(H\), the L2-penalized solution is \(\tilde{w}_i = \frac{H_{i,i}}{H_{i,i}+\alpha}w_i^{*}\): a non-zero \(w_i^{*}\) stays non-zero. L1 instead applies a constant inward push and sets small weights to zero. This is the theoretical reason behind the lecture's rule that L1 yields sparse models while L2 only shrinks them.
+</div>
 <h3 class="subsection-title">17.5.3 Deciding When to Apply Regularization</h3>
 <p>Track the training loss and validation loss over epochs. If the training loss keeps improving while the validation loss starts diverging (getting worse), you have overfitting. At that point, ask:</p>
 <div class="warning-box">

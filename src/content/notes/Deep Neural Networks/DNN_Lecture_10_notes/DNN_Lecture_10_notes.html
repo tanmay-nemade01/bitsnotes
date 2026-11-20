@@ -588,6 +588,16 @@
   </tr>
 </table>
 
+<h3 id="10.2.6-efficient-convolution-algorithms" class="subsection-title">10.2.6 Efficient Convolution Algorithms</h3>
+<div class="key-concept">
+<p><strong>Motivation:</strong> A modern CNN may contain over a million units. The naive sliding-window dot product repeats the same small set of multiply-adds thousands of times per kernel, so the choice of implementation algorithm matters as much as the parameter count.</p>
+<p><strong>1. Convolution as a structured matrix product (Toeplitz / unrolling).</strong> Any discrete convolution is equivalent to multiplication by a matrix whose entries are tied: for 1-D convolution each row is the previous row shifted by one element — a <em>Toeplitz</em> matrix; in 2-D the analogue is a doubly block-circulant matrix. The matrix is also very sparse because the kernel is far smaller than the input. Libraries exploit this by <em>unrolling</em> each input patch into a column (the "im2col" transformation) and calling one highly optimized matrix-multiply — any algorithm that works with matrix multiplication works with convolution without modification.</p>
+<p><strong>2. FFT convolution.</strong> By the convolution theorem, convolution equals a Fourier transform of input and kernel, pointwise multiplication in the frequency domain, then an inverse Fourier transform:</p>
+<p>\[ y = \mathcal{F}^{-1}\!\left(\mathcal{F}(X) \odot \mathcal{F}(W)\right) \]</p>
+<p>For large filters this replaces the naive \(\mathcal{O}(H\,W\,K^2)\) sliding-window cost with roughly \(\mathcal{O}(H\,W\log(H\,W))\). SciPy's <code>fftconvolve</code> documents the method as "generally much faster than convolve for large arrays," and frameworks switch between direct and Fourier methods based on an estimated speed comparison.</p>
+<p><strong>3. Separable kernels.</strong> A \(d\)-dimensional kernel expressible as the outer product of \(d\) vectors (e.g. a 2-D Gaussian \(G = g_x \otimes g_y\)) is <em>separable</em>: apply \(d\) successive 1-D convolutions instead of one \(d\)-dimensional convolution. Cost falls from \(\mathcal{O}(w^d)\) to \(\mathcal{O}(w \times d)\) in both runtime and parameter storage. This is distinct from the depthwise-separable channel trick, which factorizes across input channels rather than spatial axes.</p>
+</div>
+
 <h2 class="section-title">10.3 Feature Maps</h2>
 <div class="important-note">
 <p>After convolution, your image is gone — replaced by a grid of numbers. What are these numbers actually saying? A high value at some position means "the pattern this kernel learned appears here, strongly." But how do you interpret a negative value? And what happens when every value is negative?</p>
@@ -1624,6 +1634,39 @@
     <td>Function</td>
   </tr>
 </table>
+
+<h3 id="10.9.6-infinitely-strong-prior" class="subsection-title">10.9.6 Convolution and Pooling as an Infinitely Strong Prior</h3>
+<div class="key-concept">
+<p><strong>Formal Definition:</strong> The three design principles can be unified in Bayesian language: a convolutional layer is a fully connected layer whose weight matrix is constrained by an <em>infinitely strong prior</em> — a prior that assigns exactly zero probability to certain parameter configurations, forbidding them regardless of how much the data supports them.</p>
+<table>
+  <tr>
+    <th>Prior</th>
+    <th>Entropy</th>
+    <th>Effect on weights</th>
+    <th>CNN analogue</th>
+  </tr>
+  <tr>
+    <td>Weak</td>
+    <td>High (wide Gaussian)</td>
+    <td>Data moves weights freely</td>
+    <td>Unconstrained dense layer</td>
+  </tr>
+  <tr>
+    <td>Strong</td>
+    <td>Low (narrow Gaussian)</td>
+    <td>Pulled toward a preferred value</td>
+    <td>L2 weight decay toward zero</td>
+  </tr>
+  <tr>
+    <td>Infinitely strong</td>
+    <td>Zero on forbidden values</td>
+    <td>Forbidden values are impossible</td>
+    <td>Tied weights + zero masks</td>
+  </tr>
+</table>
+<p><strong>The two constraints:</strong> The convolution prior states (1) the weights of one hidden unit must equal those of its spatial neighbor, shifted in space — this is parameter sharing, which yields translation equivariance; and (2) weights must be zero everywhere outside a small, spatially contiguous receptive field — this is sparse connectivity, which yields locality. Pooling adds a second infinitely strong prior: each unit should be invariant to small translations, so the learned function must not depend on the exact position of a feature inside its pooling window.</p>
+<p><strong>Consequence — when the prior is wrong:</strong> The hypothesis space is restricted to the tied, masked subspace \(\mathcal{W}_{\text{conv}} = \{W : W_{i,j}=W_{i+\delta,\,j+\delta'},\; W_{p,q}=0 \text{ outside the receptive field}\}\). Because of this restriction, convolution and pooling can cause <em>underfitting</em>: if a task needs precise spatial information, pooling every feature raises training error; if it needs information from very distant input locations, the convolution prior is inappropriate. The constraints help only when their assumptions are reasonably accurate.</p>
+</div>
 
 <h2 class="section-title">10.10 Channels</h2>
 <div class="important-note">

@@ -1026,6 +1026,76 @@
 </div>
 <p>Real-world: lock-based protocols (shared and exclusive locks, two-phase locking with growing and shrinking phases) are the physical-level mechanism real database engines use to admit only conflict serializable schedules; the token systems of restaurants, hospitals, and the Mata Vaishno Devi temple are the everyday picture of the timestamp order that transaction-based access implements.</p>
 
+<h3 id="15.10.8-multiversion-concurrency-control-reads-without-waiting" class="subsection-title">15.10.8 Multiversion Concurrency Control: Reads Without Waiting</h3>
+<p>Every protocol we have met so far is <em>pessimistic</em>: a read waits for a lock, or a transaction is aborted because the value it wanted has already been overwritten. A third family avoids both outcomes by keeping old copies. Instead of overwriting a data item in place, each write creates a <em>new version</em>; a read then selects the version that is correct for it. This is <em>multiversion concurrency control</em> (MVCC), and it is the mechanism underneath the snapshot behaviour used by several commercial systems.</p>
+<div class="key-concept">
+  <p><strong>Multiversion scheme and the version record.</strong> With each data item \(Q\) the system keeps a sequence of versions \(\langle Q_1, Q_2, \dots, Q_m \rangle\). Each version \(Q_k\) stores three fields:</p>
+  <ul>
+    <li><strong>content</strong> — the value of that version;</li>
+    <li>\(W\text{-}timestamp(Q_k)\) — the timestamp of the transaction that created the version;</li>
+    <li>\(R\text{-}timestamp(Q_k)\) — the largest timestamp of any transaction that has successfully read it.</li>
+  </ul>
+  <p><strong>Read rule.</strong> A transaction \(T_i\) reads the version \(Q_k\) whose write timestamp is the largest one \(\le TS(T_i)\): it reads the most recent version that comes before it in time, so the read never fails and never waits.</p>
+  <p><strong>Write rule.</strong> If \(TS(T_i) < R\text{-}timestamp(Q_k)\), the transaction is too late — a younger transaction already read that version — so \(T_i\) is rolled back. If \(TS(T_i) = W\text{-}timestamp(Q_k)\), the contents of \(Q_k\) are overwritten; otherwise a brand-new version of \(Q\) is created.</p>
+  <p><strong>Valid interval.</strong> If a version \(Q_i\) has write timestamp \(t\) and the next version has timestamp \(s\), its valid interval is \([t, s)\); the newest version's interval is \([t, \infty)\). A read with timestamp \(t_i\) returns exactly the version whose valid interval contains \(t_i\). Once two versions both have write timestamps older than the oldest active transaction, the older one can be deleted.</p>
+</div>
+<div class="example-box">
+  <p><strong>Worked trace — a version chain.</strong> Suppose item \(A\) has versions \(Q_1\,(W=5)\), \(Q_2\,(W=20)\), \(Q_3\,(W=50)\), so their valid intervals are \([5,20)\), \([20,50)\), \([50,\infty)\).</p>
+  <ul>
+    <li>\(T_a\) with \(TS=12\) reads \(A\) → returns \(Q_1\) (content written at time 5).</li>
+    <li>\(T_b\) with \(TS=35\) reads \(A\) → returns \(Q_2\). \(T_c\) with \(TS=60\) reads \(A\) → returns \(Q_3\).</li>
+    <li>\(T_d\) with \(TS=30\) tries to write \(A\): its \(k\) is \(Q_1\). If \(R\text{-}timestamp(Q_1)=40 > 30\), \(T_d\) aborts — that version was already read by a "younger" transaction.</li>
+  </ul>
+  <p><strong>Final result:</strong> all three reads succeeded without waiting or aborting; only the late writer was rejected. Once the oldest active transaction has timestamp above 20, \(Q_1\) is reclaimed.</p>
+</div>
+<div class="important-note">
+  <p><strong>Trade-off.</strong> The decisive advantage is that a read request never fails and is never made to wait — a major gain in read-heavy workloads, and the reason multiversioning is widely deployed. Its costs are extra storage for obsolete versions, a second disk access to update the \(R\)-timestamp on every read, and conflicts still resolved by rollback rather than by waiting. Basic multiversion timestamp ordering also does not by itself guarantee recoverability and cascadelessness; it is normally extended to do so, and it is the foundation for the snapshot schemes we see next.</p>
+</div>
+
+<h3 id="15.10.9-snapshot-isolation-and-the-write-skew-anomaly" class="subsection-title">15.10.9 Snapshot Isolation and the Write-Skew Anomaly</h3>
+<p>Multiversioning reaches practice through <em>snapshot isolation</em>, a scheme widely used in commercial and open-source systems. Each transaction is handed a snapshot of the database as it stood when the transaction began, built only from values written by committed transactions. Long read-only transactions therefore never wait and are never aborted — exactly the situation in which two-phase locking would block updates for a long time.</p>
+<div class="key-concept">
+  <p><strong>How snapshot isolation works.</strong> Each transaction \(T_i\) receives two timestamps: \(StartTS(T_i)\), when it begins, and \(CommitTS(T_i)\), assigned when it enters validation (usually from a counter). Every version carries a single write timestamp equal to the creating transaction's \(CommitTS\).</p>
+  <ul>
+    <li><strong>Read rule:</strong> \(T_i\) reads the latest version whose timestamp is \(\le StartTS(T_i)\). It sees all transactions that committed before it started and none that committed after — its private snapshot.</li>
+    <li><strong>Private workspace:</strong> updates are held locally and written to the database only when the transaction validates, and the transition to committed plus the writing of all updates is one atomic action.</li>
+    <li><strong>First-committer-wins validation:</strong> if any data item \(T_i\) intends to write has a version whose timestamp lies in \((StartTS(T_i), CommitTS(T_i)]\) — i.e. a concurrent transaction already wrote it — \(T_i\) aborts; otherwise it commits. This prevents the lost-update problem that independent snapshots would otherwise allow.</li>
+  </ul>
+</div>
+<div class="example-box">
+  <p><strong>Worked example — write skew.</strong> A bank requires that checking + savings \(\ge 0\). Balances are checking \(=100\), savings \(=200\). Two transactions run concurrently from the same snapshot:</p>
+  <table>
+    <thead>
+      <tr>
+        <th>Step</th>
+        <th>\(T_{36}\)</th>
+        <th>\(T_{37}\)</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>1</td>
+        <td>reads checking \(=100\), savings \(=200\)</td>
+        <td>reads checking \(=100\), savings \(=200\)</td>
+      </tr>
+      <tr>
+        <td>2</td>
+        <td>sees sum \(300 \ge 200\); withdraws 200 from checking</td>
+        <td>sees sum \(300 \ge 200\); withdraws 200 from savings</td>
+      </tr>
+      <tr>
+        <td>3</td>
+        <td>writes checking \(=-100\)</td>
+        <td>writes savings \(=0\)</td>
+      </tr>
+    </tbody>
+  </table>
+  <p>Because they write <em>different</em> items, there is no update conflict and both pass validation and commit. Final state: checking \(=-100\), savings \(=0\), sum \(=-100 < 0\) — the constraint is violated, an outcome no serial execution could produce. <strong>Sense-check via §15.6:</strong> \(T_{36}\) read savings before \(T_{37}\) wrote it → edge \(T_{36} \to T_{37}\); \(T_{37}\) read checking before \(T_{36}\) wrote it → edge \(T_{37} \to T_{36}\). The precedence graph has a cycle, so the schedule is not serializable — snapshot isolation admitted a schedule the graph test would reject.</p>
+</div>
+<div class="key-takeaway">
+  <p><strong>Takeaway:</strong> snapshot isolation is powerful and practical (long readers never block writers), but it is <strong>not</strong> full serializability — write skew is the price. Integrity constraints must therefore be checked on the current database state at commit, not on a transaction's snapshot. Systems that need true serializability add read/write-dependency checks on top, a technique known as <em>serializable snapshot isolation</em>, which detects the anomaly and aborts one transaction without blocking the readers that made snapshot isolation attractive in the first place.</p>
+</div>
+
 
 
 <h2 id="key-industry-applications">Key Industry Applications</h2>

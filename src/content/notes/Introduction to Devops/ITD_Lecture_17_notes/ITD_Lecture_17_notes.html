@@ -514,6 +514,27 @@
   <li><strong>Accidental destruction.</strong> Because the whole environment is defined by a script, if somebody deletes a line in that script — accidentally or not — there is an accidental destruction of infrastructure as well. The next run of the script removes the resource that line described.</li>
 </ul>
 <p>These are the risks, and the industry should be ready to understand them when adopting infrastructure as code.</p>
+
+<div class="key-concept">
+  <p><strong>Formal Definition — Declarative versus Imperative:</strong> A <em>declarative</em> specification describes the final state the system must reach and leaves the sequence of steps to the tool; an <em>imperative</em> specification lists the exact commands to run, in order. Saying "JRE 7 must be installed" is declarative; saying "run this installer, then edit this file, then restart the service" is imperative.</p>
+  <p><strong>Formal Definition — Idempotence:</strong> an operation is <em>idempotent</em> when performing it once yields exactly the same result as performing it repeatedly with no intervening actions. If \(R\) is the tool's reconcile function and \(s\) the current state, idempotence is the fixed-point property:</p>
+  \[
+  R(R(s)) = R(s), \qquad R(s_d) = s_d
+  \]
+  <p>where \(s_d\) is the declared desired state. Once the system has converged to \(s_d\), further applications are no-ops — so the end result is identical regardless of the initial state, even if the same configuration is applied again and again.</p>
+  <p><strong>Why the JRE drift oscillates:</strong> an idempotent tool with a <em>single</em> declared desired state converges once and then stops. Oscillation appears only when two authorities disagree — the declaration says JRE 7 while an imperative script keeps writing JRE 8. The table traces both cases:</p>
+  <table>
+    <thead>
+      <tr><th>Run</th><th>State before</th><th>Declared</th><th>Idempotent tool</th><th>Imperative script writing 8</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>1</td><td>JRE 8</td><td>JRE 7</td><td>Converges to 7 → <code>changed</code></td><td>Writes 8 → <code>changed</code></td></tr>
+      <tr><td>2</td><td>JRE 7</td><td>JRE 7</td><td>No action → <code>ok</code></td><td>Writes 8 → <code>changed</code></td></tr>
+      <tr><td>3</td><td>JRE 7</td><td>JRE 7</td><td>No action → <code>ok</code></td><td>Writes 8 → <code>changed</code></td></tr>
+    </tbody>
+  </table>
+  <p><strong>Takeaway:</strong> idempotence is what makes "run the configuration as often as you like" safe, and it is the property that turns the desired-state idea from an aspiration into a guarantee — one declared state, one stable end result, no matter how many times the definition is reapplied.</p>
+</div>
 <div class="key-takeaway">
   <p><strong>Recap:</strong> Infrastructure as code writes machine-readable definition files that generate service components — programmable infrastructure. It fits DevOps because both teams now share code and understand each other's pain, and it is the only way to guarantee an exact production mirror for staging. The pre-IaC world was a manual ticket chain (test team → system admin → DB admin → development → testing), while the IaC workflow checks everything into version control and lets a script build the whole environment on demand. Benefits: less shadow IT, happier customers, lower OPEX and CapEx, standardization, safer change management — and skill upgrades rather than job losses. Risks: poor planning, error replication, configuration drift (desired vs actual state flipping), and accidental destruction.</p>
   <p><strong>Bridge:</strong> Infrastructure as code creates environments from scripts — but at the bottom of every environment sits a server that must be <em>provisioned</em>: identified, given an operating system, and made usable. The next section zooms into that bottom layer, from the manual provisioning steps to the automated DHCP → PXE → TFTP boot path.</p>
@@ -595,6 +616,23 @@
 </div>
 <div class="important-note">
   <p><strong>Why each protocol exists separately:</strong> DHCP handles <em>identity</em> (an address so the network knows the machine), PXE handles <em>selection</em> (which boot image the machine should load — it is a pre-boot environment that runs before any operating system exists on the disk), and TFTP handles <em>transfer</em> (a deliberately simple protocol good at moving one boot file quickly, without the complexity of a full file server). The division of labor is what lets a completely empty machine become a booted server without human intervention.</p>
+</div>
+
+<div class="important-note">
+  <p><strong>System Detail — What the Machine Actually Becomes:</strong> DHCP, PXE, and TFTP only get an empty machine to a boot image; they do not decide which operating system it ends up with or how that OS is configured. The companion literature groups operating-system baseline creation into three approaches:</p>
+  <table>
+    <thead>
+      <tr><th>Approach</th><th>How the OS appears</th><th>Repeatability</th><th>Where it fits</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>Fully manual</td><td>An installer is run by hand and options are chosen interactively</td><td>Not reliably repeatable — hand-built "works of art" accumulate cruft</td><td>Ad-hoc setups only; does not scale</td></tr>
+      <tr><td>Automated remote installation</td><td>PXE network-boots an installer; an unattended answer file drives it</td><td>High — one image plus one answer file for many machines</td><td>Bare-metal physical servers and virtual hosts</td></tr>
+      <tr><td>Virtualization</td><td>A VM is created from a stored image or template (covered later in the course)</td><td>Highest — clone a known-good template in minutes</td><td>Test and production environments</td></tr>
+    </tbody>
+  </table>
+  <p><strong>The missing half — unattended installation:</strong> once PXE has loaded an installer into memory, every installer question still needs an automated answer. Red Hat's <strong>Kickstart</strong>, Debian's <strong>Preseed</strong>, and Solaris's <strong>Jumpstart</strong> provide a single answer file holding those responses, so a machine installs with no operator present. Official installer documentation describes this as one file containing the answers to all the questions normally asked during a typical installation, kept on a server and read by individual machines during installation. The Windows equivalent is <strong>WDS</strong> (Windows Deployment Services), which uses PXE underneath and separates a <code>BOOT.WIM</code> boot image from an <code>INSTALL.WIM</code> install image.</p>
+  <p><strong>Worked trace — 50 identical bare-metal hosts:</strong> (1) commit one Kickstart/Preseed answer file to version control; (2) 50 machines network-boot through PXE, each pulling the same installer image by TFTP; (3) each machine reads the same answer file for disk layout, packages, language, and patches; (4) once the OS is up, the configuration-management agent is installed and takes over ongoing state. All 50 arrive at the same baseline with no keyboard input — and the next 50 reuse the exact same two files.</p>
+  <p><strong>Takeaway:</strong> DHCP → PXE → TFTP answers "how does an empty machine boot?"; the baseline method plus the unattended answer file answer "what does it become, and can we make fifty more just like it?" — which is what turns provisioning into infrastructure as code.</p>
 </div>
 <h3 id="17.6.3-provisioning-as-part-of-infrastructure-as-code">17.6.3 Provisioning as Part of Infrastructure as Code</h3>
 <p>Everything described above — installation, configuration, even the provisioning itself — can be managed with infrastructure as code. You can provision the infrastructure with the help of IaC. The benefits: you reduce the maneuvers for installation and configuration, you reduce operational cost, you reduce errors, and it is better for quality assurance. Those are the benefits one can think of for infrastructure as code, alongside the risks already discussed.</p>

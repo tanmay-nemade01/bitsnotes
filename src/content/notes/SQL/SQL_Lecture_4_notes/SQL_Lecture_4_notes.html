@@ -507,6 +507,34 @@ FROM movies;</code></pre>
 <pre><code>SELECT * FROM movies ORDER BY movie_name ASC, release_date DESC;</code></pre>
 <p>Now titles lead A-to-Z, and only films sharing a title fall back to newest-first dates. So the lesson is that key order is part of the answer: leftmost key dominates, later keys only break ties left behind.</p>
 <p>Multi-key sorting with independent directions works identically in PostgreSQL, MySQL, Snowflake, and Databricks — the lecture forms need no change across systems.</p>
+<div class="important-note">
+  <p><strong>Architectural Detail — Collating Sequences:</strong> The <code>ORDER BY</code> grammar is portable, but the <em>order</em> it produces for text is not. A <em>collation</em> is the rule set that maps every character of the active character set to a sort position; it decides whether lowercase precedes uppercase, whether case is significant at all, and how accented letters relate to their unaccented base letters. The same A-to-Z query can therefore return a different sequence on two servers whose default collations differ, even though the query text is byte-for-byte identical.</p>
+  <table>
+    <thead>
+      <tr>
+        <th>Collation</th>
+        <th>Rule applied to the sort key</th>
+        <th>Order of <code>apple</code>, <code>Banana</code>, <code>bank</code></th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><code>C</code> / <code>POSIX</code></td>
+        <td>Raw byte value; only ASCII A–Z count as letters</td>
+        <td><code>Banana</code>, <code>apple</code>, <code>bank</code></td>
+      </tr>
+      <tr>
+        <td><code>en_US</code> (natural language)</td>
+        <td>Case-insensitive at the primary level, with case breaking later ties</td>
+        <td><code>apple</code>, <code>Banana</code>, <code>bank</code></td>
+      </tr>
+    </tbody>
+  </table>
+  <p>PostgreSQL allows the collation to be chosen per sort expression, overriding the database default for that one sort:</p>
+  <pre><code>SELECT movie_name FROM movies ORDER BY movie_name COLLATE "C";
+SELECT movie_name FROM movies ORDER BY movie_name COLLATE "en_US";</code></pre>
+  <p>MySQL attaches a collation to the string or column instead, and encodes its sensitivity in the name — <code>ascii_general_ci</code> is case-insensitive (the <code>_ci</code> suffix), while a <code>_cs</code> name is case-sensitive and <code>_bin</code> compares raw byte values. The plain English titles in this lecture hide the difference, which is why the examples look alphabetical everywhere. When a report's row order is part of its contract, name the collation explicitly — the same discipline as pinning NULL placement rather than inheriting a default that shifts when the database or host locale changes.</p>
+</div>
 <div class="warning-box">
   <p><strong>Scope:</strong> <code>ORDER BY</code> arranges the answer set; it never removes or merges rows, and without it no order is promised even if the output "usually" looks sorted. Sorting large answers costs time and memory, so production queries sort only the rows the reader needs.</p>
 </div>
@@ -767,6 +795,14 @@ INSERT INTO demo_sorting (num) VALUES (1), (2), (3), (NULL);</code></pre>
   <pre><code>SELECT DISTINCT movie_lang FROM movies ORDER BY movie_lang;</code></pre>
   <pre><code>SELECT DISTINCT movie_lang FROM movies ORDER BY 1;</code></pre>
   <p>lists Chinese, English, German, Japanese, Korean, Portuguese, Spanish, and Swedish. Both sort keys work because the output has a single column in position \(1\). The collapse from 53 to 8 is the payoff made visible: 45 duplicate rows folded away.</p>
+<div class="example-box">
+  <p><strong>The Explicit Default:</strong> Just as omitting a direction word leaves <code>ORDER BY</code> ascending, omitting a filter word leaves every candidate row in place. The explicit spelling of that default is <code>SELECT ALL</code>, the exact opposite of <code>DISTINCT</code>: <code>SELECT ALL movie_lang FROM movies;</code> returns all 53 rows with duplicates intact, while <code>SELECT DISTINCT movie_lang FROM movies;</code> returns the 8 unique languages. The word is optional in both senses — it may be omitted, and the behavior it names is what a bare <code>SELECT</code> already performs. What it adds is a way to say "keep everything" out loud, which is useful in code that toggles the two words to switch between a raw feed and a unique list.</p>
+  <pre><code>SELECT movie_lang FROM movies;           -- 53 rows, default (ALL implied)
+SELECT ALL movie_lang FROM movies;       -- 53 rows, written explicitly
+SELECT DISTINCT movie_lang FROM movies;  -- 8 rows</code></pre>
+  <p><strong>Cost of the collapse:</strong> deduplication is a real processing step, not a cosmetic filter. To keep one row per value the engine must compare rows — conceptually a sort or a hash pass over the answer — so the work grows with the size of the result. Collapsing 53 movie rows to 8 languages is trivial; the same filter across millions of rows is a measurable phase of the query. The caution is well founded: generating a distinct set requires the data to be compared or sorted, which can be time-consuming on large result sets.</p>
+  <p>That is why <code>DISTINCT</code> should answer a genuine "list the kinds" question rather than be added defensively in case duplicates might exist. The discipline mirrors the warning about <code>SELECT *</code> earlier in this lecture: know the shape of the data and ask for exactly what the task needs. When a load is unique by construction, <code>DISTINCT</code> buys nothing and only adds work; when repeats are expected, it is the right tool and the collapsed row count is itself the finding.</p>
+</div>
 </div>
 <p><strong>Example 3 — unique director identifiers.</strong> The same single-column pattern on the director column:</p>
 <pre><code>SELECT DISTINCT director_id FROM movies;</code></pre>
@@ -780,6 +816,25 @@ INSERT INTO demo_sorting (num) VALUES (1), (2), (3), (NULL);</code></pre>
 <pre><code>SELECT DISTINCT * FROM movies ORDER BY movie_id ASC;</code></pre>
 <p>The grid then runs in identifier order with each full row unique. The 53-to-53 non-collapse is itself the finding: a full-row duplicate audit comes back clean.</p>
 <p><code>DISTINCT</code> with one column, several columns, and the star behaves identically in PostgreSQL, MySQL, Snowflake, and Databricks SQL — the lecture forms transfer unchanged. Two extras are worth knowing once the core is solid. PostgreSQL offers <code>DISTINCT ON (col)</code> as a vendor extension that keeps one row per value of the named column while returning other columns too — handy, but non-portable, so exam and shared queries should stick to plain <code>DISTINCT</code>. And <code>COUNT(DISTINCT movie_lang)</code> folds the filter into an aggregate to return the number \(8\) directly instead of listing the eight rows — the counting companion to the listing learned here.</p>
+<div class="warning-box">
+  <p><strong>Pitfall — Which Row Survives <code>DISTINCT ON</code>:</strong> The PostgreSQL extension keeps one row per value of the named column, but it does not promise <em>which</em> row survives. The chosen row is unpredictable unless <code>ORDER BY</code> forces the wanted row to the front of each group.</p>
+  <table>
+    <thead>
+      <tr>
+        <th><code>director_id</code></th>
+        <th><code>movie_name</code></th>
+        <th><code>release_date</code></th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr><td>7</td><td>Early Work</td><td>2001</td></tr>
+      <tr><td>7</td><td>Middle Film</td><td>2010</td></tr>
+      <tr><td>7</td><td>Latest Release</td><td>2015</td></tr>
+    </tbody>
+  </table>
+  <p>Against a mini-table like this one, <code>SELECT DISTINCT ON (director_id) director_id, movie_name, release_date FROM movies ORDER BY director_id, release_date DESC;</code> returns only <code>Latest Release</code>: the first key groups rows by director, the second sorts that group newest-first, and the leading row of each group is the one kept.</p>
+  <p>The rule is mechanical — the <code>DISTINCT ON</code> expressions must match the <em>leftmost</em> <code>ORDER BY</code> expressions. Reversing the keys to <code>ORDER BY release_date DESC, director_id</code> breaks that correspondence and the statement errors; omitting <code>ORDER BY</code> altogether leaves the choice to the engine, so a later load can silently change which title is reported. Plain <code>DISTINCT</code> has no such trap because it keeps no companion columns: every surviving row is already identical across the listed columns.</p>
+</div>
 <div class="warning-box">
   <p><strong>Scope:</strong> <code>DISTINCT</code> folds exact duplicates after all expressions are computed — trailing spaces and casing differences count as different values (<code>'English'</code> vs <code>'english '</code> survive as two rows). It never selects "one representative per group with extra detail"; that choice needs grouping or <code>DISTINCT ON</code>, not plain <code>DISTINCT</code>.</p>
 </div>

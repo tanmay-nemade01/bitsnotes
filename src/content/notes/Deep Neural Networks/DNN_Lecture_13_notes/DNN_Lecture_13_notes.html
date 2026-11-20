@@ -1285,6 +1285,22 @@
 <p>In practice, \(\lambda_{\max} < 1\) is the common case after training begins. Weights tend to shrink. So vanishing gradients are the default problem. Exploding gradients happen early in training if initial weights push eigenvalues above 1. But they are easier to detect because the loss hits NaN. They are also easier to fix with gradient clipping.</p>
 </div>
 
+<div class="key-concept">
+<p><strong>Why the Decay Is Exponential — A Spectral Derivation.</strong> The eigenvalue rule above is not a heuristic. Linearise the recurrence by dropping the input and using tanh in its linear regime, so the state-to-state transition is \( \mathbf{h}_t = \mathbf{W}_{hh}\mathbf{h}_{t-1} \). After \( t \) steps, \( \mathbf{h}_t = \mathbf{W}_{hh}^{t}\mathbf{h}_0 \). If \( \mathbf{W}_{hh} = \mathbf{Q}\mathbf{\Lambda}\mathbf{Q}^{\top} \) with orthonormal \( \mathbf{Q} \), then:</p>
+
+<p>\[ \mathbf{h}_t = \mathbf{Q}\,\mathbf{\Lambda}^{t}\,\mathbf{Q}^{\top}\mathbf{h}_0 \]</p>
+
+<p>Every component of the initial state is multiplied by \( \lambda_i^{\,t} \). Components with \( |\lambda_i| < 1 \) decay to zero; components with \( |\lambda_i| > 1 \) grow without bound. This is the power method: after many steps only the direction of the largest eigenvalue survives. Backpropagation uses the transpose, \( \mathbf{g}^{(n)} = (\mathbf{W}_{hh}^{\top})^{n}\mathbf{g} \), but \( \mathbf{W}_{hh}^{\top} \) has the same eigenvalues, so the gradient obeys exactly the same exponential law.</p>
+
+<p><strong>Perturbation view.</strong> Take two gradient vectors that differ by \( \delta \mathbf{v} \) along a unit eigenvector of eigenvalue \( \lambda \). After \( n \) backward steps their separation is:</p>
+
+<p>\[ \big\|\mathbf{J}^{n}(\mathbf{g}+\delta\mathbf{v}) - \mathbf{J}^{n}\mathbf{g}\big\| = \delta\,|\lambda|^{n} \]</p>
+
+<p>A perturbation is therefore amplified when \( |\lambda| > 1 \) and crushed when \( |\lambda| < 1 \). A spectral radius near 1 is the <em>edge of stability</em> — the regime in which a dynamical system can carry a signal across many time steps without exploding or forgetting it.</p>
+
+<p><strong>The fundamental trade-off.</strong> There is a deeper consequence. To store a memory robustly against small perturbations, the dynamics that encode it must be contractive — which forces the gradient of a long-range interaction to be exponentially smaller than the gradient of a short-range one. A plain RNN cannot simultaneously offer robust long-term memory and non-vanishing long-term gradients; the long-range signal is always exponentially dominated by short-term fluctuation. Vanishing gradients are thus a structural property, not an accident of initialisation. Gated architectures answer this by replacing repeated multiplication with an additive, near-unit self-loop (the cell state or update-gate path), so information and gradient bypass the shrinking Jacobian.</p>
+</div>
+
 <h4>Worked Example: Gradient Decay Over 20 Steps</h4>
 
 <div class="example-box">
@@ -3077,6 +3093,23 @@ d × 64 + 64 × 64 + 64  = 64d + 4160
 <p>The forget gate is applied to the previous cell state \( \mathbf{C}_{t-1} \) (see Section 13.13.5). It only controls what is <em>removed</em> from the past. It has no influence over what new information is added.</p>
 
 <p><strong>Historical detail.</strong> The original LSTM (Hochreiter and Schmidhuber, 1997) did not have a forget gate. It had only input and output gates. Without a forget gate, the cell state could grow without bound on very long sequences. There was no mechanism to deliberately discard old information. The forget gate was added later by Gers, Schmidhuber, and Cummins (2000) and has been standard in every LSTM implementation since. If you read older papers, you may encounter the phrase "LSTM with forget gates" — today we just call it LSTM.</p>
+
+<div class="important-note">
+<p><strong>Engineering Detail — Forget-Gate Bias and Peephole Connections.</strong> The forget gate just introduced has two well-studied refinements that are absent from the basic equations but matter in practice.</p>
+
+<p><table>
+<thead><tr><th>Variant</th><th>Mechanics</th><th>Reported behaviour</th></tr></thead>
+<tbody>
+<tr><td>Baseline bias \( b_f = \mathbf{0} \)</td><td>\( f_t = \sigma(\mathbf{W}_f\mathbf{x}_t + \mathbf{U}_f\mathbf{h}_{t-1}) \) starts near 0.5</td><td>Early in training roughly half the cell contents are discarded each step, so long-range signals are slow to establish.</td></tr>
+<tr><td>Forget-gate bias \( +1 \)</td><td>Initialise \( b_f = \mathbf{1} \), so \( f_t \approx \sigma(1) \approx 0.73 \) before any learning</td><td>Reported to close the gap between LSTM and GRU in a large architecture search; biases the cell toward retention from the first step.</td></tr>
+<tr><td>Peephole connections</td><td>The cell state is fed as an extra input to the forget, input and output gates, each with its own weight (three extra parameters in the scalar cell)</td><td>Lets every gate read the memory it is modifying; large ablations found no variant, peepholes included, that reliably beats the standard LSTM across tasks.</td></tr>
+</tbody>
+</table></p>
+
+<p><strong>Why a positive forget bias helps.</strong> Because \( \mathbf{C}_t = \mathbf{f}_t \odot \mathbf{C}_{t-1} + \mathbf{i}_t \odot \tilde{\mathbf{C}}_t \), the forget gate multiplies the previous cell state directly. Raising its initial value toward the "keep" regime holds the Constant Error Carousel open from the first steps: gradient reaching early time steps is larger, and the network need not learn <em>when</em> to remember before it can learn anything else. The bias remains trainable and will move away from \( +1 \) if the task calls for faster forgetting.</p>
+
+<p><strong>Scope.</strong> These are refinements of the standard cell, not new architectures. Ablation evidence identifies the forget gate and the output activation function as the two most critical components; most other variations give no consistent gain over the baseline across speech, handwriting and polyphonic-music tasks.</p>
+</div>
 
 <h3 class="subsection-title">13.13.4 Key Equations 2 and 3: The Input Gate and Candidate Cell State</h3>
 

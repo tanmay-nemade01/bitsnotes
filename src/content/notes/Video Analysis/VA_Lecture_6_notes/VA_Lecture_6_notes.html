@@ -724,10 +724,51 @@
 <h3 id="6.6.4-when-the-base-form-shines-and-when-it-fails">6.6.4 When the Base Form Shines and When It Fails</h3>
 <p>It shines on slow, thin motion. Hand waves, head nods, and dance steps span few pixels per frame gap and solve neatly. It likes thin fields where moves sit at a few blobs with wide still gaps between. It runs fast once vectorized. It needs no training.</p>
 <p>It fails on fast moves like race cars, where a thing jumps many pixels per gap and leaves the small-shift range. It fails on thick motion where all spots move at once. It wobbles on straight edges inside the patch, where only the cross-edge side is pinned. Real-world: studio clips and dance clips suit it. Race feeds do not.</p>
+<div class="example-box">
+  <p><strong>Worked Calculation - Judging the Arrow:</strong> accuracy needs a ground-truth flow \((\hat{u}, \hat{v})\) at the same pixels. The <em>endpoint error</em> is the vector gap \(\mathrm{EE} = \sqrt{(u-\hat{u})^{2} + (v-\hat{v})^{2}}\). The <em>angular error</em> lifts each 2D vector to 3D as \((u, v, 1)\) and takes the angle
+  \[ \mathrm{AE} = \cos^{-1}\!\left(\frac{u\hat{u} + v\hat{v} + 1}{\sqrt{u^{2}+v^{2}+1}\,\sqrt{\hat{u}^{2}+\hat{v}^{2}+1}}\right) \]
+  Estimate \((3, 4)\) against truth \((0, 0)\) gives \(\mathrm{EE} = \sqrt{9+16} = 5\) pixels and \(\mathrm{AE} = \cos^{-1}(1/\sqrt{26}) \approx 78.7^{\circ}\).</p>
+  <p><strong>Why two measures:</strong> truth \((5, 0)\) against estimate \((10, 0)\) gives the same 5-pixel endpoint error, but \(\mathrm{AE} = \cos^{-1}\!\left(51/(\sqrt{101}\sqrt{26})\right) \approx 5.7^{\circ}\). Angular error mostly scores direction, endpoint error scores displacement, and a third measure, motion-compensation error, needs no ground truth at all because it warps one frame by the flow and compares brightness against the next.</p>
+  <table>
+    <thead><tr><th>Measure</th><th>Ground truth</th><th>What it scores</th><th>(3,4) vs (0,0)</th></tr></thead>
+    <tbody>
+      <tr><td>Endpoint error</td><td>Required</td><td>Displacement magnitude in pixels</td><td>\(5\) px</td></tr>
+      <tr><td>Angular error</td><td>Required</td><td>Direction, via 3D lift with third component 1</td><td>\(\approx 78.7^{\circ}\)</td></tr>
+      <tr><td>Motion-compensation error</td><td>Not required</td><td>Brightness mismatch after warping</td><td>n/a</td></tr>
+    </tbody>
+  </table>
+</div>
 <div class="key-takeaway">
   <p>One hold equation plus 25 patch rows turns change zones into arrows: solve the tiny least-squares system per spot, read \((u, v)\) as side plus speed, and trust it only where texture pins both axes.</p>
 </div>
 <p>The moving blue tag demo from the lecture grounds this whole section: steady light plus a textured \(5 \times 5\) patch gives a firm arrow, while flat walls and edge cuts warn that the one-shift rule has limits.</p>
+
+<h3 id="6.6.5-local-versus-global-flow-the-horn-schunck-energy">6.6.5 Local Versus Global Flow: The Horn-Schunck Energy</h3>
+<div class="key-concept">
+  <p><strong>Formal Definition:</strong> Lucas-Kanade solves an independent \(2 \times 2\) system inside each patch. The <em>Horn-Schunck</em> method instead minimises one global energy over the whole frame, adding a smoothness term that penalises pixel-to-pixel variation of the flow field:</p>
+  \[ E(u, v) = \iint \bigl(I_{x} u + I_{y} v + I_{t}\bigr)^{2} \, dx\,dy \;+\; \alpha \iint \bigl(\lVert \nabla u \rVert^{2} + \lVert \nabla v \rVert^{2}\bigr) \, dx\,dy \]
+  <p>The first term is the brightness-hold data cost from 6.6.1, the second is the smoothness prior, and \(\alpha\) sets their relative weight: larger \(\alpha\) forces a flatter flow field. One brightness line per pixel still cannot pin both unknowns, so this extra prior is what makes the problem well-posed.</p>
+</div>
+<div class="important-note">
+  <p><strong>Solver Detail:</strong> minimising \(E\) by the calculus of variations gives coupled Euler-Lagrange equations, which Horn and Schunck solve with Gauss-Seidel sweeps over the image. Writing \(\bar{u}, \bar{v}\) for the neighbourhood averages of the current flow estimate:</p>
+  \[ u \leftarrow \bar{u} - \frac{I_{x}\bigl(I_{x}\bar{u} + I_{y}\bar{v} + I_{t}\bigr)}{\alpha^{2} + I_{x}^{2} + I_{y}^{2}}, \qquad v \leftarrow \bar{v} - \frac{I_{y}\bigl(I_{x}\bar{u} + I_{y}\bar{v} + I_{t}\bigr)}{\alpha^{2} + I_{x}^{2} + I_{y}^{2}} \]
+  <p>The field starts at zero, the derivatives \(I_{x}, I_{y}, I_{t}\) come from finite differences of the two frames, and repeated sweeps let every pixel borrow information from its neighbours. Unlike the patch solve in 6.6.1, no two pixels are solved independently.</p>
+</div>
+<table>
+  <thead>
+    <tr><th>Property</th><th>Lucas-Kanade (6.6.1)</th><th>Horn-Schunck</th></tr>
+  </thead>
+  <tbody>
+    <tr><td>Solve unit</td><td>Independent \(5 \times 5\) patch</td><td>One coupled field over the frame</td></tr>
+    <tr><td>Constraint</td><td>Brightness hold inside one patch</td><td>Brightness hold plus global smoothness prior</td></tr>
+    <tr><td>Output character</td><td>Sparse, sharp where texture exists</td><td>Dense, defined everywhere</td></tr>
+    <tr><td>At a motion edge</td><td>Patch straddling two faces breaks</td><td>Quadratic smoothness blurs the boundary</td></tr>
+    <tr><td>Compute</td><td>Tiny \(2 \times 2\) inverse per patch</td><td>Iterative sweeps until convergence</td></tr>
+  </tbody>
+</table>
+<div class="warning-box">
+  <p><strong>Pitfall - Smoothness Across Edges and Occlusions:</strong> the quadratic prior assumes neighbours share one shift, so at an object boundary it smears two motions together. The brightness term is also invalid at occlusions, where a pixel in frame \(t+1\) has no true match in frame \(t\). The textbook fixes are oriented (anisotropic) smoothness that weakens across image gradients, and an adaptive \(\alpha\) that switches the data term off in those regions.</p>
+</div>
 
 <h2 id="6.7-fast-paths-pyramids-and-learned-flow">6.7 Fast Paths Pyramids and Learned Flow</h2>
 <div class="important-note">
@@ -799,6 +840,27 @@
   <p><strong>Q:</strong> Was RAFT picked for live edge runs?</p>
   <p><strong>A:</strong> No. RAFT fits offline study and base-truth runs because it costs more compute. Edge live runs favor lighter tuned nets. The pick hinges on use case, power cap, speed need, and exactness need.</p>
 </div>
+
+<h3 id="6.7.4-video-stabilization-as-parametric-motion">6.7.4 Video Stabilization as Parametric Motion</h3>
+<p>The camera pay-back in 6.7 is not only a cleaning step before tracking; with a few global parameters it becomes a product of its own. The global-shift assumption replaces the per-pixel field \(\mathbf{v}(x, y)\) by one low-dimensional map \(x' = W(x; \mathbf{p})\), where \(\mathbf{p}\) is a short vector: 2 parameters for pure translation, 4 for similarity (translation, rotation, zoom), 6 for an affine warp, and 8 for a planar homography. Fitting \(\mathbf{p}\) with the same linearised brightness hold of 6.6.1 is cheaper than solving a dense field, and the recovered warp is exactly the camera motion to remove.</p>
+<figure class="visual-intuition">
+  <pre class="mermaid">
+flowchart LR
+  A[Frame pair] --> B[Fit global camera motion p]
+  B --> C[Smooth p: keep low-frequency path]
+  C --> D[Remove high-frequency shake]
+  D --> E[Warp frames by corrected path]
+  E --> F[Stable video]
+  </pre>
+  <figcaption><strong>Figure:</strong> The three stabilization stages - global motion estimation, motion smoothing, and image warping - with the camera path split into slow intent and fast jitter.</figcaption>
+</figure>
+<div class="important-note">
+  <p><strong>Mechanism:</strong> a stabilizer runs in three stages. Motion estimation locks onto background features with a similarity transform so that independently moving foreground objects do not hijack the fit. Motion smoothing keeps the low-frequency part of the camera path (the intended pan) and isolates the high-frequency part (hand shake) to be removed; quadratic penalties on motion derivatives are common, while \(L_{1}\) penalties give a more natural locked or linear virtual-camera path. Image warping then renders each frame as if captured on that smoothed path, filling the exposed borders.</p>
+</div>
+<div class="warning-box">
+  <p><strong>Pitfall - Locking Onto the Wrong Motion:</strong> if a large moving object fills the frame, the parameter fit follows that object instead of the camera and stabilization warps the world the wrong way. This is the both-moving ambiguity of 6.3 seen at the global level: the model must be fitted to motion shared across the static background, not to the loudest moving blob.</p>
+</div>
+
 <div class="key-takeaway">
   <p>Catch fast jumps with pyramids (shrink, solve small, double up with fixes), spend compute wisely with FlowNet on edge and RAFT offline, and always close with a short task tune plus camera pay-back where the rig moves.</p>
 </div>

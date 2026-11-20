@@ -135,6 +135,21 @@
   </ul>
 </div>
 <p>The last piece is what gives Kafka its superpower: because each partition is an append-only log, any consumer can rewind to an older offset and replay the stream from that point. In the queue design most beginners imagine, a message is deleted the moment one consumer reads it. Kafka instead keeps messages around (for a retention window such as 12 hours or 50 GB), and each consumer tracks its own position. That means many consumers can read the same topic independently, each at its own pace, and a failed job can re-read exactly the events it missed instead of losing them forever.</p>
+
+<div class="example-box">
+  <p><strong>Worked mechanism — how the append-only log reclaims space.</strong> The retention window quoted above ("12 hours or 50 GB") is not magic: the broker physically stores each partition as a sequence of <em>log segments</em>. Once a segment is older than the retention time or the partition crosses its size cap, that whole segment is deleted or moved to archive storage. The partition therefore behaves as a <em>bounded-size buffer</em> — a circular buffer on disk — rather than an infinite file.</p>
+  <p><strong>Back-of-the-envelope retention bound.</strong> With a 6 TB disk sustaining 150 MB/s of sequential writes, the time to fill the disk is:</p>
+  \[
+  T_{\text{fill}} = \frac{6\times10^{12}\ \text{B}}{150\times10^{6}\ \text{B/s}} = 4.0\times10^{4}\ \text{s} \approx 11.1\ \text{hours}
+  \]
+  <p>At maximum write speed the log can buffer roughly 11 hours of messages. Real deployments run well below full disk bandwidth, so the practical buffer is days or weeks. The consequences tie directly back to the demo's <code>--from-beginning</code> flag:</p>
+  <ul>
+    <li>A consumer whose offset points into a <em>deleted</em> segment silently misses those messages — it cannot replay past the oldest retained offset, so "from the beginning" means "from the oldest retained record," not necessarily absolute offset 0.</li>
+    <li>The loss is isolated: a lagging consumer affects only itself, not other consumers of the same topic — a major operational advantage over destructive queue designs.</li>
+    <li>Teams monitor <em>consumer lag</em> (distance from the log end) and alert before a slow consumer crosses the retention edge.</li>
+  </ul>
+  <p><strong>Final result:</strong> retention converts an unbounded append-only stream into a fixed-capacity, replayable window; the 6 TB / 150 MB/s disk yields about an 11-hour buffer at full write speed.</p>
+</div>
 <p><strong>Assumption and scope.</strong> This design assumes messages are append-only and never edited once written — the broker only ever adds to a partition. If a system needs to modify already-stored events in place, Kafka is the wrong tool. Also, ordering is guaranteed <em>within</em> a partition only; Kafka makes no ordering promise across different partitions of the same topic.</p>
 <p><strong>Pitfalls.</strong> A common beginner trap is to believe that deleting a message from one consumer's read deletes it for everyone — it does not; each consumer group tracks its own offset. Another is to think the offset is global across the topic; it is local to a partition, so two partitions each restart their numbering at 0. And a third: reading "from the beginning" (offset 0) replays every retained message, which can flood a consumer that expects only new arrivals.</p>
 <h3 id="9.2.2-worked-walkthrough-the-producer-consumer-demo">9.2.2 Worked Walkthrough: The Producer–Consumer Demo</h3>
@@ -156,6 +171,43 @@ kafka-console-consumer.bat --topic example_event --from-beginning</code></pre>
   <p><strong>Live error correction:</strong> the producer's connection flag is <code>--broker-list</code>, the consumer's is not. The console producer was originally given <code>--bootstrap-server</code> — the flag the console consumer uses — and the producer did not become ready until the flag was corrected to <code>--broker-list localhost:9092</code>. This is the classic producer/consumer flag mix-up the professor showed live: the broker list names the servers that hold the partitions, while the bootstrap server is the contact address used at startup. When a console tool hangs without showing its prompt, check the flag name before anything else.</p>
 </div>
 <p><strong>Step 5 — start the consumer.</strong> In another window, run <code>kafka-console-consumer.bat</code> for the same topic. To see messages that were sent before the consumer started, add the <code>--from-beginning</code> flag, which tells the consumer to read from offset 0 rather than from the newest message onward. The standard console consumer follows exactly this form: the topic name plus the begin-from flag when you want the full history.</p>
+
+<div class="important-note">
+  <p><strong>System detail — what happens inside a consumer group.</strong> The console consumer you just started joins a <em>consumer group</em>: a set of consumers sharing the same <code>group.id</code> that cooperate to read one or more topics. Kafka's rule is coarse-grained: <strong>each partition is consumed by exactly one consumer in a group at any instant</strong>, so parallelism is capped by the partition count — adding more consumers than partitions leaves the extras idle. A broker-side <em>group coordinator</em> (chosen from the <code>group.id</code>) assigns partitions and reassigns them whenever members join, leave, or topic metadata changes — a <em>rebalance</em>.</p>
+  <p><strong>Worked trace — offset commit and crash recovery.</strong> Progress is not tracked per message; the group periodically checkpoints a single integer per partition to the internal <code>__consumer_offsets</code> topic, and that offset means the <em>next</em> record to read. Consider one partition with these positions:</p>
+  <table>
+    <thead>
+      <tr>
+        <th>Position marker</th>
+        <th>Value</th>
+        <th>Meaning</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>Current position</td>
+        <td>6</td>
+        <td>next record this consumer will fetch</td>
+      </tr>
+      <tr>
+        <td>Last committed offset</td>
+        <td>1</td>
+        <td>bookmark checkpointed to <code>__consumer_offsets</code></td>
+      </tr>
+      <tr>
+        <td>High watermark</td>
+        <td>10</td>
+        <td>offset replicated to all in-sync replicas; consumer read ceiling</td>
+      </tr>
+      <tr>
+        <td>Log end offset</td>
+        <td>14</td>
+        <td>last record physically written to the log</td>
+      </tr>
+    </tbody>
+  </table>
+  <p>If this consumer crashes, the coordinator hands its partition to another group member, which resumes from the last committed offset (1) rather than from where the crashed consumer actually reached (6) — records at offsets 1–5 are processed a second time. This is why message processing should be idempotent: checkpointing less often reduces bookkeeping but widens the replay window. A consumer also can never read past the high watermark (10), so unreplicated writes at offsets 11–14 stay invisible until they are replicated.</p>
+</div>
 <p><strong>Step 6 — send messages.</strong> Everything typed in the producer window flows to the consumer window: the instructor typed "Hello" and then "Hello Kafka", and both appeared on the consumer side. That is the whole mechanism in miniature — the producer writes messages to the topic, the broker holds them, and the consumer reads them off.</p>
 <div class="example-box">
   <p><strong>Worked trace — the demo on real inputs.</strong></p>

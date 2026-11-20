@@ -549,6 +549,46 @@
 <h3 id="12.4.1-the-base-mechanism">12.4.1 The Base Mechanism</h3>
 <p>The most basic cloud arrangement is large hardware managed by a <em>hypervisor</em>. That is a software layer managing the hardware to create many virtual machines on one physical machine — think of it as an operating system whose "applications" are entire computers. Around it sit a powerful file system holding the files of all these virtual machines, and networking that wires them together. To any outside observer, each virtual machine looks like an ordinary standalone computer.</p>
 <p>Every cloud advantage appears here. The virtual machines rarely need all resources at the same instant, so pooling pays. Expansion is easy, and changing a virtual machine is far easier than changing a physical one — a virtual machine is, after all, mostly a set of files that can be copied, moved, or restored like any other file. Measured overhead makes the trick practical: modern hardware is designed for virtualization, and the cost of the extra layer has been measured at roughly 1% per instance.</p>
+<div class="important-note">
+  <p><strong>Architectural extension — containers versus virtual machines.</strong> The hypervisor model above virtualizes the <em>hardware</em>: every VM boots a complete guest operating system with its own kernel. A <em>container</em> virtualizes at the <em>operating-system</em> level instead — it is an isolated process packaging an application with its libraries, binaries, and configuration, while every container on the host shares the host kernel. Shared operating-system files stay read-only; each container receives only a thin writable layer of its own. The companion treatment records the practical consequences: a container may be tens of megabytes where a VM with a full OS is several gigabytes, a container starts almost instantly where a VM takes minutes, and the lightweight unit is what makes the microservice style — an application split into independently replaceable modules — economical.</p>
+  <table>
+    <thead>
+      <tr>
+        <th>Aspect</th>
+        <th>Virtual machine</th>
+        <th>Container</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>What is virtualized</td>
+        <td>Physical hardware by a hypervisor</td>
+        <td>Operating system by the host kernel</td>
+      </tr>
+      <tr>
+        <td>Guest OS / kernel</td>
+        <td>Full guest OS with its own kernel per VM</td>
+        <td>No guest OS; host kernel is shared</td>
+      </tr>
+      <tr>
+        <td>Size and startup</td>
+        <td>Several gigabytes; minutes to boot</td>
+        <td>Tens of megabytes; starts in about a second</td>
+      </tr>
+      <tr>
+        <td>Isolation boundary</td>
+        <td>Hardware-level separation enforced by the hypervisor (stronger)</td>
+        <td>Kernel-enforced separation between processes (lighter)</td>
+      </tr>
+      <tr>
+        <td>Packing density</td>
+        <td>Fewer per host; different guest OSes can coexist</td>
+        <td>Many per host; all must share one kernel</td>
+      </tr>
+    </tbody>
+  </table>
+  <p><strong>Architect's reading:</strong> the two are complements rather than rivals — cloud servers are frequently VMs that in turn run many containers. Containers buy finer packing and faster startup; VMs buy a harder isolation boundary. The Open Container Initiative standardizes the image format, and Kubernetes orchestrates container fleets — the same disposable-resource instinct that section 12.11.2 describes as treating machines as replaceable rather than precious.</p>
+</div>
 <h3 id="12.4.2-address-spaces-what-the-hypervisor-maps">12.4.2 Address Spaces: What the Hypervisor Maps</h3>
 <p>Recall how a computer works. The CPU operates through address spaces: a heap, a stack, a program loaded into memory, an address register, the register copy of the current instruction. Then it fetches the next instruction and executes it. Alongside, the machine maintains a memory map, hash tables holding data, and references to disk locations — block spaces and block numbers where data lives.</p>
 <p>On a physical machine, the CPU does all of this directly: every address the program generates goes through one page table that translates it to a physical memory location. On a virtual machine, a layer must sit in between and map the physical machine onto the virtual one — that layer is the hypervisor. The translation now happens twice:</p>
@@ -793,6 +833,36 @@ graph LR
 <p>A few bad providers give the whole market a bad reputation — which is why the safe play is buying only from top-tier providers. Direct-from-provider service from Amazon and Azure dominates; Google's offerings are acknowledged as very good even by those not personally using them.</p>
 <h3 id="12.10.3-availability-and-auto-scaling">12.10.3 Availability and Auto Scaling</h3>
 <p>Availability tracks the quality of the service provider; top-end providers have built serious capacity. As a calibration point, Amazon's EC2 service agreement has guaranteed 99.95% availability — read that number both ways: it is high enough to trust, and it openly budgets roughly 0.05% of the year (about four and a half hours) as <em>your</em> problem to survive. Mature tenants plan for that slice: keep services stateless so any replica can answer any request, replicate data across availability zones, and degrade gracefully — fail fast with timeouts, fall back to lower-quality responses, drop non-critical features under load.</p>
+<div class="key-concept">
+  <p><strong>Formal definition — region and availability zone.</strong> The "availability zones" in that SLA sentence have a precise hierarchy. A <em>Region</em> is a separate geographic area, engineered to be isolated from every other Region for the greatest possible fault tolerance and stability. Each Region contains multiple <em>Availability Zones</em> (AZs): isolated locations — distinct data centers with independent power, cooling, and networking — linked to sibling zones by inexpensive, low-latency connectivity, and identified by the Region code plus a letter such as <code>us-east-1a</code>. A provider's resources are not automatically replicated across Regions, so the isolation that makes a Region robust also makes it the architect's explicit choice.</p>
+  <table>
+    <thead>
+      <tr>
+        <th>Level</th>
+        <th>Failure domain</th>
+        <th>What it protects against</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>Region</td>
+        <td>An entire geographic area</td>
+        <td>Regional outage; also the natural boundary for the data-residency rules of section 12.1.4</td>
+      </tr>
+      <tr>
+        <td>Availability Zone</td>
+        <td>One data center inside a Region</td>
+        <td>Power, cooling, or host failure insulated from sibling zones</td>
+      </tr>
+      <tr>
+        <td>Instance / VM</td>
+        <td>One physical host</td>
+        <td>Hardware failure, handled by the hypervisor, replicas, and elastic-IP failover</td>
+      </tr>
+    </tbody>
+  </table>
+  <p><strong>Why it matters here:</strong> the 99.95% guarantee budgets roughly 0.05% downtime, so the architect spreads stateless replicas across AZs and keeps a hot standby — or a full multi-Region copy — for the residual slice. Placing everything in one AZ defeats the guarantee, because a single facility failure takes every instance at once; cross-AZ replication converts that facility failure into a routing event, which is precisely the failover mechanism of section 12.6.1.</p>
+</div>
 <p>Auto scaling needs planning: growth will not necessarily scale itself, especially when you impose your own limits. AWS, for example, lets you cap the quantum of resources allotted automatically. Once you hit your limit, runaway problems stop there — a billing circuit-breaker as much as a capacity one. Study security, availability, and performance together as concepts in the cloud context; they are the three qualities the textbook singles out as meaningfully different once you move into the cloud.</p>
 <div class="key-takeaway">
   <p>Recap: share nothing carelessly — isolation between tenants is a security boundary, a performance boundary, and an availability budget all at once; buy from top-tier providers and set explicit auto-scaling caps. Next: the playbooks the top providers themselves publish.</p>

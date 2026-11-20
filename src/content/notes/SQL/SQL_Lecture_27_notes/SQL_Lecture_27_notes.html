@@ -681,6 +681,51 @@ FROM generate_series(1, 10) AS g(x);</code></pre>
   <p>Frames turn cumulative windows into sliding ones: ROWS counts positions, RANGE pulls whole peer groups, and array_agg makes any frame's contents visible. Next, named windows let several functions share one frame definition.</p>
 </div>
 
+<h3 id="27.7.5-ordered-set-string-aggregation-with-listagg" class="subsection-title">27.7.5 Ordered-Set String Aggregation with LISTAGG</h3>
+<div class="important-note">
+  <p><code>array_agg</code> in 27.7.3 showed a frame's contents as an array. Sometimes the wanted shape is one delimited string per partition instead — a comma-separated list of countries beside each region row. <code>LISTAGG</code> does that, and its ordering lives in a different clause from an ordinary window's ORDER BY.</p>
+</div>
+<pre><code>SELECT DISTINCT region,
+       LISTAGG(country, ', ') WITHIN GROUP (ORDER BY country)
+         OVER (PARTITION BY region) AS country_list
+FROM trades;</code></pre>
+<div class="key-concept">
+  <p><strong>Two orderings, two jobs:</strong> <code>WITHIN GROUP (ORDER BY country)</code> fixes the sequence of values <em>inside</em> the list, while the outer <code>ORDER BY</code> of the query fixes the sequence of output rows. An outer ORDER BY never reorders the elements inside a LISTAGG string. NULL inputs are skipped by all engines; when every input is NULL, Snowflake returns an empty string while PostgreSQL's <code>string_agg</code> returns NULL — a real cross-engine difference when reporting empty groups.</p>
+</div>
+<div class="example-box">
+  <p><strong>Worked example — one row per region.</strong> With rows Asia/Japan, Asia/India, Asia/China, the Asia partition holds three rows. <code>LISTAGG(country, ', ') WITHIN GROUP (ORDER BY country) OVER (PARTITION BY region)</code> yields <code>China, India, Japan</code> on each of the three Asia output rows, and <code>DISTINCT</code> collapses them to one Asia row. Change the inner order to <code>ORDER BY country DESC</code> and the string becomes <code>Japan, India, China</code> while the outer row order is untouched.</p>
+  <p><strong>Sense-check:</strong> the list length equals the partition's non-NULL row count, and the same string repeats on every row of the partition — the same stamping behavior as <code>AVG(...) OVER (PARTITION BY region)</code> from 27.6.2.</p>
+</div>
+<table>
+  <thead>
+    <tr>
+      <th>Engine</th>
+      <th>Window spelling</th>
+      <th>ORDER BY location</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td>Snowflake</td>
+      <td><code>LISTAGG(x, ', ') WITHIN GROUP (ORDER BY x) OVER (PARTITION BY g)</code></td>
+      <td>Inside <code>WITHIN GROUP</code>; no ORDER BY or frame inside <code>OVER</code></td>
+    </tr>
+    <tr>
+      <td>PostgreSQL</td>
+      <td><code>STRING_AGG(x, ', ' ORDER BY x)</code> with <code>GROUP BY g</code>, or <code>OVER (PARTITION BY g)</code></td>
+      <td>Inside the aggregate call; standard window frames apply</td>
+    </tr>
+    <tr>
+      <td>MySQL 8</td>
+      <td><code>GROUP_CONCAT(x ORDER BY x SEPARATOR ', ')</code></td>
+      <td>Inside the aggregate call; no LISTAGG keyword</td>
+    </tr>
+  </tbody>
+</table>
+<div class="warning-box">
+  <p><strong>Pitfall — ordering in the wrong clause:</strong> writing <code>LISTAGG(country, ', ') OVER (PARTITION BY region ORDER BY country)</code> is rejected by Snowflake, which allows only <code>PARTITION BY</code> inside <code>OVER</code> for this function. <code>DISTINCT</code> plus <code>WITHIN GROUP</code> there must refer to the same column, and the delimiter must be a constant. Pick the grouped form when one row per group is enough; pick the window form only when the list must sit beside intact detail rows.</p>
+</div>
+
 <h2 id="27.8-named-windows-window-clause-and-frame-rules">27.8 Named Windows WINDOW Clause and Frame Rules</h2>
 <h3 id="27.8.1-one-named-window-reused">27.8.1 One named window reused</h3>
 <div class="important-note">
@@ -843,6 +888,66 @@ WINDOW w_dept AS (PARTITION BY d.department_id ORDER BY e.salary DESC),
 <p>Without ORDER BY inside w_dept every row shows rank 1, which is the visible proof that ordering matters — with no ordering key every row ties for first. With descending salary order the department ranks read 1, 2, 3 within each department. The global window has no PARTITION BY, so it ranks all 107 people at once. In the run Kimberly is rank 1 in her department but 45th globally, while Michael is rank 1 in his two-person group and 6th globally. One query answers both "best in group" and "best overall".</p>
 <div class="key-takeaway">
   <p>RANK skips after ties, DENSE RANK stays tight, NTILE deals near-equal buckets, and ROW NUMBER hands every row a unique ID — with Nth-per-group and pagination falling out of the wrap-and-filter pattern. Next, row-hopping functions read neighbors directly.</p>
+</div>
+
+<h3 id="27.9.7-inverse-distribution-percentile-cont-and-percentile-disc" class="subsection-title">27.9.7 Inverse Distribution: PERCENTILE CONT and PERCENTILE DISC</h3>
+<div class="important-note">
+  <p>NTILE answers "which bucket is this row in" by splitting rows into near-equal <em>counts</em>. Its inverse answers "what value sits at this fraction" by reading along the <em>value</em> axis: an inverse-distribution function returns the data value at a requested cumulative fraction, the way a median is the value at fraction \(0.5\).</p>
+</div>
+<div class="key-concept">
+  <p><strong>Formal definition:</strong> Sort a partition's non-NULL values as \(x_{(1)} \le x_{(2)} \le \dots \le x_{(n)}\). For a fraction \(p \in [0,1]\), the continuous position is \(c = 1 + p(n-1)\). <code>PERCENTILE_CONT(p)</code> returns the value interpolated at that position:</p>
+  <p>\[q_{cont} = x_{(\lfloor c \rfloor)} + (c - \lfloor c \rfloor)\left(x_{(\lceil c \rceil)} - x_{(\lfloor c \rfloor)}\right)\]</p>
+  <p><code>PERCENTILE_DISC(p)</code> instead returns the first observed value whose cumulative fraction reaches \(p\), that is the smallest \(x_{(j)}\) with \(j/n \ge p\). CONT can return a number that never appeared in the data; DISC always returns an actual row value. Both are <em>ordered-set aggregates</em>: the ordering lives inside <code>WITHIN GROUP (ORDER BY ...)</code>, not inside <code>OVER</code>.</p>
+</div>
+<div class="example-box">
+  <p><strong>Worked calculation — median of six export figures.</strong> Sorted exports for one country: \(0, 6, 6, 7, 9, 10\), so \(n = 6\).</p>
+  <p>Step 1 — position: \(c = 1 + 0.5(6-1) = 3.5\). Step 2 — CONT interpolates halfway between \(x_{(3)} = 6\) and \(x_{(4)} = 7\): \(6 + 0.5(7-6) = \mathbf{6.5}\). Step 3 — DISC takes the first value with \(j/6 \ge 0.5\), which is \(j = 3\), so it returns \(\mathbf{6}\).</p>
+  <p>The same split shows in real payroll data: one department's median rate is 34.375 under CONT but 32.6923 under DISC. <strong>Sense-check:</strong> for an even-sized sample the continuous median lies between the two middle values while the discrete median equals one of them; for \(n = 1\) both return that single value at any fraction.</p>
+</div>
+<pre><code>SELECT DISTINCT country,
+       PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY exports)
+         OVER (PARTITION BY country) AS median_cont,
+       PERCENTILE_DISC(0.5) WITHIN GROUP (ORDER BY exports)
+         OVER (PARTITION BY country) AS median_disc
+FROM trades;</code></pre>
+<table>
+  <thead>
+    <tr>
+      <th>Function</th>
+      <th>Answer it gives</th>
+      <th>Value from the data?</th>
+      <th>Best use</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><code>NTILE(4)</code></td>
+      <td>Bucket label 1–4 with near-equal row counts</td>
+      <td>Yes (a label)</td>
+      <td>Quartile bands of equal size</td>
+    </tr>
+    <tr>
+      <td><code>CUME_DIST</code> / <code>PERCENT_RANK</code></td>
+      <td>Relative position of a row (\(0\) to \(1\))</td>
+      <td>No (a fraction)</td>
+      <td>Where a row sits in the distribution</td>
+    </tr>
+    <tr>
+      <td><code>PERCENTILE_CONT(0.5)</code></td>
+      <td>Interpolated value at fraction \(0.5\)</td>
+      <td>No (may fall between rows)</td>
+      <td>Smooth median for reporting</td>
+    </tr>
+    <tr>
+      <td><code>PERCENTILE_DISC(0.5)</code></td>
+      <td>First observed value reaching \(0.5\)</td>
+      <td>Yes</td>
+      <td>Median that must be a real data point</td>
+    </tr>
+  </tbody>
+</table>
+<div class="important-note">
+  <p><strong>Dialect note:</strong> the window form with <code>OVER (PARTITION BY ...)</code> runs in Snowflake, Databricks/Spark SQL, and SQL Server, but accepts only <code>PARTITION BY</code> inside <code>OVER</code> — no <code>ORDER BY</code> and no explicit frame. PostgreSQL classifies these as ordered-set aggregates, so its form is <code>PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY exports)</code> with <code>GROUP BY country</code> and no <code>OVER</code>; MySQL 8 has neither function and re-creates the median with <code>CUME_DIST()</code> over a CTE. NULL inputs are ignored in every engine.</p>
 </div>
 
 <h2 id="27.10-lead-lag-first-last-totals-correlation-and-with">27.10 LEAD LAG FIRST LAST Totals Correlation and WITH</h2>

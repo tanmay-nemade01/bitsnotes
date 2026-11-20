@@ -567,6 +567,44 @@
 </div>
 <p><em>Where this matters in the field:</em> real engines expose this exact distinction — MySQL InnoDB and PostgreSQL lock rows with shared/exclusive modes, and their isolation guarantees (sections 16.5) are implemented by choosing <em>when</em> locks are released, not by inventing new lock kinds. The ₹250 banking trace is the reason every database manual warns against releasing locks mid-transaction.</p>
 
+<h3 id="16.2.8-multiple-granularity-locking-and-intention-locks">16.2.8 Multiple Granularity Locking and Intention Locks</h3>
+<p>Everything so far assumed a single lockable item. Real engines let a lock be taken at several levels of a hierarchy — database → file → page → record — and a transaction may choose the level that best fits its workload. This is <em>multiple granularity locking</em> (MGL), and it is the missing bridge between the single-item model of this section and the lock manager of 16.3.6 (T1 §22.5, pp. 795–798).</p>
+<div class="key-concept">
+  <p><strong>The granularity trade-off.</strong> Coarse granularity (lock a whole file) means few locks and low overhead, but a transaction that needs one record blocks every other transaction touching that file. Fine granularity (lock one record) maximizes concurrency but multiplies the number of locks, lock/unlock operations, and lock-table entries. MGL gets the best of both: a long transaction locks a file once, while a short transaction locks a single record, and the two coexist.</p>
+  <p><strong>The three intention lock modes.</strong> An intention lock is declared on an <em>ancestor</em> node to advertise what kind of lock the transaction intends to take on a <em>descendant</em>:</p>
+  <ul>
+    <li><strong>IS (intention-shared):</strong> one or more shared locks will be requested on descendant nodes.</li>
+    <li><strong>IX (intention-exclusive):</strong> one or more exclusive locks will be requested on descendant nodes.</li>
+    <li><strong>SIX (shared-intention-exclusive):</strong> the node itself is locked in shared mode, while exclusive locks will be requested on descendants.</li>
+  </ul>
+  <p><strong>Compatibility matrix</strong> for the five modes (Yes = compatible):</p>
+  <table>
+    <thead>
+      <tr>
+        <th>Held → / Request ↓</th>
+        <th>IS</th>
+        <th>IX</th>
+        <th>S</th>
+        <th>SIX</th>
+        <th>X</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr><td><strong>IS</strong></td><td>Yes</td><td>Yes</td><td>Yes</td><td>Yes</td><td>No</td></tr>
+      <tr><td><strong>IX</strong></td><td>Yes</td><td>Yes</td><td>No</td><td>No</td><td>No</td></tr>
+      <tr><td><strong>S</strong></td><td>Yes</td><td>No</td><td>Yes</td><td>No</td><td>No</td></tr>
+      <tr><td><strong>SIX</strong></td><td>Yes</td><td>No</td><td>No</td><td>No</td><td>No</td></tr>
+      <tr><td><strong>X</strong></td><td>No</td><td>No</td><td>No</td><td>No</td><td>No</td></tr>
+    </tbody>
+  </table>
+  <p><strong>The MGL protocol rules.</strong> (1) Honour the compatibility matrix. (2) Lock the root of the hierarchy first, in any mode. (3) A node may be locked in S or IS mode only if its parent is already held in IS or IX. (4) A node may be locked in X, IX, or SIX mode only if its parent is already held in IX or SIX. (5) A transaction may not lock any node after it has unlocked one — this is 2PL. (6) A node may be unlocked only after all of its locked descendants have been unlocked, so locks are released bottom-up.</p>
+</div>
+<div class="example-box">
+  <p><strong>Worked scenario — why intention locks avoid a full descendant scan.</strong> In the hierarchy database → file f1 → page p1n → record r1nj: transaction \(T_1\) wants to update <em>all</em> records of file f1, so it takes one X lock on f1 instead of locking every page and record. Later \(T_2\) wants a shared lock on the single record r1nj.</p>
+  <p>Without intention locks, once the file-level X lock is granted the manager must inspect every descendant of f1 for a conflicting lock — prohibitively expensive. With MGL, \(T_1\) declares IX along db → f1 before locking descendants, and \(T_2\) declares IS along db → f1 → p1n before its S lock on r1nj. The matrix shows IX (held by \(T_1\) on f1) is incompatible with S but not with IS, so the conflict is detected at the <em>top</em> of the tree in constant time: \(T_2\) waits, and no descendant scan is needed.</p>
+  <p><strong>Final answer: intention locks turn an expensive tree walk into a constant-time top-level compatibility check, which is what makes mixed-granularity locking practical.</strong> <em>Sense-check:</em> the conflict is caught before a single descendant is examined; the same IS/IX table-level scheme is what real row-level engines declare before taking a row lock.</p>
+</div>
+
 <h2 id="16.3-two-phase-locking-2pl">16.3 Two-Phase Locking (2PL)</h2>
 <h3 id="16.3.1-growing-phase-shrinking-phase-and-the-lock-point">16.3.1 Growing Phase, Shrinking Phase, and the Lock Point</h3>
 <p>The basic idea is a single, stark rule: a transaction's locking life is divided into two phases, and the phases never overlap.</p>
@@ -980,6 +1018,22 @@
   <p><strong>Recap + bridge.</strong> The timestamp protocol is the token-number system made formal: every transaction is born with an immutable timestamp, every item remembers the timestamps of its last reader and writer, and every operation is judged against those stamps — reads against \(W(Q)\), writes against both \(R(Q)\) and \(W(Q)\) — with rollback as the only punishment. It guarantees conflict serializability by construction and eliminates deadlock structurally, at the cost of rollbacks and a recoverability gap that strict TO patches. The next sections harden this picture: the three classic anomalies the protocols prevent (16.5), the timestamp-based deadlock-prevention cousins wait-die and wound-wait (16.6), the wait-for graph (16.7), and Thomas' write rule, the classic optimization that makes the write rule less wasteful (16.8).</p>
 </div>
 <p><em>Where this matters in the field:</em> timestamp ordering is the ancestor of modern non-locking schemes — snapshot isolation and optimistic concurrency control order transactions by version timestamps and validate conflicts instead of blocking. Postgres-style MVCC engines record "which version may this transaction see" using exactly this read/write-stamp logic, with old versions kept instead of rollbacks — the same seniority idea, gentler implementation.</p>
+
+<h3 id="16.4.12-multiversion-concurrency-control-and-snapshot-isolation">16.4.12 Multiversion Concurrency Control and Snapshot Isolation</h3>
+<p>The basic timestamp protocol rejects a read when a junior has already overwritten the item (16.4.3). Multiversion concurrency control (MVCC) avoids that rejection by keeping old versions: a read is redirected to the newest version whose writer timestamp is still no later than the reader's, so a read almost always succeeds. This is the textbook's third concurrency-control family after locking and timestamp ordering (T1 §22.3, pp. 791–793), and it is the formal version of the "old versions kept instead of rollbacks" idea in the field note above.</p>
+<div class="key-concept">
+  <p><strong>Version metadata and the two rules.</strong> Each item holds a chain of versions \(X_1, X_2, \ldots, X_k\); every version stores its own \(write\_TS(X_i)\) (the writer's timestamp) and \(read\_TS(X_i)\) (the largest timestamp of a transaction that successfully read it). A write creates a fresh version with both stamps set to the writing transaction's timestamp.</p>
+  <ul>
+    <li><strong>Read:</strong> select the version \(X_i\) with the largest \(write\_TS(X_i) \le TS(T)\), return its value, and set \(read\_TS(X_i) \leftarrow \max\bigl(read\_TS(X_i), TS(T)\bigr)\). Such a version always exists, so the read succeeds — the senior transaction sees the state that was current as of its own birth, not a value a junior has since replaced.</li>
+    <li><strong>Write:</strong> let \(X_i\) be the version with the largest \(write\_TS(X_i) \le TS(T)\). If \(read\_TS(X_i) > TS(T)\), a junior has already read a value that \(T\) was supposed to produce — abort and roll back \(T\). Otherwise create a new version \(X_j\) with \(read\_TS(X_j) = write\_TS(X_j) = TS(T)\).</li>
+  </ul>
+  <p><strong>Guarantee and cost.</strong> Reads are neither blocked nor rejected; only a write that would invalidate an earlier junior read is rolled back. The price is storage for multiple versions and the need to reclaim versions no active transaction can still see. Recoverability still needs the same care as basic TO: a transaction should not commit until every transaction whose version it read has committed.</p>
+</div>
+<div class="example-box">
+  <p><strong>Worked trace — a read that basic TO rejects but MVCC accepts.</strong> Item \(X\) has one committed version written by \(T_2\) (\(TS = 6\)), so \(write\_TS(X_1) = 6\). Senior transaction \(T_1\) (\(TS = 3\)) issues a read of \(X\).</p>
+  <p><em>Basic TO (16.4.3):</em> \(3 < W(X) = 6\) → rejected, \(T_1\) rolls back. <em>MVCC:</em> the version with the largest \(write\_TS \le 3\) is an older committed version \(X_0\) (written by a transaction with timestamp 1); \(T_1\) reads \(X_0\) and raises \(read\_TS(X_0)\) to 3. Both transactions proceed.</p>
+  <p><strong>Final answer: MVCC converts "reject the senior's read" into "serve the older version," trading extra storage for a rollback avoided.</strong> <em>Sense-check:</em> this is snapshot isolation in one line — each transaction reads the snapshot of the database as of its start, so the value it sees is always one it was entitled to under timestamp order.</p>
+</div>
 
 <h2 id="16.5-concurrency-anomalies-dirty-read-unrepeatable-read-phantom">16.5 Concurrency Anomalies: Dirty Read, Unrepeatable Read, Phantom</h2>
 <p>Before the protocols, the syllabus asks for the three canonical ways concurrent execution can corrupt data — the anomalies that serializability testing and the protocols exist to prevent. Each one is a concrete, examinable failure story.</p>

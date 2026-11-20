@@ -336,6 +336,17 @@
 <p>These use cases share a shape: a real-world event (a purchase, a click, a course interaction) becomes a message, and the business value comes from acting on the message while it is still fresh. That freshness is exactly what the data flow layer buys — the analysis tier no longer waits for a nightly batch to learn what happened today.</p>
 <h3 id="7.2.5-a-distributed-high-throughput-system">7.2.5 A Distributed, High-Throughput System</h3>
 <p>Apache Kafka is a distributed publish–subscribe model — which means it runs as a cluster of machines. It is designed as a high-throughput distributed system, suitable for large-scale applications. Its importance lies in scalability: you can add producers and consumers, where producers are nothing but the various data systems through which data actually comes into the processing engine (Spark, in this course's setup). The log-based design lets a production cluster handle millions of messages per second: the work is spread across machines, and each machine only sees its own slice of the load.</p>
+
+<div class="important-note">
+  <p><strong>System detail — where the throughput comes from:</strong> "Millions of messages per second" is not one trick but four reinforcing choices in Kafka's storage and network path.</p>
+  <ol>
+    <li><strong>Linear over random disk I/O.</strong> A log is only ever appended and read sequentially. Official Kafka measurements put linear writes on a 7200 rpm SATA JBOD at roughly <code>600 MB/s</code> against about <code>100 kB/s</code> for random writes — a gap of over 6000×. Cheap, high-capacity drives are usable precisely because their weak seek performance is never exercised.</li>
+    <li><strong>Batching and compression.</strong> The wire protocol groups records into a <em>message set</em>, and the producer accumulates bytes in memory (for example up to 64 kB or 10 ms) before issuing one larger request. Because the broker keeps the batch compressed in the log, redundancy across messages — field names, user agents — compresses far better than message-by-message compression. Kafka supports GZIP, Snappy, LZ4, and ZStandard.</li>
+    <li><strong>Page cache, not an in-process cache.</strong> Records are written straight into the filesystem log and land in the OS page cache. This avoids JVM object overhead and garbage collection, and the cache stays warm across a broker restart — a rebuilt in-memory cache can otherwise take minutes.</li>
+    <li><strong>Zero-copy transfer.</strong> The ordinary file-to-socket path performs four copies and two system calls. Kafka uses the Linux <code>sendfile</code> path to move data from page cache to the network directly, leaving only the final copy to the NIC buffer. The same cached bytes are reused for every consumer, so a mostly-caught-up cluster shows almost no disk reads.</li>
+  </ol>
+  <p>These are properties of each <em>broker's</em> storage path; horizontal scaling then multiplies this per-broker throughput across the machines of the cluster.</p>
+</div>
 <p>Kafka takes care of many non-functional requirements — reliability, scalability, maintainability, and so on. Within the cluster there is a notion of leaders and followers; the leader is also a node. A bunch of machines are connected together and all work toward one common goal. In replication terms, each partition of a topic has one leader, and the leader serves all reads and writes for that partition; follower nodes hold copies of the partition, so that if the leader fails the cluster can keep going with another node.</p>
 <p>The basic running model: a broker is the Kafka server. In the Java distribution you run a server start script (the server.bat file), and executing it is how you configure Kafka. A set of producers publish to topics, and consumers subscribe to those topics and consume them. In a single-machine setup one broker sits at the center; in a production cluster, brokers are the nodes of the cluster.</p>
 <div class="key-takeaway">
@@ -359,6 +370,15 @@
   <li><strong>Ordering is guaranteed within a partition, not across the topic.</strong> If messages A, B, C land in the same partition, consumers see A then B then C. If they land in different partitions, no global order exists. So when order matters, the producer must route related messages (say, all events for one customer) to the same partition.</li>
 </ul>
 <p>Where the data-frame analogy stretches: a data frame you split and modify in parallel is usually reassembled afterward; Kafka partitions are deliberately never merged back — the whole point is that independent consumers each chew on their own subset forever.</p>
+
+<div class="key-concept">
+  <p><strong>Mechanism — how a producer pins a key to a partition:</strong> The rule that "related messages go to the same partition" is implemented by a <em>partitioner</em>. The producer attaches a key to each record; the default policy hashes that key and maps the result onto one of the \(P\) partitions, conceptually:</p>
+  <p>\[ p = \operatorname{hash}(key) \bmod P \]</p>
+  <p>Because the hash is deterministic, every record with the same key lands in the same partition, and its offset order inside that partition is preserved. Records with no key are spread by the producer's load-balancing policy instead of being pinned to one partition.</p>
+  <p><strong>Worked trace.</strong> Take a topic with \(P = 4\) partitions numbered 0–3, and suppose a toy hash yields \(h(\text{cust-42}) = 17\) and \(h(\text{cust-43}) = 22\):</p>
+  <p>\[ 17 \bmod 4 = 1, \qquad 22 \bmod 4 = 2 \]</p>
+  <p>All events for <code>cust-42</code> therefore append to partition 1 and all events for <code>cust-43</code> to partition 2, in arrival order within each. Had the key been an order ID instead, one customer's events would scatter across all four partitions and the per-customer ordering guarantee would be lost. The partition key is thus a <em>locality</em> decision made at design time: choose the key that matches the grouping your consumers need to see in order.</p>
+</div>
 <div class="warning-box">
   <p><strong>Scope:</strong> the partition count is chosen at topic creation, and changing it later is expensive — Kafka cannot split an existing partition in half for you. Partitions also carry a cost: each partition means more files and bookkeeping on the broker, so "more partitions = more parallel" is not a license to create thousands without measuring. Zookeeper keeps track of which partition lives where as brokers join and leave the cluster, so the mapping stays correct even when machines come and go.</p>
   <p><strong>Common traps:</strong></p>
@@ -370,6 +390,37 @@
 </div>
 <div class="key-takeaway">
   <p>A topic is a named stream of messages of one type; the broker splits each topic into partitions so the work can spread across the cluster. The inbox subject line tells you which messages are yours; the partition layout tells the system where each slice of those messages is processed and in what order.</p>
+</div>
+
+<h3 id="7.3.4-topic-storage-retention-and-log-compaction">7.3.4 Topic Storage, Retention, and Log Compaction</h3>
+<p>Each partition is physically a sequence of on-disk <em>segment files</em>, not an unbounded in-memory stream. Offsets increase monotonically within a segment; when a segment reaches its size cap a new file is opened and subsequent records continue there. Records are never mutated in place — a message becomes visible to consumers only after it has been committed to the log — which keeps all I/O append-only and sequential.</p>
+<p>Kafka also does not delete a record when a consumer reads it. Instead each topic carries a retention (cleanup) policy that decides what may be discarded:</p>
+<table>
+  <thead>
+    <tr>
+      <th>Policy</th>
+      <th>Keeps</th>
+      <th>Removes</th>
+      <th>Typical use</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><code>delete</code> (time/size based)</td>
+      <td>Every record inside the retention window, e.g. one week</td>
+      <td>Oldest segments once the window or size cap is crossed</td>
+      <td>Clickstreams, metrics, audit-style event logs replayed over a fixed window</td>
+    </tr>
+    <tr>
+      <td><code>compact</code> (per-key)</td>
+      <td>The most recent value for each key (a null value marks a deleted key)</td>
+      <td>Superseded values for the same key, reclaimed in the background</td>
+      <td>Change-data capture, table state, materialized views, rebuildable derived stores</td>
+    </tr>
+  </tbody>
+</table>
+<div class="key-concept">
+  <p><strong>Log compaction:</strong> where ordinary retention is coarse and time-based, compaction is finer-grained and per-record: the cleaner periodically finds records sharing a primary key, throws away the duplicates and keeps only the most recent update for that key. The guarantee is that the log retains <em>at least the last state for every key</em>, so a consumer starting from offset 0 can rebuild a complete snapshot of current state without a separate snapshot mechanism. This is what lets a compacted topic act as durable state storage rather than merely transient messaging — while a <code>delete</code>-policy topic remains the natural fit for raw event history.</p>
 </div>
 
 <h2 id="7.4-ingestion-rate-vs-processing-rate-ri-and-rp">7.4 Ingestion Rate vs Processing Rate (Ri and Rp)</h2>

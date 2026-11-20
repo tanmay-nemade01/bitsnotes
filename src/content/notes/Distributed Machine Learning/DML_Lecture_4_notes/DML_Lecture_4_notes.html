@@ -595,6 +595,33 @@
       </div>
       <h3 id="4.2.5-memory-bottlenecks-and-bubble-ratio-analysis">4.2.5 Memory Bottlenecks and Bubble Ratio Analysis</h3>
       <p>The mathematical core of GPipe's memory problem stems from the activation storage lifetime. Let \(S_{\text{act}}\) denote the memory in bytes required to store intermediate activations for a single micro-batch on one GPU stage. Because GPU 0 must store activations for frames \(F_1, F_2, \dots, F_m\) while waiting for the entire forward wave and backward wave to return, its peak activation memory consumption is: \[ M_{\text{activations}}^{\text{GPipe}} = m \times S_{\text{act}} \] When practitioners increase \(m\) to decrease the bubble fraction \(F_{\text{bubble}} = \frac{p-1}{m+p-1}\), the required activation memory increases linearly. On physical GPUs with finite memory (such as 40 GB or 80 GB VRAM), this creates a hard barrier: reducing the bubble to acceptable levels causes out-of-memory crashes.</p>
+      <h3 id="4.2.6-activation-checkpointing-and-the-recomputation-tradeoff" class="subsection-title">4.2.6 Activation Checkpointing and the Recomputation Trade-off</h3>
+      <p>Activation checkpointing (recomputation) attacks the same activation memory wall from a different angle: rather than reordering when backward passes run, it discards intermediate tensors that are not yet needed and regenerates them from saved checkpoints during the backward pass. It is lossless — gradients are identical to full retention — and is complementary to the 1F1B schedule introduced in Section 4.3.</p>
+      <div class="key-concept">
+        <p><strong>Sublinear Memory Bound:</strong> Consider one pipeline stage holding \(L\) sequential layers with a uniform per-layer activation footprint \(s\) bytes. Full retention costs \[ M_{\text{full}} = L s . \] If a checkpoint is stored every \(k\) layers, the live set at any instant is the \(\frac{L}{k}\) surviving checkpoints plus at most \(k\) activations inside the segment being replayed: \[ M_{\text{ckpt}}(k) = \left(\frac{L}{k} + k\right) s . \] Minimizing over \(k\) gives \(k^{\star} = \sqrt{L}\) and \[ M_{\text{ckpt}}^{\star} = 2 s \sqrt{L} = \mathcal{O}(\sqrt{L}) \quad \text{versus} \quad M_{\text{full}} = \mathcal{O}(L) . \] The price is one extra forward sweep through the \(L\) layers during backpropagation, raising forward-equivalent work from \(L\) to \(2L\) (roughly 2&times; forward compute) while preserving exact gradients.</p>
+      </div>
+      <div class="example-box">
+        <p><strong>Worked Calculation:</strong> Let a transformer stage hold \(L = 256\) layers with \(s = 4 \text{ MB}\) of activation per layer. Full retention needs \(256 \times 4 = 1024 \text{ MB}\) per micro-batch. With \(k^{\star} = \sqrt{256} = 16\): \[ M_{\text{ckpt}} = \left(\frac{256}{16} + 16\right) \times 4 = (16 + 16) \times 4 = 128 \text{ MB}, \] an <strong>8&times; reduction</strong>. Substituting into the 1F1B bound \(M_{\text{activations}}^{\text{1F1B}} = p S_{\text{act}}\) on \(p = 4\) GPUs gives \(4 \times 1024 = 4096 \text{ MB}\) without checkpointing versus \(4 \times 128 = 512 \text{ MB}\) with it — freeing device memory that permits a larger micro-batch count \(m\) and thus a lower \(F_{\text{bubble}} = \frac{p-1}{m+p-1}\).</p>
+      </div>
+      <table>
+        <thead>
+          <tr>
+            <th>Strategy</th>
+            <th>Peak Activation Memory</th>
+            <th>Extra Forward Work</th>
+            <th>Gradient Fidelity</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr><td>Full retention (baseline)</td><td>\(L s = \mathcal{O}(L)\)</td><td>None</td><td>Exact</td></tr>
+          <tr><td>Periodic checkpointing, interval \(k\)</td><td>\(\left(\frac{L}{k} + k\right)s\)</td><td>One replay per segment</td><td>Exact</td></tr>
+          <tr><td>Optimal \(k^{\star} = \sqrt{L}\)</td><td>\(2 s \sqrt{L} = \mathcal{O}(\sqrt{L})\)</td><td>~2&times; forward</td><td>Exact</td></tr>
+        </tbody>
+      </table>
+      <div class="important-note">
+        <p><strong>When to Use It:</strong> Checkpointing pays off when a stage is memory-bound rather than compute-bound: it converts scarce device memory into redundant arithmetic. Because the replayed forward segment is pure computation independent of the bubble schedule, it composes with GPipe, 1F1B, interleaved 1F1B, and DualPipe alike — and the memory it frees is what makes a larger \(m\) (and hence a smaller bubble) achievable on a fixed VRAM budget.</p>
+      </div>
+
       <div class="key-takeaway">
         <p><strong>Recap & Bridge:</strong> GPipe proved that pipeline parallelism could partition large deep networks across accelerators, but its "all-forward first, all-backward" scheduling imposes an \(\mathcal{O}(m)\) activation memory bottleneck. To overcome this limitation, Section 4.3 introduces the 1F1B (One Forward, One Backward) architecture, which interleaves forward and backward passes to cap activation memory at \(\mathcal{O}(p)\).</p>
       </div>

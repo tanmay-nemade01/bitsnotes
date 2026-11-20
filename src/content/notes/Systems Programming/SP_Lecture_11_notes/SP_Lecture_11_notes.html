@@ -453,6 +453,22 @@ that's all folks</code></pre>
 </div>
 <p>Real-world & domain connection: System scripts use <code>case</code> exactly like this to dispatch on the first argument: <code>case "\$1" in start) start_service ;; stop) stop_service ;; restart) stop_service; start_service ;; *) echo "Usage: \$0 {start|stop|restart}" ;; esac</code>. Package managers, <code>init</code> scripts, and CLI tools all follow the pattern — one <code>case</code> at the top selects the mode, each branch runs a pipeline, and <code>*)</code> prints usage. The shape you practised with <code>hello</code>/<code>bye</code> is the production shape.</p>
 
+<div class="important-note">
+  <p><strong>Beyond the classroom — reusable logic with shell functions:</strong> The dispatcher above names actions such as <code>start_service</code> and <code>stop_service</code>. In production those names are usually <em>functions</em>: a group of shell commands given one name and called like an ordinary command. Bash accepts two equivalent definitions — <code>fname () { commands; }</code> and <code>function fname { commands; }</code> — and, unlike launching a separate script, a function runs in the <em>current</em> shell context (no new process). The braces must be separated from the body by a space or newline, because <code>{</code> and <code>}</code> are reserved words.</p>
+  <p><strong>Arguments and <code>return</code>:</strong> While a function executes, its own arguments become the positional parameters <code>\$1</code>, <code>\$2</code>, … and <code>\$#</code> is updated to their count; <code>\$0</code> still names the script. Pass values on the call line (<code>addem 10 15</code>) — a function's <code>\$1</code> is not the script's <code>\$1</code>. The <code>return n</code> builtin stops the function and sets its exit status, but only the least significant 8 bits survive (values wrap modulo 256), so use it for small status codes. To hand back an arbitrary integer or a string, print the result and capture it with command substitution: <code>result=\$(dbl)</code>.</p>
+  <pre><code>addem() {                      # equivalent: function addem { ... }
+  if [ \$# -eq 2 ]; then
+    echo \$(( \$1 + \$2 ))       # the echoed value is the "return value"
+  else
+    echo -1                    # wrong argument count
+  fi
+}
+value=\$(addem 10 15); echo "\$value"   # → 25
+value=\$(addem 10);    echo "\$value"   # → -1</code></pre>
+  <p><strong>Scope trap — global vs <code>local</code>:</strong> By default every variable is global, so a helper that assigns <code>temp=\$(( value + 5 ))</code> silently overwrites a <code>temp</code> belonging to its caller. Declare function-internal names with <code>local temp</code> (or <code>local temp=\$(( value + 5 ))</code>): a local <em>shadows</em> a same-named global, and the original value becomes visible again when the function returns. Bash uses <em>dynamic scope</em>, so a local declared in a calling function is also seen by functions that function calls.</p>
+  <p><strong>Why it belongs here:</strong> <code>return</code> is to a function what <code>break</code> is to a loop — both stop the current construct early — and a function body freely reuses the <code>case</code>, <code>for</code>, <code>while</code>, <code>[ ]</code> and file tests from this lecture. Wrapping a checked action once in a function avoids pasting the same guard at every call site, which is exactly how the <code>start_service</code>/<code>stop_service</code> branches above are written in real init scripts.</p>
+</div>
+
 <h2 id="11.3-arithmetic-forms-and-the-odd-even-program-with-case">11.3 Arithmetic Forms and the Odd-Even Program with case</h2>
 <div class="important-note">
   <p><strong>Hook:</strong> You can already route words with <code>case hello|bye</code>. Can you route <em>numbers</em> the shell computes — for example, the remainder when a user-supplied value is divided by two — and use that single digit to decide "even" versus "odd"? The twist in class: when the user types a <em>letter</em> instead of a number, the same script confidently prints "even". Why does a word become <code>0</code>?</p>
@@ -1018,6 +1034,21 @@ bye
   </ul>
 </div>
 <p>Real-world & domain connection: In systems programming, <code>while</code> with a string guard is exactly how interactive tools stay alive — a network daemon does <code>while [ "\$cmd" != "quit" ]; do read cmd; case "\$cmd" in …; esac; done</code> — and <code>while IFS= read -r line</code> is the standard way to process a log file line-by-line without loading it all into memory. The integer guard <code>while [ \$attempts -le 3 ]</code> implements retry logic for flaky <code>curl</code> or <code>ssh</code> calls, incrementing attempts and sleeping between tries. The colon form <code>while :; do …; sleep 60; done</code> appears in monitoring watchdogs that poll forever until an operator interrupts them.</p>
+
+<div class="example-box">
+  <p><strong>Advanced loop idiom — <code>getopts</code> is a <code>while</code> + <code>case</code> parser:</strong> The guarded loops above test a string read from input; a script can equally guard on its own command-line options. Bash's <code>getopts</code> builtin parses positional parameters one flag at a time and is almost always driven by exactly the two constructs of this lecture — a <code>while</code> test and a <code>case</code> dispatch.</p>
+  <pre><code>while getopts ":hv:" opt; do
+  case "\$opt" in
+    h)  echo "usage: \$0 [-h] [-v name] file..." ;;
+    v)  version="\$OPTARG" ;;            # argument that follows -v
+    \?) echo "bad option: -\$OPTARG" &gt;&amp;2 ;;
+  esac
+done
+shift \$(( OPTIND - 1 ))                 # leave real arguments in \$1, \$2, ...</code></pre>
+  <p><strong>Reading the option string <code>":hv:"</code>:</strong> each letter is a recognised flag; a colon <em>after</em> a letter means <code>-v</code> requires an argument, which <code>getopts</code> stores in <code>\$OPTARG</code>. A colon <em>first</em> selects silent error reporting, so the script prints its own diagnostic: an unknown flag sets <code>opt</code> to <code>?</code> and <code>\$OPTARG</code> to the offending character. Each call puts the next flag into <code>opt</code> and the index of the next argument into <code>\$OPTIND</code>; at end-of-options <code>getopts</code> returns non-zero, so the <code>while</code> exits and <code>\$OPTIND</code> points at the first non-option word.</p>
+  <p><strong>Worked trace — <code>./deploy.sh -h -v 2.1 web1</code>:</strong> pass 1 sets <code>opt=h</code> → prints usage; pass 2 sets <code>opt=v</code> and <code>\$OPTARG=2.1</code> → <code>version=2.1</code>; pass 3 sees <code>web1</code> is not a flag, returns false, and leaves <code>\$OPTIND=4</code>. The single <code>shift \$(( 4 - 1 ))</code> drops the three consumed tokens, so <code>\$1</code> is now <code>web1</code> — the host a <code>for h in "\$@"</code> loop (11.4) can then visit. This is the same "validate the discriminator before you use it" discipline as the <code>-z</code> guards in 11.9.</p>
+  <p><strong>Pitfalls:</strong> <code>\$OPTIND</code> is not reset automatically between separate <code>getopts</code> loops in one shell — set it back to <code>1</code> yourself. Shift only <em>after</em> the loop: <code>getopts</code> tracks its own position, so shifting inside the body corrupts the parse. And <code>getopts</code> handles short single-letter flags only; long <code>--name</code> options need the external <code>getopt</code> or manual parsing.</p>
+</div>
 
 <h2 id="11.6-the-until-loop-running-until-a-condition-becomes-true">11.6 The until Loop — Running Until a Condition Becomes True</h2>
 <div class="important-note">

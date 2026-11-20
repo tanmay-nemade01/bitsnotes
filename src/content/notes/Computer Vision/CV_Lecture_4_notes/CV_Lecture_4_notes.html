@@ -502,6 +502,12 @@
   <p class="text-xs text-slate-500 mt-2"><strong>Figure:</strong> Jitter sits like grass on the flat field while the true cliff cuts through it; smoothing mows the grass and keeps the cliff.</p>
 </div>
 <p>Phone cameras, scanners and medical sensors all add this jitter, so smoothing is routine before edge finding. A phone shot in low light, a scanned page and an MRI slice all get a blur pass first.</p>
+
+<div class="important-note">
+  <p><strong>Edge-preserving smoothing:</strong> A plain Gaussian mean lowers noise but also softens the very rims an edge finder needs. The bilateral filter keeps both. It replaces the flat neighborhood mean with a weighted mean whose weight is the product of a <em>domain</em> term, which falls with distance from the center, and a <em>range</em> term, which falls with brightness difference from the center:</p>
+  \[ w(i,j,k,l) = \exp\left(-\frac{(i-k)^2+(j-l)^2}{2\sigma_d^2}\right) \cdot \exp\left(-\frac{\|f(i,j)-f(k,l)\|^2}{2\sigma_r^2}\right) \]
+  <p>A pixel far away in position or very different in brightness contributes little. Across a true jump, same-side neighbors still average while opposite-side neighbors are suppressed, so the step stays sharp and the jitter on each flat side fades. In color images the range term uses the vector distance, so an edge in any one band downweights that neighbor. The cost is speed: the filter is far slower than a separable Gaussian pass, which is why faster approximations exist.</p>
+</div>
 <div class="warning-box">
   <p><strong>Scope:</strong> Smoothing helps when noise is small and local. It cannot fix large stains, motion blur trails or dead pixels. Those need repair or masking, not stronger blur.</p>
 </div>
@@ -770,7 +776,22 @@
 <p>\[ G_x \approx (Z_7 + 2Z_8 + Z_9) - (Z_1 + 2Z_2 + Z_3) \]</p>
 <p>The reason was signal lift. This center weight lift helps faint step detection. Fine edges such as 10 against 20 give a small gap of 10. Smoothing may shrink that gap toward 4. A weight of 2 on the middle row lifts the center contribution back up. Detection of faint steps gets better. Noise sensitivity drops a bit compared with flat weights. Place exactness can suffer a bit on very wide kernels. Users can test 5 by 5 or 7 by 7 Sobel forms for wider context.</p>
 <p>Work a tiny case. Let top row be 10, 10, 10 and bottom row be 20, 20, 20. Prewitt \(G_x = 60 - 30 = 30\). Sobel \(G_x = (20 + 40 + 20) - (10 + 20 + 10) = 80 - 40 = 40\). The center lift adds 10 of signal. That margin can push a faint rim above threshold.</p>
+
+<div class="key-concept">
+  <p><strong>Separable form:</strong> The 3 by 3 Sobel kernel is not nine unrelated weights. It is the outer product of a central-difference vector \([-1\quad 0\quad 1]\) and a smoothing tent \([1\quad 2\quad 1]\), one along each axis. In this note's row-down convention the gap runs down rows, so:</p>
+  \[ K = \begin{bmatrix}-1\\0\\1\end{bmatrix}\begin{bmatrix}1&2&1\end{bmatrix} = \begin{bmatrix}-1&-2&-1\\0&0&0\\1&2&1\end{bmatrix} \]
+  <p>That reproduces the middle-row weight of 2 in the formula above: the tent smooths across columns, the difference takes the gap across rows. A separable kernel is applied as two 1D passes, costing \(2K\) multiply-adds per pixel instead of \(K^2\) — six instead of nine for \(K = 3\). Vision libraries expose the two 1D kernels directly, which is why a Sobel pass stays cheap enough for phone previews and factory line checks.</p>
+</div>
 <p>Roberts stays tiny at 2 by 2. It reacts fast at the exact jump spot. That gives good place data. But it has no averaging across three rows. Noise hits it harder. Detection of faint wide ramps is weaker. In short: Roberts gives good localization but weak noise handling. Prewitt gives wider view but flat weights stay noise prone. Sobel adds center lift for better detection with less noise hit but can blur place a bit.</p>
+
+<div class="important-note">
+  <p><strong>Non-linear alternative — the morphological (Beucher) gradient:</strong> Every kernel above is a linear derivative filter, a weighted sum of neighbors. Mathematical morphology gives a different edge measure built from order statistics instead of sums. For a gray-scale image \(f\) and a flat structuring element \(B\), the morphological gradient is the algebraic difference of a dilation and an erosion:</p>
+  \[
+  \mathrm{grad}(f) = (f \oplus B) - (f \ominus B)
+  \]
+  <p>With a flat \(B\), dilation returns the local maximum and erosion the local minimum inside the window, so \(\mathrm{grad}(f)(x,y)=\max_{B} f-\min_{B} f\), the widest intensity spread in that neighborhood. Work a 1D row through a step: \(0,0,0,255,255,255\) with a width-3 \(B\). The window \(\{0,0,255\}\) at the boundary gives \(255-0=255\); windows wholly on either flat side, \(\{0,0,0\}\) or \(\{255,255,255\}\), give 0. The response is a two-pixel band straddling the step, not the single spike a difference filter gives.</p>
+  <p>Compared with Sobel, this measure needs no multiplications (only min/max comparisons), gives the same magnitude for a rising and a falling rim, and has no smoothing \(\sigma\) to tune — its width is set by the structuring element. The trade-off is that it inflates thin lines, treats an isolated impulse as strongly as a true border, and gives a band rather than a pinned peak. It is therefore used less as a standalone finder and more as the gradient-magnitude image passed to watershed segmentation, where the whole field is used and the inflated plateaus are acceptable.</p>
+</div>
 <p>Sobel and Prewitt finders ship in common vision libraries for quick border sketches before heavier models run. Phone edge previews and factory line checks often start with one Sobel pass.</p>
 <div class="warning-box">
   <p><strong>Pitfalls:</strong> Picking Roberts for noisy outdoor shots gives speckle. Picking wide Sobel for thin wire art gives fat lines. Start with Sobel 3 by 3 on smoothed data, then switch only when the task map says so.</p>
@@ -807,6 +828,15 @@
   <p><strong>Hook:</strong> Raw gradients give thick messy bands. How do we shave them to one-pixel lines and keep only the true rims?</p>
 </div>
 <p>Canny joins four stages. The list was smooth, gradient, thin and link by double threshold. Each stage has a clear math form. This Canny smooth gradient thin hysteresis linking chain is the core of the lecture.</p>
+
+<div class="key-concept">
+  <p><strong>Why these four stages — Canny's optimality criteria:</strong> The four stages are not an arbitrary recipe. Canny derived them by first stating three goals for an edge detector and then solving a variational problem for the filter impulse response \(f\). The three criteria are <em>good detection</em> (low chance of missing a real edge or marking a false one), <em>good localization</em> (the marked point should lie as close as possible to the true edge center), and <em>only one response to a single edge</em> (one rim must not fire several peaks). The first two are written as functionals of \(f\), with \(G\) the edge profile and \(\sigma_n\) the noise level:</p>
+  \[
+  \mathrm{SNR}(f) = \frac{\left|\int_{-W}^{W} G(-x)f(x)\,dx\right|}{\sigma_n\sqrt{\int_{-W}^{W} f^{2}(x)\,dx}},\qquad
+  \mathrm{Loc}(f) = \frac{\left|\int_{-W}^{W} G'(-x)f'(x)\,dx\right|}{\sigma_n\sqrt{\int_{-W}^{W} f'^{2}(x)\,dx}}
+  \]
+  <p>Canny maximized the product of these two terms by the calculus of variations. Stretching the filter to \(f_w(x)=f(x/w)\) multiplies the SNR term by \(\sqrt{w}\) and divides the localization term by \(\sqrt{w}\), leaving the product invariant. That is an <em>uncertainty principle</em>: detection and localization trade off against each other and cannot both improve, so \(\sigma\) is a genuine scale choice rather than a free knob. A wider bell suppresses noise but shifts the peak; a narrower one sharpens place but keeps speckle. The exactly optimal kernel has no cheap two-dimensional implementation, so Canny approximated it by the first derivative of a Gaussian, which the original analysis reports is worse than the true optimum by about 20 percent — precisely the smoothed-slope operator built in stages 1 and 2 above. The third criterion is what forces non-maximum suppression in stage 3, and hysteresis in stage 4 then removes the streaking that a single threshold leaves along a contour.</p>
+</div>
 <p>Stage 1 smooths with a Gaussian. The form was a bell set by spread sigma. In symbols with \(r^2 = u^2 + v^2\) for offset \((u,v)\) from center, for the Gaussian bell spread sigma smoothing weights:</p>
 <p>\[ G(u,v) = K \cdot \exp\left(-\frac{r^2}{2\sigma^2}\right) \]</p>
 <p>Here \(G(u,v)\) is the blur weight at offset \((u,v)\). Here \(\sigma\) is spread, a positive scalar in pixels. Here \(K\) is a normalizing scalar so weights sum to one. Here \(r\) is radial distance from the window center. Larger \(\sigma\) spreads weight wider and blurs more. A 3 by 3 example holds center near 0.6 and sides near 0.3 in unnormalized form before dividing by the total sum. For \(\sigma = 1\), raw values are 1 at center, about 0.61 on four sides and about 0.37 at corners. After dividing by the sum near 4.9, the normalized center is about 0.20. Convolve this bell with \(f\) to get smoothed \(f_s\).</p>

@@ -393,6 +393,21 @@
   </tbody>
 </table>
 
+<div class="key-concept">
+  <p><strong>Beyond SQL and NoSQL — NewSQL:</strong> NewSQL is a modern relational database class that preserves the <em>ACID guarantees</em> and SQL interface of a traditional RDBMS while adopting the <em>shared-nothing, horizontal scale-out</em> architecture of NoSQL systems for online transaction processing (OLTP).</p>
+  <table>
+    <thead>
+      <tr><th>Dimension</th><th>SQL (RDBMS)</th><th>NoSQL</th><th>NewSQL</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>ACID transactions</td><td>Yes</td><td>No (BASE)</td><td>Yes</td></tr>
+      <tr><td>Scaling model</td><td>Scale up (vertical)</td><td>Scale out (horizontal)</td><td>Scale out (horizontal)</td></tr>
+      <tr><td>Primary interface</td><td>SQL</td><td>Non-SQL APIs</td><td>SQL</td></tr>
+    </tbody>
+  </table>
+  <p><em>Takeaway:</em> NewSQL targets workloads that need both globally scalable write throughput and strict transactional correctness — a combination classic SQL and NoSQL each sacrifice one side of.</p>
+</div>
+
 <h3 class="subsection-title">3.1.6 Student Questions and Answers</h3>
 
 <div class="important-note">
@@ -859,6 +874,26 @@ Transaction    EMI Email                                |
   </ul>
 </div>
 
+<div class="important-note">
+  <p><strong>Architectural Extension — HDFS Federation:</strong> Because one NameNode holds the entire namespace in RAM, namespace size — not raw disk capacity — becomes the scaling ceiling on very large, small-file-heavy clusters. Introduced in Hadoop 2.x, <em>federation</em> splits the namespace across multiple independent NameNodes. Each manages a distinct <strong>namespace volume</strong> (its own metadata plus a <strong>block pool</strong>), while every DataNode registers with all NameNodes and stores blocks for every pool.</p>
+  <ul>
+    <li>NameNodes do not coordinate with one another, so the failure of one namespace does not affect the others.</li>
+    <li>Clients use <code>ViewFs</code> mount tables to map a path to the NameNode that owns its namespace.</li>
+    <li>Benefits: horizontal namespace scaling, higher aggregate filesystem throughput, and isolation between tenant workloads.</li>
+  </ul>
+</div>
+
+<div class="important-note">
+  <p><strong>Architectural Extension — HDFS Centralized Block Caching:</strong> The operating system page cache is not the only way to keep hot data in memory. With <em>centralized cache management</em>, the NameNode explicitly instructs selected DataNodes to pin chosen file or directory paths into an <strong>off-heap block cache</strong>, instead of relying on every replica being pulled accidentally into each DataNode's OS buffer cache.</p>
+  <ul>
+    <li><strong>Control plane:</strong> An administrator creates a <em>cache directive</em> (a path plus a cache replication factor and a TTL) inside a named <em>cache pool</em> using <code>hdfs cacheadmin -addDirective</code>. Directives are persisted in the <code>fsimage</code> and <code>editlog</code>; the NameNode collects periodic <em>cache reports</em> from DataNodes and piggybacks cache/uncache commands onto normal heartbeats.</li>
+    <li><strong>Memory accounting:</strong> A DataNode reserves pinned memory through <code>dfs.datanode.max.locked.memory</code> (which on Linux also requires raising the <code>ulimit -l</code> locked-memory limit). By default a block is cached on only one DataNode, so only \(m\) of the \(n = 3\) on-disk replicas consume RAM, rather than all \(n\) copies being cached independently by the OS.</li>
+    <li><strong>Compute synergy:</strong> Because the NameNode knows exactly where cached blocks reside, job schedulers (MapReduce, Spark) can place a task on the DataNode holding a cached replica — extending the data-locality principle from disk to memory. Cached blocks additionally allow a zero-copy client read path, since the DataNode verifies the checksum once when the block is cached.</li>
+    <li><strong>Best fit:</strong> Small, repeatedly scanned lookup or fact tables used in joins; a one-off historical report that is read a single time gains little from pinning.</li>
+  </ul>
+  <p><em>Distinction:</em> This is NameNode-coordinated, off-heap pinning of HDFS blocks — not the in-memory RDD caching performed by Spark and not the passive per-node OS buffer cache.</p>
+</div>
+
 <h3 class="subsection-title">3.6.2 Compute Layer Roles: Resource Manager and Node Managers</h3>
 <p>In YARN (Hadoop 2.0+), computational task execution follows a parallel master-slave architecture:</p>
 
@@ -921,6 +956,16 @@ Transaction    EMI Email                                |
   <p>If you need to ship 100,000 tons of coal across the country, you don't send 100,000 separate individual courier envelopes by motorcycle (small 4 KB blocks). The overhead of addressing, tracking, and signing for each envelope would take years. Instead, you load the coal onto massive freight trains (large 128 MB blocks). The time required to locate the start of a train (disk seek time \(\approx 10\text{ ms}\)) becomes insignificant compared to the continuous high-speed streaming of data off disk (transfer rate \(\approx 100\text{ MB/s}\)).</p>
 </div>
 
+<div class="example-box">
+  <p><strong>Derivation — Why the Default Block Size Is 128 MB:</strong> The analogy above can be made quantitative using the two disk parameters it quotes: an average seek time \(t_{\mathrm{seek}} \approx 10\,\mathrm{ms}\) and a sustained transfer rate \(r \approx 100\,\mathrm{MB/s}\).</p>
+  <p><strong>Step 1 — fix the acceptable overhead ratio.</strong> Require the fixed seek cost to consume only 1 percent of the time spent streaming one block, i.e. \(\alpha = 0.01\):</p>
+  \[ t_{\mathrm{seek}} = \alpha \cdot t_{\mathrm{transfer}} \quad \Rightarrow \quad t_{\mathrm{transfer}} = t_{\mathrm{seek}} / \alpha = 10\,\mathrm{ms} / 0.01 = 1000\,\mathrm{ms} = 1\,\mathrm{s} \]
+  <p><strong>Step 2 — convert transfer time into bytes.</strong> At \(100\,\mathrm{MB/s}\), one second of continuous streaming delivers:</p>
+  \[ B_{\mathrm{block}} = r \cdot t_{\mathrm{transfer}} = 100\,\mathrm{MB/s} \cdot 1\,\mathrm{s} = 100\,\mathrm{MB} \]
+  <p><strong>Step 3 — reconcile with the real default.</strong> The \(100\,\mathrm{MB}\) figure is an order-of-magnitude result; Hadoop adopts the next power of two, \(128\,\mathrm{MB} = 2^{7}\,\mathrm{MB}\), and practitioners raise it further as disk transfer rates grow. In general \(B_{\mathrm{block}} = r \cdot t_{\mathrm{seek}} / \alpha\), so the ideal block size scales linearly with drive speed.</p>
+  <p><strong>Upper bound — the compute-side trade-off:</strong> a map task normally processes exactly one block, so blocks that are too large reduce the task count below the cluster's node count, \(N_{\mathrm{tasks}} \approx F / B_{\mathrm{block}} &lt; N_{\mathrm{nodes}}\) where \(F\) is the total file size. Parallelism is then wasted and the job runs slower than with smaller blocks — the same seek-versus-throughput balance viewed from the scheduler's side.</p>
+</div>
+
 
 <h3 class="subsection-title">3.7.2 Replication Factor and Reliability Math</h3>
 <p>To guarantee high fault tolerance on commodity hardware, HDFS replicates every data block across multiple physical DataNodes. The default production replication factor is \(R = 3\) (on single-node development environments, \(R = 1\)).</p>
@@ -947,6 +992,15 @@ Transaction    EMI Email                                |
   <ul>
     <li>Increasing \(R\) from 3 to 5 reduces mathematical data loss probability by a factor of 100 (\(0.1\% \to 0.001\%\)).</li>
     <li>However, it increases raw physical storage consumption linearly from \(3\times\) raw file size to \(5\times\) raw file size. Because commodity hard drive storage is inexpensive, 3x replication provides the optimal balance of enterprise reliability and hardware cost.</li>
+  </ul>
+</div>
+
+<div class="important-note">
+  <p><strong>Reliability Beyond Replication — Data Integrity Checksums:</strong> Replication protects against a node disappearing; it does not detect <em>silent bit corruption</em> ("bit rot") inside a stored block. HDFS transparently computes a checksum on write and verifies it on read using <strong>CRC-32C</strong> over every <code>dfs.bytes-per-checksum</code> bytes (default 512). A 4-byte checksum per 512-byte chunk costs &lt;1% extra storage.</p>
+  <ul>
+    <li>The last DataNode in the write pipeline verifies the checksum before the write is acknowledged; clients re-verify each block on read.</li>
+    <li>A background <strong>DataBlockScanner</strong> periodically re-checks every block on each DataNode to catch physical media decay that no client read would otherwise expose.</li>
+    <li>On a mismatch, the client reports the bad replica to the NameNode, which re-replicates a good copy and deletes the corrupt one — so checksums and the \(p^R\) reliability model work together.</li>
   </ul>
 </div>
 

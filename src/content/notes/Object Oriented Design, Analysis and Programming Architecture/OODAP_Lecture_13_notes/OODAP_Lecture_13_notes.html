@@ -1006,6 +1006,43 @@ System.out.println(c2.getName()); // prints "Acme Ltd" — same instance</code><
   <li><strong>Thread safety:</strong> In a multithreaded environment, two threads calling <code>getInstance()</code> simultaneously can create two instances if the check is not synchronised. Production code uses synchronisation, double-checked locking, or the enum-singleton idiom in Java — detail not required on the exam but worth noting as a pitfall.</li>
   <li><strong>Subclassing limitation:</strong> A private constructor makes subclassing difficult. If you anticipate variation in the singleton's behaviour, instance-side methods on the singleton instance are more flexible than static-only helpers, as discussed in the textbook.</li>
 </ul>
+
+<div class="important-note">
+  <p><strong>System detail — Making the single instance genuinely single under concurrency.</strong> The lazy sketch above is safe only in a single-threaded program. Two threads can both observe <code>instance == null</code> and each construct a separate object, silently breaking the invariant. The memory model makes the fix subtler than simply adding a second check, because a partially constructed object can be published in an order other threads do not expect.</p>
+  <table>
+    <thead>
+      <tr>
+        <th>Variant</th>
+        <th>Mechanism</th>
+        <th>Cost / caveat</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>Synchronised accessor</td>
+        <td>Declare <code>public static synchronized Singleton getInstance()</code>. A static synchronised method locks the monitor of the class object, so only one thread can be inside the accessor at a time.</td>
+        <td>Correct and simple, but every call pays the lock even after construction. The companion text uses exactly this form for its <code>PrintSpooler</code>.</td>
+      </tr>
+      <tr>
+        <td>Double-checked locking</td>
+        <td>Test <code>instance == null</code> outside the lock, synchronise only for the first construction, then test again inside. The field must be <code>volatile</code> so the write is ordered before later reads and a half-built object cannot escape.</td>
+        <td>Without <code>volatile</code> the idiom is broken under the memory model; it is the variant most often written incorrectly.</td>
+      </tr>
+      <tr>
+        <td>Initialization-on-demand holder</td>
+        <td>A private static nested class owns the instance; the JVM initialises that nested class on first access to its field, giving lazy creation with no explicit locking.</td>
+        <td>Requires understanding class-initialisation timing and adds one nested type.</td>
+      </tr>
+      <tr>
+        <td>Enum singleton</td>
+        <td>A single-element enum constant <code>INSTANCE</code> is created once by the JVM and is safe against serialisation creating a second instance.</td>
+        <td>Less flexible if the type must extend a class; the companion's eager static field is the closest relative.</td>
+      </tr>
+    </tbody>
+  </table>
+  <p><strong>Why <code>volatile</code> is the linchpin:</strong> the memory model defines a volatile write as ordered before every later read of that same field. Without that edge, a thread can see a non-null reference while still seeing default values in the object's fields — the classic double-checked-locking failure. All four variants keep the same pattern intent and differ only in where the run-time guarantees the "one instance" invariant.</p>
+</div>
+
 <p>Visual: picture a single reception desk in a large office building. Every department that needs the company stamp must walk to that one desk (<code>getInstance()</code>), rather than keeping its own stamp. The desk guarantees there is one stamp and controls who uses it — convenient, but every department now depends on that desk being open and consistent.</p>
 <div class="warning-box">
   <p><strong>Pitfalls — How singleton hurts if overused.</strong></p>
@@ -1224,6 +1261,38 @@ class Histogram implements Observer {
   }
 }</code></pre>
 <p>In the Java library variant described, <code>Observable</code> is a class (not an interface) and <code>Observer</code> is an interface with <code>update(Observable o, Object arg)</code>. A typical subject then calls <code>setChanged(); notifyObservers();</code> and each <code>update</code> pulls the new data. A non-Java design often makes both sides interfaces. Either way, the collaboration is the same.</p>
+
+<div class="important-note">
+  <p><strong>Modern Java detail — the library form is deprecated.</strong> The <code>Observable</code>/<code>Observer</code> pair described above reflects the original Java design, but it is no longer the recommended implementation. Both types are marked deprecated since Java 9, and the official API documentation records three concrete reasons. Each one maps directly onto a design decision discussed in this section:</p>
+  <table>
+    <thead>
+      <tr>
+        <th>Documented limitation of the library pair</th>
+        <th>Observer concept it undermines</th>
+        <th>Replacement named by the API documentation</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>The event model is limited to one generic argument.</td>
+        <td>Typed events, deltas and filtered subscriptions cannot be expressed beyond a single opaque argument; the push-vs-pull choice stays coarse.</td>
+        <td>The <code>java.beans</code> package: <code>PropertyChangeListener</code> and <code>PropertyChangeEvent</code> for named property changes.</td>
+      </tr>
+      <tr>
+        <td>Notification order is unspecified.</td>
+        <td>The requirement that observers be independent becomes a correctness condition, not a courtesy — a view must not rely on running before another.</td>
+        <td><code>java.util.concurrent</code> queues and executors for reliable, ordered delivery between threads.</td>
+      </tr>
+      <tr>
+        <td>State changes do not correspond one-to-one with notifications.</td>
+        <td>The <code>hasChanged</code> flag can collapse several mutations into one broadcast, so a view never sees intermediate states.</td>
+        <td>The Flow API (<code>java.util.concurrent.Flow</code>) reactive-streams model with explicit demand signalling.</td>
+      </tr>
+    </tbody>
+  </table>
+  <p><strong>What stays the same:</strong> none of these alternatives changes the pattern's structure. A <code>PropertyChangeListener</code> is still an Observer registered with a subject; the subject still holds a list and broadcasts; only the interface and the delivery guarantees are richer. In an answer, name the Subject and Observer roles and the pull-or-push choice first, and treat the library class as one implementation detail — one that modern Java has deliberately retired.</p>
+</div>
+
 <p>This achieves <em>separation between application data and its presentation</em>. Views stay separate from the data, and both sides remain reusable. The subject does not know the concrete class of any observer; it only knows they implement the observer interface. Communication is by broadcast notification, and there is no tight type coupling between subject and concrete observers.</p>
 <div class="example-box">
   <p><strong>Worked trace — Table edits flow to pie and histogram.</strong></p>

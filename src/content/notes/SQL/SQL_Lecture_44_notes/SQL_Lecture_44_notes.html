@@ -1036,6 +1036,46 @@ WHERE table_schema = 'public';</code></pre>
     <li><strong>Relative Path Resolution:</strong> When executing <code>\i script.sql</code>, psql resolves relative file paths starting from the directory where <code>psql</code> was originally launched, not the directory where the database server runs.</li>
   </ul>
 </div>
+<div class="important-note">
+  <p><strong>Client-Side Bulk Transfer: the <code>\copy</code> Metacommand:</strong> The SQL <code>COPY</code> command reads and writes files using the <em>server's</em> filesystem and privileges. The <code>\copy</code> metacommand executes an SQL <code>COPY</code>, but psql reads/writes the local file and streams the rows across the connection, so file accessibility and privileges are those of the <em>client</em> user and no SQL superuser rights are required. This is the practical route for loading a local CSV into a remote managed database (for example AWS RDS) whose server filesystem is inaccessible.</p>
+  <table>
+    <thead>
+      <tr>
+        <th>Property</th>
+        <th>SQL <code>COPY</code></th>
+        <th>psql <code>\copy</code></th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>File resolved on</td>
+        <td>Database server host</td>
+        <td>Client machine running psql</td>
+      </tr>
+      <tr>
+        <td>Required privileges</td>
+        <td>Server-side file privilege (superuser / <code>pg_write_server_files</code>)</td>
+        <td>Local OS file permissions only</td>
+      </tr>
+      <tr>
+        <td>Remote database</td>
+        <td>Cannot see your local files</td>
+        <td>Routes the local file to the remote server</td>
+      </tr>
+      <tr>
+        <td>Bulk performance</td>
+        <td>Fastest (no network hop)</td>
+        <td>Slower &mdash; all rows cross the client/server link</td>
+      </tr>
+    </tbody>
+  </table>
+  <p><strong>Worked Syntax:</strong></p>
+  <pre><code>analysis=# \copy state_regions FROM 'C:/data/state_regions.csv' WITH (FORMAT CSV, HEADER);
+COPY 56
+analysis=# \copy state_regions TO 'C:/data/state_regions_out.csv' WITH (FORMAT CSV, HEADER);
+COPY 56</code></pre>
+  <p>Note the special parsing rule: unlike other metacommands, the entire remainder of the line is taken as <code>\copy</code> arguments, and no variable interpolation or backquote expansion occurs. The companion shell form <code>psql -d analysis -U postgres -c "COPY state_regions FROM STDIN WITH (FORMAT CSV, HEADER)" &lt; state_regions.csv</code> achieves a similar one-shot import by piping the local file through standard input.</p>
+</div>
 <h3 id="44.5.3-worked-examples-editing-re-executing-and-scripting">44.5.3 Worked Examples: Editing, Re-executing, and Scripting</h3>
 <div class="example-box">
   <p>#### Worked Example 1: Editing a Query in Vim Using \e</p>
@@ -1327,6 +1367,61 @@ WHERE table_schema = 'public';</code></pre>
   <li><code>2</code>: Full outer border surrounding the entire tabular result set.</li>
 </ul>
 <p>Combining <code>\pset linestyle unicode</code> with <code>\pset border 2</code> produces clear, publication-quality terminal tables with distinct box-drawing boundaries.</p>
+<div class="important-note">
+  <p><strong>Full <code>\pset</code> Surface &mdash; Beyond Borders and Linestyle:</strong> PostgreSQL exposes several additional print options that change how rows are serialized, not just how borders are drawn. Each metacommand has an equivalent command-line flag, which matters when redirecting output from a shell script.</p>
+  <table>
+    <thead>
+      <tr>
+        <th>Goal</th>
+        <th>psql metacommand</th>
+        <th>Shell flag</th>
+        <th>Effect</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>Unaligned (delimiter-separated) rows</td>
+        <td><code>\pset format unaligned</code> / <code>\a</code></td>
+        <td><code>-A</code></td>
+        <td>Columns separated by a delimiter instead of an aligned grid; <code>\a</code> toggles back to aligned.</td>
+      </tr>
+      <tr>
+        <td>True CSV output</td>
+        <td><code>\pset format csv</code></td>
+        <td><code>--csv</code></td>
+        <td>Comma-separated values with quoting of embedded commas and quotes.</td>
+      </tr>
+      <tr>
+        <td>Change the field separator</td>
+        <td><code>\pset fieldsep '|'</code> / <code>\f |</code></td>
+        <td><code>-F |</code></td>
+        <td>Overrides the default pipe separator used in unaligned mode.</td>
+      </tr>
+      <tr>
+        <td>Suppress / restore scrolling</td>
+        <td><code>\pset pager</code></td>
+        <td>&mdash;</td>
+        <td>Toggles the pager; with it off, all rows print immediately without <code>-- More --</code>.</td>
+      </tr>
+      <tr>
+        <td>Toggle the row-count footer</td>
+        <td><code>\pset footer</code></td>
+        <td><code>-t</code> (also hides headers)</td>
+        <td>Removes the trailing <code>(n rows)</code> line from machine-readable output.</td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+<div class="example-box">
+  <p><strong>Worked Trace: Capturing CSV output entirely client-side.</strong> Combine <code>\pset format csv</code> with <code>\o</code> (output redirection) to write a result set to a local file without any server-side <code>COPY</code> privileges:</p>
+  <pre><code>analysis=# \pset format csv
+Output format is csv.
+analysis=# \o 'C:/reports/grades.csv'
+analysis=# SELECT student_id, course_id, grade FROM grades ORDER BY student_id;
+analysis=# \o
+analysis=# \pset format aligned</code></pre>
+  <p>After <code>\o</code> is set, every subsequent statement's output is appended to the named file rather than shown on screen; issuing bare <code>\o</code> restores screen output, and <code>\pset format aligned</code> restores the normal grid. On Windows the path must use forward slashes (<code>C:/reports/grades.csv</code>) or doubled backslashes, because a single backslash begins a psql metacommand argument. All of these settings are strictly client-side &mdash; stored data and the server are untouched &mdash; and they can be persisted in <code>~/.psqlrc</code> (or <code>%APPDATA%\postgresql\psqlrc.conf</code> on Windows).</p>
+</div>
 <p>To reset table formatting back to default:</p>
 <pre><code>\pset linestyle ascii
 \pset border 1</code></pre>

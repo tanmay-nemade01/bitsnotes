@@ -694,6 +694,18 @@ LIMIT 10;</code></pre>
   <p>\[total = domestic + international\]</p>
   <p><code>NULLS LAST</code> guards the sort: any film with a missing revenue has a <code>NULL</code> total, and without the keywords some systems float those blank rows to the top of a <code>DESC</code> sort. <code>LIMIT 10</code> then keeps the first 10 surviving rows. MySQL workaround where <code>NULLS LAST</code> is unavailable: <code>ORDER BY (total_revenue IS NULL), total_revenue DESC LIMIT 10</code> — the <code>IS NULL</code> expression sorts 0 (known) before 1 (missing), reproducing nulls-last behavior.</p>
 </div>
+<div class="important-note">
+  <p><strong>Beyond equality — range (non-equi) joins:</strong> every <code>ON</code> clause in Sections 17.1–17.10 is an equality, but a join condition is only required to be a boolean expression. A <em>range join</em> pairs a continuous value with the band it falls into, using <code>BETWEEN ... AND ...</code> in <code>ON</code> instead of <code>=</code>. It is the textbook way to attach a category label from a small lookup table without writing a long <code>CASE</code> expression.</p>
+  <pre><code>SELECT sd.sale_price, cat.category_description
+FROM sales_details AS sd
+INNER JOIN sales_category AS cat
+  ON sd.sale_price BETWEEN cat.lower_threshold
+                       AND cat.upper_threshold;</code></pre>
+  <p><strong>Worked trace:</strong> the lookup rows are <code>(0, 50) → budget</code>, <code>(51, 200) → standard</code>, and <code>(201, 10000) → premium</code>; a sale of <code>78</code> satisfies only \(51 \le 78 \le 200\), so it pairs once with <em>standard</em>. A sale of <code>50</code> pairs with <em>budget</em>, because <code>BETWEEN</code> includes both endpoints — PostgreSQL documents it as \(a \ge x \ \mathrm{AND} \ a \le y\). <strong>Final result: one label per sale, resolved by band membership rather than key equality.</strong> Sense-check: count how many bands each sale matched — <code>1</code> is correct, <code>0</code> means a gap in the lookup table, and more than <code>1</code> means overlapping bands silently duplicated the sale.</p>
+</div>
+<div class="warning-box">
+  <p><strong>Pitfall — overlapping or gapped bands:</strong> because the predicate is a range rather than a key, the usual "one row per key" guarantee disappears. Overlapping <code>(lower, upper)</code> pairs fan one fact row out into several labelled copies, and uncovered gaps drop the row entirely from an inner join. Validate that the lookup bands are disjoint and contiguous before using this pattern. The syntax ports unchanged to PostgreSQL and Databricks/Spark SQL, since both accept a general boolean expression in <code>ON</code>.</p>
+</div>
 <p>Double-quoted <code>"total_revenue"</code> follows PostgreSQL aliasing (double quotes for identifiers); MySQL would use backticks and SQL Server brackets, but a plain unquoted <code>AS total_revenue</code> works in all four systems including Snowflake and Spark SQL.</p>
 <h3 id="17.3.3-student-questions-and-answers">17.3.3 Student Questions and Answers</h3>
 <div class="important-note">
@@ -868,6 +880,21 @@ LEFT JOIN table2
   <p class="text-xs text-slate-500 mt-2"><strong>Figure:</strong> LEFT JOIN on product_id — left ids 1, 2, 3, 5 all survive; id 5 (mics) has no right twin, so it prints with right-side NULLs.</p>
 </div>
 <p>LEFT and RIGHT JOIN support is universal: PostgreSQL, MySQL, Snowflake, and Databricks/Spark SQL all accept the same <code>LEFT JOIN ... ON</code> syntax used here, so you keep one common version.</p>
+<div class="key-concept">
+  <p><strong>Edge case — why a NULL key never finds a twin:</strong> the preserved rule above assumes \(L.key = R.key\) answers true or false. For two NULL keys it answers <em>unknown</em>: ordinary comparison operators yield NULL whenever either input is NULL, so a row whose join key is NULL matches nothing on either side of any join — not even another NULL-keyed row. That is why such a row appears once with all-NULL partner columns instead of pairing up.</p>
+  <table>
+    <thead>
+      <tr><th>Left key</th><th>Right key</th><th><code>=</code></th><th><code>IS NOT DISTINCT FROM</code></th></tr>
+    </thead>
+    <tbody>
+      <tr><td>1</td><td>1</td><td>true</td><td>true</td></tr>
+      <tr><td>1</td><td>2</td><td>false</td><td>false</td></tr>
+      <tr><td>1</td><td>NULL</td><td>NULL (unknown)</td><td>false</td></tr>
+      <tr><td>NULL</td><td>NULL</td><td>NULL (unknown)</td><td>true</td></tr>
+    </tbody>
+  </table>
+  <p><strong>NULL-safe form:</strong> \(L.key = R.key\) becomes \(L.key\ \mathrm{IS\ NOT\ DISTINCT\ FROM}\ R.key\), written <code>ON l.key IS NOT DISTINCT FROM r.key</code>. It behaves like <code>=</code> for non-NULL values but treats NULL as an ordinary data value: two NULLs pair, while one NULL never pairs with a real value. Reach for it only when NULL is meaningful in the key itself; otherwise the NULL columns of an outer join are exactly the signal you are trying to read.</p>
+</div>
 <div class="warning-box">
   <p><strong>Scope:</strong> this section covers only LEFT JOIN on an equality key with small product tables. It does not cover filtering the joined result, grouping and totals (that is Section 17.7), direction swaps (Section 17.6), or RIGHT and FULL joins (Sections 17.8–17.9). All examples use the <code>left_products</code> / <code>right_products</code> lecture tables in PostgreSQL-compatible syntax.</p>
 </div>
@@ -1373,6 +1400,31 @@ INNER JOIN movies_revenues AS r ON r.movie_id = mv.movie_id;</code></pre>
 <div class="important-note">
   <p><strong>Q:</strong> Does the order of tables in a multi-table inner join change the answer? <strong>A:</strong> The row set stays the same and only the column order shifts. Start from whichever table reads best and link each new table to the chain by its shared column. Reordering never adds or removes inner-join rows.</p>
 </div>
+
+<h3 id="17.9.4-lateral-joins-evaluating-a-subquery-per-left-row">17.9.4 LATERAL Joins: Evaluating a Subquery Per Left Row</h3>
+<p>Every join so far pairs two already-built tables on a shared key. A <code>LATERAL</code> join removes that restriction: the right-hand item may be a sub-SELECT that references columns of the table on its left, so the right side is rebuilt for each left row. It extends the <code>ON TRUE</code> form from Section 17.11 from "pair every row with every row" to "run a small query for each row".</p>
+<div class="key-concept">
+  <p><strong>Formal definition — per-row evaluation:</strong> in <code>FROM A LEFT JOIN LATERAL S(a.col) ON TRUE</code>, the sub-SELECT \(S\) is evaluated once per row \(a \in A\) with \(a.col\) bound as a constant inside \(S\). Each evaluation's rows are appended to that \(a\); an empty evaluation leaves \(a\) once with right-side NULLs. A non-lateral FROM sub-SELECT is evaluated independently and cannot reference earlier FROM items; <code>LATERAL</code> lifts that barrier.</p>
+  <p>\[result = \bigcup_{a \in A} \{(a, s) \mid s \in S(a.col)\}\]</p>
+</div>
+<div class="example-box">
+  <p><strong>Worked example — two most recent lab swipes per teacher.</strong> The detail table <code>teachers_lab_access</code> holds <code>(teacher_id, access_time, lab_name)</code>; a plain equi-join would return every swipe, not the latest two. The LATERAL form ranks inside each teacher's own slice:</p>
+  <pre><code>SELECT t.first_name, t.last_name, a.access_time, a.lab_name
+FROM teachers AS t
+LEFT JOIN LATERAL (
+  SELECT access_time, lab_name
+  FROM teachers_lab_access
+  WHERE teacher_id = t.id
+  ORDER BY access_time DESC
+  LIMIT 2
+) AS a ON TRUE
+ORDER BY t.id;</code></pre>
+  <p>Trace: (1) take teacher Lee (id 2); (2) bind <code>t.id = 2</code> inside the subquery, which returns the two newest rows, 2022-12-21 Chemistry A and 2022-12-01 Chemistry B; (3) repeat for the next teacher, whose id filters a different slice; (4) a teacher with no access rows produces zero subquery rows, so <code>LEFT</code> keeps that teacher once with NULL time and lab. <strong>Final result: at most two rows per teacher, and teachers with no swipes still appear.</strong> Sense-check: the output row count is at most \(2 \times count(teachers)\), never the full access-log count.</p>
+</div>
+<div class="warning-box">
+  <p><strong>Pitfall — direction and the mandatory alias:</strong> the sub-SELECT must carry an alias (<code>AS a</code> here) and the join needs a boolean condition; <code>ON TRUE</code> is the standard way to say "keep everything the subquery produced". PostgreSQL requires the LATERAL item to sit on the right of an <code>INNER</code> or <code>LEFT</code> join and to reference only tables to its left — <code>X RIGHT JOIN LATERAL Y</code> parses, but Y cannot reference X. Both PostgreSQL and Spark SQL/Databricks accept <code>JOIN LATERAL</code>, so one common query shape ports between them.</p>
+</div>
+
 <div class="key-takeaway">
   <p><strong>Recap + bridge:</strong> FULL JOIN = matched rows + both kinds of orphans (<code>NULL</code>s mark the gaps); the products case proves \(3 + 1 + 2 = 6\), and the movies case proves the James David gap of one. Multi-table queries add one <code>JOIN</code> + <code>ON</code> per table through the bridge, order changes columns not rows, and bare <code>JOIN</code> is <code>INNER JOIN</code>. Next, Section 17.10 turns the join inward — one table joining to itself.</p>
 </div>

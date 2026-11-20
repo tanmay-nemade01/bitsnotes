@@ -166,6 +166,51 @@ flowchart LR
 <div class="warning-box">
   <p><strong>Scope — where this background matters:</strong> The encryption equations apply to any cipher, symmetric or public-key, and they are the minimal model you need to understand ransomware. What they do <em>not</em> capture is key management: who holds the key, how it was generated, and how it is delivered. In ransomware, the attacker generates the key, holds it off-machine, and does not share it until payment — so no amount of local password guessing can recover the files. Also note that encryption alone guarantees only confidentiality; integrity and authentication (was the message changed? who sent it?) need separate tools such as hash functions and digital signatures.</p>
 </div>
+<div class="key-concept">
+  <p><strong>Formal principle — Kerckhoffs's principle (Shannon's maxim):</strong> A cryptosystem should remain secure even if everything about the system, except the key, is public knowledge. Auguste Kerckhoffs stated this in 1883 as the second of six design rules for military ciphers — the system must not require secrecy and can be stolen by the enemy without causing trouble — and Claude Shannon restated it as the maxim that one ought to design systems under the assumption that the enemy will ultimately gain full familiarity with them. All security therefore rests on the secrecy of the key, never on secrecy of the algorithm.</p>
+  <p><strong>Why this matters for ransomware:</strong> it is exactly the principle the attacker relies on. Ransomware authors freely reuse published, well-studied ciphers such as AES and RSA because hiding the algorithm buys nothing — the victim may know precisely how the files were encrypted and still be unable to decrypt them, since only the key is secret and the attacker holds it off-machine. The flip side is a direct warning: "security through obscurity" — keeping the cipher or the malware's code hidden — is not a defense. The only things standing between the victim and their files are the attacker's key and a tested offline backup.</p>
+</div>
+
+<div class="key-concept">
+  <p><strong>Formal mechanism — hybrid encryption (key encapsulation):</strong> The section so far treated symmetric and public-key encryption as alternatives, but real systems — including ransomware — use both together. A symmetric cipher (AES) is fast and encrypts bulk data efficiently, but requires the receiver to already hold the same secret key; a public-key cipher (RSA) solves that key-distribution problem but is far too slow to encrypt every file. The hybrid construction combines them: generate a fresh random <em>content-encryption key</em> \(k_s\), encrypt the data with it, then encrypt \(k_s\) itself under a public key so that only the holder of the matching private key can unwrap it.</p>
+  <p>The textbook pattern (the PGP processing steps, and the same structure standardized as CMS enveloped-data) is exactly this sequence — create a random session key for a symmetric algorithm, encrypt the message with it, encrypt the session key under the recipient's public key, and attach the encrypted key to the encrypted message. Written with the section's notation:</p>
+  \[
+  k_s \leftarrow \text{random}, \qquad C = E_{k_s}(P), \qquad K = E_{k_{pub}}(k_s), \qquad k_s = D_{k_{priv}}(K)
+  \]
+  <p><strong>Worked trace:</strong> the malware generates a fresh 128-bit \(k_s\) and encrypts each file with AES, producing the ciphertext \(C\). It then encrypts \(k_s\) under its embedded public key \(k_{pub}\) and leaves the small wrapped blob \(K\) on the disk. The matching private key \(k_{priv}\) was generated off-machine and never leaves the attacker. The victim therefore holds \(C\), \(K\), and even \(k_{pub}\) — but recovering \(k_s\) requires computing \(D_{k_{priv}}(K)\), and \(k_{priv}\) is not on the machine.</p>
+  <table>
+    <thead>
+      <tr>
+        <th>Scheme</th>
+        <th>Bulk speed</th>
+        <th>Key delivery</th>
+        <th>Fits ransomware?</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>Symmetric only</td>
+        <td>Fast</td>
+        <td>Victim would need the same \(k_s\) in advance</td>
+        <td>No — the victim never had it</td>
+      </tr>
+      <tr>
+        <td>Public-key only</td>
+        <td>Too slow for large files</td>
+        <td>Public key can be embedded safely</td>
+        <td>Impractical at scale</td>
+      </tr>
+      <tr>
+        <td>Hybrid</td>
+        <td>Fast (symmetric bulk encryption)</td>
+        <td>\(k_s\) wrapped under \(k_{pub}\)</td>
+        <td>Yes — the actual design</td>
+      </tr>
+    </tbody>
+  </table>
+  <p><strong>Consequence for defense:</strong> this is Kerckhoffs's principle made concrete — the victim may know the cipher is AES and the wrapper is RSA and still not recover a single file, because all security rests on the one missing private key. Searching the infected disk for "the decryption key" cannot work: only the wrapped form \(K\) is present. That is why the controls that actually help are an offline, tested backup (restore \(P\) without any key) and behavior monitoring that stops the bulk-encryption step before \(C\) exists.</p>
+</div>
+
 <h3 id="11.2.2-how-a-ransomware-attack-works">11.2.2 How a Ransomware Attack Works</h3>
 <p><em>Ransomware</em> is malware whose main objective is to encrypt all the data on the victim's laptop, desktop, or server. It is not spyware quietly collecting data, and not a wiper that destroys it — the files must remain intact but unusable, because intact-but-locked files are what the victim will pay to unlock. The attack follows a fixed pattern:</p>
 <div class="key-concept">
@@ -416,6 +461,47 @@ flowchart LR
   <p><strong>Sense-check:</strong> the victim never sees the attacker's packets directly; it sees only the responses bouncing off the intermediary network — the flood is real (the victim is hit by \(N \times\) the attacker's rate), which matches the definition of a DoS: legitimate use becomes impossible.</p>
 </div>
 <p>The ping flood variant works the same way at a smaller scale: the ping utility's legitimate job is checking connectivity — you ping the IP address and see if it answers — but used continuously, the same tool turns into a bandwidth exhaust. The system stays "up" but its network link is saturated, so legitimate traffic cannot get through.</p>
+
+<div class="key-concept">
+  <p><strong>Formal model — reflection and amplification beyond the broadcast case:</strong> The smurf example above is one member of a larger family. In a <em>reflector</em> attack the attacker spoofs the victim's source address on requests sent to legitimate intermediaries, so the replies — not the requests — hit the victim. <em>Amplification</em> adds a multiplier: one spoofed request triggers more or larger responses. Write the amplification factor as the ratio of traffic delivered to the victim to traffic sent by the attacker:</p>
+  \[
+  \rho = \frac{\text{bytes delivered to victim}}{\text{bytes sent by attacker}}, \qquad R_{\text{victim}} = \rho \cdot R_{\text{attacker}}
+  \]
+  <p>For broadcast floods (smurf, and its UDP-echo variant fraggle) \(\rho \approx N\), the number of hosts that answer the broadcast — the case already worked above. DNS amplification gets its multiplier a different way: a small query is turned into a much larger <em>single</em> answer. The textbook figures: a classic DNS UDP query of about <strong>60 bytes</strong> yields a <strong>512-byte</strong> answer; with the extended DNS protocol (EDNS0) answers exceed <strong>4000 bytes</strong>, and the IETF best-current-practice for recursive nameservers puts the achievable amplification factor at <strong>around 80</strong> for an open recursive resolver.</p>
+  <table>
+    <thead>
+      <tr>
+        <th>Variant</th>
+        <th>Intermediary</th>
+        <th>Source of the multiplier</th>
+        <th>Typical \(\rho\)</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>Smurf / fraggle</td>
+        <td>Network broadcast (ICMP echo / UDP echo)</td>
+        <td>One request → \(N\) replies</td>
+        <td>\(\approx N\) hosts</td>
+      </tr>
+      <tr>
+        <td>Classic DNS amplification</td>
+        <td>Authoritative or recursive name server</td>
+        <td>60-byte query → 512-byte answer</td>
+        <td>\(\approx 8.5\times\)</td>
+      </tr>
+      <tr>
+        <td>EDNS0 + open recursion</td>
+        <td>Open recursive resolver with large cached RDATA</td>
+        <td>Small query → answer over 4000 bytes, cached for the TTL</td>
+        <td>up to \(\approx 80\times\)</td>
+      </tr>
+    </tbody>
+  </table>
+  <p><strong>Worked calculation:</strong> an attacker emits 100 queries per second, each 60 bytes, at an open resolver that returns 4800 bytes. Attacker send rate \(= 100 \times 60 = 6{,}000\) B/s; victim receive rate \(= 100 \times 4800 = 480{,}000\) B/s, so \(\rho = 480{,}000 / 6{,}000 = 80\). A modest 6 KB/s uplink from one machine becomes a 480 KB/s flood at the target — multiply by many resolvers and a botnet and the victim's link saturates.</p>
+  <p><strong>Why defenses target the intermediary, not just the victim:</strong> both variants depend on two conditions — spoofed source addresses and intermediaries willing to answer outsiders. The recommended controls are therefore ingress filtering to block spoofed source addresses (BCP 38) and configuring recursive name servers to serve only intended clients: "By default, nameservers SHOULD NOT offer recursive service to external networks." At the victim, filtering and rate limiting still help, but once \(\rho\) is large the attack is best absorbed upstream by mitigation-as-a-service — the same conclusion the section reached for botnet floods.</p>
+</div>
+
 <h3 id="11.3.3-identifying-dos-and-ddos-attacks">11.3.3 Identifying DoS and DDoS Attacks</h3>
 <p>The identification strategies are common and fairly easy to spot:</p>
 <ul>

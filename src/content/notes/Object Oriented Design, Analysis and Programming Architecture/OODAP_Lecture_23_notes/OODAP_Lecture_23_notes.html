@@ -372,6 +372,48 @@
 <div class="key-concept">
   <p><strong>The state set in one view:</strong> Think of a thread as always in one of these buckets: New means created but not yet started; Runnable means ready and waiting for the scheduler to give it the CPU; Running means actually executing its <code>run</code> method; Blocked or Waiting means paused until some event occurs; Timed Waiting means sleeping for a fixed duration such as 1000 milliseconds; Terminated or Dead means the <code>run</code> method has finished and the thread will not run again. The scheduler moves threads between these buckets.</p>
 </div>
+<div class="key-concept">
+  <p><strong>Formal API view — <code>Thread.State</code> and <code>getState()</code>:</strong> Java exposes the life cycle as a six-valued enum <code>Thread.State</code>, readable at any instant through <code>Thread.State s = t.getState();</code>. The VM reports only these constants, and a thread is in exactly one at a time: <code>NEW</code> (created, <code>start()</code> not yet called), <code>RUNNABLE</code> (executing in the JVM, possibly awaiting a CPU), <code>BLOCKED</code> (waiting to re-enter a monitor after <code>wait()</code> or to enter a <code>synchronized</code> method/block), <code>WAITING</code> (indefinite wait from no-argument <code>wait()</code>, <code>join()</code> or <code>LockSupport.park</code>), <code>TIMED_WAITING</code> (bounded wait from <code>sleep</code>, <code>wait(long)</code> or <code>join(long)</code>), and <code>TERMINATED</code> (<code>run</code> has exited).</p>
+</div>
+<table>
+  <thead>
+    <tr>
+      <th>Lecture's informal name (23.4.1)</th>
+      <th>Formal <code>Thread.State</code> constant</th>
+      <th>Entered by</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td>New</td>
+      <td><code>NEW</code></td>
+      <td><code>new Thread(...)</code>, before <code>start()</code></td>
+    </tr>
+    <tr>
+      <td>Runnable / Running</td>
+      <td><code>RUNNABLE</code> (both map here)</td>
+      <td><code>start()</code>; scheduler dispatch</td>
+    </tr>
+    <tr>
+      <td>Blocked / Waiting</td>
+      <td><code>BLOCKED</code> or <code>WAITING</code></td>
+      <td><code>synchronized</code> contention; no-arg <code>wait()</code>/<code>join()</code></td>
+    </tr>
+    <tr>
+      <td>Timed Waiting</td>
+      <td><code>TIMED_WAITING</code></td>
+      <td><code>sleep</code>, <code>wait(long)</code>, <code>join(long)</code></td>
+    </tr>
+    <tr>
+      <td>Terminated / Dead</td>
+      <td><code>TERMINATED</code></td>
+      <td><code>run</code> returns or throws</td>
+    </tr>
+  </tbody>
+</table>
+<div class="key-concept">
+  <p><strong>Key nuance:</strong> the VM has no separate <code>RUNNING</code> constant — both the lecture's "Runnable" and "Running" are reported as <code>RUNNABLE</code> by <code>getState()</code>, and these are virtual-machine states that do not mirror operating-system thread states. That is why a thread dump can show a thread as <code>RUNNABLE</code> even while it still awaits a processor.</p>
+</div>
 <h3 id="23.4.2-new-runnable-and-running">23.4.2 New, Runnable and Running</h3>
 <p>A new thread is one that has been created but not yet started. Once the <code>start</code> method is invoked the thread becomes Runnable, meaning it is ready to run and waiting for CPU allocation. When the scheduler gives it the CPU it enters the Running state and executes its <code>run</code> method. The lecture focuses more on the waiting and terminated states because they are used to control execution order, but the New to Runnable to Running progression is implied in every example where <code>start</code> leads to <code>run</code>.</p>
 <div class="important-note">
@@ -760,6 +802,45 @@ class Synch {
 <p>Synchronization affects functioning because purposely keeping the monitor locked for 1000 milliseconds makes output come later but keeps correctness. The trade-off between timing and atomicity is explicit: unsynchronized runs faster in wall-clock interleaving but produces garbled brackets; synchronized runs slower but preserves unit order. That distinction is used to justify synchronization overhead.</p>
 <div class="warning-box">
   <p><strong>Assumption — synchronization does not make code faster:</strong> Its purpose is correctness for shared memory, not speed. If shared data is not involved, extra synchronization can reduce throughput by forcing sequential entry. Synchronize the critical section only, and keep non-shared work outside the lock.</p>
+</div>
+
+<h3 id="23.8.7-interthread-communication-with-wait-notify-and-notifyall">23.8.7 Interthread Communication with wait(), notify() and notifyAll()</h3>
+<p>The <code>synchronized</code> forms studied so far enforce mutual exclusion: they keep threads out of a critical section. They do not let one thread <em>tell</em> another that a condition has become true. Java supplies that second mechanism through three <code>final</code> methods inherited from <code>Object</code>: <code>wait()</code>, <code>notify()</code> and <code>notifyAll()</code>. All three must be called from inside a <code>synchronized</code> context — a synchronized method or a <code>synchronized(object)</code> block — otherwise the JVM throws <code>IllegalMonitorStateException</code>.</p>
+<div class="key-concept">
+  <p><strong>Formal rule — the wait set:</strong> Calling <code>wait()</code> makes the current thread release the object's monitor and enter that object's <em>wait set</em>, suspending it until another thread enters the same monitor and calls <code>notify()</code> (wakes one arbitrary waiter) or <code>notifyAll()</code> (wakes all waiters, which then compete for the lock). On re-entry the monitor is reacquired before <code>wait()</code> returns. Unlike <code>sleep()</code>, <code>wait()</code> releases the lock; like <code>sleep()</code>, it throws the checked <code>InterruptedException</code>. Timed overloads such as <code>wait(1000)</code> bound the wait, and timed <code>join(long)</code> uses the same waiting-with-deadline idea.</p>
+</div>
+<div class="example-box">
+  <p><strong>Worked trace — producer/consumer with a one-slot buffer:</strong> The textbook's <code>Q</code> class keeps a single <code>int n</code> plus a <code>boolean valueSet</code> flag, with both <code>put</code> and <code>get</code> synchronized.</p>
+  <pre><code>class Q {
+    int n;
+    boolean valueSet = false;
+    synchronized int get() {
+        while (!valueSet)
+            try { wait(); } catch (InterruptedException e) { }
+        int v = n;
+        valueSet = false;
+        notify();
+        return v;
+    }
+    synchronized void put(int n) {
+        while (valueSet)
+            try { wait(); } catch (InterruptedException e) { }
+        this.n = n;
+        valueSet = true;
+        notify();
+    }
+}</code></pre>
+  <p><strong>Step-by-step:</strong> 1. Consumer calls <code>get()</code>; with <code>valueSet == false</code> it calls <code>wait()</code>, releasing <code>Q</code>'s monitor. 2. Producer enters <code>put(1)</code>, stores <code>n = 1</code>, sets <code>valueSet = true</code>, calls <code>notify()</code>, and leaves the monitor. 3. Consumer is awakened, reacquires the monitor, passes the loop guard, reads <code>1</code>, sets the flag false and calls <code>notify()</code> back. 4. A second consumer entry finds the flag false and waits again, so no value is read twice and none is overwritten before consumption. <strong>Result:</strong> strict alternation <code>Put: 1, Got: 1, Put: 2, Got: 2, ...</code> without the polling loop that repeatedly wastes CPU cycles checking a condition.</p>
+</div>
+<div class="warning-box">
+  <p><strong>Pitfall — spurious wakeups and the loop guard:</strong> The Java specification states that a thread "can wake up without being notified, interrupted, or timing out, a so-called <em>spurious wakeup</em>." Therefore the condition test must be a <code>while</code> loop around <code>wait()</code>, never an <code>if</code>. A bare <code>if</code> would let a spuriously awakened thread proceed with an unmet condition and corrupt the buffer. Calling <code>wait()</code> or <code>notify()</code> without owning the target's monitor throws <code>IllegalMonitorStateException</code>.</p>
+</div>
+
+<h3 id="23.8.8-deadlock-circular-wait-on-two-monitors">23.8.8 Deadlock — Circular Wait on Two Monitors</h3>
+<div class="warning-box">
+  <p><strong>Failure mode — deadlock:</strong> Deadlock arises when two or more threads become blocked forever, each waiting for a monitor the other holds. The textbook's scenario uses two objects <code>A</code> and <code>B</code> whose methods are synchronized. Step 1: <code>MainThread</code> enters <code>A.foo(b)</code>, acquiring <code>A</code>'s monitor, sleeps 1000 ms, then tries <code>b.last()</code>. Step 2: meanwhile <code>RacingThread</code> enters <code>B.bar(a)</code>, acquiring <code>B</code>'s monitor, sleeps 1000 ms, then tries <code>a.last()</code>. Step 3: <code>MainThread</code> now needs <code>B</code> but <code>RacingThread</code> will not release it before obtaining <code>A</code>; <code>RacingThread</code> needs <code>A</code> but <code>MainThread</code> will not release it before obtaining <code>B</code>. Neither can proceed — a circular wait.</p>
+  <p><strong>Observed trace:</strong> <code>MainThread entered A.foo</code>, <code>RacingThread entered B.bar</code>, <code>MainThread trying to call B.last()</code>, <code>RacingThread trying to call A.last()</code> — then the program hangs and must be terminated. A thread dump (CTRL-BREAK on a PC, or <code>jstack</code>) shows <code>RacingThread</code> owning <code>B</code> while waiting for <code>A</code>, and <code>MainThread</code> owning <code>A</code> while waiting for <code>B</code>.</p>
+  <p><strong>Mitigation:</strong> Deadlock is rare because it needs the two threads to interleave at just the right moment, and it can involve more than two threads, which makes it hard to reproduce and debug. Avoid it by acquiring multiple monitors in one consistent global order and by holding each lock for the shortest possible critical section. If a multithreaded program occasionally locks up, inspect a thread dump for a circular monitor dependency before suspecting anything else.</p>
 </div>
 
 

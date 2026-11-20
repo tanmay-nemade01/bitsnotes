@@ -670,6 +670,31 @@
 </div>
 <p>In industrial software engineering, collision management is fundamental to system availability. In 2011, vulnerability researchers demonstrated that web servers computing deterministic modulo hashes on HTTP request parameters could be subjected to hash collision denial-of-service (DoS) attacks. Attackers intentionally sent thousands of colliding keys, degrading server lookup from \(O(1)\) to \(O(n)\) and exhausting CPU resources. Modern runtimes resolve this by combining modulo division with randomized secret seeds (universal hashing) to prevent systematic collision exploitation.</p>
 
+<h3 id="10.3.3-the-multiplication-hash-function" class="subsection-title">10.3.3 The Multiplication Hash Function</h3>
+<p>Modulo division is not the only way to compress a key into a table index. The <em>multiplication method</em> avoids division entirely and is often preferable on hardware where integer division is a multi-cycle operation.</p>
+<div class="key-concept">
+  <p><strong>Multiplication Method Formulation:</strong> Choose a constant \(A\) with \(0 < A < 1\). Multiply the key \(k\) by \(A\), keep only the fractional part \(kA \bmod 1 = kA - \lfloor kA \rfloor\), scale by \(m\), and take the floor:</p>
+  \[ h(k) = \left\lfloor m\,(kA \bmod 1) \right\rfloor \]
+  <p>Unlike the division method, the table size \(m\) is not critical and is commonly chosen as a power of two (\(m = 2^p\)), allowing an implementation built from multiplication and bit extraction alone. Knuth recommends \(A \approx (\sqrt{5} - 1)/2 \approx 0.6180339887\), the golden-ratio conjugate, because it tends to distribute keys uniformly.</p>
+</div>
+<div class="example-box">
+  <p><strong>Worked Calculation:</strong> Let \(k = 123456\), \(m = 2^{14} = 16384\), machine word \(w = 32\), and \(A = 2654435769/2^{32}\) (the closest fraction of the form \(s/2^{32}\) to the golden-ratio constant). The product \(k \cdot s = 123456 \times 2654435769 = 327706022297664 = 76300 \cdot 2^{32} + 17612864\). The low-order word is \(r_0 = 17612864\); taking its \(14\) most significant bits yields \(h(k) = 67\).</p>
+</div>
+
+<h3 id="10.3.4-universal-hashing" class="subsection-title">10.3.4 Universal Hashing and Adversarial-Resistant Families</h3>
+<p>The division and multiplication methods are <em>fixed</em> functions: once published, an adversary can study the mapping and deliberately supply keys that all collide. Universal hashing removes this vulnerability by randomizing the hash function itself at run time, rather than making assumptions about the input keys.</p>
+<div class="key-concept">
+  <p><strong>Formal Definition:</strong> Let \(H\) be a finite family of hash functions mapping a key universe \(U\) into the slots \(\{0, 1, \dots, m - 1\}\). The family is <em>universal</em> if for every pair of distinct keys \(k \neq \ell\), at most \(|H| / m\) of its functions cause a collision. Equivalently, when \(h\) is drawn uniformly at random from \(H\):</p>
+  \[ \Pr_{h \in H}\{h(k) = h(\ell)\} \le \frac{1}{m} \quad \text{for all } k \neq \ell \]
+  <p><strong>Expected-Collision Theorem:</strong> If \(h\) is chosen from a universal family and hashes \(n\) keys into \(m\) slots with chaining, then for any key \(k\) the expected bucket length is \(\mathbb{E}[n_{h(k)}] \le \alpha = n/m\) when \(k\) is absent and \(\mathbb{E}[n_{h(k)}] \le 1 + \alpha\) when \(k\) is present. Define indicator variables \(X_{k\ell} = \mathbf{1}\{h(k) = h(\ell)\}\); universality gives \(\mathbb{E}[X_{k\ell}] \le 1/m\), and linearity of expectation yields the bound. Crucially, the expectation is over the <em>choice of function</em>, not over any assumed distribution of the keys.</p>
+  <p><strong>Constructive Family:</strong> Choose a prime \(p\) larger than every possible key value and define, for \(a \in \{1, \dots, p - 1\}\) and \(b \in \{0, \dots, p - 1\}\):</p>
+  \[ h_{a,b}(k) = \big((ak + b) \bmod p\big) \bmod m \]
+  <p>The family \(H_{p,m} = \{h_{a,b}\}\) contains \(p(p - 1)\) functions and is universal: multiplication by a nonzero \(a\) modulo the prime \(p\) is a bijection, so distinct keys first map to distinct residues modulo \(p\) before the final reduction modulo \(m\), where the probability of a collision is at most \(1/m\).</p>
+</div>
+<div class="example-box">
+  <p><strong>Worked Calculation:</strong> Take \(p = 17\), \(m = 6\), \(a = 3\), \(b = 4\), and key \(k = 8\). First compute \((3 \cdot 8 + 4) \bmod 17 = 28 \bmod 17 = 11\); then reduce \(11 \bmod 6 = 5\), so \(h_{3,4}(8) = 5\). Drawing a different pair \((a, b)\) relocates the whole key set, so an adversary who does not know the random seed cannot force a persistent collision — the mechanism behind the randomized-secret defenses used in modern runtimes.</p>
+</div>
+
 <h2 id="10.4" class="section-title">10.4 Collision Resolution by Separate Chaining (Open Hashing)</h2>
 <p>Collision resolution techniques fall into two major paradigms:</p>
 <ol>
@@ -860,6 +885,22 @@
 </div>
 <p>In enterprise systems, separate chaining powers foundational key-value platforms. In the Java Virtual Machine, <code>java.util.HashMap</code> uses separate chaining as its core collision resolution mechanism. To protect against malicious or accidental worst-case degradation, Java 8 introduced treeification: when any single bucket chain exceeds 8 nodes and the table is sufficiently large, the runtime dynamically converts the linked list into a balanced red-black tree, maintaining \(O(\log n)\) worst-case lookup even under targeted collision attacks.</p>
 
+<h3 id="10.4.3-perfect-hashing-for-static-sets" class="subsection-title">10.4.3 Perfect Hashing for Static Key Sets</h3>
+<p>When a key set is fixed once and never changes — a language's reserved words, a CD-ROM file index — chaining can be strengthened into a scheme with guaranteed worst-case \(O(1)\) lookup, requiring neither a favorable load factor nor a search-time random probe.</p>
+<div class="key-concept">
+  <p><strong>Formal Definition &amp; Two-Level Construction:</strong> A hashing technique is <em>perfect</em> if a search needs only \(O(1)\) memory accesses in the worst case. The Fredman-Komlos-Szemeredi (1984) scheme applies universal hashing at two levels:</p>
+  <ol>
+    <li>Scatter the \(n\) keys into \(m = n\) primary slots with a first-level function \(h\) drawn from a universal family.</li>
+    <li>If slot \(j\) receives \(n_j\) keys, replace its chain with a secondary table \(S_j\) of size \(m_j = n_j^2\) and a fresh universal function \(h_j(k) = ((a_j k + b_j) \bmod p) \bmod m_j\), resampling \((a_j, b_j)\) until that secondary table has no collisions.</li>
+  </ol>
+  <p><strong>No-Collision &amp; Space Guarantees:</strong> With a universal family, any pair collides with probability at most \(1/m\). Hashing \(n\) keys into \(m = n^2\) slots gives an expected collision count</p>
+  \[ \mathbb{E}[X] = \binom{n}{2} \cdot \frac{1}{n^2} = \frac{n(n - 1)}{2n^2} < \frac{1}{2} \]
+  <p>so Markov's inequality gives \(\Pr\{X \ge 1\} \le \mathbb{E}[X] < 1/2\): a randomly chosen first-level function is collision-free with probability greater than \(1/2\), so a few trials suffice. Using the identity \(n_j^2 = n_j + 2\binom{n_j}{2}\) together with linearity of expectation bounds the expected total secondary storage by \(\mathbb{E}[\sum_j n_j^2] < 2n\), keeping overall space \(O(n)\).</p>
+</div>
+<div class="example-box">
+  <p><strong>Worked Example:</strong> Store the static set \(K = \{10, 22, 37, 40, 52, 60, 70, 72, 75\}\) with \(n = 9\). Choose \(p = 101\) and first-level parameters \(a = 3\), \(b = 42\), \(m = 9\). For key \(75\): \((3 \cdot 75 + 42) \bmod 101 = 267 \bmod 101 = 65\), and \(65 \bmod 9 = 2\), so \(h(75) = 2\). Key 75 therefore enters secondary table \(S_2\), whose size is the square of the number of keys landing in slot 2 and whose own universal function is retried until collision-free — so a lookup touches exactly one primary slot and one collision-free secondary slot.</p>
+</div>
+
 <h2 id="10.5" class="section-title">10.5 Collision Resolution by Open Addressing: Linear and Quadratic Probing</h2>
 <p>To avoid the extra pointer overhead and external memory allocation of chaining, we turn to <em>open addressing</em>. In open addressing, all elements are stored directly inside the array of the hash table. No linked lists or external nodes are created.</p>
 <div class="important-note">
@@ -883,6 +924,13 @@
   <p><strong>Load Factor Invariant:</strong> Because all elements reside strictly within the \(m\) slots of the array, the number of stored keys \(n\) can never exceed \(m\). Therefore, the load factor is bounded:</p>
   <p>\[ \lambda = \frac{n}{m} \le 1 \]</p>
   <p>If \(\lambda\) approaches \(1\), probe sequences lengthen dramatically, requiring the table to be resized and rehashed into a larger array.</p>
+</div>
+<div class="key-concept">
+  <p><strong>Expected Probe Counts Under Uniform Hashing:</strong> Under the idealized <em>uniform hashing</em> assumption, where each probe sequence is equally likely regardless of the key, the load factor \(\lambda = n/m\) governs the expected number of slot inspections. For an <em>unsuccessful</em> search (and likewise an insertion), the expected count is bounded by:</p>
+  \[ T_{\text{unsuccessful}} \le \frac{1}{1 - \lambda} \]
+  <p>For a <em>successful</em> search, assuming each stored key is equally likely to be sought, the bound is:</p>
+  \[ T_{\text{successful}} \le \frac{1}{\lambda}\ln\frac{1}{1 - \lambda} \]
+  <p>At \(\lambda = 0.5\), these give at most \(2\) probes for an unsuccessful search and fewer than \(1.387\) for a successful one; at \(\lambda = 0.9\) they rise to \(10\) and \(2.559\). The bounds tighten the earlier \(\lambda \le 0.5\) design rule: probe costs grow sharply as the table fills, which is why open-addressing tables are resized well before capacity.</p>
 </div>
 <h3 id="10.5.2" class="subsection-title">10.5.2 Linear Probing</h3>
 <p>In <em>linear probing</em>, the offset function is a linear function of the probe index.</p>
