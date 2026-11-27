@@ -29,10 +29,12 @@ import {
   buildCompanionBlock,
   buildCurrentLectureBlock,
   buildRelatedBlock,
+  buildZeroSignalBlock,
   getCompanionSnippets,
   getCurrentLectureContext,
   getLastUserQuery,
   getRelatedSnippets,
+  isZeroSignalQuery,
   normalizeAssistantReply,
   parseSubjectFromSystemPrompt,
   shouldRetrieveCompanion,
@@ -353,6 +355,7 @@ export const POST: APIRoute = async ({ locals, request }) => {
     confidence: 0,
     hasHighConfidenceMatch: false,
     matchedSections: [],
+    sectionTitles: [],
     toString() {
       return this.text;
     },
@@ -385,6 +388,9 @@ export const POST: APIRoute = async ({ locals, request }) => {
   let relatedBlock = '';
   let companionBlock = '';
   let relatedSources: Array<{ kind: string; title: string; folderName: string; slug: string }> = [];
+  // Raw retrieval counts (pre visibility-filter) feed the zero-signal gate.
+  let lectureSnippetCount = 0;
+  let companionSnippetCount = 0;
   try {
     const [lectureSnippets, companionSnippets] = await Promise.all([
       needRelated && subject && excludeFolder
@@ -394,6 +400,8 @@ export const POST: APIRoute = async ({ locals, request }) => {
         ? getCompanionSnippets({ subject, query })
         : Promise.resolve([]),
     ]);
+    lectureSnippetCount = lectureSnippets.length;
+    companionSnippetCount = companionSnippets.length;
     if (lectureSnippets.length > 0) {
       // Never let auxiliary retrieval surface content from hidden lectures.
       const visibleSnippets = lectureSnippets.filter(
@@ -425,8 +433,25 @@ export const POST: APIRoute = async ({ locals, request }) => {
   }
 
   // 3. Assemble lean tiered context block server-side
+  // Zero-signal cheap path: nothing in the subject matches the query, so
+  // serve it from a minimal context (~1.5K tokens) instead of the full
+  // lecture budget — off-topic spam cannot farm tokens. The model is
+  // still called, so a genuinely unusual phrasing degrades gracefully.
+  const relatedWasRetrieved = needRelated && Boolean(subject && excludeFolder);
+  const companionWasRetrieved = needCompanion && Boolean(subject);
+  const zeroSignal = isZeroSignalQuery({
+    query,
+    hasHighConfidenceMatch: lectureContext.hasHighConfidenceMatch,
+    relatedRetrieved: relatedWasRetrieved,
+    relatedCount: lectureSnippetCount,
+    companionRetrieved: companionWasRetrieved,
+    companionCount: companionSnippetCount,
+  });
+
   const baseSystemPrompt = buildBaseSystemPrompt(subject);
-  const currentLectureBlock = buildCurrentLectureBlock(subject, excludeFolder, lectureContext.text);
+  const currentLectureBlock = zeroSignal
+    ? buildZeroSignalBlock(subject, excludeFolder, lectureContext.sectionTitles)
+    : buildCurrentLectureBlock(subject, excludeFolder, lectureContext.text);
 
   const fullSystemPrompt = [
     baseSystemPrompt,
@@ -467,7 +492,14 @@ export const POST: APIRoute = async ({ locals, request }) => {
       body: JSON.stringify({
         models: modelConfig.models,
         messages: upstreamMessages,
-        temperature: 0.3,
+        // 0.6 keeps grounding solid while letting the tutor persona sound
+        // like a person, not a spec sheet (0.3 read as stiff and clipped).
+        temperature: 0.6,
+        // Cost guardrail: legit answers are 150–400 words (~1K tokens);
+        // quiz and code answers fit inside 2000. Without this, an abuser
+        // on a programming-subject page could harvest multi-thousand-token
+        // completions ("write lengthy code") from each daily-quantum slot.
+        max_tokens: 2000,
         // Ask OpenRouter to include token usage in the response so we can
         // store per-request cost data for admin analytics.
         usage: { include: true },
