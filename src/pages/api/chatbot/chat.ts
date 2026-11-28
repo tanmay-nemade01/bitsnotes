@@ -230,22 +230,18 @@ export const POST: APIRoute = async ({ locals, request }) => {
     if (!excludeFolder) excludeFolder = parsed.lectureFolder;
   }
 
+  // ─── Visibility gates (parallel reads; both must pass before any work) ──
   let hiddenLectures = new Set<string>();
   if (!isAdmin) {
     try {
-      hiddenLectures = await getHiddenLectureKeys(db);
-    } catch (err) {
-      if (err instanceof LectureVisibilityUnavailableError) {
-        return jsonResponse({ error: 'Lecture visibility unavailable' }, 503);
-      }
-      throw err;
-    }
-  }
+      // Two independent reads — one D1 round-trip instead of two serial ones.
+      const [lectureKeys, hiddenSubjects] = await Promise.all([
+        getHiddenLectureKeys(db),
+        subject ? getHiddenSubjectNames(db) : Promise.resolve(new Set<string>()),
+      ]);
+      hiddenLectures = lectureKeys;
 
-  if (!isAdmin && subject) {
-    try {
-      const hiddenSubjects = await getHiddenSubjectNames(db);
-      if (hiddenSubjects.has(subject)) {
+      if (subject && hiddenSubjects.has(subject)) {
         await logBlockedRequest(db, {
           requestId,
           userId: user.id,
@@ -268,6 +264,9 @@ export const POST: APIRoute = async ({ locals, request }) => {
         return jsonResponse({ error: 'Lecture not found.' }, 404);
       }
     } catch (err) {
+      if (err instanceof LectureVisibilityUnavailableError) {
+        return jsonResponse({ error: 'Lecture visibility unavailable' }, 503);
+      }
       if (err instanceof SubjectVisibilityUnavailableError) {
         return jsonResponse({ error: 'Subject visibility unavailable' }, 503);
       }
@@ -275,177 +274,247 @@ export const POST: APIRoute = async ({ locals, request }) => {
     }
   }
 
-  // ─── Create the request row BEFORE the model call ────────────────────
-  // This is the audit record: it exists even if the upstream call hangs or the
-  // worker dies. The quota slot is reserved immediately afterwards.
-  const insertResult = await insertRequestStart(db, {
-    requestId,
-    userId: user.id,
-    conversationId,
-    usageDay,
-    createdAt: startedAt,
-    reserved: false,
-  });
+  // ─── Phase B: parallel tracks — D1 bookkeeping ∥ context retrieval ∥ model ──
+  // These were previously sequential, stacking ~9 D1 round-trips plus a
+  // retrieval chain before the model call even started. The tracks are
+  // independent (retrieval only reads edge-cached notes and uses the
+  // hidden sets resolved above), so they now overlap. Quota ordering,
+  // refund semantics, and every error path inside the bookkeeping track
+  // are unchanged. When the bookkeeping track blocks (duplicate, quota,
+  // internal error), the in-flight retrieval reads are simply abandoned —
+  // they are idempotent reads with no side effects.
+  const bookkeepingPromise = (async (): Promise<{ blocked: Response | null; reserved: boolean }> => {
+    // Create the request row BEFORE the model call — the audit record
+    // exists even if the upstream call hangs or the worker dies. The
+    // quota slot is reserved immediately afterwards.
+    const insertResult = await insertRequestStart(db, {
+      requestId,
+      userId: user.id,
+      conversationId,
+      usageDay,
+      createdAt: startedAt,
+      reserved: false,
+    });
 
-  if (insertResult === 'duplicate') {
-    return jsonResponse({ error: 'This request was already submitted. Please try again.' }, 409);
-  }
-  if (insertResult === 'error') {
-    return jsonResponse({ error: 'Chatbot is under heavy use, please try again later.' }, 503);
-  }
-
-  // ─── Atomic daily quota reservation (admins bypass) ──────────────────
-  let reserved = false;
-  if (!isAdmin) {
-    try {
-      await cleanupStalePendingRequests(db, user.id);
-      const limit = await getUserChatbotLimit(db, user.id);
-      reserved = await reserveChatbotUsage(db, user.id, limit, usageDay);
-    } catch (err) {
-      console.error('[chatbot/chat] Quota reservation failed:', err);
-      await markRequestError(db, requestId, {
-        errorCode: 'internal',
-        httpStatus: 503,
-        latencyMs: Date.now() - startedAt,
-      });
-      return jsonResponse({ error: 'Chatbot is under heavy use, please try again later.' }, 503);
+    if (insertResult === 'duplicate') {
+      return {
+        blocked: jsonResponse({ error: 'This request was already submitted. Please try again.' }, 409),
+        reserved: false,
+      };
+    }
+    if (insertResult === 'error') {
+      return {
+        blocked: jsonResponse({ error: 'Chatbot is under heavy use, please try again later.' }, 503),
+        reserved: false,
+      };
     }
 
-    if (!reserved) {
-      await markRequestError(db, requestId, {
-        errorCode: 'quota_exceeded',
-        httpStatus: 429,
-        latencyMs: Date.now() - startedAt,
-      });
-
-      // Intentionally omit usage numbers: the fair-use threshold is internal.
-      return jsonResponse({
-        error: "You've reached today's fair-use limit. Please try again tomorrow.",
-        limitReached: true,
-      }, 429);
-    }
-
-    const marked = await markRequestReserved(db, requestId);
-    if (!marked) {
-      // We could not persist the reservation; refund and fail closed rather than
-      // leaving an untracked quota slot.
+    // ─── Atomic daily quota reservation (admins bypass) ────────────────
+    let reserved = false;
+    if (!isAdmin) {
       try {
-        await refundChatbotUsage(db, user.id, usageDay);
+        // Independent reads overlap; the reservation itself stays atomic
+        // and strictly ordered after both.
+        const [, limit] = await Promise.all([
+          cleanupStalePendingRequests(db, user.id),
+          getUserChatbotLimit(db, user.id),
+        ]);
+        reserved = await reserveChatbotUsage(db, user.id, limit, usageDay);
       } catch (err) {
-        console.error('[chatbot/chat] Failed to refund unreserved request:', err);
+        console.error('[chatbot/chat] Quota reservation failed:', err);
+        await markRequestError(db, requestId, {
+          errorCode: 'internal',
+          httpStatus: 503,
+          latencyMs: Date.now() - startedAt,
+        });
+        return {
+          blocked: jsonResponse({ error: 'Chatbot is under heavy use, please try again later.' }, 503),
+          reserved: false,
+        };
       }
-      await markRequestError(db, requestId, {
-        errorCode: 'internal',
-        httpStatus: 503,
-        latencyMs: Date.now() - startedAt,
-      });
-      return jsonResponse({ error: 'Chatbot is under heavy use, please try again later.' }, 503);
-    }
-  }
 
-  // ─── Store the question (content only, never the response) ───────────
-  const userTurns = body.messages.filter(
-    (m) => m && m.role === 'user' && typeof m.content === 'string'
-  ).length;
-  const turnIndex = normalizeTurnIndex(body.turn_index, Math.max(0, userTurns - 1));
+      if (!reserved) {
+        await markRequestError(db, requestId, {
+          errorCode: 'quota_exceeded',
+          httpStatus: 429,
+          latencyMs: Date.now() - startedAt,
+        });
 
-  await insertQuestion(db, {
-    requestId,
-    conversationId,
-    userId: user.id,
-    questionText: rawQuery,
-    turnIndex,
-    subject: subject && subject !== 'Subject' ? subject : null,
-    lectureFolder: excludeFolder || null,
-    lectureTitle: deriveLectureTitle(excludeFolder),
-    lectureNumber: parseLectureNumber(excludeFolder),
-    includeTextbook,
-    pageUrl: safeString(body.page_url, 500) || null,
-    createdAt: startedAt,
-  });
+        // Intentionally omit usage numbers: the fair-use threshold is internal.
+        return {
+          blocked: jsonResponse(
+            {
+              error: "You've reached today's fair-use limit. Please try again tomorrow.",
+              limitReached: true,
+            },
+            429
+          ),
+          reserved: false,
+        };
+      }
 
-  // 1. Fetch current lecture section chunks (non-fatal)
-  let lectureContext: CurrentLectureContext = {
-    text: '',
-    confidence: 0,
-    hasHighConfidenceMatch: false,
-    matchedSections: [],
-    sectionTitles: [],
-    toString() {
-      return this.text;
-    },
-  };
-  try {
-    if (subject && excludeFolder) {
-      lectureContext = await getCurrentLectureContext({
-        subject,
-        lectureFolder: excludeFolder,
-        query,
-      });
-    }
-  } catch (err) {
-    console.error('[chatbot/chat] Current lecture retrieval failed (non-fatal):', err);
-  }
-
-  // 2. Intent-gated auxiliary retrieval
-  const needRelated = shouldRetrieveRelated({
-    query,
-    hasHighConfidenceMatch: lectureContext.hasHighConfidenceMatch,
-  });
-
-  const needCompanion = shouldRetrieveCompanion({
-    query,
-    includeTextbook,
-    hasHighConfidenceMatch: lectureContext.hasHighConfidenceMatch,
-    isLectureContextSparse: !lectureContext.text || lectureContext.text.length < 400,
-  });
-
-  let relatedBlock = '';
-  let companionBlock = '';
-  let relatedSources: Array<{ kind: string; title: string; folderName: string; slug: string }> = [];
-  // Raw retrieval counts (pre visibility-filter) feed the zero-signal gate.
-  let lectureSnippetCount = 0;
-  let companionSnippetCount = 0;
-  try {
-    const [lectureSnippets, companionSnippets] = await Promise.all([
-      needRelated && subject && excludeFolder
-        ? getRelatedSnippets({ subject, excludeFolder, query })
-        : Promise.resolve([]),
-      needCompanion && subject
-        ? getCompanionSnippets({ subject, query })
-        : Promise.resolve([]),
-    ]);
-    lectureSnippetCount = lectureSnippets.length;
-    companionSnippetCount = companionSnippets.length;
-    if (lectureSnippets.length > 0) {
-      // Never let auxiliary retrieval surface content from hidden lectures.
-      const visibleSnippets = lectureSnippets.filter(
-        (s) => !hiddenLectures.has(makeLectureKey(s.subject, s.folderName)),
-      );
-      if (visibleSnippets.length > 0) {
-        relatedBlock = buildRelatedBlock(visibleSnippets);
-        relatedSources = visibleSnippets.map((s) => ({
-          kind: 'lecture',
-          title: s.title,
-          folderName: s.folderName,
-          slug: s.slug,
-        }));
+      const marked = await markRequestReserved(db, requestId);
+      if (!marked) {
+        // We could not persist the reservation; refund and fail closed rather than
+        // leaving an untracked quota slot.
+        try {
+          await refundChatbotUsage(db, user.id, usageDay);
+        } catch (err) {
+          console.error('[chatbot/chat] Failed to refund unreserved request:', err);
+        }
+        await markRequestError(db, requestId, {
+          errorCode: 'internal',
+          httpStatus: 503,
+          latencyMs: Date.now() - startedAt,
+        });
+        return {
+          blocked: jsonResponse({ error: 'Chatbot is under heavy use, please try again later.' }, 503),
+          reserved: false,
+        };
       }
     }
-    if (companionSnippets.length > 0) {
-      companionBlock = buildCompanionBlock(companionSnippets);
-      for (const s of companionSnippets) {
-        relatedSources.push({
-          kind: 'textbook',
-          title: s.title,
-          folderName: s.chapterId,
-          slug: s.chapterId,
+
+    // ─── Store the question (content only, never the response) ────────
+    const userTurns = (body.messages || []).filter(
+      (m) => m && m.role === 'user' && typeof m.content === 'string'
+    ).length;
+    const turnIndex = normalizeTurnIndex(body.turn_index, Math.max(0, userTurns - 1));
+
+    await insertQuestion(db, {
+      requestId,
+      conversationId,
+      userId: user.id,
+      questionText: rawQuery,
+      turnIndex,
+      subject: subject && subject !== 'Subject' ? subject : null,
+      lectureFolder: excludeFolder || null,
+      lectureTitle: deriveLectureTitle(excludeFolder),
+      lectureNumber: parseLectureNumber(excludeFolder),
+      includeTextbook,
+      pageUrl: safeString(body.page_url, 500) || null,
+      createdAt: startedAt,
+    });
+
+    return { blocked: null, reserved };
+  })();
+
+  // Context retrieval track — pure reads (edge-cached lectures, R2
+  // companion ranges); every failure is non-fatal and degrades to less
+  // context rather than a failed request.
+  const retrievalPromise = (async () => {
+    // 1. Fetch current lecture section chunks (non-fatal)
+    let lectureContext: CurrentLectureContext = {
+      text: '',
+      confidence: 0,
+      hasHighConfidenceMatch: false,
+      matchedSections: [],
+      sectionTitles: [],
+      toString() {
+        return this.text;
+      },
+    };
+    try {
+      if (subject && excludeFolder) {
+        lectureContext = await getCurrentLectureContext({
+          subject,
+          lectureFolder: excludeFolder,
+          query,
         });
       }
+    } catch (err) {
+      console.error('[chatbot/chat] Current lecture retrieval failed (non-fatal):', err);
     }
-  } catch (err) {
-    console.error('[chatbot/chat] Auxiliary retrieval failed (non-fatal):', err);
-  }
+
+    // 2. Intent-gated auxiliary retrieval
+    const needRelated = shouldRetrieveRelated({
+      query,
+      hasHighConfidenceMatch: lectureContext.hasHighConfidenceMatch,
+    });
+
+    const needCompanion = shouldRetrieveCompanion({
+      query,
+      includeTextbook,
+      hasHighConfidenceMatch: lectureContext.hasHighConfidenceMatch,
+      isLectureContextSparse: !lectureContext.text || lectureContext.text.length < 400,
+    });
+
+    let relatedBlock = '';
+    let companionBlock = '';
+    let relatedSources: Array<{ kind: string; title: string; folderName: string; slug: string }> = [];
+    // Raw retrieval counts (pre visibility-filter) feed the zero-signal gate.
+    let lectureSnippetCount = 0;
+    let companionSnippetCount = 0;
+    try {
+      const [lectureSnippets, companionSnippets] = await Promise.all([
+        needRelated && subject && excludeFolder
+          ? getRelatedSnippets({ subject, excludeFolder, query })
+          : Promise.resolve([]),
+        needCompanion && subject
+          ? getCompanionSnippets({ subject, query })
+          : Promise.resolve([]),
+      ]);
+      lectureSnippetCount = lectureSnippets.length;
+      companionSnippetCount = companionSnippets.length;
+      if (lectureSnippets.length > 0) {
+        // Never let auxiliary retrieval surface content from hidden lectures.
+        const visibleSnippets = lectureSnippets.filter(
+          (s) => !hiddenLectures.has(makeLectureKey(s.subject, s.folderName)),
+        );
+        if (visibleSnippets.length > 0) {
+          relatedBlock = buildRelatedBlock(visibleSnippets);
+          relatedSources = visibleSnippets.map((s) => ({
+            kind: 'lecture',
+            title: s.title,
+            folderName: s.folderName,
+            slug: s.slug,
+          }));
+        }
+      }
+      if (companionSnippets.length > 0) {
+        companionBlock = buildCompanionBlock(companionSnippets);
+        for (const s of companionSnippets) {
+          relatedSources.push({
+            kind: 'textbook',
+            title: s.title,
+            folderName: s.chapterId,
+            slug: s.chapterId,
+          });
+        }
+      }
+    } catch (err) {
+      console.error('[chatbot/chat] Auxiliary retrieval failed (non-fatal):', err);
+    }
+
+    return {
+      lectureContext,
+      relatedBlock,
+      companionBlock,
+      relatedSources,
+      lectureSnippetCount,
+      companionSnippetCount,
+      needRelated,
+      needCompanion,
+    };
+  })();
+
+  const [retrieval, bookkeeping, modelConfig] = await Promise.all([
+    retrievalPromise,
+    bookkeepingPromise,
+    getChatbotModel(db),
+  ]);
+  if (bookkeeping.blocked) return bookkeeping.blocked;
+  const reserved = bookkeeping.reserved;
+
+  const {
+    lectureContext,
+    relatedBlock,
+    companionBlock,
+    relatedSources,
+    lectureSnippetCount,
+    companionSnippetCount,
+    needRelated,
+    needCompanion,
+  } = retrieval;
 
   // 3. Assemble lean tiered context block server-side
   // Zero-signal cheap path: nothing in the subject matches the query, so
@@ -490,9 +559,6 @@ export const POST: APIRoute = async ({ locals, request }) => {
     { role: 'system', content: fullSystemPrompt },
     ...conversationTurns,
   ];
-
-  // 5. Resolve the admin-selected model (falls back to the default list)
-  const modelConfig = await getChatbotModel(db);
 
   // ─── Proxy to OpenRouter ─────────────────────────────────────────────
   // Completion ceiling: generous enough that real answers (worked quizzes,

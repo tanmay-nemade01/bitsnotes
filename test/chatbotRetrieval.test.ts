@@ -713,6 +713,10 @@ describe('chatbotRetrieval (lean cross-lecture RAG)', () => {
       // and must never be cut short mid-thought.
       expect(prompt).toContain('Long answers are welcome');
       expect(prompt).toContain('never end mid-thought');
+      // Anti-transcription: the model must teach from the notes, not
+      // recite them — the #1 cause of "dumps lecture text word by word".
+      expect(prompt).toContain("TEACH, don't transcribe");
+      expect(prompt).toContain('explain in your own words');
       expect(prompt).toContain('Formatting');
       expect(prompt.length).toBeLessThan(2000);
     });
