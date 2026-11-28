@@ -590,7 +590,9 @@
     var accumulated = '';
 
     // Fast transformer pacing:
-    // Paced so any length answer streams smoothly in ~1.0 to 1.8 seconds max
+    // 25ms per tick = 1.75× the original 14ms pacing. The old speed flashed
+    // by so fast the streaming was invisible; at this pace any length answer
+    // streams smoothly in ~1.8 to 3.2 seconds and the arrival is readable.
     var totalTokens = tokens.length;
     var targetTicks = Math.min(80, Math.max(25, Math.round(totalTokens / 4)));
     var tokensPerTick = Math.max(2, Math.ceil(totalTokens / targetTicks));
@@ -655,7 +657,7 @@
       if (tokenIndex >= tokens.length) {
         finish();
       }
-    }, 14);
+    }, 25);
   }
 
   // ─── Welcome Card with 4 Interactive Starter Chips ─────────────────────
@@ -699,12 +701,30 @@
 
   function clearChat() {
     stopActiveStream();
+    stopThinkingPhases();
     var container = document.getElementById('bn-chatbot-messages');
     if (container) container.innerHTML = '';
     conversationHistory = [];
     saveConversationHistory();
     rotateConversationId();
     appendWelcomeMessage();
+  }
+
+  // ─── Thinking indicator (Claude-style wait state) ──────────────────────
+  var thinkingPhaseTimer = null;
+
+  var THINKING_PHASES = [
+    'Reading the lecture notes',
+    'Connecting the ideas',
+    'Thinking through your doubt',
+    'Almost there'
+  ];
+
+  function stopThinkingPhases() {
+    if (thinkingPhaseTimer) {
+      clearInterval(thinkingPhaseTimer);
+      thinkingPhaseTimer = null;
+    }
   }
 
   function showTypingIndicator() {
@@ -716,16 +736,47 @@
     msgDiv.id = 'bn-typing-indicator';
 
     var bubble = document.createElement('div');
-    bubble.className = 'bn-msg-bubble bn-typing-dots';
-    bubble.innerHTML = '<div class="bn-typing-dot"></div><div class="bn-typing-dot"></div><div class="bn-typing-dot"></div>';
+    bubble.className = 'bn-msg-bubble bn-thinking-bubble';
+    bubble.innerHTML =
+      '<span class="bn-thinking-icon" aria-hidden="true">' +
+        '<svg fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24">' +
+          '<path stroke-linecap="round" stroke-linejoin="round" d="M12 3l1.9 5.6 5.6 1.9-5.6 1.9L12 18l-1.9-5.6-5.6-1.9 5.6-1.9L12 3z"></path>' +
+        '</svg>' +
+      '</span>' +
+      '<span class="bn-thinking-label" id="bn-thinking-label" role="status">' +
+        THINKING_PHASES[0] + '…' +
+      '</span>';
 
     msgDiv.appendChild(bubble);
     container.appendChild(msgDiv);
     container.scrollTop = container.scrollHeight;
+
+    // Rotate status phases so the wait reads like real progress (mirrors the
+    // server pipeline: retrieval → assembly → model). The tick is
+    // self-terminating in case the indicator is removed by another path.
+    var phase = 0;
+    stopThinkingPhases();
+    thinkingPhaseTimer = setInterval(function () {
+      var label = document.getElementById('bn-thinking-label');
+      if (!label) {
+        stopThinkingPhases();
+        return;
+      }
+      phase = (phase + 1) % THINKING_PHASES.length;
+      label.style.opacity = '0';
+      setTimeout(function () {
+        var el = document.getElementById('bn-thinking-label');
+        if (!el) return;
+        el.textContent = THINKING_PHASES[phase] + '…';
+        el.style.opacity = '1';
+      }, 360);
+    }, 2600);
+
     return msgDiv;
   }
 
   function hideTypingIndicator() {
+    stopThinkingPhases();
     var el = document.getElementById('bn-typing-indicator');
     if (el) el.remove();
   }

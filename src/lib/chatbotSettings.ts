@@ -2,19 +2,27 @@
  * Chatbot model configuration.
  *
  * The admin-selected OpenRouter model is persisted in `app_settings` under the
- * `chatbot_model` key. When unset, the historical default model list is used so
- * existing deployments keep working without a migration seed.
+ * `chatbot_model` key. When unset, the default is OpenRouter's Free Models
+ * Router (`openrouter/free`): every request is routed to a free model that
+ * fits it, with fallbacks only to other free models — never a paid one.
+ * Paid models are used ONLY when an admin explicitly selects one in the
+ * backstage settings panel.
+ *
+ * Operational note: free endpoints are rate-limited per OpenRouter account
+ * (20 req/min, 50 req/day by default; a one-time $10 credit purchase lifts
+ * the daily cap to 1,000 without changing the $0 inference pricing).
  */
 
 import type { AuthDb } from './auth/db';
 
 export const CHATBOT_MODEL_SETTING_KEY = 'chatbot_model';
 
-export const DEFAULT_CHATBOT_MODELS = [
-  'google/gemma-4-31b-it:free',
-  'google/gemma-4-26b-a4b-it:free',
-  'nvidia/nemotron-3.5-lightning:free',
-];
+/**
+ * Free Models Router — OpenRouter picks a fitting free model per request
+ * and never falls back to a paid one. Kept as a single-entry list on
+ * purpose: adding paid slugs here would silently bill fallbacks.
+ */
+export const DEFAULT_CHATBOT_MODELS = ['openrouter/free'];
 
 export interface ChatbotModelConfig {
   /** Selected model, or null when the deployment is using the defaults. */
