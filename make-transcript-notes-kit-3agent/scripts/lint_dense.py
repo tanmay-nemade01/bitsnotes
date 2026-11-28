@@ -423,6 +423,68 @@ def check_dense_repetition_and_qa(text, report):
         report.passed("draft repetition and Q&A relevance", "No severe repetition, pseudo-symbols, or rhetorical Q&A detected.")
 
 
+def check_logistics_visuals_and_cleanliness(text, phase, report):
+    """Catch institutional logistics, prose-only visual placeholders, callout echoes, and mojibake."""
+    failures = []
+    warnings = []
+
+    # 1. Institutional / exam / quiz headings
+    for level in (2, 3):
+        for title, _, _ in _find_heading_spans(text, level):
+            if PL.is_logistics_heading(title):
+                failures.append(f"Institutional/exam/quiz heading must be excluded: '{title}'")
+
+    # 2. Exam-note callouts / paragraphs
+    blocks = [b.strip() for b in re.split(r"\n\s*\n", text) if b.strip()]
+    exam_hits = PL.find_exam_note_callouts(
+        [re.sub(r"^:::[a-z-]+\s*\n|\n:::$", "", b, flags=re.DOTALL) for b in blocks]
+    )
+    if exam_hits:
+        failures.append(f"Exam-framed callout/note found ({len(exam_hits)}x, e.g. '{exam_hits[0]}'). Remove institutional exam framing.")
+
+    # 3. Prose-only "Visual intuition:" in enriched phase without <svg>/mermaid/table
+    if phase == "enriched":
+        for i, b in enumerate(blocks):
+            plain = re.sub(r"<[^>]+>|\*+", "", b).strip()
+            if re.match(r"^visual\s+intuition\s*[:.]", plain, re.IGNORECASE):
+                window = "\n".join(blocks[i : i + 2])
+                if not re.search(r"<svg\b|```mermaid|<pre\s+class=[\"']mermaid[\"']|\|.*\|", window, re.IGNORECASE):
+                    failures.append(f"Prose-only visual-intuition block without SVG/Mermaid/table: '{plain[:70]}...'")
+
+    # 4. Callout echo & adjacent duplicate paragraph check in enriched phase
+    if phase == "enriched":
+        callout_pairs = re.findall(
+            r"(?:^|\n\n)([^\n#][^\n]{30,}(?:\n[^\n:][^\n]*)*)\n\n:::(?:key-concept|important-note|key-takeaway|warning-box|example-box)\s*\n(.*?)\n:::",
+            text,
+            re.DOTALL,
+        )
+        echo_count = sum(1 for p, c in callout_pairs if PL.blocks_overlap(p, c, threshold=0.80))
+        if echo_count:
+            failures.append(f"Found {echo_count} callout block(s) echoing the preceding paragraph (>=80% token overlap).")
+
+    # 5. Lecture-voice residue, content-free transitions, and mojibake
+    voice_hits = PL.find_lecture_voice_artifacts(text)
+    if voice_hits:
+        warnings.append(f"Lecture-voice residue ({len(voice_hits)}x, e.g. '{voice_hits[0][1]}'). Keep notes standalone.")
+
+    prose = extract_readable_prose(text)
+    sents = [s.strip() for s in PL._SENT_SPLIT.split(prose) if s.strip()]
+    filler_hits = PL.find_content_free_transitions(sents)
+    if filler_hits:
+        warnings.append(f"Content-free transition sentence(s) ({len(filler_hits)}x, e.g. '{filler_hits[0][:60]}').")
+
+    mojibake = PL.find_mojibake(text)
+    if mojibake:
+        failures.append(f"Encoding mojibake detected: {', '.join(mojibake)}")
+
+    if failures:
+        report.failed("cleanliness & logistics gate", "\n".join(failures))
+    elif warnings:
+        report.warned("cleanliness & logistics gate", "\n".join(warnings))
+    else:
+        report.passed("cleanliness & logistics gate", "No logistics leaks, prose-only visuals, callout echoes, or mojibake.")
+
+
 def lint_dense_file(path, lecture_num=None, phase="dense"):
     if not os.path.exists(path):
         print(f"Error: file not found at {path}", file=sys.stderr)
@@ -451,7 +513,8 @@ def lint_dense_file(path, lecture_num=None, phase="dense"):
     check_writing_style(text, report)
     check_fancy_words(text, report)
     check_dense_repetition_and_qa(text, report)
-    
+    check_logistics_visuals_and_cleanliness(text, phase, report)
+
     return report
 
 

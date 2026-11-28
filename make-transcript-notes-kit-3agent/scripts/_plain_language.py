@@ -337,3 +337,108 @@ def find_duplicate_sentences(sentences, min_len=30):
     counts = Counter(cleaned)
     return [(s, c) for s, c in counts.items() if c > 1]
 
+
+# --------------------------------------------------------------------------- #
+# 8. Shared cleanup / deduplication / logistics / visual / mojibake helpers
+# --------------------------------------------------------------------------- #
+_STOPWORDS_OVERLAP = {
+    "about", "above", "after", "again", "against", "also", "because", "before",
+    "being", "below", "between", "both", "could", "does", "doing", "down",
+    "during", "each", "from", "further", "have", "having", "here", "into",
+    "just", "more", "most", "only", "other", "over", "same", "should", "some",
+    "such", "than", "that", "their", "them", "then", "there", "these", "they",
+    "this", "those", "through", "under", "until", "very", "what", "when",
+    "where", "which", "while", "with", "would",
+}
+
+LECTURE_VOICE_PATTERNS = [
+    ("classroom/lecturer framing", re.compile(
+        r"\b(?:the\s+(?:professor|lecturer|instructor)|in\s+(?:the\s+)?class|"
+        r"from\s+the\s+session|as\s+heard\s+in\s+(?:the\s+)?recording|"
+        r"several\s+students\s+asked|live\s+demo)\b",
+        re.IGNORECASE,
+    )),
+    ("transcript keyword/tag tail", re.compile(
+        r"(?:^|\n)\s*(?:Keywords|Transcript)\s*:",
+        re.IGNORECASE,
+    )),
+]
+
+LOGISTICS_HEADING_RE = re.compile(
+    r"^(?:\d+(?:\.\d+)*\s+)?"
+    r"(?:exam\s+(?:guidance(?:\s+summary)?|notes?|revision\s+notes?)|"
+    r"the\s+mid-?semester\s+exam\b|comprehensive\s+exam\b|"
+    r"assessment\s+plan\b|course\s+overview\s+and\s+expectations\b|"
+    r"how\s+the\s+course\s+works\b|course\s+tools,\s*textbooks,\s*and\s+evaluation\b)"
+    r"|\bquiz\b",
+    re.IGNORECASE,
+)
+
+EXAM_CALLOUT_START_RE = re.compile(
+    r"^(?:the\s+professor'?s\s+)?(?:exam\s+note|exam\s+tip|on\s+the\s+exam)\s*[:—,-]",
+    re.IGNORECASE,
+)
+
+CONTENT_FREE_TRANSITION_RE = re.compile(
+    r"^(?:"
+    r"the\s+explanation\s+below\s+adds\s+the\s+next\s+layer\s+of\s+intuition|"
+    r"the\s+visual\s+picture\s+clarifies\s+why\s+the\s+preceding\s+assumption\s+matters|"
+    r"a\s+second\s+concrete\s+trace\s+makes\s+the\s+pattern\s+concrete|"
+    r"(?:this\s+section\s+shows|in\s+this\s+section\s+we\s+will|let\s+us\s+now)\b[^.!?]{0,70}"
+    r")[.!]?$",
+    re.IGNORECASE,
+)
+
+MOJIBAKE_RE = re.compile(r"â€”|â€“|â€™|â€œ|â€\x9d|Ã©|\ufffd")
+
+
+def content_tokens(text):
+    """Return distinctive lowercase tokens (>=4 chars, non-stopword) for overlap checks."""
+    cleaned = re.sub(r"<[^>]+>|\\\[.*?\\\]|\\\(.*?\\\)", " ", str(text), flags=re.DOTALL)
+    words = re.findall(r"\b[a-zA-Z]{4,}\b", cleaned.lower())
+    return {w for w in words if w not in _STOPWORDS_OVERLAP}
+
+
+def blocks_overlap(text_a, text_b, threshold=0.80, min_tokens=6):
+    """Return True when two text blocks share at least `threshold` of their content tokens."""
+    toks_a = content_tokens(text_a)
+    toks_b = content_tokens(text_b)
+    if len(toks_a) < min_tokens or len(toks_b) < min_tokens:
+        return False
+    return (len(toks_a & toks_b) / min(len(toks_a), len(toks_b))) >= threshold
+
+
+def find_lecture_voice_artifacts(text):
+    """Return [(label, snippet)] for classroom-voice or transcript-tail residue."""
+    hits = []
+    for label, rx in LECTURE_VOICE_PATTERNS:
+        for match in rx.finditer(text):
+            hits.append((label, match.group(0).strip()))
+    return hits
+
+
+def is_logistics_heading(title):
+    """Return True if a heading is clearly about exams, quizzes, grading, or admin."""
+    return bool(LOGISTICS_HEADING_RE.search(str(title).strip()))
+
+
+def find_exam_note_callouts(blocks):
+    """Return snippets of blocks/paragraphs that start with exam-framed callout labels."""
+    hits = []
+    for block in blocks:
+        plain = re.sub(r"<[^>]+>", " ", str(block))
+        plain = re.sub(r"\*+", "", plain).strip()
+        if EXAM_CALLOUT_START_RE.match(plain):
+            hits.append(plain[:80])
+    return hits
+
+
+def find_content_free_transitions(sentences):
+    """Return filler transition sentences carrying no technical payload."""
+    return [s.strip() for s in sentences if CONTENT_FREE_TRANSITION_RE.match(s.strip())]
+
+
+def find_mojibake(text):
+    """Return unique mojibake sequences detected in text."""
+    return sorted(set(MOJIBAKE_RE.findall(text)))
+

@@ -165,7 +165,6 @@
   <p>Here \(x_1, \ldots, x_n\) are the answer tokens, \(R(q)\) is the retrieved context, \(q\) is the user query, and \(x_{\lt i}\) marks the tokens written so far. In plain words: each new word is picked with both the question and the retrieved passages in view.</p>
 </div>
 <p>An <em>index</em> is a search-ready copy of the trusted documents, held either as word lists or as vectors. <em>Retrieval</em> is the act of pulling the few passages that best match the query. <em>Augmentation</em> is the act of pasting those passages next to the question inside the prompt. <em>Generation</em> is the model writing the final answer while reading that added context.</p>
-<p>The same idea was recalled through quick questions at the start of the class. RAG improves answer accuracy by linking the model to outside authority sources. It lowers hallucination and it opens access to private or restricted data. The four working parts named were indexing, retrieval, augmentation, and generation.</p>
 <p>A bank case made the motive concrete: about 29 models that build different reports for different customer groups, and the teams use RAG so each report pulls only the customer data it is allowed to see. A telecom case added a second shape: product teams keep long specification documents as PDFs across modules, and the testing team queries a RAG system to learn which features a new decoding release actually added. A third note tracked careers: support roles in such firms are shifting toward SRE-style AI work, with wider scope than routine daily tickets, which is one more sign that retrieval-grounded assistants are entering daily operations.</p>
 <div class="important-note">
   <p>Picture a library with a strict librarian. The books are the trusted documents, the librarian is the retriever, and you are the generator. You never memorize the whole library. For each question you ask the librarian for the three most relevant pages, read them at your desk, and then write the answer with those pages open. The mapping is direct: books to index, librarian search to retrieval, pages on the desk to augmentation, your essay to generation. The picture breaks at one point: a real librarian understands the question, while a basic retriever only matches surface patterns, which is why later sections upgrade the matching step.</p>
@@ -197,9 +196,6 @@
 <p>Bank and travel bots show the pattern in daily use. An enterprise travel bot keeps HR policy PDFs, turns them into vectors, and answers role-wise travel questions from retrieved paragraphs instead of generic web text. The same pattern serves course facts, product facts, and policy facts wherever the truth lives in company files.</p>
 <div class="warning-box">
   <p><strong>Scope:</strong> Naive vector RAG fits plain lookup questions whose answer sits in one or two prose paragraphs. <strong>Assumption:</strong> chunks are clean, embeddings share one model, and the top K window holds the answer. When facts span grids, or when links between facts matter, or when the answer needs many scattered pages, this plain pipe falls short and later sections add fixes.</p>
-</div>
-<div class="key-takeaway">
-  <p><strong>Exam note:</strong> keep the retrieval quality high, because weak context can score worse than no context at all. When scores look poor, fix parsing, chunking, or embedding before blaming the model.</p>
 </div>
 <figure class="visual-intuition">
   <svg viewBox="0 0 500 220" role="img" aria-label="Naive RAG vector pipeline" xmlns="http://www.w3.org/2000/svg">
@@ -276,9 +272,6 @@
 <div class="warning-box">
   <p><strong>Scope:</strong> Hybrid ranking fits mixed query traffic where some questions need exact strings and others need paraphrase matches. <strong>Assumption:</strong> both indexes cover the same corpus, and the context window stays small enough that each added chunk must earn its tokens. When traffic is purely exact codes, sparse alone is cheaper; when traffic is purely prose meaning, dense alone is enough.</p>
 </div>
-<div class="key-takeaway">
-  <p><strong>Exam note:</strong> context length caps how many chunks the model can read, so rank quality matters more than rank size. Prefer fewer strong varied chunks over many weak ones.</p>
-</div>
 <figure class="visual-intuition">
   <svg viewBox="0 0 500 220" role="img" aria-label="Dense plus sparse hybrid ranking" xmlns="http://www.w3.org/2000/svg">
     <line x1="60" y1="190" x2="450" y2="190" stroke="#94a3b8" stroke-width="1.5" />
@@ -299,6 +292,40 @@
 </figure>
 <h3 id="3.3.1" class="subsection-title">3.3.1 Mathematical Formulation</h3>
 <p>The spoken account for dense search was "encode words with a model such as BERT and compare with cosine similarity". That is the same cosine formula as in 3.2.1, with \(q\) for the query and \(c_i\) for each chunk. The spoken account for sparse search was "match words and keyword weights, TF-IDF style, with BM25 as the refined form". BM25 scores a document \(d\) against query \(q\) by weighting each query term \(t\) with its IDF weight, its frequency \(tf_{t,d}\) in \(d\), and the length of \(d\) against the average length, with knobs \(k\) in about \([1.2, 2]\) for term-frequency saturation and \(b = 0.75\) for length scaling as reasonable defaults. In plain words: repeat mentions help, but with fading returns, and long documents pay a length penalty.</p>
+<div class="example-box">
+  <p><strong>Worked Calculation — Making the sparse path concrete.</strong> Sparse retrieval does not score raw word counts. With \(N\) chunks in the store and \(df_t\) chunks containing term \(t\), the term frequency squashes the raw count and the inverse document frequency rewards rarity:</p>
+  <p>\[ tf_{t,d} = \begin{cases} 1 + \log_{10} count(t,d) &amp; count(t,d) \gt 0 \\ 0 &amp; \text{otherwise} \end{cases}, \qquad idf_t = \log_{10}\!\left(\frac{N}{df_t}\right), \qquad w_{t,d} = tf_{t,d} \cdot idf_t \]</p>
+  <p>The logarithm compresses frequency: count 1 gives \(tf = 1\), count 10 gives \(tf = 2\), count 100 gives \(tf = 3\), so a repeated word is informative but not a hundred times more informative. IDF downweights words spread across the whole store: a term present in every chunk earns \(idf_t = 0\). The alternative convention \(tf_{t,d} = \log_{10}(count(t,d) + 1)\) shifts the baseline but preserves the ordering, and the base of the logarithm is immaterial to rank. Scoring then reuses the cosine of 3.2.1 on these weighted vectors, \(score(q,d) = \frac{q \cdot d}{\|q\|_2 \|d\|_2}\), expanded as a sum only over terms shared by query and chunk.</p>
+  <p>A four-chunk miniature from the retrieval literature makes the arithmetic visible. Query <em>sweet love</em> with \(N = 4\), \(df_{sweet} = 3\), \(df_{love} = 2\) gives \(idf_{sweet} = \log_{10}(4/3) \approx 0.125\) and \(idf_{love} = \log_{10}(4/2) \approx 0.301\), and query length \(\|q\|_2 = \sqrt{0.125^2 + 0.301^2} \approx 0.326\).</p>
+  <table>
+    <thead>
+      <tr><th>Term</th><th>Query (unit)</th><th>Chunk 1 (unit)</th><th>Product</th><th>Chunk 2 (unit)</th><th>Product</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>sweet</td><td>0.383</td><td>0.357</td><td>0.137</td><td>0.203</td><td>0.0779</td></tr>
+      <tr><td>love</td><td>0.924</td><td>0.661</td><td>0.610</td><td>0</td><td>0</td></tr>
+    </tbody>
+  </table>
+  <p><strong>Final result:</strong> Chunk 1 scores \(0.137 + 0.610 = 0.747\), while Chunk 2 scores only \(0.0779 + 0 = 0.0779\), so Chunk 1 ranks first because it carries both query terms instead of one. <strong>Sense-check:</strong> this is the same cosine ranking as the dense path, but assembled from weighted counts, which is exactly why an exact course code or part number survives instead of drifting through meaning space.</p>
+</div>
+
+<div class="key-concept">
+  <p><strong>Formal Definition — BM25 scoring.</strong> BM25 refines the tf-idf score by replacing the tf-idf weight with a saturating frequency factor and an explicit length-normalisation term. For query \(q\) and chunk \(d\):</p>
+  <p>\[ score(q,d) = \sum_{t \in q} \log\!\left(\frac{N}{df_t}\right) \cdot \frac{tf_{t,d}}{tf_{t,d} + k\left(1 - b + b\,\frac{|d|}{|d_{avg}|}\right)} \]</p>
+  <p>Here \(N\) is the collection size, \(df_t\) the chunk count containing \(t\), \(tf_{t,d}\) the count of \(t\) in \(d\), \(|d|\) the chunk length, and \(|d_{avg}|\) the average chunk length. The knobs named in the prose now have exact roles:</p>
+  <table>
+    <thead>
+      <tr><th>Setting</th><th>Effect on the score</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>\(k = 0\)</td><td>Term frequency drops out; only term presence plus IDF remains.</td></tr>
+      <tr><td>Large \(k\)</td><td>Approaches raw frequency, so repeated mentions keep adding weight.</td></tr>
+      <tr><td>\(b = 1\)</td><td>Full length normalisation by \(|d| / |d_{avg}|\).</td></tr>
+      <tr><td>\(b = 0\)</td><td>No length penalty; long chunks are not discounted.</td></tr>
+    </tbody>
+  </table>
+  <p>At the common defaults \(k = 1.2\) and \(b = 0.75\), an average-length chunk \((|d| = |d_{avg}|)\) gives a frequency factor of \(1/(1 + 1.2) \approx 0.45\) for one mention and \(2/(2 + 1.2) = 0.625\) for two: repetition helps, but with fading returns. Some production engines swap the IDF term for a smoothed \(\log\!\left(1 + \frac{N - df_t + 0.5}{df_t + 0.5}\right)\) while keeping the same \(k\) and \(b\) defaults, which is why these knobs transfer across systems even when absolute scores differ.</p>
+</div>
 <div class="key-concept">
   <p>Rank fusion joins the two orderings. With \(r_j(d)\) for the rank of chunk \(d\) in list \(j\) and \(k\) for a softening constant, reciprocal rank fusion scores each chunk as:</p>
   <p>\[ \text{RRF}(d) = \sum_j \frac{1}{k + r_j(d)} \]</p>
@@ -437,9 +464,6 @@
 <div class="warning-box">
   <p><strong>Scope:</strong> Graph RAG fits domains where links decide the answer: drug-gene webs, firm-event chains, course-prerequisite nets. <strong>Assumption:</strong> entities extract cleanly, edges stay current, and the question needs more than one hop. When questions need single paragraphs, or when the graph drifts stale, the extra build cost buys nothing.</p>
 </div>
-<div class="key-takeaway">
-  <p><strong>Exam note:</strong> judge graph quality with an eval frame such as RAGAS, tracking faithfulness, answer relevance, recall, precision, and answer correctness. When edge cases fail, treat the build as a loop: fix data feeding, embedding, or graph shape, then test again on sampled edge queries with human review.</p>
-</div>
 <figure class="visual-intuition">
   <svg viewBox="0 0 500 220" role="img" aria-label="Knowledge graph walk from course to teacher" xmlns="http://www.w3.org/2000/svg">
     <defs>
@@ -559,9 +583,6 @@
 <p>Research assistants show the payoff: they split one hard question into sub-questions, pull from web plus private stores plus calculators, and only trust hits with solid citations. Travel helpers join company policy stores with live flight search so one answer covers both rules and options.</p>
 <div class="warning-box">
   <p><strong>Scope:</strong> Agentic RAG fits tangled tasks where the source list cannot be fixed up front: unknown stores, mixed years, live prices, multi-tool joins. <strong>Assumption:</strong> tools stay reachable, the judge score tracks real quality, and the round cap plus metadata keep the search bounded. When the source list is known and stable, a fixed pipe answers faster and cheaper.</p>
-</div>
-<div class="key-takeaway">
-  <p><strong>Exam note:</strong> score agentic drafts with RAGAS-style checks such as faithfulness, answer relevance, recall, precision, and correctness. Output checks of this kind belong to the same family as the precision, recall, F1, and ERRANT checks used for text correction tasks, and a later review will walk them with simpler worked cases.</p>
 </div>
 <figure class="visual-intuition">
   <svg viewBox="0 0 500 220" role="img" aria-label="Agentic plan loop with round cap" xmlns="http://www.w3.org/2000/svg">

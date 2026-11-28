@@ -220,9 +220,6 @@
 <div class="important-note">
   <p><strong>Q:</strong> For a weather agent asked a non-weather question, should it answer from general knowledge? <strong>A:</strong> No. One student view is that it may hallucinate on niche topics and mislead the user. The added view is that scope matters more: the agent was defined as a weather information agent, so it should not serve outside that role even when the underlying model knows the answer. A better behaviour is to stay in role, for example by asking whether the user means the weather of that place, since answering directly in the form given is not desirable.</p>
 </div>
-<div class="key-takeaway">
-  <p><strong>Exam note:</strong> be ready to run a fixed model through a small question set and tabulate correct, hallucinated, and wrong answers, then repeat with a different model and compare behaviour. Further probes: introduce spelling mistakes, ask related but non-weather questions, and trace where the agent fails and where it holds, linking each outcome to scoping, tool availability, and the role written in the system prompt.</p>
-</div>
 <div class="important-note">
   <p><strong>Q:</strong> Where should guardrails sit when tool output flows into the prompt? <strong>A:</strong> In more than one place. A guardrail belongs between the tool output and the next model step, and another belongs on the final response before it reaches the user. The tool response itself should be checked, and the model response should be checked as well. A further suggestion is that when no tool matches a request description, a guardrail should act before falling back to the base model. For a weather-only agent, unrelated requests should not reach the weather tool path at all.</p>
 </div>
@@ -244,6 +241,16 @@
 <p>An <em>embedding</em> (a vector form of a word or token that carries meaning and context, written \(e \in \mathbb{R}^{d}\), e.g. \(e = [0.2, -0.5, \dots]\)) turns text into numbers with learned relationships. A <em>positional encoding</em> (a vector added to each embedding that marks its position, so order survives) supplies the order in which tokens arrive, since the transformer needs to know token sequence. Put together, text becomes numbers with order, and those numbers carry learned relationships.</p>
 <div class="key-concept">
   <p>Pipeline order matters: token identifiers map to embeddings, positional encodings are added, the sum flows through attention plus feed-forward blocks with residual paths, and the final layer turns hidden states into logits. Each block reads context, transforms it, and passes both the new and the old signal forward.</p>
+</div>
+<div class="key-concept">
+  <p><strong>What the named blocks actually compute:</strong> attention is the only component that mixes information across token positions. The feed-forward network (FFN) is <em>position-wise</em> — the same two-layer network is applied independently at every token, with a separate copy of the parameters at each layer. With model width \(d\) and inner width \(d_{ff}\), its classic form is:</p>
+  <p>\[ \text{FFN}(x) = \max(0, xW_1 + b_1)W_2 + b_2 \]</p>
+  <p>where \(W_1 \in \mathbb{R}^{d \times d_{ff}}\) and \(W_2 \in \mathbb{R}^{d_{ff} \times d}\). The original Transformer uses \(d = 512\) and \(d_{ff} = 2048 = 4d\), so each FFN holds \(2 \cdot 512 \cdot 2048 \approx 2.1\) million weights — more than the attention projections beside it, which is why these layers carry much of the model's stored knowledge.</p>
+</div>
+<div class="important-note">
+  <p><strong>Stabilization detail:</strong> layer normalization rescales a single token vector, not a whole layer. For \(x \in \mathbb{R}^{d}\), compute \(\mu = \frac{1}{d}\sum_{j=1}^{d} x[j]\) and \(\sigma = \sqrt{\frac{1}{d}\sum_{j=1}^{d}(x[j]-\mu)^2}\), then apply learnable gain \(\gamma\) and offset \(\beta\):</p>
+  <p>\[ \text{LayerNorm}(x) = \gamma \odot \frac{x - \mu}{\sigma} + \beta \]</p>
+  <p><strong>Worked mini-trace:</strong> for \(x = [1, 2, 3, 4]\), \(\mu = 2.5\) and \(\sigma = \sqrt{1.25} \approx 1.118\), giving \(\hat{x} \approx [-1.34, -0.45, 0.45, 1.34]\). With \(\gamma = 1, \beta = 0\) this zero-mean, unit-variance vector is what enters the residual sum, keeping activations in a range where gradient training stays stable.</p>
 </div>
 <figure class="visual-intuition">
 <svg viewBox="0 0 500 160" role="img" aria-label="Transformer block pipeline" xmlns="http://www.w3.org/2000/svg">
@@ -345,6 +352,15 @@
 </div>
 <h3 id="2.3.3" class="subsection-title">2.3.3 Decoder-Only Practice With Encoder-Decoder Exceptions</h3>
 <p>The session draws a practical line. Although encoder, decoder-only, and encoder-decoder designs all exist, conversation systems are observed to use full encoder-decoder stacks only rarely. Maximum deployed practice uses decoder-only models: the input is the embedding of the context, and the model decodes from there. The reason given is scale for dialogue: decoder-only setups handle dialogue flow well, though training still takes effort, so teams are advised not to train a full encoder stack where an augmented decoder-only setup suffices.</p>
+<div class="key-concept">
+  <p><strong>The mask that makes a decoder causal:</strong> the attention formula of Section 2.3.1 scores every query against every key, including tokens that come later. In language modelling that would leak the answer — predicting word \(i\) while already seeing word \(i+1\) is trivial. The fix is an additive mask \(M\) with \(M_{ij} = 0\) for \(j \le i\) and \(M_{ij} = -\infty\) for \(j > i\):</p>
+  <p>\[ \text{Attention}(Q,K,V) = \text{softmax}\!\left(\frac{QK^\top}{\sqrt{d_k}} + M\right)V \]</p>
+  <p>For four tokens the upper triangle is suppressed, leaving a lower-triangular score matrix before the softmax:</p>
+  <p>\[ M = \begin{bmatrix} 0 & -\infty & -\infty & -\infty \\ 0 & 0 & -\infty & -\infty \\ 0 & 0 & 0 & -\infty \\ 0 & 0 & 0 & 0 \end{bmatrix} \]</p>
+</div>
+<div class="example-box">
+  <p><strong>Worked mask trace:</strong> at query position 2 the raw scores are \([2.0, 1.0, -1.5, 0.5]\); adding the mask gives \([2.0, 1.0, -\infty, -\infty]\). Since \(\exp(-\infty) = 0\), the softmax weights are \(e^{2}/(e^{2}+e^{1}) \approx 0.73\) and \(e^{1}/(e^{2}+e^{1}) \approx 0.27\), with exactly zero mass on tokens 3 and 4. Sense-check: every position can still serve as its own training example, yet nothing after it can influence its prediction — the property that lets decoder-only training process the whole sequence in parallel.</p>
+</div>
 <p>The exception is complexity plus budget. A demanding query may need natural language understanding backed by a transformer with both sides, and when the system is very involved and compute allows it, a dedicated encoder-decoder pair may be used. Then cross-attention matters because encoder input and the text being generated must attend to each other for dynamic scoring. The takeaway is framed as a design judgement: know where a language model is needed, why it is needed there, and which complementary approach covers the rest.</p>
 <table>
   <thead>
@@ -379,9 +395,6 @@
 </div>
 <h3 id="2.4.1" class="subsection-title">2.4.1 When to Retrieve Instead of Generate</h3>
 <p>For frequently asked queries the advice is to retrieve rather than generate. The case given is a policy question about the process of registering for a midterm examination. The process lives in policy documents, so the safe design is a retrieval system that returns the stored procedure. Letting the model generate freely risks hallucination, which would be serious for a binding process.</p>
-<div class="key-takeaway">
-  <p><strong>Exam note:</strong> for process and policy questions, prefer retrieval of the approved procedure over free generation.</p>
-</div>
 <p>The contrast is a comparison question from the same student helper, such as what distinguishes a Conversational AI course from a language-model, generative-AI, or NLP-applications course, plus a few added aspects. That question is open rather than tied to an examination process, so generation with a language model is acceptable there, with the caution that hallucination remains possible.</p>
 <table>
   <thead>
@@ -411,6 +424,14 @@
 <p>Generation need not keep only the single best word. The model scores candidates by probability, keeps the top \(N\) tokens, and maintains several possible answers. Those maintenance choices are called <em>decoding strategies</em> (rules for which candidate words survive each step, e.g. keep the top 2). One control is a sampling rule such as keeping the top two responses with a beam search of width two. The session sketches a tree: the question sits at the root, the first level holds children such as from and a second candidate such as the word corresponding to D, and the machine searches or generates along several trajectories. From from it might continue with candidates such as the book we saw it or the movies we saw it, while after the word the the next candidates might include flamingos versus bird. Incrementally the machine tracks each trajectory, here with branching factor two because the top two tokens are kept, while pruning removes unneeded words and shrinks the search.</p>
 <div class="example-box">
   <p><strong>Worked example — two beams on flamingos.</strong> Step 1: \(P(\text{from}) = 0.35\), \(P(\text{the}) = 0.25\); keep both beams. Step 2: after <em>from</em>, \(P(\text{the} \mid \text{from}) = 0.5\) and \(P(\text{a} \mid \text{from}) = 0.2\); after <em>the</em>, \(P(\text{flamingos} \mid \text{the}) = 0.4\). Path scores multiply: <strong>0.35 x 0.5 = 0.175</strong> vs <strong>0.25 x 0.4 = 0.10</strong>, so the <em>from-the</em> beam leads. Sense-check: the leading path extends the question grammar instead of restarting it.</p>
+</div>
+<div class="key-concept">
+  <p><strong>Length-normalized beam score:</strong> the worked beams above are compared at the same depth, but a finished candidate may be shorter than another. Because a language model multiplies one conditional factor per token, longer strings naturally receive smaller joint probabilities; raw scores therefore favour short outputs. The textbook scores a hypothesis \(y = (y_1,\dots,y_t)\) with the chain-rule sum of log probabilities and then divides by its length:</p>
+  <p>\[ \text{score}(y) = \frac{1}{t}\log P(y \mid x) = \frac{1}{t}\sum_{i=1}^{t}\log P(y_i \mid y_1,\dots,y_{i-1},x) \]</p>
+  <p>Working in logs turns the product into a sum that avoids underflow, and the better of two log scores is the one closer to zero. During expansion every beam in the frontier has the same length, so raw and normalized rankings agree; the correction matters only when completed hypotheses leave the frontier at different lengths. In machine translation, beam widths \(k\) between 5 and 10 are common.</p>
+</div>
+<div class="example-box">
+  <p><strong>Worked comparison — short beam versus long beam.</strong> Short candidate \(y_s\) (2 tokens): \(\log P(y_s \mid x) = -1.74\). Long candidate \(y_\ell\) (5 tokens): \(\log P(y_\ell \mid x) = -2.60\). Raw ranking: \(-1.74 > -2.60\), so the short candidate wins. Normalized ranking: \(-1.74/2 = -0.87\) versus \(-2.60/5 = -0.52\), so the <strong>long candidate wins</strong> even though its joint probability is smaller. Sense-check: the raw score penalizes length, while division by \(t\) compares average per-token log probability instead.</p>
 </div>
 <p>At the output, raw scores become probabilities through a softmax over logits. With \(z_v\) as the <em>logit</em> (the raw score for vocabulary item \(v\), e.g. \(z_v = 2.1\)), the next-word distribution over the vocabulary is:</p>
 <p>\[ P(w_t = v \mid \text{context}) = \frac{\exp(z_v)}{\sum_{u}\exp(z_u)} \]</p>
@@ -695,9 +716,6 @@
 </div>
 <h3 id="2.8.2" class="subsection-title">2.8.2 Heuristic for Choosing a Prompting Technique</h3>
 <p>A compact heuristic closes the prompting block. Frequently asked questions call for zero-shot prompting. Edge cases with thin data call for few-shot examples. Mathematical problem solving calls for chain of thought. Gaming settings, where the extra search pays off, call for tree of thought, with the warning that it is computationally heavy and costly because several approaches must be remembered, evaluated, and pruned. Automatic generation is the fallback when human prompts stop helping and performance deteriorates; at that point let the system generate its own prompts.</p>
-<div class="key-takeaway">
-  <p><strong>Exam note:</strong> be ready to match each technique to its setting and to justify the cost trade-off behind the choice. Zero-shot for the frequent, few-shot for the thin edges, chain for the derivations, trees for the games, and automatic search when hand prompts stall — with cost rising at each step.</p>
-</div>
 
 <h2 id="2.9" class="section-title">2.9 Structured Output, Sampling Controls, and Validation</h2>
 <p>Even with good prompts, free text can drift. This block explains why outputs are constrained, how randomness is controlled, and how invalid outputs are caught and reworked.</p>

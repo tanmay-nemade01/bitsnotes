@@ -553,9 +553,6 @@
   <p><strong>Worked example: the 100-times-smaller bet.</strong> Giant: \(3 \times 10^{12}\) parameters. Compact: \(30 \times 10^9 = 3 \times 10^{10}\) parameters. Ratio: \((3 \times 10^{12}) / (3 \times 10^{10}) = \mathbf{100}\). Deployment plan: keep the giant for open-ended reasoning research, route banking questions to a finance specialist, crop questions to an agriculture specialist, and run fraud flags on a classical classifier with thousands of parameters. <strong>Answer: the compact fleet matches the giant per task at roughly one hundredth the weights each.</strong> Sense-check: specialization replaces coverage, so each small model memorizes less and reasons within its lane.</p>
 </div>
 <div class="key-takeaway">
-  <p><strong>Exam note:</strong> Expect conceptual questions that ask you to separate recall from reasoning and to argue when a small model suffices. The winning argument names the task, the needed ability, and the specialist that covers it.</p>
-</div>
-<div class="key-takeaway">
   <p>A 30 billion parameter specialist fleet can rival a 3 trillion parameter giant per task, and classical small models still carry classification and clustering cheaply. The next section converts that bet into gigabytes, cards, and rupees.</p>
 </div>
 
@@ -573,6 +570,46 @@
 </div>
 <div class="example-box">
   <p><strong>Worked example: card count at three card sizes.</strong> Weights: 3,000 GB. With 100 GB cards: \(3000/100 = \mathbf{30}\) cards. With 80 GB cards: \(3000/80 = 37.5\), so <strong>38 cards</strong> after rounding up. With 192 GB cards: \(3000/192 = 15.6\), so <strong>16 cards</strong>. <strong>Answer: 16 to 38 cards just for weights, depending on card size.</strong> Sense-check: larger cards cut the count but never reach one card, so multi-machine loading is unavoidable at this scale.</p>
+</div>
+<div class="important-note">
+  <p><strong>Hardware detail — why "one byte per parameter" is a choice, not a law.</strong> The arithmetic above assumes one byte per weight. The companion treatment of inference accelerators observes that neural networks tolerate far less numerical precision than general scientific code: double precision is unnecessary, and even full IEEE 754 floats are not required, so inference weights are commonly converted to 8- or 16-bit fixed-point integers. That conversion is <em>quantization</em>; training almost always stays in floating point. An integer \(i\) represents a real value \(r\) through an affine map:</p>
+  <p>\[ r = i \cdot s + b \]</p>
+  <p>where \(s\) is a positive scale and \(b\) a bias, equivalently an integer zero point. Rounding to the nearest representable integer changes the value by at most half a grid step, so the worst-case <em>quantization error</em> is \(s/2\) — the same half-unit-in-the-last-place tolerance IEEE 754 aims for, just spent on a much coarser grid.</p>
+  <table>
+    <thead>
+      <tr>
+        <th>Weight format</th>
+        <th>Bits per weight</th>
+        <th>Bytes per weight</th>
+        <th>3-trillion weights</th>
+        <th>Cards at 100 GB</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>FP32 (IEEE 754 single)</td>
+        <td>32</td>
+        <td>4</td>
+        <td>12 TB</td>
+        <td>120</td>
+      </tr>
+      <tr>
+        <td>FP16 (IEEE 754 half)</td>
+        <td>16</td>
+        <td>2</td>
+        <td>6 TB</td>
+        <td>60</td>
+      </tr>
+      <tr>
+        <td>INT8 quantized</td>
+        <td>8</td>
+        <td>1</td>
+        <td>3 TB</td>
+        <td>30</td>
+      </tr>
+    </tbody>
+  </table>
+  <p><strong>Worked calculation: 8-bit mapping of a ReLU6 range.</strong> Map real range \([0, 6]\) onto unsigned integers \([0, 255]\): the endpoints \(0 \to 0.0\) and \(255 \to 6.0\) force \(b = 0\) and \(s = 6/255 \approx 0.02353\). The grid has 256 levels spaced \(s\) apart, so worst-case error is \(s/2 \approx 0.01176\). The real value 1.0 rounds to \(i = \mathrm{round}(1.0/s) = \mathrm{round}(42.5) = 42\), which decodes to \(42 \times 6/255 \approx 0.98824\), an error of about 0.01176. Adding 1.0 + 1.0 on this grid gives \(2 \times 42 = 84\), decoding to \(84 \times 6/255 \approx 1.97647\), now about 0.02353 (one full step) below 2.0. <strong>Answer: quantization shrinks the weight bill fourfold versus FP32 at the price of bounded, accumulating error.</strong></p>
 </div>
 <div class="warning-box">
   <p><strong>Scope:</strong> Weight arithmetic governs giant-model deployment planning on accelerator clusters. It barely matters for small on-device models that fit one chip. <strong>Assumption:</strong> One byte per parameter assumes quantized storage. At higher precision the same model needs two to four times the bytes, so always pair a card count with its precision.</p>
@@ -643,6 +680,42 @@
 <div class="example-box">
   <p><strong>Worked example: closing a fivefold gap.</strong> Cards available: 60,000. Cards wanted: 300,000. Shortfall factor: \(300{,}000 / 60{,}000 = \mathbf{5}\). Suppose parallelism plus compression together deliver a factor of 5 in throughput per card: effective capacity becomes \(60{,}000 \times 5 = \mathbf{300{,}000}\) card-equivalents. <strong>Answer: a fivefold efficiency gain exactly offsets a fivefold hardware gap.</strong> Sense-check: no single trick gives 5 times; the win comes from stacking smaller gains across compute, memory, and model size, which is the whole course plan.</p>
 </div>
+<div class="important-note">
+  <p><strong>Hardware detail — leave the general-purpose GPU when the domain is fixed.</strong> The fivefold gap is measured against hardware built for everything. A domain-specific architecture (DSA) removes circuits a general processor needs for other workloads and spends the saved area on one job. Google's Tensor Processing Unit (TPU) is an ASIC designed for the inference phase of neural networks: its heart is a \(256 \times 256\) grid of 65,536 eight-bit multiply-accumulate units with a large software-managed on-chip memory, and its deterministic execution model matches the 99th-percentile response-time requirement of inference rather than optimising average throughput.</p>
+  <p>That grid is <em>systolic</em>: weights are preloaded, activations enter from one edge, and partial sums travel across the array as a wavefront. Each input is read from memory once and each output written once, so the arithmetic is reused inside the array instead of repeatedly fetching a large on-chip buffer. Because inference weights are read-only, they can be staged close to the multipliers — the hardware conclusion of the quantization trade-off above. The price is generality: the fixed datapath that makes the TPU efficient for inference makes it useless for arbitrary code.</p>
+  <table>
+    <thead>
+      <tr>
+        <th>Property</th>
+        <th>General-purpose GPU</th>
+        <th>Inference DSA (TPU)</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>Target workload</td>
+        <td>Training and diverse parallel code</td>
+        <td>Neural-network inference only</td>
+      </tr>
+      <tr>
+        <td>Execution model</td>
+        <td>Caches, out-of-order issue, multithreading</td>
+        <td>Deterministic, software-managed buffers</td>
+      </tr>
+      <tr>
+        <td>Arithmetic</td>
+        <td>Flexible precision, floating-point heavy</td>
+        <td>8-bit integer MAC systolic array</td>
+      </tr>
+      <tr>
+        <td>Optimises</td>
+        <td>Average throughput</td>
+        <td>Tail latency and cost per inference</td>
+      </tr>
+    </tbody>
+  </table>
+  <p><strong>Worked sizing.</strong> A \(256 \times 256\) array holds \(65{,}536\) MACs; at the 700 MHz clock quoted for the original TPU, that is \(65{,}536 \times 700 \times 10^6 \approx 4.59 \times 10^{10}\) MAC/s. Counting a multiply and an add as two operations gives roughly \(9.2 \times 10^{10}\) operations/s, or about <strong>92 TOPS</strong> of peak integer throughput. <strong>Takeaway: when cards are scarce, changing the hardware's domain buys an order-of-magnitude gain that stacking general-purpose cards cannot match.</strong></p>
+</div>
 <div class="warning-box">
   <p><strong>Scope:</strong> Frugal methods matter wherever hardware budgets are fixed: public missions, startups, and edge fleets. They matter less inside frontier labs that can buy the full cluster. <strong>Assumption:</strong> Efficiency gains stack but also interact. Parallelism, caching, and compression multiply only when tuned together; bolted on blindly, they can fight over the same memory.</p>
 </div>
@@ -666,9 +739,6 @@
 </div>
 <div class="example-box">
   <p><strong>Worked example: the full adopt-or-reject verdict.</strong> Savings: 8 roles at 100,000 rupees gives \(8 \times 100{,}000 = \mathbf{800{,}000}\) rupees, or 8 lakhs. Model cost: <strong>15 lakhs</strong>. Net: \(8 - 15 = \mathbf{-7}\) lakhs per month. <strong>Answer: reject — the company loses 7 lakhs monthly.</strong> Sense-check: flip the model cost to 5 lakhs and the verdict flips to \(8 - 5 = +3\) lakhs, adopt. The accuracy never changed; only the token bill moved the decision.</p>
-</div>
-<div class="key-takeaway">
-  <p><strong>Exam note:</strong> Expect numerical questions that test exactly this comparison: savings from automation minus token and serving costs, with a clear adopt-or-reject verdict. Show both multiplications and the net.</p>
 </div>
 <div class="warning-box">
   <p><strong>Scope:</strong> The savings-minus-bill test fits any automation pitch: support desks, data entry, and review queues. It fits less for new capabilities with no salaries to replace, where revenue rather than savings funds the bill. <strong>Assumption:</strong> Prices used are planning quotes around 12 dollars per million tokens. Real bills shift with model, region, and volume discounts, so rerun the verdict with contracted prices.</p>
@@ -787,9 +857,6 @@
 <div class="warning-box">
   <p><strong>Scope:</strong> Chain analysis applies to every iterative learner: boosting rounds, network depth, and clustering iterations. It matters less for single-pass scoring with no feedback. <strong>Assumption:</strong> Within-step work still parallelizes. A chained algorithm is not hopeless; its layers, trees, or points split fine, only the steps stay ordered.</p>
 </div>
-<div class="key-takeaway">
-  <p><strong>Exam note:</strong> Expect questions that ask which algorithms split across processors with almost no coordination and which carry sequential dependencies, with the random forest versus boosting pair as the canonical comparison. Name the baton: prior errors, prior layer, prior assignment.</p>
-</div>
 <div class="warning-box">
   <p>The trap is promising linear speedup for a chained algorithm: "100 cores, 100 times faster" is false when 100 steps must run in order. Find the baton first, quote the chain floor honestly, then parallelize inside each step.</p>
 </div>
@@ -842,27 +909,6 @@
 </div>
 <div class="key-takeaway">
   <p>Roughly half of routine engineering effort automates away, leaving architecture, domain knowledge, data framing, and enterprise hardening as the durable work. That work organizes into the course plan of the next section.</p>
-</div>
-<h3 id="1.9.2" class="subsection-title">1.9.2 Topics, Assignments, and How to Succeed</h3>
-<div class="important-note">
-  <p>Sixteen sessions, scarce textbooks, half field experience — how is this course actually run?</p>
-</div>
-<p>The course runs about 16 sessions and mixes theory with hard-won practice, including failure stories from real deployments alongside the successes. Roughly half the material comes from field experience rather than textbooks, which are scarce in this area, with two or three standard references covering the rest. Planned topics include CPU architecture and how parallelization is achieved, graphics-card architecture with its choke points in compute units, memory, and network bandwidth, making sequential algorithms parallel, memory optimization, algorithm optimization, process optimization, and compression techniques such as quantization. Named analytical tools include Amdahl's law for the limits of speedup. Small language models recur throughout as the proving ground: routers that dispatch each question to a financial, automotive, or agricultural specialist model, and mixtures of experts inside large models, show how specialization beats sheer size.</p>
-<p>Assessment is hands-on. Group assignments of three to five members ask teams to optimize something concrete, exercises are designed to run on Google Colab so no special hardware is needed, and at least one assignment requires building a parallel algorithm from scratch. Guardrails return as a theme under ethics, governance, security, and privacy, and data security gets dedicated attention.</p>
-<div class="key-concept">
-  <p>The course rewards understanding over memorization. Prepare to derive trade-offs for a new problem statement, name the bottleneck among compute, memory, and bandwidth, and defend a concrete optimization plan. Amdahl's law is the named tool: the sequential fraction caps the speedup no matter how many parallel workers join.</p>
-</div>
-<div class="example-box">
-  <p><strong>Worked example: planning one assignment.</strong> Task: parallelize a forest on Colab. Group: 4 members. Split: member 1 profiles the sequential code, member 2 shards trees across workers, member 3 measures latency at 100, 1,000, and 10,000 users, member 4 writes the bottleneck report naming compute, memory, or bandwidth. <strong>Answer: four roles, one optimization plan, all runnable on free Colab.</strong> Sense-check: no special hardware is needed because the lesson is measurement and bottlenecks, not cluster access.</p>
-</div>
-<div class="warning-box">
-  <p><strong>Scope:</strong> The roadmap covers this course's 16 sessions only; later courses extend each topic. <strong>Assumption:</strong> Colab suffices because assignments target method, not scale. Lessons about choke points transfer upward, but absolute timings will differ on real clusters.</p>
-</div>
-<div class="warning-box">
-  <p>Do not study by memorizing definitions: an exam that hands you a fresh problem statement rewards derivation, not recall. And do not skip the failure stories; production postmortems teach guardrails and cost control that no clean textbook chapter contains.</p>
-</div>
-<div class="key-takeaway">
-  <p>Sixteen sessions move from CPU and graphics-card architecture through parallel, memory, and compression optimization, assessed by Colab group work and judged on derived trade-offs. Logistics closed, the Q&amp;A below settles the remaining student doubts.</p>
 </div>
 <h3 id="1.9.3" class="subsection-title">1.9.3 Student Questions and Answers</h3>
 <div class="important-note">

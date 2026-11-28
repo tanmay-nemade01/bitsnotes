@@ -1291,9 +1291,10 @@ def check_writing_style(parser, report):
 
 
 def check_content_repetition(raw, parser, report):
-    """Detect repetitive content: duplicate sentences, pseudo-symbols, and callout echoes."""
+    """Detect repetitive content: duplicate sentences, pseudo-symbols, callout echoes, D1/D2 Q&A dupes."""
     warnings = []
-    
+    failures = []
+
     # 1. Duplicate sentences in prose
     prose = PL.strip_verify_markers(parser.prose)
     sentences = [s.strip() for s in PL._SENT_SPLIT.split(prose) if s.strip()]
@@ -1308,27 +1309,126 @@ def check_content_repetition(raw, parser, report):
         detail = "; ".join(f"'{p[:50]}...'" for p in pseudo[:3])
         warnings.append(f"Found {len(pseudo)} pseudo-symbol pattern(s) 'written as <phrase>' on non-math concepts: {detail}. Use natural prose instead.")
 
-    # 3. Callout echo: callout box immediately repeating preceding paragraph
-    echoes = re.findall(
-        r'<p>([^<]{30,})</p>\s*<div class="(?:key-concept|important-note)">\s*<p>(?:<strong>[^<]+:</strong>\s*)?([^<]{30,})</p>',
-        raw,
-        re.DOTALL | re.IGNORECASE
-    )
+    # 3. Callout echo (D3/D4): any callout echoing preceding/following <p>, <ul>, or <ol>
+    callout_rx = r'<div class="(?:key-concept|important-note|key-takeaway|warning-box|example-box)">(.*?)</div>'
     echo_hits = 0
-    for p_text, c_text in echoes:
-        p_words = set(w.lower() for w in re.findall(r'\b[a-zA-Z]{4,}\b', p_text))
-        c_words = set(w.lower() for w in re.findall(r'\b[a-zA-Z]{4,}\b', c_text))
-        if len(p_words) >= 6 and len(c_words) >= 6:
-            overlap = len(p_words & c_words) / min(len(p_words), len(c_words))
-            if overlap >= 0.75:
-                echo_hits += 1
+    for m in re.finditer(r'(<p>.*?</p>|<[ou]l>.*?</[ou]l>)\s*' + callout_rx, raw, re.DOTALL | re.IGNORECASE):
+        if PL.blocks_overlap(m.group(1), m.group(2), threshold=0.80):
+            echo_hits += 1
+    for m in re.finditer(callout_rx + r'\s*(<p>.*?</p>)', raw, re.DOTALL | re.IGNORECASE):
+        if PL.blocks_overlap(m.group(1), m.group(2), threshold=0.80):
+            echo_hits += 1
     if echo_hits > 0:
-        warnings.append(f"Found {echo_hits} instance(s) where a callout box echoes the preceding paragraph with >75% word overlap. Provide context in prose rather than restating the box.")
+        failures.append(f"Found {echo_hits} instance(s) where a callout box echoes an adjacent paragraph/list (>=80% token overlap).")
 
-    if warnings:
+    # 4. D2: blockquote Q&A immediately followed by .important-note/.key-concept Q&A
+    d2_pairs = re.findall(
+        r'<blockquote>(.*?)</blockquote>\s*<div class="(?:important-note|key-concept)">(.*?)</div>',
+        raw,
+        re.DOTALL | re.IGNORECASE,
+    )
+    d2_hits = sum(
+        1 for bq, box in d2_pairs
+        if "Q:" in bq and "Q:" in box and PL.blocks_overlap(bq, box, threshold=0.75, min_tokens=4)
+    )
+    if d2_hits:
+        failures.append(f"Found {d2_hits} duplicated blockquote + callout Q&A pair(s) (D2).")
+
+    # 5. D1: Q&A appearing inline and repeated under a Q&A <h3> within the same <h2> section
+    h2_sections = re.split(r"(?=<h2\b)", raw, flags=re.IGNORECASE)
+    d1_hits = 0
+    for sec in h2_sections:
+        qa_heading_m = re.search(
+            r"<h3\b[^>]*>[^<]*(?:Questions\s+and\s+Answers|Q\s*&\s*A)[^<]*</h3>(.*)",
+            sec,
+            re.DOTALL | re.IGNORECASE,
+        )
+        if not qa_heading_m:
+            continue
+        body_part = sec[: qa_heading_m.start()]
+        qa_part = qa_heading_m.group(1)
+        inline_qs = re.findall(r"<strong>\s*Q:\s*</strong>(.*?)(?:<strong>\s*A:|</p>)", body_part, re.DOTALL | re.IGNORECASE)
+        tail_qs = re.findall(r"<strong>\s*Q:\s*</strong>(.*?)(?:<strong>\s*A:|</p>)", qa_part, re.DOTALL | re.IGNORECASE)
+        for tq in tail_qs:
+            if any(PL.blocks_overlap(iq, tq, threshold=0.75, min_tokens=4) for iq in inline_qs):
+                d1_hits += 1
+    if d1_hits:
+        failures.append(f"Found {d1_hits} Q&A exchange(s) duplicated both inline and under a Q&A subsection (D1).")
+
+    # 6. D5: adjacent <p> elements making the same claim
+    adj_p = re.findall(r'<p>([^<]{40,})</p>\s*<p>([^<]{40,})</p>', raw, re.DOTALL | re.IGNORECASE)
+    d5_hits = sum(1 for p1, p2 in adj_p if PL.blocks_overlap(p1, p2, threshold=0.82))
+    if d5_hits:
+        warnings.append(f"Found {d5_hits} adjacent paragraph pair(s) with >=82% token overlap (D5).")
+
+    if failures:
+        report.failed("content repetition", "\n".join(failures + warnings))
+    elif warnings:
         report.warned("content repetition", "\n".join(warnings))
     else:
         report.passed("content repetition", "No severe repetition, pseudo-symbols, or callout echoes detected.")
+
+
+def check_logistics_visuals_and_markup(raw, parser, report):
+    """Enforce zero institutional logistics, no prose-only visuals, no split <ol> runs, and clean encoding."""
+    visible = re.sub(r"<!--.*?-->", "", raw, flags=re.DOTALL)
+    visible = re.sub(r"<script\b.*?</script>", "", visible, flags=re.DOTALL | re.IGNORECASE)
+    visible = re.sub(r"<style\b.*?</style>", "", visible, flags=re.DOTALL | re.IGNORECASE)
+
+    failures = []
+    warnings = []
+
+    # 1. Exam/quiz/assessment headings & Exam note callouts
+    for h_match in re.finditer(r"<h[23][^>]*>(.*?)</h[23]>", visible, re.DOTALL | re.IGNORECASE):
+        h_text = re.sub(r"<[^>]+>", "", h_match.group(1)).strip()
+        if PL.is_logistics_heading(h_text):
+            failures.append(f"Institutional/exam/quiz heading in visible HTML: '{h_text}'")
+
+    if re.search(r'<section[^>]*class="[^"]*exam-revision', visible, re.IGNORECASE):
+        failures.append("Exam Revision Notes section must be omitted from rendered HTML.")
+
+    p_blocks = re.findall(r"<p>(.*?)</p>", visible, re.DOTALL | re.IGNORECASE)
+    exam_callouts = PL.find_exam_note_callouts(p_blocks)
+    if exam_callouts:
+        failures.append(f"Exam-framed callout/paragraph found ({len(exam_callouts)}x, e.g. '{exam_callouts[0]}').")
+
+    # 2. Split single-item <ol> runs (Dedup §6.1)
+    split_ol = re.findall(
+        r"<ol>\s*<li>.*?</li>\s*</ol>\s*<ol>\s*<li>.*?</li>\s*</ol>",
+        visible,
+        re.DOTALL | re.IGNORECASE,
+    )
+    if split_ol:
+        failures.append(f"Found {len(split_ol)} split single-item <ol> run(s) — merge consecutive numbered items into one <ol>.")
+
+    # 3. Prose-only Visual intuition paragraphs (Refiner §3)
+    for m in re.finditer(r"<p>([^<]*)</p>", visible, re.IGNORECASE):
+        txt = m.group(1).strip()
+        if re.match(r"^visual\s+intuition\s*[:.]", txt, re.IGNORECASE):
+            after = visible[m.end():m.end() + 300]
+            if not re.search(r"<(?:svg|table)\b|<pre\s+class=[\"']mermaid[\"']", after, re.IGNORECASE):
+                failures.append(f"Prose-only visual intuition paragraph without SVG/Mermaid/table: '{txt[:70]}...'")
+
+    # 4. Lecture-voice artifacts, content-free transitions, and mojibake
+    voice_hits = PL.find_lecture_voice_artifacts(parser.prose)
+    if voice_hits:
+        warnings.append(f"Lecture-voice artifact(s) ({len(voice_hits)}x, e.g. '{voice_hits[0][1]}').")
+
+    sents = [s.strip() for s in PL._SENT_SPLIT.split(parser.prose) if s.strip()]
+    filler_hits = PL.find_content_free_transitions(sents)
+    if filler_hits:
+        warnings.append(f"Content-free transition sentence(s) ({len(filler_hits)}x, e.g. '{filler_hits[0][:60]}').")
+
+    mojibake = PL.find_mojibake(visible)
+    if mojibake:
+        failures.append(f"Encoding mojibake found in visible HTML: {', '.join(mojibake)}")
+
+    if failures:
+        report.failed("logistics, visuals & markup", "\n".join(failures + warnings))
+    elif warnings:
+        report.warned("logistics, visuals & markup", "\n".join(warnings))
+    else:
+        report.passed("logistics, visuals & markup", "Clean of institutional logistics, split lists, prose-only visuals, and mojibake.")
 
 
 def check_qa_relevance(raw, report):
@@ -1492,6 +1592,7 @@ def lint_file(path):
     check_placeholder_tasks(raw, parser, report)
     check_writing_style(parser, report)
     check_content_repetition(raw, parser, report)
+    check_logistics_visuals_and_markup(raw, parser, report)
     check_qa_relevance(raw, report)
     check_html_formatting(raw, report)
     return report

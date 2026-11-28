@@ -282,9 +282,6 @@
   <p><strong>Scope:</strong> The dollar ceiling covers inference input plus output for the turn under test. It does not cover training, storage, or staff time. <strong>Assumption:</strong> Per-token price stays fixed while history size varies, so input size drives the bill. If the vendor reprices, recheck the same inequality with the new rate.</p>
 </div>
 <p>Real-world: teams serving high-traffic assistants cap history per call because full-history fan-out is one of the fastest ways to triple an inference bill.</p>
-<div class="key-takeaway">
-  <p><strong>Recap:</strong> Forgetting means no managed state. Stalling means no latency target with a timeout. Overspending means no history plan. <strong>Exam note:</strong> Remember the 15-second latency target and the $0.5 cost ceiling as architecture triggers. <strong>Bridge:</strong> The next section names the three stores that stop the forgetting: context for the turn, conversational state for the task, and memory across sessions.</p>
-</div>
 
 <h2 id="3.3" class="section-title">3.3 Context, Conversational State, and Memory</h2>
 <div class="important-note">
@@ -348,13 +345,8 @@
 <div class="important-note">
   <p><strong>Q:</strong> If the user profile lives in long-term storage, does it also enter conversational state? <strong>A:</strong> Yes, a copy of it does. Generating the state for each turn needs the recent history plus the task plus the system details plus the profile. The stored profile is loaded and used on every turn so the system knows what to say next. The profile itself stays in the database as long-term storage. The rest of the conversational state typically lives only within the session, and in most applications the session copy is deleted afterward. So all four pieces meet during context building, but only the profile is guaranteed a permanent home.</p>
 </div>
-<p>The second answer is worth restating in one line: storage is long-term, but use is per-turn. The database keeps the profile; each turn borrows a copy of it.</p>
 <h3 id="3.3.4" class="subsection-title">3.3.4 Industry Applications</h3>
 <p>Hospital assistants keep department, doctor, date, and booking status as explicit slots so a dropped entity shows up as an empty field rather than a mystery. Travel helpers attach system instructions that state what the model may share and what it must withhold before any user message is processed. Support desks keep language and tone in memory so a returning user is greeted in the same mode without being asked again.</p>
-<h3 id="3.3.5" class="subsection-title">3.3.5 Exam Notes</h3>
-<div class="key-takeaway">
-  <p><strong>Exam note:</strong> Be ready to separate the three stores by lifetime: context travels per turn, conversational state survives across turns within the task, memory survives across sessions. The AAA drug versus requested-appointment pair is a compact way to remember which is which. <strong>Bridge:</strong> The next section runs one full turn so the three stores can be seen moving together.</p>
-</div>
 
 <h2 id="3.4" class="section-title">3.4 How the System Runs End to End</h2>
 <div class="important-note">
@@ -416,6 +408,48 @@
   <p><strong>Recap:</strong> Arrive, load, build, model, write back, log. The model is stateless, so the loop carries the state. <strong>Bridge:</strong> History is the heaviest item the loop loads, so the next section asks which part of it deserves to travel.</p>
 </div>
 <p>Hospitals run this loop on every booking turn. Universities run it on makeup requests. Support desks run it on every ticket reply. The domain changes the slots and constraints, but the five beats stay the same.</p>
+
+<h3 id="3.4.3" class="subsection-title">3.4.3 Dialogue Structure: Turns, Speech Acts, and Grounding</h3>
+<div class="key-concept">
+  <p><strong>Formal definition:</strong> A dialogue is a sequence of <em>turns</em>, each one contribution from one participant. A turn may be a single word, one sentence, or several sentences, so the five-beat loop above runs once per turn rather than once per sentence. The deeper insight is that an utterance is not merely a string of words but an <em>action</em> the speaker performs; these are <em>speech acts</em> (or dialogue acts), and recognizing the act is a separate decision from filling slots. A four-class taxonomy covers the common cases:</p>
+  <table>
+    <thead>
+      <tr>
+        <th>Class</th>
+        <th>What the speaker does</th>
+        <th>Booking-assistant example</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>Constative</td>
+        <td>Commits to something being the case: stating, claiming, confirming, denying</td>
+        <td>"I need dermatology" states a constraint to be recorded.</td>
+      </tr>
+      <tr>
+        <td>Directive</td>
+        <td>Attempts to get the addressee to act: asking, requesting, ordering, forbidding</td>
+        <td>"Which date works for you?" asks the patient to answer.</td>
+      </tr>
+      <tr>
+        <td>Commissive</td>
+        <td>Commits the speaker to a future course: promising, planning, offering</td>
+        <td>"I will hold the 6 PM slot" commits the assistant.</td>
+      </tr>
+      <tr>
+        <td>Acknowledgment</td>
+        <td>Expresses the speaker's attitude toward a social action: greeting, thanking, apologizing</td>
+        <td>"Thanks, that works" closes the exchange politely.</td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+<div class="important-note">
+  <p><strong>System detail — grounding and structure:</strong> Dialogue is a joint act, so participants must build <em>common ground</em>: the set of facts they mutually accept. Each contribution has two phases, <em>presentation</em> (the speaker performs the act) and <em>acceptance</em> (the hearer signals whether understanding succeeded). Signals form a continuum from weakest to strongest: continued attention, a next relevant contribution, a short acknowledgment such as "uh-huh", a demonstration that paraphrases what was understood, and a verbatim display of it. Local structure also constrains what comes next: <em>adjacency pairs</em> such as QUESTION → ANSWER or PROPOSAL → ACCEPT/REJECT set an expectation for a second pair part. That expectation can be delayed by a <em>side sequence</em> (a correction or clarification subdialogue) without abandoning the main task.</p>
+</div>
+<div class="example-box">
+  <p><strong>Worked trace: dialogue acts in the hospital case.</strong> Patient "book an appointment with Doctor X" is a directive plus a constative, so the manager records the doctor slot. Assistant "which department?" is a directive; patient "dermatology" is a constative that also answers the question, so the pair QUESTION → ANSWER closes. Assistant "Yes, Doctor X is available, shall I hold 6 PM?" demonstrates grounding by reformulating the collected slots before committing, and the patient's "yes" accepts the proposal. When the patient interjects "what day of the week is the 15th?", that is a clarification subdialogue: the answer must be given, then the main booking thread resumes with the corrected date. <strong>Result: classifying the act and grounding it explains why a turn advances state, whereas a bare slot fill cannot tell an answer from an interruption.</strong></p>
+</div>
 
 <h2 id="3.5" class="section-title">3.5 Dialogue History and Three Ways to Trim It</h2>
 <div class="important-note">
@@ -517,10 +551,6 @@
   <p><strong>Q:</strong> For retrieval, how does the system fetch only the relevant turns? Is it like tool routing where a description picks the tool? <strong>A:</strong> It is an information retrieval step over the turns. Think of retrieval-augmented generation with static documents replaced by turns. A document here means one turn, namely the consolidated user and assistant messages from that turn. The current user message is the query. Both the query and each turn become embedding vectors. Then the query vector is compared against each turn vector for similarity. If the current message resembles only the first turn and nothing about the recent turns, the builder receives just that first turn as its recent history instead of the whole dialogue. That selective fetch is the retrieval task.</p>
 </div>
 <p>The routing comparison inside the second question is close but not exact. Tool routing picks a destination by description. Turn retrieval ranks evidence by similarity. Both select, but one selects an action and the other selects memory.</p>
-<h3 id="3.5.5" class="subsection-title">3.5.5 Exam Notes</h3>
-<div class="key-takeaway">
-  <p><strong>Exam note:</strong> The three-way contrast is load-bearing. Sliding window is simple and cheap but can drop older keys. Summarization preserves meaning but costs a model call. Retrieval fetches by similarity and pairs naturally with a top-\(K\) cutoff or a later summarizer. <strong>Bridge:</strong> History trims decide what the model reads; the next section decides what the system writes, through state tracking, slots, profiles, and logs.</p>
-</div>
 
 <h2 id="3.6" class="section-title">3.6 State Tracking, Task State, User Profile, and Runtime Metadata</h2>
 <div class="important-note">
@@ -540,6 +570,16 @@
 </div>
 <div class="example-box">
   <p><strong>Worked example: three pointers, three bindings.</strong> State holds doctor = Doctor X, department = dermatology, date = 14th November (pending). Message 1: "book that requested appointment" binds to the full record, so the run resumes with all three slots intact. Message 2: "that doctor is fine" binds "that doctor" to the doctor slot, confirming Doctor X. Message 3: "cancel my previous preference, previously 5 PM onwards" binds the time phrase to the date slot, reopening date to pending. <strong>Result: no value is re-asked; each pointer updates exactly one slot.</strong></p>
+</div>
+
+<div class="key-concept">
+  <p><strong>From heuristic to mechanism:</strong> The agreement-plus-recency rule above is a usable shorthand, but a resolver that must scale to long histories needs a scored decision procedure. The formal task splits in two: (1) detect which text spans are mentions, and (2) cluster those mentions into coreference chains, where a chain is the set of mentions pointing at one discourse entity. Work over a turn of \(T\) word pieces. The model scores every contiguous span, so the candidate set has size</p>
+  <p>\[N = \frac{T(T+1)}{2}\]</p>
+  <p>For the span \(i\) currently being resolved, the antecedent is a random variable \(y_i\) ranging over \(\mathcal{Y}(i) = \{1, \dots, i-1, \epsilon\}\), where \(\epsilon\) is a dummy antecedent meaning "no earlier mention; start a new chain." Each candidate pair gets a score built from three factors:</p>
+  <p>\[s(i,j) = m(i) + m(j) + c(i,j), \qquad s(i,\epsilon) = 0\]</p>
+  <p>where \(m(i)\) scores how likely span \(i\) is a mention at all, \(m(j)\) does the same for the candidate antecedent, and \(c(i,j)\) scores how well \(j\) fits as the antecedent of \(i\). Fixing the dummy score at zero gives an abstention rule: if every non-dummy score is negative, \(\epsilon\) wins and no link is made. The scores become a probability through a softmax over all candidates:</p>
+  <p>\[P(y_i) = \frac{\exp\big(s(i,y_i)\big)}{\sum_{y' \in \mathcal{Y}(i)} \exp\big(s(i,y')\big)}\]</p>
+  <p><strong>Worked trace:</strong> Take the four-piece phrase "that doctor is fine", so \(T = 4\) and \(N = 4 \cdot 5 / 2 = 10\) spans are scored. For the anaphoric span "that doctor", let the candidates be \(j_1\) = "Doctor X", \(j_2\) = "dermatology", \(j_3\) = "5 PM", plus \(\epsilon\). Suppose \(s(i,j_1) = 2.1\), \(s(i,j_2) = -0.4\), \(s(i,j_3) = -1.2\), and \(s(i,\epsilon) = 0\). The normalizer is \(e^{2.1} + e^{-0.4} + e^{-1.2} + e^{0} \approx 8.17 + 0.67 + 0.30 + 1 = 10.14\), giving \(P(j_1) \approx 0.81\), \(P(\epsilon) \approx 0.10\), \(P(j_2) \approx 0.07\), \(P(j_3) \approx 0.03\). The highest score binds "that doctor" to the doctor slot, which is exactly the behavior the informal rule predicted. Evaluating all \(N\) spans against all earlier spans is expensive, so implementations keep only the top-scoring mentions and a small fixed number of antecedents per mention before running the softmax.</p>
 </div>
 <figure class="visual-intuition">
   <svg viewBox="0 0 500 220" role="img" aria-label="Coreference pointers binding to slots" xmlns="http://www.w3.org/2000/svg">
@@ -613,10 +653,6 @@
   <p><strong>Worked example: reading a slow-turn complaint.</strong> Complaint: "last time the response was delayed." Lookup: session 101 shows input 8200 tokens, output 140 tokens, model version B, latency 60 seconds, availability-check module blamed. Compare: session 103 shows input 900 tokens, output 120 tokens, same model, latency 12 seconds. Diagnosis: the slow turn carried a large history and hit the slow submodule, so the fix is a history cap plus a timeout on that module. <strong>Result: the metadata names the turn, the cause, and the fix.</strong></p>
 </div>
 <p>A three-turn makeup exchange shows the complete state in miniature. Three turns produce six messages, with user and assistant alternating, and the dialogue history holds all six. The task status holds the filled intent slots. The profile holds the user category and preferred communication mode. The metadata records the model used, the input and output token counts, the elapsed time, and the guarantee that no personal data was logged.</p>
-<h3 id="3.6.5" class="subsection-title">3.6.5 Student Questions and Answers</h3>
-<div class="important-note">
-  <p><strong>Q:</strong> The user profile sounds like long-term memory, yet it also appears inside conversational state. How can it be both? <strong>A:</strong> The profile is long-term memory in storage, and a copy of it participates in every turn of short-term reasoning. The builder needs the profile together with the recent history, the task, and the system details to produce the next conversational state. So the profile is read from the database each time and used immediately, while the bulk of the conversational state is session-local and typically deleted afterward.</p>
-</div>
 <div class="key-takeaway">
   <p><strong>Recap:</strong> Tracking maintains intent plus slots, coreference binds backward pointers, task state lives in cache with a durable copy, the profile persists by consent, and metadata audits everything without personal data. <strong>Bridge:</strong> With writes understood, the next section prices the reads: what enters the context and what each part costs.</p>
 </div>
@@ -694,11 +730,6 @@
 <h3 id="3.7.3" class="subsection-title">3.7.3 Student Questions and Answers</h3>
 <div class="important-note">
   <p><strong>Q:</strong> Every greeting seems to reach the model and come back from it. If the model generates everything anyway, why pass history back through calls? Would it not be cheaper for the model to keep the history itself, perhaps with memory on the same server? <strong>A:</strong> A language model is only weights plus an input-output pass. The stored object is a large set of parameters learned from training data, and inference runs the curated weights over the input and produces the output. In, out, and nothing retained. Inputs and outputs are not stored by the model. Whether the model and the state share one server or two is a separate deployment question. Either way the state must live outside the weights, which is why language models are called stateless while the agent or system around them carries the state.</p>
-</div>
-<p>The server-sharing idea inside the question is a deployment detail, not a memory design. Same machine or two machines, the weights still keep nothing between calls. The manager carries the state in both layouts.</p>
-<h3 id="3.7.4" class="subsection-title">3.7.4 Exam Notes</h3>
-<div class="key-takeaway">
-  <p><strong>Exam note:</strong> Refresh transformers before the model half of this module: what a transformer is, how self-attention works, what the key, query, and value matrices do, and what multi-head attention adds. That background was named as the entry ticket for the follow-up on model landscape, optimization tricks, latency, and token cost. <strong>Bridge:</strong> Budgets cap single calls; the next section caps whole deployments with layers, logs, and guardrails.</p>
 </div>
 
 <h2 id="3.8" class="section-title">3.8 Layers, Observability, and Guardrails</h2>
@@ -835,10 +866,6 @@
 <h3 id="3.9.4" class="subsection-title">3.9.4 Student Questions and Answers</h3>
 <div class="important-note">
   <p><strong>Q:</strong> How should I summarize what the orchestrator does? <strong>A:</strong> Call it the heart of the system: the logic that routes each request, sending it toward an intent handler, a tool, or another workflow. It either follows a fixed sequence, picks among destinations, or keeps the conversation going with clarifying questions until the next step is clear.</p>
-</div>
-<h3 id="3.9.5" class="subsection-title">3.9.5 Exam Notes</h3>
-<div class="key-takeaway">
-  <p><strong>Exam note:</strong> The three patterns map to three prompts. Fixed form-filling points to workflow. Same request, different destination, such as another branch or a human doctor, points to routing. A short request that unpacks into many unknown steps, such as the conference plan, points to the agent loop. <strong>Bridge:</strong> Patterns choose the path; the appendix collects where each lesson pays off in production.</p>
 </div>
 
 <h2 id="key-industry-applications" class="section-title">Key Industry Applications</h2>

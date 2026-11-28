@@ -3,11 +3,12 @@ name: extractor
 description: >-
   Phase 1 of make-transcript-notes-kit. Exhaustively extracts every educational
   detail from a raw lecture transcript into a dense markdown draft — every concept,
-  example, formula, student Q&A, industry application, exam tip, professor intuition,
-  worked computation, and named reference. Filters ONLY administrative noise and PII.
+  example, formula, student Q&A, industry application, professor intuition,
+  worked computation, and named reference. Filters administrative noise, college/exam
+  logistics, quizzes, grading chatter, and PII.
   Reconstructs real LaTeX from the transcript's plain-language descriptions of math
   (formulas, derivations, symbols), flags
-  ambiguous math with a *[verify: reason]* marker, and preserves the professor's verbal
+  ambiguous math with a *[verify: reason]* marker, and preserves the speaker's verbal
   explanation alongside every equation so Agent 2 can reconcile it against the
   enrichment docs. Output is plain markdown, no callout boxes or HTML.
   Trigger before Agent 2 (enricher) and Agent 3 (formatter).
@@ -15,7 +16,7 @@ description: >-
 
 # Agent 1 — Extractor
 
-**Your job:** Read a raw `.txt` lecture transcript and produce an **exhaustive, maximally detailed dense markdown draft** — a document so thorough that a student who missed the lecture could learn EVERYTHING from it alone. This is not a summary or an outline for someone else to flesh out. It is the substantive educational document. Agent 2 will add structural polish, reconcile math, and add callout formatting — but the depth, detail, and teaching content must already be here. Capture EVERY educational dimension — not just concepts and definitions, but also student questions, professor answers, industry applications, worked computations, exam guidance, named references, and every pedagogical moment. Filter NOTHING that has educational value.
+**Your job:** Read a raw `.txt` lecture transcript and produce an **exhaustive, maximally detailed dense markdown draft** — a document so thorough that a student who missed the lecture could learn EVERYTHING from it alone. This is not a summary or an outline for someone else to flesh out. It is the substantive educational document. Agent 2 will add structural polish, textbook supplementation, fact-checking, and callout formatting — but the depth, detail, and teaching content must already be here. Capture EVERY technical dimension — concepts, definitions, student questions and technical answers, industry applications, worked computations, named references, and every pedagogical moment. Filter out ALL college/institutional logistics (exams, marks, quizzes, grading, assignments, portals, deadlines).
 
 **Depth expectation:** Major concepts (`##` sections) where the professor spent significant time — explaining, deriving, working examples, fielding questions — must be substantial mini-lessons, typically 600–1000 words of prose plus math and Q&A. If such a section is under 350 words, re-read the transcript — you likely missed explanations, examples, or intuition. However, not every concept warrants this depth: brief definitions, transitional remarks, or topics the professor only mentioned in passing may naturally be short. Match your depth to how much the professor actually said, not to an arbitrary word floor. Thin sections on *major* concepts are the #1 failure mode of this phase. **The dense draft is the primary deliverable.** Write the full educational content here, in prose. Do not defer detail to the manifest — the manifest is only a checksum of what you wrote (see Step 6).
 
@@ -36,8 +37,8 @@ description: >-
 4. **Student Q&A is GOLD** — When a student asks a question and the professor answers, this reveals real confusion points AND the professor''s clearest explanations. Capture the question, the answer, and any follow-up discussion in full.
 5. **Worked computations are SACRED** — Every number, every intermediate step, every substitution, every result. Never summarize a computation. Show it in full.
 6. **Industry applications are ESSENTIAL** — Every named tool, company, system, product, technique, or real-world use case the professor mentions. These connect theory to practice.
-7. **Exam guidance is CRITICAL** — Mark distributions, question patterns, study advice, what to expect, what is important. Students need this.
-8. **Anonymize identities, not teaching interactions** — Strip professor names, institute names, and student names. Never mention "transcript", "recording", or source-file mechanics. Preserve the roles in useful exchanges as neutral `Q:` / `A:` dialogue. Privacy must never flatten a misconception-and-correction sequence into generic prose.
+7. **Pure technical focus (NO college/exam logistics)** — Discard all marks, weightage (`EC1/EC2/EC3`), quiz recaps/announcements, assignment submission rules, grading criteria, exam dates/scope/model papers, and portal logistics. Preserve only technical difficulty warnings (*"watch out for sign errors here"*) without exam framing.
+8. **Anonymize identities and remove classroom voice** — Strip professor names, institute names, and student names. Never mention `"transcript"`, `"recording"`, `"the professor"`, `"the lecturer"`, `"the instructor"`, `"in the session"`, `"several students asked"`, `"live demo"`, or `Keywords:`/`Transcript:` tails. Preserve genuine teaching exchanges as neutral `Q:` / `A:` dialogue. Privacy must never flatten a misconception-and-correction sequence into generic prose.
 9. **Factual fidelity for numbers and math** — Preserve every number, constant, dimension, and formula exactly as stated. Do not round, paraphrase, or "tidy" values. When the transcript's plain-language math is ambiguous, reconstruct the most likely LaTeX and mark it `*[verify]*` rather than silently guessing. (See the Math extraction protocol.)
 10. **Math is an audit trail, not a paraphrase** — Every reconstructed formula must keep the professor's verbal description next to it. Agent 2 will reconcile your LaTeX against the enrichment docs using that verbal description as the bridge.
 11. **Strict File Attachment Guard Rail** — Focus *only and only* on the raw `.txt` lecture transcript file attached to the prompt/context. You are strictly prohibited from reading or accessing companion documents, slides, textbooks, or other lecture files. Agent 1 operates strictly on the raw transcript. Agent 2 handles all companion documents.
@@ -152,25 +153,13 @@ Capture these FULLY when they represent genuine educational doubts or discussion
 
 **Format as:** Document each application/connection inline with the relevant concept, prefixed with a "Real-world:" label for easy scanning.
 
-### Dimension 6 — Exam Guidance and Study Advice
+### Dimension 6 — Technical Importance & Conceptual Pitfalls (NO Exam Logistics)
 
-**Students rely heavily on this. Capture EVERYTHING:**
+Capture **technical** emphasis and conceptual difficulty warnings, NOT institutional exam chatter:
 
-- Mark distribution across topics
-- Question types expected (mathematical, conceptual, application-oriented)
-- Specific problem types mentioned ("expect a 4-mark question on n-gram language modeling")
-- What is NOT on the exam ("no back propagation through time")
-- Study advice ("refer to Jurafsky chapter 6", "go through my recordings")
-- Assumption-writing advice ("write all your assumptions clearly")
-- Presentation advice ("show your work in a table, it is easier to grade")
-- Handwriting/formatting advice
-- Comparison between regular and makeup exams
-- Difficulty level guidance
-- Time management hints
-- Which textbook chapters to focus on
-- Which topics get more marks and why
-
-**Format as:** Annotate inline where relevant (e.g., "Exam note: expect a 4-mark numerical here") directly alongside the corresponding concept in the main notes.
+- Common mistakes, subtle edge cases, and explicit difficulty flags ("this derivation step is easy to get backwards")
+- Practical computational choices ("use log base 10 vs natural log", "how precision affects stability")
+- **STRICTLY EXCLUDE** mark distributions, `EC1`/`EC2`/`EC3` weightages, quiz scopes/recaps, regular vs. makeup exam comparisons, grading/handwriting rules, assignment deadlines, portal links, and `Exam note:` framing.
 
 ### Dimension 7 — Professor Pedagogical Moments
 
@@ -474,12 +463,13 @@ Use the Dimension 7 table above as the canonical list of professor intuition typ
 
 ## MUST filter out (discard)
 
-- **Administrative chatter & course logistics:** homework deadlines, exam dates (EXCEPT when tied to study advice), office hours, slide/recording uploads, Microsoft Teams links/channels/folders, attendance, breaks
+- **Administrative chatter & college/exam logistics:** marks, weightages (`EC1/EC2/EC3`), quizzes (recaps, mechanics, announcements), homework/assignment deadlines, group size, report/video deliverables, exam dates/formats/scope/model papers/hall tickets, open/closed-book rules, grading/re-evaluation, office hours, slide/recording uploads, portals (Taxila, eLearn), Microsoft Teams/Google Drive/WhatsApp links, attendance, breaks, textbook lists/prices
 - **Rhetorical pauses & empty check-ins:** "Are there any questions?", "Any doubts?", dead air, and students responding "No" or "Clear" without asking an actual doubt. Never turn conversational check-ins into Q&A blocks or notes content.
 - **Session deferrals & time warnings:** "We only have 5 minutes left so we will cover this next week", "live demo will be in the weekend webinar"
+- **Unrecoverable ASR transcript gibberish:** Garbled speech-to-text fragments where no technical claim, parameter, or ordered step can be recovered. (If parameters or steps *are* recoverable, extract the technical content cleanly; never copy raw ASR word-salad.)
 - **Pure off-topic banter:** "how was everyone's weekend?", family conversations, unrelated small talk
 - **Technical difficulties:** "Is the projector working?", dead air, "can you see my screen?", filler ("um", "uh")
-- **PII:** professor names, institute/university names, student full names. The output must never contain these.
+- **PII & classroom voice:** professor names, institute/university names, student full names, `"the professor"`, `"the lecturer"`, `"the instructor"`, `"in the session"`, `"as heard in the recording"`, `Keywords:`/`Transcript:` tails. The output must never contain these.
 - **Platform logistics:** "I will upload the slides", "check the e-learn portal", "I shared the Excel sheet"
 - **Time-sensitive references:** "yesterday's email", "due to the snow day"
 
@@ -531,11 +521,11 @@ Save your output to the file `<LecturePrefix>_notes_dense.md` (creating it if it
 - `*[verify: <reason>]*` markers next to any formula or derivation step whose reconstruction is uncertain — never silently guess
 - All professor intuition woven into prose (never as attributed quotes)
 - All PII stripped
-- Student Q&A formatted as blockquotes with **Q:** and **A:** labels
+- Student Q&A formatted as blockquotes with **Q:** and **A:** labels **once** inline where the exchange occurred (never duplicate the same Q&A under a separate Q&A subsection)
 - Industry applications prefixed with "Real-world:" for easy scanning
-- Exam guidance prefixed with "Exam note:" for easy scanning
+- **NO exam guidance / `Exam note:` / quiz / assessment sections or callouts**
 - **NO extraction checklist, verification list, or internal metadata in the output.** The output starts directly with the first educational section.
-- **NO pipeline jargon** — no agent names ("Agent 1", "Extractor"), no phase labels, no course codes. The draft must read as standalone educational material.
+- **NO pipeline jargon or classroom voice** — no agent names ("Agent 1", "Extractor"), no phase labels, no course codes, no "the professor"/"the speaker"/"in the session". The draft must read as standalone educational material.
 
 ### Suggested section structure
 
@@ -543,15 +533,13 @@ Save your output to the file `<LecturePrefix>_notes_dense.md` (creating it if it
 # [Topic]
 
 ## <lecture_number>.<topic_number> [First Concept]
-### <lecture_number>.<topic_number>.<sub_topic_number> Mathematical Formulation   ← reconstructed LaTeX + professor's verbal description alongside, *[verify]* where uncertain
+### <lecture_number>.<topic_number>.<sub_topic_number> Mathematical Formulation   ← reconstructed LaTeX + verbal description alongside, *[verify]* where uncertain
 ### <lecture_number>.<topic_number>.<sub_topic_number> Worked Examples
   - Example 1: [full walkthrough]
   - Example 2: [full walkthrough]
-### <lecture_number>.<topic_number>.<sub_topic_number> Student Questions and Answers
-> **Q:** ...
+> **Q:** ...   ← woven inline where the doubt arose (never repeated in a separate Q&A heading)
 > **A:** ...
 ### <lecture_number>.<topic_number>.<sub_topic_number> Industry Applications
-### <lecture_number>.<topic_number>.<sub_topic_number> Exam Notes
 
 ## <lecture_number>.<topic_number + 1> [Second Concept]
   [same structure]

@@ -751,6 +751,99 @@ A streaming platform (a service that sends video, written as load from viewers) 
         lint_dense.check_dense_repetition_and_qa(md_text, report)
         self.assertTrue(report.counts["WARN"] >= 1)
 
+    # -- Root-cause fixes for Refiner / Dedup / Supplement ----------------
+    def test_loose_ordered_list_and_mermaid_and_stray_callout(self):
+        md = (
+            "1. First step in pipeline.\n\n"
+            "2. Second step in pipeline.\n\n"
+            "```mermaid\n"
+            "flowchart LR\n"
+            "  A --> B\n"
+            "```\n\n"
+            ":::\n"
+        )
+        html = convert_md_to_html.convert_markdown_to_html(md)
+        self.assertEqual(html.count("<ol>"), 1)
+        self.assertEqual(html.count("<li>"), 2)
+        self.assertIn('<figure class="visual-intuition">', html)
+        self.assertIn('<pre class="mermaid">', html)
+        self.assertIn("A --> B", html)
+        self.assertNotIn("</div>", html)
+
+    def test_prerequisite_deduplicates_across_lectures_ignoring_numbering(self):
+        current = ["3.1 Kernel Threads Scheduling"]
+        previous = [
+            {"lecture_number": "1", "topic": "Intro", "topics_covered": ["1.2 Kernel Threads"]},
+            {"lecture_number": "2", "topic": "OS", "topics_covered": ["2.1 Kernel Threads"]},
+        ]
+        selected = TMU._select_prerequisites(current, previous, limit=10)
+        self.assertEqual(len(selected), 1)
+
+    def test_cross_lecture_collision_gate_detects_prior_and_future(self):
+        self.write_map(
+            "Operating Systems.yaml",
+            (
+                "subject_name: Operating Systems\n"
+                "lectures:\n"
+                "  - lecture_number: \"1\"\n"
+                "    topic: Intro\n"
+                "    topics_covered:\n"
+                "      - 1.2 Byte Pair Encoding\n"
+                "  - lecture_number: \"6\"\n"
+                "    topic: Deadlocks\n"
+                "    topics_covered:\n"
+                "      - 6.3 Banker's Algorithm\n"
+            ),
+        )
+        results = TMU.check_cross_lecture_collisions(
+            "Operating Systems",
+            4,
+            ["Byte Pair Encoding", "Banker's Algorithm", "Marascuilo Procedure"],
+        )
+        statuses = {r["candidate"]: r["status"] for r in results}
+        self.assertEqual(statuses["Byte Pair Encoding"], "prior")
+        self.assertEqual(statuses["Banker's Algorithm"], "future")
+        self.assertEqual(statuses["Marascuilo Procedure"], "clear")
+
+    def test_html_lint_catches_logistics_duplication_split_ol_and_prose_visual(self):
+        raw = (
+            "<html><body><main>"
+            "<h2 class=\"section-title\">1.1 Assessment Plan</h2>"
+            "<p>The five modules cover REST, cloud native, data pipelines, AI APIs, and IoT analytics.</p>"
+            "<div class=\"key-concept\"><p>The five modules cover REST, cloud native, data pipelines, AI APIs, and IoT analytics.</p></div>"
+            "<div class=\"key-takeaway\"><p><strong>Exam note:</strong> expect a 4-mark question.</p></div>"
+            "<ol><li>Step one</li></ol><ol><li>Step two</li></ol>"
+            "<p>Visual intuition: picture a parabola rising smoothly.</p>"
+            "<blockquote><p><strong>Q:</strong> Why use gradient clipping during training?</p>"
+            "<p><strong>A:</strong> It prevents exploding gradients in deep networks.</p></blockquote>"
+            "<div class=\"important-note\"><p><strong>Q:</strong> Why use gradient clipping during training?</p>"
+            "<p><strong>A:</strong> It prevents exploding gradients in deep networks.</p></div>"
+            "</main></body></html>"
+        )
+        p = _parser(raw)
+        report = html_lint.Report()
+        html_lint.check_content_repetition(raw, p, report)
+        html_lint.check_logistics_visuals_and_markup(raw, p, report)
+        failed_names = {name for lvl, name, _ in report.rows if lvl == "FAIL"}
+        self.assertIn("content repetition", failed_names)
+        self.assertIn("logistics, visuals & markup", failed_names)
+
+    def test_dense_lint_catches_logistics_heading_and_prose_visual_and_echo(self):
+        md = (
+            "# Topic\n\n"
+            "## 1.1 Assessment Plan\n"
+            "Marks are split across components.\n\n"
+            "## 1.2 Gradient Descent\n"
+            "Gradient descent iteratively updates weights along the negative gradient to minimize the empirical loss.\n\n"
+            ":::key-concept\n"
+            "Gradient descent iteratively updates weights along the negative gradient to minimize the empirical loss.\n"
+            ":::\n\n"
+            "Visual intuition: picture a valley sloping down to a minimum.\n"
+        )
+        report = lint_dense.Report()
+        lint_dense.check_logistics_visuals_and_cleanliness(md, "enriched", report)
+        self.assertTrue(report.has_fail)
+
 
 if __name__ == "__main__":
     unittest.main()

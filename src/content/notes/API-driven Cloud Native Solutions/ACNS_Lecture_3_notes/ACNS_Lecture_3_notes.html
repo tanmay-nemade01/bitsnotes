@@ -191,6 +191,42 @@
   <p><strong>Worked example — POST order contract.</strong> Setup is a food order from a mobile client. Given values are <code>userId = &quot;u-101&quot;</code>, <code>restaurantId = &quot;r-207&quot;</code>, <code>item = &quot;paneer tikka&quot;</code>, and <code>quantity = 2</code>. The call is <code>POST /order</code> with those four fields in the request body. The order service runs its own steps — it checks the restaurant is open, prices the items, and writes the order row — then returns JSON such as <code>{&quot;orderId&quot;: &quot;o-9001&quot;, &quot;status&quot;: &quot;confirmed&quot;}</code>. Commentary is that the client learns only endpoint plus request and response fields, while storage and processing stay hidden inside the order service. Sense-check: if the order team later moves its tables to a new database, the mobile app keeps working because the contract did not change.</p>
 </div>
 <p>The gains from API-first work are practical. Different teams can build different services at the same time because the contract holds them together. Teams can pick different programming languages for different services. Front end and back end work can move in parallel once the contract is fixed. The same API can serve a mobile application, a web application, or another client type. The contract also supports <em>loose coupling</em>, where services depend on shared promises rather than on each other's inner code, and that makes independent development safer. In traffic terms, these service-to-service calls are east-west traffic: they stay inside the application group, and the platform (rather than each developer by hand) should route, balance, and watch them.</p>
+
+<div class="important-note">
+  <p><strong>Mechanism — what the "platform" for east-west traffic actually is.</strong> The service-to-service calls above are exactly what a <em>service mesh</em> manages: an infrastructure layer for traffic inside a cluster, distinct from the north-south API gateway that admits outside clients. The companion API text defines it as a pattern for managing all service-to-service communication, optimized for east-west traffic where the caller is a known internal service rather than a user device. It separates into a <strong>data plane</strong> of sidecar proxies running alongside each service that actually route packets, enforce policy, and emit telemetry, and a <strong>control plane</strong> where operators declare routes, policies, and telemetry (for example Kubernetes Custom Resource YAML applied with <code>kubectl</code>) and which programs the sidecars. Envoy is the widely used sidecar proxy; Istio is an open control plane that deploys Envoy sidecars with automatic injection.</p>
+  <table>
+    <thead>
+      <tr>
+        <th>Concern</th>
+        <th>Without a mesh</th>
+        <th>With a sidecar mesh</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>Routing and retries</td>
+        <td>Each service codes its own client logic</td>
+        <td>Data plane proxies route and retry transparently</td>
+      </tr>
+      <tr>
+        <td>Security</td>
+        <td>TLS and identity handled per service</td>
+        <td>Workload identity and mutual TLS enforced by the mesh</td>
+      </tr>
+      <tr>
+        <td>Observability</td>
+        <td>Each team instruments its own calls</td>
+        <td>Metrics, logs, and traces emitted by every proxy</td>
+      </tr>
+      <tr>
+        <td>Change cost</td>
+        <td>A behaviour change means code change and redeploy</td>
+        <td>Operator updates control-plane config; no app code change</td>
+      </tr>
+    </tbody>
+  </table>
+  <p>A service mesh is not mesh networking — the lower-level topology common in IoT — it builds on existing network protocols. Its one-to-one proxy mapping also means a proxy does not aggregate calls across services; that aggregation remains the gateway's job.</p>
+</div>
 <div class="warning-box">
   <p><strong>Scope:</strong> This split pays off when capabilities change at different speeds and different teams own them. It assumes the contract is versioned and honored, and that each service owns its own data. Where those promises fail — shared tables, lockstep releases, one team owning everything — the services are distributed in name only, and the team pays network and ops cost without gaining independence.</p>
 </div>
@@ -222,6 +258,22 @@
   <p><strong>Pitfalls.</strong> Splitting too early is the classic trap: a two-person team with one deploy target gains meetings, not speed. A second trap is the shared database — two services reading one table are one service wearing two hats, and a schema change still blocks both teams. A third is the chatty contract: if every order needs ten round trips to the restaurant service, latency piles up at each hop, and the design from section 3.4 (fewer, larger calls) fits better.</p>
 </div>
 <p>Swiggy and Zomato are named as familiar food delivery systems where login, search, ordering, payment, delivery tracking, and notifications map to separate concerns. That mapping is the real-world anchor for this section: when order volume spikes at dinner time, the order and delivery services scale up while login stays small, which is only possible because each capability is its own service.</p>
+
+<div class="important-note">
+  <p><strong>Resilience pattern — the circuit breaker.</strong> Splitting services removes a shared release bottleneck, but it adds a new failure shape: a slow or failing downstream service makes every caller wait, and those waits consume threads, memory, and connections until unrelated parts of the system stall — a cascading failure. A <em>circuit breaker</em> is a proxy in front of the call that watches recent failures and, past a threshold, fails fast instead of waiting for a timeout. The companion cloud-native text models it as a three-state machine, and the Microsoft Azure Architecture Center defines the same three states: <strong>Closed</strong> (requests pass, failures counted), <strong>Open</strong> (requests fail immediately), and <strong>Half-Open</strong> (a limited number of trial requests decide whether to close again).</p>
+  <figure class="visual-intuition">
+    <pre class="mermaid">
+    stateDiagram-v2
+        [*] --> Closed
+        Closed --> Open: failure rate exceeds threshold
+        Open --> HalfOpen: timeout expires
+        HalfOpen --> Closed: trial requests succeed
+        HalfOpen --> Open: any trial request fails
+    </pre>
+    <figcaption><strong>Circuit breaker states:</strong> Half-Open is transitory, letting a recovering service take a probe without being flooded.</figcaption>
+  </figure>
+  <p>The companion's Hystrix example trips when <strong>50%</strong> of requests fail and stays Open for <strong>5 seconds</strong> before probing Half-Open. In its measured 3-minute outage, a protected caller saw first signs of recovery in 1–2 minutes and full recovery in 4–5 minutes, versus 9 minutes and 12–13 minutes with naive retries and no breaker. An Open breaker may also return a <em>fallback</em> — cached stale content or a precanned stand-in — so the caller degrades gracefully instead of erroring. The pattern is complementary to retries: retries assume eventual success, while a breaker stops calling while success is unlikely.</p>
+</div>
 <div class="key-takeaway">
   <p><strong>Recap + bridge:</strong> Microservices give each business capability its own code base and release path, and API-first contracts let teams build in parallel without knowing each other's internals. Next, section 3.2 turns that independence into release practice: one shared pipeline versus one pipeline per service.</p>
 </div>
@@ -448,6 +500,33 @@
 <p>AWS Lambda, Amazon S3, Amazon DynamoDB, Aurora Serverless, Amazon SNS, Amazon SQS, AWS Step Functions, Amazon API Gateway, and AWS Fargate are named as the managed set used to build this style of application. For scale intuition, the cloud-native companion notes put this in context: a well-built service runs across many availability zones and regions, so one zone's failure does not take the shop down — the managed parts above inherit that redundancy instead of each team rebuilding it.</p>
 <div class="warning-box">
   <p><strong>Scope:</strong> This join works when each step is short, event-shaped, and independently retryable: gateway validates, function computes, table remembers, queue absorbs bursts. It assumes at-least-once delivery is acceptable (SQS may redeliver) and that steps are idempotent — running the order write twice must not charge twice.</p>
+
+<div class="warning-box">
+  <p><strong>Pitfall — retry storms and "kind" retries.</strong> An unbounded retry loop turns a short outage into a self-inflicted overload: the companion text shows clients retrying indefinitely against a struggling service, with full recovery taking 12–13 minutes after a 3-minute network blip. Its fix is a <em>kind client</em> — cap the attempts, wait between them, and retry only errors likely to be transient. The Spring example uses <code>@Retryable(value = ResourceAccessException.class, maxAttempts = 3, backoff = @Backoff(delay = 500))</code>: retry connect/read timeouts at most three times with a 500 ms pause, while a 5xx server error is not retried. Microsoft's Retry pattern guidance agrees that an aggressive policy with many retries and minimal delay degrades a service already near capacity, and that the delay should spread requests from multiple client instances.</p>
+  <table>
+    <thead>
+      <tr>
+        <th>Naive retry</th>
+        <th>Kind retry</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>Retry forever on any error</td>
+        <td>Capped attempts (<code>maxAttempts = 3</code>), retry only transient exceptions</td>
+      </tr>
+      <tr>
+        <td>Immediate re-fire, synchronized clients</td>
+        <td>Delay between attempts (<code>500 ms</code>) spreads the load</td>
+      </tr>
+      <tr>
+        <td>Caller times out on every try</td>
+        <td>Paired with a fallback (cached or default value)</td>
+      </tr>
+    </tbody>
+  </table>
+  <p>The companion also names when <em>not</em> to retry: operations that are not idempotent (a duplicate order write charges twice), business-logic errors that are not transient, and a fault that is clearly long-lived — that last case is the circuit breaker's job.</p>
+</div>
 </div>
 <div class="warning-box">
   <p><strong>Pitfalls.</strong> Beginners wire everything through Lambda: images through functions instead of S3, long reports inside one call instead of Fargate, strict ordering assumed from a queue that only promises best-effort order. Each misuse has a named home — S3 for bytes, Fargate for long runs, Step Functions where order truly matters — and the section's part list is the map.</p>

@@ -603,16 +603,85 @@ def _select_prerequisites(current_topics, prev_lecs, limit=10):
             key=lambda item: (item[2], item[3]),
         )[: limit - len(selected)]
 
-    # Restore chronological order and drop duplicate topic labels.
+    # Restore chronological order and drop duplicate topic labels (ignoring
+    # leading L.T numbering so "1.2 Threads" and "2.1 Threads" do not repeat).
     selected.sort(key=lambda item: (item[2], item[3]))
     seen, deduped = set(), []
     for item in selected:
-        key = item[1].lower()
+        normalized_tokens = _clean_and_normalize(item[1])
+        key = " ".join(normalized_tokens) if normalized_tokens else item[1].lower()
         if key in seen:
             continue
         seen.add(key)
         deduped.append(item)
     return deduped
+
+
+def check_cross_lecture_collisions(subject_name, current_lecture_number, candidates):
+    """Classify candidate supplement topics against all lectures in a subject.
+
+    Returns a list of dicts:
+        {candidate, status ('prior'|'current'|'future'|'clear'),
+         lecture_number, matched_topic}
+    """
+    topic_map = load_topic_map(subject_name)
+    if not topic_map:
+        return [
+            {
+                "candidate": c,
+                "status": "clear",
+                "lecture_number": None,
+                "matched_topic": None,
+            }
+            for c in candidates
+        ]
+
+    current = _safe_parse_lecture_number(current_lecture_number)
+    lectures = topic_map.get("lectures", [])
+    results = []
+
+    for candidate in candidates:
+        cand_clean = str(candidate).strip()
+        if not cand_clean:
+            continue
+        cand_sig = _topic_signature(cand_clean)
+        hit = None
+        for lec in lectures:
+            lec_num_raw = lec.get("lecture_number", "")
+            lec_num = _safe_parse_lecture_number(lec_num_raw)
+            covered = lec.get("topics_covered", [])
+            if not isinstance(covered, list):
+                continue
+            for topic in covered:
+                if _topics_match(cand_clean, topic, min_word_overlap=2) or (
+                    len(cand_sig) >= 2
+                    and len(cand_sig & _topic_signature(topic)) >= 2
+                ):
+                    if lec_num < current:
+                        status = "prior"
+                    elif lec_num == current:
+                        status = "current"
+                    else:
+                        status = "future"
+                    hit = {
+                        "candidate": cand_clean,
+                        "status": status,
+                        "lecture_number": str(lec_num_raw),
+                        "matched_topic": str(topic),
+                    }
+                    break
+            if hit:
+                break
+        results.append(
+            hit
+            or {
+                "candidate": cand_clean,
+                "status": "clear",
+                "lecture_number": None,
+                "matched_topic": None,
+            }
+        )
+    return results
 
 
 def generate_prerequisite_html(subject_name, current_lecture_number, limit=10):
@@ -680,6 +749,23 @@ if __name__ == "__main__":
         prereq_html = generate_prerequisite_html(subject_arg, lec_arg)
         if prereq_html:
             print(prereq_html)
+    elif len(sys.argv) >= 5 and sys.argv[1] == "collisions":
+        subject_arg = sys.argv[2]
+        lec_arg = sys.argv[3]
+        cand_arg = sys.argv[4]
+        if os.path.isfile(cand_arg):
+            with open(cand_arg, "r", encoding="utf-8") as fh:
+                candidates = [ln.strip() for ln in fh if ln.strip()]
+        else:
+            candidates = [c.strip() for c in cand_arg.split(",") if c.strip()]
+        for row in check_cross_lecture_collisions(subject_arg, lec_arg, candidates):
+            if row["status"] == "clear":
+                print(f"[CLEAR] {row['candidate']}")
+            else:
+                print(
+                    f"[COLLISION:{row['status'].upper()}] {row['candidate']} "
+                    f"-> Lecture {row['lecture_number']} ({row['matched_topic']})"
+                )
     else:
         maps = get_all_topic_maps()
         print(f"Loaded {len(maps)} topic maps:")

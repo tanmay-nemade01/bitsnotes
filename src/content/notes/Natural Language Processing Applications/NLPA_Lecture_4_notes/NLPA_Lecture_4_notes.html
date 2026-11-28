@@ -201,15 +201,12 @@
 <p>This lecture moves from single-pipeline retrieval to the full family of production designs: naive vector search, vectorless exact match, multimodal archives, graph-linked search, agentic loops, hybrid fusion, stack choices, RAGAS scoring, and readiness checks. Read straight through for the cost ladder, or jump to one design and follow its bridge back.</p>
 
 <h2 id="4.1" class="section-title">4.1 Why RAG Exists and How the Three Main Designs Differ</h2>
-<p>A large language model on its own can only answer from what it learned during training. When a question needs fresh facts, private enterprise files, or domain records, the model needs help. <em>Retrieval Augmented Generation</em>, often shortened to RAG, fills this gap. RAG pulls facts from outside sources and feeds them to the model with the question. It pulls small passages from an outside data source, places them next to the user question, and asks the model to build its answer from that shared material.</p>
+<p>A large language model on its own can only answer from what it learned during training. When a question needs fresh facts, private enterprise files, or domain records, the model needs help. <em>Retrieval Augmented Generation</em>, often shortened to RAG, fills this gap. It pulls small passages from an outside data source, places them next to the user question, and asks the model to build its answer from that shared material.</p>
 <div class="important-note">
   <p><strong>Hook:</strong> Imagine a brilliant colleague with no internet access and no permission to open your company drive. They know a lot, yet they cannot answer "what did the client approve last week?" RAG is the act of handing that colleague the right page before asking the question.</p>
 </div>
 <p>Three gaps motivate the design, and each one is worth naming. First, models hallucinate: they produce fluent text that is not faithful to any source, and they state it with full confidence. Grounding the answer in fetched passages gives every claim a source to point at. Second, models cannot see proprietary data: personal mail, medical records, internal tickets, and legal files were never in the public training set, yet most enterprise questions live there. Third, models go stale: training ends on a fixed date, while prices, guidelines, and code change every week. Retrieval fixes all three at once, because the fetched passages can be fresh, private, and cited.</p>
 <p>Every RAG design follows the same broad shape. First comes data ingestion and indexing, done offline before any user arrives. Then a user question arrives and the system works out what the question needs. Then comes retrieval of matching passages. Then the question plus the retrieved passages go to the model, which writes the final answer. Naive RAG, Graph RAG, and Agentic RAG all keep this shape. They differ in how they index, how they decide what to fetch, and who controls the search.</p>
-<div class="key-concept">
-  <p><strong>The shared pipeline:</strong> ingest and index offline, understand the question, fetch matching passages, then generate the answer from the question plus the fetched passages. Every design in this lecture is a variation on these four steps.</p>
-</div>
 <p>In naive RAG the archive is first split into small pieces. Each piece passes through an <em>embedding model</em>, a model that turns text into a numeric vector. The vectors go into a <em>vector database</em>, a store built for fast similarity search. When a user question arrives, it passes through the same embedding model, so the question vector and the archive vectors live in one shared space. The system ranks archive pieces by similarity to the question and keeps the top one or two.</p>
 <p>The plain-words account given for this step is that the query is converted into a vector with the same technique used for the archive, and only then can the two be compared in a fair way. That shared-space rule matters. When the same technique embeds both sides, similarity scores stay valid. When the techniques differ, the scores lose their meaning.</p>
 <div class="important-note">
@@ -226,6 +223,16 @@
   <p><strong>Why the two sides must share the model:</strong> the score above only means "same direction" when \(q\) and \(d\) were built by the same embedding map. A question vector from one model and an archive vector from another live in unrelated spaces, so their dot product is noise. Notation texts often write a generic similarity as \(s(q, d)\); here we keep \(\text{cos}(q, d)\) to match the lecture.</p>
 </div>
 <p>One more check keeps the math sound. When \(q\) and \(d\) share the same dimension \(n\), the dot product \(q^\top d\) is a single number, and each norm is a single positive number, so their ratio is a single number. That number is high when the vectors align and low when they do not. As a spot check, take \(q = [1, 0]\) and \(d = [1, 0]\): the dot product is \(1\), each length is \(1\), and the score is \(1\), the maximum, exactly as "identical direction" demands. Flip \(d\) to \([0, 1]\) and the dot product is \(0\), so the score is \(0\), exactly as "unrelated direction" demands. A score of \(1\) always marks perfect alignment and a score of \(0\) marks no overlap, so rankings read the same way on every question. A common spoken form such as "w trans x" maps to \(w^\top x\), with the transpose mark written as \(\top\).</p>
+
+<div class="key-concept">
+  <p><strong>Formal object of the generation stage:</strong> ranking only chooses the context; it does not write the answer. Let the retriever return \(R(q) = d_1 \cdots d_k\), the top-\(k\) passages from the collection \(D\). The generator conditions on those passages together with the question, so for an answer written as tokens \(x_1, \ldots, x_n\) its probability factorises one token at a time:</p>
+  <p>\[ p(x_1, \ldots, x_n) = \prod_{i=1}^{n} p\bigl(x_i \mid R(q),\ \text{Answer the following question...},\ q,\ x_{&lt;i}\bigr) \]</p>
+  <p>Here \(x_{&lt;i} = x_1 \cdots x_{i-1}\) is the answer prefix already written. This is the ordinary next-token chain rule with \(R(q)\) inserted as extra context; when no passages are retrieved, \(R(q)\) is empty and the expression collapses to a plain closed-book language model. It makes the earlier warning precise: the retrieved passages change the distribution of every token, not just the first.</p>
+  <p><strong>Two ways to spend the passages:</strong> the retrieved set can be treated as one latent document \(z\) for the whole answer, or as a different document per token. Writing \(p_\eta(z \mid x)\) for the retriever and \(p_\theta\) for the generator, the two formulations are:</p>
+  <p>\[ p_{\text{seq}}(y \mid x) \approx \sum_{z \in \text{top-}k} p_\eta(z \mid x)\, \prod_{i=1}^{N} p_\theta(y_i \mid x, z, y_{&lt;i}) \]</p>
+  <p>\[ p_{\text{tok}}(y \mid x) \approx \prod_{i=1}^{N} \sum_{z \in \text{top-}k} p_\eta(z \mid x)\, p_\theta(y_i \mid x, z, y_{&lt;i}) \]</p>
+  <p>The sequence form commits to one passage and marginalises once over the top-\(k\); the token form marginalises at every step, so different passages can supply different parts of the answer. The first is cheaper to decode, while the second can combine evidence from several documents, which matters for questions whose answer spans more than one chunk. Both behave identically when the answer is a single token.</p>
+</div>
 <figure class="visual-intuition">
   <svg viewBox="0 0 500 220" role="img" aria-label="Cosine similarity as the angle between a question vector and two archive vectors" xmlns="http://www.w3.org/2000/svg">
     <line x1="60" y1="190" x2="450" y2="190" stroke="#94a3b8" stroke-width="1.5" />
@@ -280,13 +287,6 @@
 <div class="warning-box">
   <p><strong>Pitfalls:</strong> (1) embedding the question with a different model than the archive silently breaks every score, because the two spaces no longer line up; (2) reading a high cosine as proof the passage answers the question, when it only proves similar wording; (3) reaching for Graph or Agentic designs on single-fact lookups, where the extra machinery adds cost without changing the answer.</p>
 </div>
-<h3 id="4.1.3" class="subsection-title">4.1.3 Student Questions and Answers</h3>
-<div class="important-note">
-  <p><strong>Q:</strong> What is RAG, why do we need it, and how do naive RAG and Graph RAG differ? <strong>A:</strong> RAG pulls facts from outside sources and feeds them to the model with the question, which fixes hallucination on fresh facts, blindness to proprietary files, and stale training knowledge. In naive RAG the archive is split, turned into vectors with an embedding model, and stored in a vector database. The question is embedded the same way, close vectors are fetched, and the question plus the fetched passages go to the model. Graph RAG instead builds a knowledge graph of entities and relations. Naive RAG stores each token span apart and cannot catch relations. Graph RAG stores the links, so it fits archives full of relations.</p>
-</div>
-<div class="important-note">
-  <p><strong>Q:</strong> Can you give a case where naive RAG fails and Graph RAG is needed? <strong>A:</strong> Take a medical question that links a drug, a disease, and an age group, and asks how well the drug works for that group. Plain vectors cannot hold that three-way link: each passage is scored alone, so no single score can express "this drug treats this disease for this age group." A graph can, because the drug, disease, and age-group nodes carry named edges, so Graph RAG answers it in a sound way. Any archive where relations carry the meaning points the same way.</p>
-</div>
 <div class="key-takeaway">
   <p><strong>Recap:</strong> RAG grounds a model in fetched passages so fresh, private, and cited facts reach the answer. Naive search ranks shared-space vectors by cosine; graphs add stored relations; agents add answer-time reasoning. <strong>Bridge:</strong> the next two sections stress-test the naive arm, first against exact codes it cannot match, then against images it cannot read.</p>
 </div>
@@ -298,6 +298,16 @@
   <p><strong>Hook:</strong> ask a dense-only system for course code "AIMLCZG565" and it may return a page about a different course whose description sounds similar. The letters must match exactly, and meaning-similarity is the wrong tool for that job.</p>
 </div>
 <p>An <em>inverted index</em> (a map from each word to the list of documents holding it, plus counts) makes this fast: the system looks up each question word, intersects the lists, and scores only the documents that share words with the question. Two classic scores sit on top of that index. <em>TF-IDF</em> (term frequency times inverse document frequency) weights a word by how often it appears in the passage divided down by how common it is across the whole archive, so a rare code counts far more than the word "the." <em>BM25</em> refines the same idea with two dampers: term frequency saturates so the tenth repeat adds less than the first, and long documents are penalized so length alone cannot win. Short notes on vectorless matching will be shared, and related courses on conversational systems also cover it. It is not part of the exam scope here, but it matters for hybrid designs.</p>
+
+<div class="example-box">
+  <p><strong>Formal BM25 score:</strong> the sparse arm described above is not an arbitrary rule; it is a weighted sum over the query terms. With \(N\) documents in the archive, \(df_t\) the number holding term \(t\), \(tf_{t,d}\) the count of \(t\) in document \(d\), \(|d|\) and \(|d_{avg}|\) the document and average document lengths, and parameters \(k\) and \(b\):</p>
+  <p>\[ \text{BM25}(q,d) = \sum_{t \in q} \log\!\left(\frac{N}{df_t}\right) \cdot \frac{tf_{t,d}\,(k+1)}{tf_{t,d} + k\left(1 - b + b\,\frac{|d|}{|d_{avg}|}\right)} \]</p>
+  <p>The first factor is inverse document frequency: a term in few documents weighs more, and a term in every document weighs zero. The second factor is a <em>saturating</em> term frequency divided by a soft length penalty \(B = (1-b) + b\,|d|/|d_{avg}|\). With \(b=0.75\), a document twice the average length has \(B = 0.25 + 1.5 = 1.75\), so its raw counts are discounted; with \(k=1.2\), extra repeats of the same term add less and less. The \((k+1)\) numerator is a common variant that rescales every term equally and therefore does not change the ranking. The log base only rescales all IDF weights by the same constant, so it leaves the order untouched.</p>
+  <p><strong>Worked calculation:</strong> take \(N=1000\) documents, \(|d_{avg}|=100\) tokens, and the two-term query "refund policy" with \(df_{\text{refund}}=20\) and \(df_{\text{policy}}=200\). Document A has \(|d|=200\) tokens with \(tf_{\text{refund}}=4, tf_{\text{policy}}=2\); document B has \(|d|=100\) tokens with the same two counts. Use \(k=1.2, b=0.75\) and base-10 logs as in the chapter's IDF term.</p>
+  <p>Step 1, IDF: \(\log_{10}(1000/20)=\log_{10}50 \approx 1.6990\) for "refund" and \(\log_{10}(1000/200)=\log_{10}5 \approx 0.6990\) for "policy". Step 2, document A's length factor: \(B_A = 0.25 + 0.75(200/100) = 1.75\), so \(k B_A = 2.1\). Its "refund" weight is \(4(2.2)/(4+2.1) = 8.8/6.1 \approx 1.4426\), contributing \(1.6990 \times 1.4426 \approx 2.451\); its "policy" weight is \(2(2.2)/(2+2.1) = 4.4/4.1 \approx 1.0732\), contributing \(0.6990 \times 1.0732 \approx 0.750\). So \(\text{BM25}(q,A) \approx \textbf{3.201}\).</p>
+  <p>Step 3, document B: \(B_B = 0.25 + 0.75(100/100) = 1.0\), so \(k B_B = 1.2\). "refund" gives \(8.8/5.2 \approx 1.6923 \times 1.6990 \approx 2.875\); "policy" gives \(4.4/3.2 = 1.375 \times 0.6990 \approx 0.961\). So \(\text{BM25}(q,B) \approx \textbf{3.836}\). <strong>The shorter document wins even though both carry identical term counts</strong>, which is the length normalization doing its job.</p>
+  <p><strong>Sense check:</strong> in document B, raising "refund" from \(tf=1\) to \(tf=4\) moves the term's weight from \(1.0\) to \(1.6923\), a factor of only about \(1.7\times\) for four times the occurrences. That flattening is saturation: unlike raw TF-IDF, no single repeated term can dominate the score without bound, which is why the sparse arm is stable on long policy files.</p>
+</div>
 <p>The strong point of vectorless search is exact match. A course code, a DNA string, a drug name, a disease name, or a stock ticker must match letter for letter. Vectors are built to find near neighbors in meaning, so they can drift past the exact string. A string index does not drift. Vectors drift past exact codes, so the sparse string arm carries exact match. It returns the passage that holds the exact code or name.</p>
 <div class="key-concept">
   <p><strong>When strings beat vectors:</strong> any question whose answer is a fixed token (code, clause number, ticker, DNA string) belongs to the sparse arm. Embeddings smooth over surface form, which is a strength for paraphrase and a failure mode for identifiers.</p>
@@ -332,10 +342,6 @@
 </div>
 <div class="warning-box">
   <p><strong>Pitfalls:</strong> (1) treating BM25 scores and cosine scores as directly comparable numbers, when only ranks survive fusion; (2) indexing raw text with no cleaning, so spelling variants split the same term into strangers; (3) dropping the sparse arm because "vectors are modern," then failing every code lookup.</p>
-</div>
-<h3 id="4.2.1" class="subsection-title">4.2.1 Student Questions and Answers</h3>
-<div class="important-note">
-  <p><strong>Q:</strong> A vectorless design was mentioned but not covered in detail. What is it, and where do notes on it live? <strong>A:</strong> Vectorless RAG stores text as plain words in the index instead of turning it into vectors, much like BM25 or TF-IDF matching over an inverted index. Short notes on it will be shared, and related courses on conversational systems also cover it. It is not part of the exam scope here, but it matters for hybrid designs, because the sparse string arm carries the exact-match half of every hybrid pipeline.</p>
 </div>
 <div class="key-takeaway">
   <p><strong>Recap:</strong> keep words as words when letters must match; the inverted index plus BM25 or TF-IDF returns the passage holding the exact code. <strong>Bridge:</strong> the next section flips the problem: what happens when the archive is not words at all but pictures and tables.</p>
@@ -426,7 +432,6 @@
 <div class="key-concept">
   <p><strong>The working rule:</strong> start with naive RAG. Move to Graph RAG only when relations are needed. Move to Agentic RAG only when neither gives good results. Simple factual lookups never need a reasoning agent, and paying for one there is waste.</p>
 </div>
-<p>The cost ladder of naive, graph, and agentic designs is the kind of comparison that suits short written answers. Expect to justify a pick in one paragraph: name the question shape, name the design, and name the price paid.</p>
 <div class="warning-box">
   <p><strong>Scope:</strong> the ladder assumes the answer lives in the archive. It breaks when the archive holds no relevant passage (then the fix is coverage, not a heavier design) and when the question needs an exact code (then a sparse arm matters more than graph or agent machinery).</p>
 </div>
@@ -448,9 +453,6 @@
   </svg>
   <figcaption><strong>Figure 4.4:</strong> Capability rises from left to right, but so does price: indexing price for graphs, answer-time price for agents.</figcaption>
 </figure>
-<div class="key-takeaway">
-  <p><strong>Recap:</strong> one fact points to naive search, linked facts point to a graph, and an unclear path points to an agent, with cost rising at each step. <strong>Bridge:</strong> the next section proves the ladder on a shared six-document toy archive where every design faces the same three questions. <strong>Exam note:</strong> no direct exam item was tied to this section, but the cost ladder of naive, graph, and agentic designs is the kind of comparison that suits short written answers.</p>
-</div>
 <p>A customer help desk with fixed refund and ordering questions runs well on naive RAG. A finance research desk that weighs risk, horizon, and budget across many stocks needs planning and tools, which points to Agentic RAG.</p>
 
 <h2 id="4.5" class="section-title">4.5 Comparative Demo Over a Six-Document Toy Archive</h2>
@@ -472,7 +474,7 @@
 <div class="example-box">
   <p><strong>Worked lookup:</strong> six one-sentence pieces each carry one sentence vector from the shared model, and the question "Who supervises Ravi Kumar?" carries one question vector from that same model. Step 1, score every piece with the per-document cosine above. Step 2, sort the six scores from high to low. Step 3, read the top piece: it names the supervisor, so the answer is that name. <strong>All three designs return the right answer here.</strong> Sense check: a one-entity question needs no hop and no plan, so the cheapest reader wins the cost comparison by default.</p>
 </div>
-<p>All three designs answer well, and that is the point. For a single lookup, plain naive RAG is the right pick. It is cheapest and fastest. For a single lookup, plain naive RAG is the right pick because it is cheapest and fastest. Graph RAG pays for entity finding and graph building it did not need. Agentic RAG pays for reasoning calls it did not need. Reaching for an agentic loop on such simple facts is overkill: the agent adds reasoning calls without changing the answer, so plain naive RAG is the cheapest and fastest pick here.</p>
+<p>All three designs answer well, and that is the point. For a single lookup, plain naive RAG is the right pick. It is cheapest and fastest. Graph RAG pays for entity finding and graph building it did not need. Agentic RAG pays for reasoning calls it did not need. Reaching for an agentic loop on such simple facts is overkill: the agent adds reasoning calls without changing the answer, so plain naive RAG is the cheapest and fastest pick here.</p>
 <h3 id="4.5.3" class="subsection-title">4.5.3 Question Two: A Summary Across the Archive</h3>
 <p>The second question is "What are the main themes across these documents?" This is a summary task over all six pieces, not a lookup of one.</p>
 <p>Graph RAG groups pieces that share meaning into communities. In the demo it returns two theme groups, academic research and clinical use, by following entity and relation overlap. Naive RAG has no group step. Its six vectors were built apart from each other, so it cannot see shared themes. It may return one theme or a partial answer. Agentic RAG can still answer through planning, reasoning, and joining steps, but that loop needs several model calls where the graph needs fewer.</p>
@@ -480,7 +482,7 @@
   <p><strong>Worked summary:</strong> the six vectors are scored on their own in naive search, so each fetch returns one neighborhood, and the generator sees one theme. The graph instead walks entity and relation overlap across all six pieces and finds two dense clusters: three pieces sharing research terms and three sharing clinical terms. <strong>The graph returns two theme groups, academic research and clinical use.</strong> Sense check: themes are relations between documents, so only the design that stores relations can report them directly.</p>
 </div>
 <h3 id="4.5.4" class="subsection-title">4.5.4 Question Three: A Multi-Hop Chain</h3>
-<p>The third question is "In which city is the hospital that uses the model built by doctors?" The answer needs a chain: doctors build a model, a hospital uses that model, and that hospital sits in a city. No single piece holds the full chain. The chain runs doctors build a model, a hospital uses that model, and that hospital sits in a city.</p>
+<p>The third question is "In which city is the hospital that uses the model built by doctors?" The answer needs a chain: doctors build a model, a hospital uses that model, and that hospital sits in a city. No single piece holds the full chain.</p>
 <p>Graph RAG follows its stored path from doctors to model to hospital to city and reads off the end. Agentic RAG keeps running notes in memory, plans the hops, fetches each link, reflects, and joins them into the final city. Both reach the answer. Naive RAG, with no links stored, cannot cross the hops and falls short. Between the two winners, the graph path is usually the more direct one, while the agent loop costs more.</p>
 <div class="example-box">
   <p><strong>Worked chain:</strong> hop 1 finds the piece where doctors build the model and names the model. Hop 2 searches for that model name and finds the piece where a hospital uses it. Hop 3 searches for that hospital and finds the piece naming its city. <strong>The final answer is the city at the end of the stored path.</strong> Sense check: each hop names the search key for the next hop, so a missing link breaks the chain at a visible point.</p>
@@ -565,10 +567,6 @@
 </div>
 <div class="warning-box">
   <p><strong>Pitfalls:</strong> (1) promising zero misses, when each arm keeps a blind spot and the pair only shrinks the gap; (2) fusing raw scores from incompatible scales instead of ranks; (3) running the arms in sequence and paying double latency, when parallel arms plus caching cost far less.</p>
-</div>
-<h3 id="4.6.1" class="subsection-title">4.6.1 Student Questions and Answers</h3>
-<div class="important-note">
-  <p><strong>Q:</strong> On a petabyte-scale archive we tried plain RAG and Graph RAG and still lost corner cases. Only dense plus inverted-index keyword search gave clean results. Is there anything inside RAG that reaches zero misses? <strong>A:</strong> The pair you built is the standard answer. Near-meaning passages arrive via dense search, and letter-exact hits arrive via the sparse keyword side. Fuse them, often with reciprocal rank fusion, and rank with a rule such as BM25 on the sparse side. Zero misses cannot be promised in general because each arm has a blind spot, but the hybrid covers both. Expect added latency from the two arms, and trim it with caching, precompute, parallel runs, and quantized vectors.</p>
 </div>
 <div class="key-takeaway">
   <p><strong>Recap:</strong> run meaning search and string search together and fuse by rank; the pair catches what either arm alone drops, at the price of latency. <strong>Bridge:</strong> the next section names the concrete tools teams use to build each arm.</p>
@@ -722,7 +720,7 @@
 <h3 id="4.8.2" class="subsection-title">4.8.2 Answer Relevancy at the Generation Stage</h3>
 <p><em>Answer relevancy</em> asks whether the final answer fits the user question. It never looks at the fetched chunks. The plain-words account is that the final claims are set next to the question and each claim is judged for fit. In symbols:</p>
 <p>\[ \text{Answer Relevancy} = \frac{\text{relevant claims}}{\text{total claims}} \]</p>
-<p>Here total claims is again the count of checkable statements in the answer, and relevant claims are those that speak to the question asked. A worked case used an earbud question with four answer claims about phone fit, spatial audio, laptop use, and battery life. Two of the four spoke to the asked question, so the score was two out of four. Labels for which claims count as relevant may come from people or from model-based claim splitting, but some outside judgment is needed.</p>
+<p>Here total claims is again the count of checkable statements in the answer, and relevant claims are those that speak to the question asked. Labels for which claims count as relevant may come from people or from model-based claim splitting, but some outside judgment is needed.</p>
 <div class="example-box">
   <p><strong>Worked relevancy (two of four claims on point):</strong> the earbud question asks about phone fit, and the answer gives four claims: phone fit (relevant), spatial audio (off point), laptop use (off point), battery life (relevant). Step 1, label each claim against the question: relevant \(= 2\). Step 2, count total claims \(= 4\). Step 3, divide: \(\text{Answer Relevancy} = 2/4 = \textbf{0.5}\). <strong>Half the answer speaks to the question asked.</strong> Sense check: padding an answer with true but off-point facts leaves faithfulness high while relevancy falls, which is exactly why the two scores stay separate.</p>
 </div>
@@ -730,7 +728,7 @@
 <p><em>Context recall</em> and <em>context precision</em> judge the fetched chunks, not the final answer. The plain-words account is that the fetched set is set next to the question needs and each need is checked. In symbols:</p>
 <p>\[ \text{Context Recall} = \frac{\text{retrieved relevant claims}}{\text{total relevant claims needed}} \]</p>
 <p>\[ \text{Context Precision} = \frac{\text{relevant retrieved claims}}{\text{total retrieved claims}} \]</p>
-<p>Here total relevant claims needed is what the question truly requires, retrieved relevant claims are those needs the fetched chunks meet, and total retrieved claims is what the fetch returned. A worked earbud case asked three things: phone fit, features, and battery life for a specific phone model. The fetched chunks met two of the three needs, so recall was two out of three. The chunks also held extra lines about other devices that did not fit the question, which drags precision down. Hard counts or soft model scores can be used. One soft path embeds each claim and the question, takes cosine similarity, and calls a chunk relevant when its score tops a cutoff such as 0.5. Either way the meaning holds: recall asks what share of needs were met, precision asks what share of fetched material was useful.</p>
+<p>Here total relevant claims needed is what the question truly requires, retrieved relevant claims are those needs the fetched chunks meet, and total retrieved claims is what the fetch returned. Hard counts or soft model scores can be used. One soft path embeds each claim and the question, takes cosine similarity, and calls a chunk relevant when its score tops a cutoff such as 0.5. Either way the meaning holds: recall asks what share of needs were met, precision asks what share of fetched material was useful.</p>
 <div class="example-box">
   <p><strong>Worked retrieval pair (earbud case):</strong> the question needs three facts: phone fit, features, and battery life for one phone model. The fetch returns four chunks: two meet the needs (phone fit, battery life), one misses (features absent), and two extra chunks describe other devices. Step 1, recall: retrieved relevant \(= 2\), needed \(= 3\), so \(\text{Context Recall} = 2/3 \approx \textbf{0.67}\). Step 2, precision: relevant retrieved \(= 2\), total retrieved \(= 4\), so \(\text{Context Precision} = 2/4 = \textbf{0.5}\). <strong>Two thirds of the needs arrived, but only half the fetch was useful.</strong> Sense check: adding more off-point chunks leaves recall flat while precision falls, which mirrors the classic precision-recall trade.</p>
 </div>
@@ -764,9 +762,6 @@
   <p><strong>Q:</strong> Without a ground truth from the client, only source files, how can answer checking be automated? <strong>A:</strong> Use faithfulness against the fetched chunks. The RAG system already stores chunk vectors: the question becomes a vector, near chunks are fetched by similarity, and the question plus those chunks goes to the model. Split the answer into claims and check each claim against the fetched passages. A claim inside the passages is grounded. A claim outside them is unsupported, which counts as hallucination for this score. No outside ground truth is needed because the fetched chunks serve as the reference. This check is not foolproof, but it catches models that ignore their fetched material.</p>
 </div>
 <div class="important-note">
-  <p><strong>Q:</strong> How does that check use the RAG pieces already built? <strong>A:</strong> The RAG system already stores chunk vectors. The question becomes a vector, near chunks are fetched by similarity, and the question plus those chunks goes to the model. The model output is then set against those same chunks claim by claim. High faithfulness means the output came from the given material. Low faithfulness means the model wrote on its own.</p>
-</div>
-<div class="important-note">
   <p><strong>Q:</strong> When the fetched chunks look unrelated and the answer still looks right, how is the score read? <strong>A:</strong> The answer may be true in the world yet score zero faithfulness, because the score only asks whether the fetched chunks back it. A correct real-world fact with no backing in the fetched chunks scores zero here, and a zero points at the fetch or the embedding, not the fact. Re-chunk, re-clean, or re-embed so the right passages arrive.</p>
 </div>
 <div class="important-note">
@@ -775,9 +770,6 @@
 <div class="important-note">
   <p><strong>Q:</strong> Which measures sit at which stage? <strong>A:</strong> Relevancy and faithfulness are generation-stage measures because both judge the final answer. Recall and precision are retrieval-stage measures because both judge the fetched set. Answer correctness spans both, joining the relevancy check with the grounding check.</p>
 </div>
-<div class="key-takeaway">
-  <p><strong>Recap:</strong> score the fetch with recall and precision, score the writing with faithfulness and relevancy, and use correctness as the final acceptance read. <strong>Bridge:</strong> scores mean little on dirty data, so the next section hardens the pipeline that feeds them. <strong>Exam note:</strong> expect numerical items on evaluation measures in the closed-book mid-semester test, covering both the RAGAS set and the question answering set with worked cases.</p>
-</div>
 
 <h2 id="4.9" class="section-title">4.9 Production Readiness for RAG</h2>
 <p>A demo can run on rough files. A live system cannot. Data quality sets the ceiling, so files need cleaning before indexing: noise removal, duplicate removal, spelling fixes, and grammar fixes. Duplicate passages waste fetch slots when the same chunk returns twice. Stale files mislead the model, so freshness checks belong in the pipeline.</p>
@@ -785,6 +777,42 @@
   <p><strong>Hook:</strong> a demo forgives a duplicate paragraph; a live help desk does not, because the same chunk twice means one useful passage never made the shortlist.</p>
 </div>
 <p>Latency needs active control because every fetch, rank, and model call takes time. Repeat questions suit cached answers that skip the pipeline. Common questions suit precompute. Parallel arms shorten hybrid fetching. Smaller quantized vectors move faster. None of these remove latency fully, but together they keep answers timely. Think of the cache as the desk drawer: frequently-used tools kept on the desk beat a trip to the store every time.</p>
+
+<div class="important-note">
+  <p><strong>System detail — why the vector store is approximate:</strong> the dense arm ranks by dot product against every archive vector. Exact top-\(k\) search scans all \(N\) vectors of width \(d\), costing \(O(N d)\) per question, which becomes prohibitive as the store grows. Production stores therefore build an index and trade a controlled amount of recall for speed and memory. The trade-off is measured against the brute-force result, which serves as the gold standard: 1-recall@1 asks how often the true nearest neighbour is returned first.</p>
+  <table>
+    <thead>
+      <tr>
+        <th>Search</th>
+        <th>Mechanism</th>
+        <th>Recall</th>
+        <th>Cost and memory</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>Exact brute force</td>
+        <td>Score every stored vector, then pick the top \(k\)</td>
+        <td>100% by definition</td>
+        <td>\(O(N d)\); full vectors in RAM — fine for toy archives, impractical at scale</td>
+      </tr>
+      <tr>
+        <td>ANN, inverted file + product quantization (Faiss IVFADC)</td>
+        <td>Coarse quantizer clusters vectors; probe \(\tau\) clusters and compare compressed codes</td>
+        <td>Tunable via \(\tau\), typically well below 100%</td>
+        <td>Sub-linear scan; a few bytes per vector, so billions fit on one server</td>
+      </tr>
+      <tr>
+        <td>ANN, graph walk (HNSW)</td>
+        <td>Navigate a hierarchical small-world graph from an entry point to neighbours</td>
+        <td>High and tunable at query time</td>
+        <td>Fast but keeps the full graph in memory</td>
+      </tr>
+    </tbody>
+  </table>
+  <p><strong>Worked operating point:</strong> on Deep1B, one billion image vectors compressed to 20-byte codes, Faiss reaches about 40% 1-recall@1 in under 2 ms per query on a single core, roughly 500 queries per second. Pushing recall higher costs more time or more bytes per vector, so the recall target is chosen from the latency budget, not from a wish for perfect neighbours.</p>
+  <p><strong>Sense check:</strong> this is the mechanism behind the earlier advice to budget latency with quantized vectors. For a small help-desk archive the brute-force reference is cheap and exact, so ANN adds risk for no gain; for a million-passage legal or medical store, an approximate neighbour returned quickly beats an exact one returned too late, and the RAG generation step is robust to a swapped second- or third-ranked passage.</p>
+</div>
 <p>Access control is a must. Not every user may see every store. Finance archives in particular need per-group stores so each user set reaches only its own vectors. Medical archives need <em>PII scrubbing</em>, the removal of names, addresses, mail IDs, photos, and other personal markers before vectors are built. Logs and monitors need the same care. Freshness, access rules, and scrubbing belong in design from day one, not as late patches.</p>
 <div class="key-concept">
   <p><strong>The readiness checklist:</strong> clean and dedupe before indexing, stamp freshness and re-crawl on a schedule, gate every store by user group, scrub personal markers before embedding, and budget latency with caching, precompute, parallel arms, and quantized vectors.</p>
@@ -840,13 +868,6 @@
 <div class="warning-box">
   <p><strong>Pitfalls:</strong> (1) optimizing a school-grade formula and declaring dense prose "readable" while merchants still stall; (2) mistaking linked prose for fast prose, when coherence and speed diverge; (3) shipping a judge-model number with no cause attached, so no edit can move it on purpose.</p>
 </div>
-<h3 id="4.10.1" class="subsection-title">4.10.1 Student Questions and Answers</h3>
-<div class="important-note">
-  <p><strong>Q:</strong> How do we score the readability of bot answers so busy readers grasp them fast? <strong>A:</strong> Fix the reader profile first, for example a college graduate with some science background. Then gather ground truth: timed reads, ease ratings, or action delays after reading. Score candidate answers against that truth. Surface formulas and closeness scores alone do not capture read speed on dense prose, and a bare model-given number gives no cause to act on.</p>
-</div>
-<div class="important-note">
-  <p><strong>Q:</strong> Why not let a judge model output a readability score? <strong>A:</strong> A bare number hides its cause. When a nine turns into an eight with no stated change in the words, the team cannot fix anything. Judge-model scores may suit rough sorting, but they fail where teams must diagnose and repair, because no edit maps to the drop.</p>
-</div>
 <div class="key-takeaway">
   <p><strong>Recap:</strong> no settled measure exists; fix the reader, collect timed and rated ground truth, and score against it. <strong>Bridge:</strong> the closing sections return to firmer ground: when a single answer suffices and when a conversation is required.</p>
 </div>
@@ -857,7 +878,7 @@
   <p><strong>Hook:</strong> "store hours?" needs one fact; booking a flight needs ten turns of shifting dates, seats, and prices. One system answers, the other negotiates.</p>
 </div>
 <p>Cost and delay decide between them. A plain question answering path skips dialogue memory, planning loops, and tool chains. A conversational path pays for all three. So fixed, repeat questions belong to question answering: refund timing, refund steps, late-order help, store hours, travel rules, leave rules, medical safety lines, account-opening file lists, quarterly sales by region, or voice orders such as playing a song or setting an alarm. When answers are fixed and controlled, question answering is enough. A small model at the door can even sort inputs: greetings and cached repeats get instant replies with no RAG call at all, while fresh questions flow onward.</p>
-<p>Flight booking shows the other side. Stops, dates, seats, and prices shift turn by turn with availability, so each answer depends on the last. A single-turn answer cannot hold that state. A single-turn answer cannot hold shifting availability across turns. Conversational handling with memory and tools fits there.</p>
+<p>Flight booking shows the other side. Stops, dates, seats, and prices shift turn by turn with availability, so each answer depends on the last. A single-turn answer cannot hold that state. Conversational handling with memory and tools fits there.</p>
 <div class="key-concept">
   <p><strong>The decision rule:</strong> fixed, repeat, single-need questions belong to question answering with caching and no dialogue state. Shifting, multi-turn tasks with dependencies between turns belong to conversational handling with memory and tools.</p>
 </div>
@@ -885,10 +906,6 @@
   </svg>
   <figcaption><strong>Figure 4.11:</strong> Stateless single answers suit fixed needs; stateful turns suit tasks where each answer depends on the last.</figcaption>
 </figure>
-<h3 id="4.11.1" class="subsection-title">4.11.1 Student Questions and Answers</h3>
-<div class="important-note">
-  <p><strong>Q:</strong> Is conversational AI the same as question answering? <strong>A:</strong> They overlap but differ in shape. Question answering gives one grounded answer to one question. Conversational AI holds turns, keeps memory of the exchange, and may ask the user for more inputs. Many single needs, such as fixed help-desk questions, need no multi-turn memory, so a conversational stack there is overkill.</p>
-</div>
 <div class="key-takeaway">
   <p><strong>Recap:</strong> answer once for fixed needs, converse with memory for unfolding tasks. <strong>Bridge:</strong> the final section narrows question answering to its most common industrial form: short fixed factoid answers.</p>
 </div>
@@ -907,9 +924,6 @@
 </div>
 <div class="warning-box">
   <p><strong>Pitfalls:</strong> (1) generating a long free-form answer where one cited sentence would do; (2) skipping the cache on questions asked hundreds of times a day; (3) grading factoid answers with style scores instead of exact or near-exact match against the stored fact.</p>
-</div>
-<div class="key-takeaway">
-  <p><strong>Recap:</strong> factoid loads want string matching first, dense or hybrid help only where wording shifts. <strong>Bridge:</strong> the appendix below maps every design in this lecture to the industry desk where it earns its keep. <strong>Exam note:</strong> expect numerical items on evaluation measures in the closed-book mid-semester test, covering both the RAGAS set and the question answering set with worked cases. The next session carries question answering types, hybrid builds, and more scored cases.</p>
 </div>
 
 <h2 id="key-industry-applications" class="section-title">Key Industry Applications</h2>

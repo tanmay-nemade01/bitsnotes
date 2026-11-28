@@ -298,6 +298,14 @@
 <div class="example-box">
   <p><strong>Worked example — tiny 3-word vocabulary.</strong> Suppose the vocabulary is {cat, sat, mat} and the head produces logits \(z = [2.0, 1.0, 0.0]\). Exponentiate: \([\exp(2.0), \exp(1.0), \exp(0.0)] \approx [7.39, 2.72, 1.00]\). Sum: \(7.39 + 2.72 + 1.00 = 11.11\). Divide: \(p \approx [0.665, 0.245, 0.090]\). <strong>Greedy pick: cat with probability 0.665. Sense-check: probabilities sum to about 1, and the largest logit won.</strong></p>
 </div>
+<div class="important-note">
+  <p><strong>System detail — softmax must be evaluated in its shifted (safe) form.</strong> The definition above is mathematically exact but numerically unsafe as written: exponentiation in 32-bit floating point overflows around \(\exp(89)\), and logits from a large model routinely reach that scale. The fix follows from shift invariance — adding the same constant \(c\) to every logit multiplies numerator and denominator by \(\exp(c)\), which cancels exactly:</p>
+  \[
+  \frac{\exp(z_i + c)}{\sum_{j=1}^{V}\exp(z_j + c)} = \frac{\exp(c)\exp(z_i)}{\exp(c)\sum_{j=1}^{V}\exp(z_j)} = \frac{\exp(z_i)}{\sum_{j=1}^{V}\exp(z_j)}
+  \]
+  <p>Taking \(c = -m\) with \(m = \max_j z_j\) gives the implementation form \(p_i = \exp(z_i - m) / \sum_j \exp(z_j - m)\). The largest exponent is now exactly \(\exp(0) = 1\), so nothing overflows; logits far below \(m\) underflow harmlessly to zero because they contribute almost nothing to the denominator. Shift invariance is why this changes no probability and leaves greedy decoding untouched.</p>
+  <p><strong>Worked numerics.</strong> Let \(z = [1000, 995, 990]\). Naive evaluation requires \(\exp(1000)\), which is infinite in float32, so the denominator is infinite and every \(p_i\) becomes undefined. Shift by \(m = 1000\): \(z - m = [0, -5, -10]\), so \([\exp(0), \exp(-5), \exp(-10)] \approx [1, 0.00674, 0.0000454]\). The normalizer is \(1.00679\), giving \(p \approx [0.9933, 0.0067, 0.000045]\). <strong>Answer: the same distribution the definition prescribes, computed without overflow — greedy pick is the first token.</strong></p>
+</div>
 <figure class="visual-intuition">
   <svg viewBox="0 0 500 160" role="img" aria-label="LM head pipeline" xmlns="http://www.w3.org/2000/svg">
     <defs>
@@ -344,9 +352,6 @@
 </div>
 <div class="example-box">
   <p><strong>Worked dimension calculation.</strong> Suppose \(D = 4\) for illustration and the vocabulary holds \(V = 7\) tokens. The last hidden state is \(1 \times 4\). A \(4 \times 7\) unembedding matrix maps it to \(1 \times 7\) logits, one score per token, and the softmax turns those 7 scores into 7 probabilities that sum to 1. Concretely, if \(h = [1, 0, 2, -1]\) and the first column of \(W_{out}\) is \([1, 0, 0, 1]\), the first logit is \(1 \times 1 + 0 + 0 + (-1) \times 1 = 0\). Now scale up: with a sequence of \(N\) tokens processed together, every position is projected at once, so the output is \(N \times V\) — one distribution per position. That \(N \times V\) form is what parallel training uses; the \(1 \times V\) form is what single-step inference uses. <strong>Answer: \(1 \times 4\) times \(4 \times 7\) gives \(1 \times 7\).</strong></p>
-</div>
-<div class="key-takeaway">
-  <p><strong>Exam note:</strong> Expect numerical questions on these matrix sizes, since the dimension walk-through is exactly the kind of calculation that gets asked. Remember the pair: inference uses \(1 \times V\), parallel training uses \(N \times V\).</p>
 </div>
 <div class="warning-box">
   <p><strong>Scope:</strong> This \(D\)-to-\(V\) direction is an up-projection — the output is far wider than the input because the vocabulary is huge. A \(V \times D\) matrix here would be a shape error: \((1 \times D)(V \times D)\) does not multiply. If the inner dimensions disagree, the projection is backwards.</p>
@@ -477,6 +482,23 @@
   </tbody>
 </table>
 <p>When to pick which: use causal for generation, masked for understanding and filling gaps, span for sequence-to-sequence repair. This course lives in the causal column.</p>
+<div class="key-concept">
+  <p><strong>Textbook detail — how masked LM actually chooses its blanks.</strong> "Mask random words anywhere" is only the sketch. The BERT-style recipe first selects \(15\%\) of input token positions at random; for each chosen position \(i\), the original token \(x_i\) is manipulated in one of three ways, and the model must still recover \(x_i\):</p>
+  <table>
+    <thead>
+      <tr><th>Probability</th><th>Manipulation of \(x_i\)</th><th>Why</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>80%</td><td>Replace with <code>[MASK]</code></td><td>Teach prediction from bidirectional context</td></tr>
+      <tr><td>10%</td><td>Replace with a random vocabulary token</td><td>Keep the model correct on genuinely observed tokens</td></tr>
+      <tr><td>10%</td><td>Leave unchanged</td><td>Bias the representation toward the real word</td></tr>
+    </tbody>
+  </table>
+  <p>Why not insert <code>[MASK]</code> at every selected position? That token never appears at fine-tuning or inference time, so a pure-mask model would learn to predict only when it sees a mask. The 80/10/10 split also forces the encoder to maintain a contextual representation of <em>every</em> input position, since it cannot know which positions will be scored.</p>
+  <p><strong>Formal objective.</strong> Let \(M\) be the set of manipulated positions and \(h_i^{L}\) the final-layer hidden state at position \(i\). Gradients flow only through those positions:</p>
+  <p>\[L_{\mathrm{MLM}} = -\frac{1}{|M|}\sum_{i \in M} \log P(x_i \mid h_i^{L})\]</p>
+  <p><strong>Worked count.</strong> In a 20-token sequence, \(0.15 \times 20 = 3\) positions are chosen: in expectation 2.4 become <code>[MASK]</code>, 0.3 get a random token, and 0.3 stay unchanged — so only \(0.10 \times 0.15 = 1.5\%\) of all tokens are randomly replaced. <strong>Answer: 3 loss terms per sequence here versus all 20 under causal teacher forcing — roughly 6.7× fewer learning signals per sequence, which is why masked pre-training needs more steps to converge.</strong></p>
+</div>
 <div class="warning-box">
   <p><strong>Scope:</strong> All three are language modeling because all three predict words — the difference is only where the blanks may fall and which direction the model may look. Causal models see only the past; masked models see both sides.</p>
 </div>
@@ -510,6 +532,13 @@
 </div>
 <div class="example-box">
   <p><strong>Trace — "So long and thanks for".</strong> Take the sentence "So long and thanks for" processed by a decoder-only model with a causal objective. At the position holding "So", the model outputs a distribution; the ground truth for that position is "long". At the position holding "long", the ground truth is "and", and so on down the line. Suppose the four true-next probabilities are \(0.5, 0.25, 0.8, 0.4\). The loss is \(-\frac{1}{4}(\log 0.5 + \log 0.25 + \log 0.8 + \log 0.4) \approx 0.86\). Because teacher forcing supplies every true input up front, all these \(\hat{y}\) distributions compute in parallel, one cross-entropy term is evaluated per position against its known ground truth, and the terms are averaged into a single loss for the gradient step. <strong>Answer: \(L \approx 0.86\). Sense-check: probabilities below 1 give positive loss, and the weakest link (0.25) dominates.</strong></p>
+</div>
+<div class="important-note">
+  <p><strong>System detail — the loss is fused; softmax is not applied explicitly.</strong> The derivation above routes logits through a softmax and then takes \(-\log p\), but production trainers pass the raw logits straight into one fused cross-entropy routine. PyTorch's contract is explicit: <code>torch.nn.functional.cross_entropy</code> takes "predicted unnormalized logits" as input and performs log-softmax plus negative log-likelihood internally. Supplying probabilities that were already softmaxed silently computes a different, incorrect loss.</p>
+  <p><strong>Shape trace.</strong> A batch of \(B\) sequences of length \(T\) yields logits of shape \((B, T, V)\) and integer target token IDs of shape \((B, T)\). Flattening the batch and time axes gives:</p>
+  <p>\[(B, T, V) \rightarrow (BT, V), \qquad (B, T) \rightarrow (BT,)\]</p>
+  <p>With input \((N, C)\) and targets \((N)\), where \(N = BT\) and \(C = V\), the documented case applies: each target is a class index in \([0, V)\), and the default <code>reduction='mean'</code> divides the summed per-token negative log-likelihood by \(BT\) — exactly the average loss derived above, extended over the batch.</p>
+  <p><strong>Worked shape.</strong> For \(B = 2\), \(T = 3\), \(V = 50{,}257\): logits \(2 \times 3 \times 50257\) flatten to \(6 \times 50257\), targets \(2 \times 3\) flatten to \(6\), and the returned scalar averages 6 terms. <strong>Answer: six cross-entropy terms per optimizer step, one per (sequence, position) pair.</strong></p>
 </div>
 <div class="warning-box">
   <p><strong>When to use vs. alternatives.</strong> Teacher forcing is the training-time choice whenever true sequences are available — always in pre-training. At inference there is no answer key, so the model must feed its own outputs. That gap (training on truth, testing on guesses) is a known skew, but the parallel speedup wins by orders of magnitude.</p>
@@ -580,9 +609,6 @@
 </div>
 <div class="warning-box">
   <p><strong>Pitfalls:</strong> Do not mistake post-training for a new objective: instruction tuning and preference alignment reshape behavior, yet the pre-training stages underneath all optimize next-token prediction. Skipping evaluation before saving weights is the operational twin of that error.</p>
-</div>
-<div class="key-takeaway">
-  <p><strong>Exam note:</strong> The staged nature of modern pre-training versus the classical single-stage picture is exactly the kind of contrast worth being able to draw. One loop, many stages, one pre-training objective throughout.</p>
 </div>
 <div class="key-takeaway">
   <p><strong>Recap:</strong> Pre-process, pre-train in stages, post-train to align, then evaluate — with optimization across all of it. The fuel for every stage is data that labels itself, which is the next topic.</p>
@@ -858,9 +884,6 @@
 </div>
 <div class="warning-box">
   <p><strong>Pitfalls:</strong> Synthetic data compounds errors if unchecked — generated problems need the same quality filtering as web text. And stage order is a choice, not a law: Qwen reasons before stretching context, Llama stretches before annealing.</p>
-</div>
-<div class="key-takeaway">
-  <p><strong>Exam note:</strong> These case studies are background color for understanding staged modern pre-training, not memorization material — questions come from class material and discussions, and sample questions will show the pattern.</p>
 </div>
 <div class="key-takeaway">
   <p><strong>Recap:</strong> General multilingual base, reasoning enrichment, then context stretch — 36 trillion tokens with synthetic and PDF-mined ingredients. Two builds, one staged moral: general first, specialized later, quality always.</p>
