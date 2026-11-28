@@ -20,14 +20,15 @@ Reads: SKILL_agent1_       Reads: SKILL_agent2_        Reads: SKILL_agent3_
 Input: raw .txt             Input: split dense draft     Input: split enriched draft
        transcript                  (markdown sections)          (markdown + annotations)
 
-Does: exhaustive extraction,    Does: manifest closure,     Does: section-by-section
-      PII stripping,               lecture-flow preservation,   HTML conversion,
-      teaching-moment manifest,    math reconciliation,         SEO metadata,
-      source anchors               selective teaching spine,    prerequisite HTML,
-                                   SVG visual intuition,        HTML/SEO lint gate
-                                   smart readability checks,
-                                   topic mapping YAML update
-                                   (processed per-section)
+Does: exhaustive extraction,    Does: manifest closure,          Does: section-by-section
+      PII & logistics stripping,     lecture-flow preservation,   HTML conversion,
+      teaching-moment manifest,      cross-lecture collision      SEO metadata,
+      source anchors                 pre-filter, proactive        prerequisite HTML,
+                                     official-source fact-check,  HTML/SEO/dedup/logistics
+                                     selective callouts &         lint gate
+                                     SVG/Mermaid visuals,
+                                     topic mapping YAML update
+                                     (processed per-section)
 
 Output: dense draft         Output: enriched sections    Output: <LecturePrefix>_notes.html
         + manifest          (markdown + :::annotations)

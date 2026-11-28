@@ -231,6 +231,28 @@ def convert_table(lines: list[str], indent: str) -> list[str]:
     return out
 
 
+def _collect_list_items(lines: list[str], start_index: int, marker_re: re.Pattern) -> tuple[list[str], int]:
+    """Collect list items, keeping loose lists (separated by blank lines) in one list."""
+    items = []
+    i = start_index
+    n = len(lines)
+    while i < n:
+        stripped = lines[i].strip()
+        if marker_re.match(stripped):
+            items.append(marker_re.sub("", stripped, count=1))
+            i += 1
+            continue
+        if not stripped:
+            lookahead = i + 1
+            while lookahead < n and not lines[lookahead].strip():
+                lookahead += 1
+            if lookahead < n and marker_re.match(lines[lookahead].strip()):
+                i = lookahead
+                continue
+        break
+    return items, i
+
+
 def convert_markdown_to_html(md_text: str, drop_leading_h1: bool = False) -> str:
     """Convert markdown section text into pretty-printed HTML.
 
@@ -249,6 +271,7 @@ def convert_markdown_to_html(md_text: str, drop_leading_h1: bool = False) -> str
             lines = lines[cursor + 1:]
     html_lines = []
     indent = ""
+    callout_stack = []
     i = 0
     n = len(lines)
 
@@ -264,6 +287,7 @@ def convert_markdown_to_html(md_text: str, drop_leading_h1: bool = False) -> str
         if stripped.startswith(":::") and len(stripped) > 3:
             cname = stripped[3:].strip()
             if cname in CALLOUT_CLASSES:
+                callout_stack.append(cname)
                 html_lines.append(f'{indent}<div class="{cname}">')
                 indent += "  "
                 i += 1
@@ -271,9 +295,11 @@ def convert_markdown_to_html(md_text: str, drop_leading_h1: bool = False) -> str
 
         # Callout end :::
         if stripped == ":::":
-            if len(indent) >= 2:
-                indent = indent[:-2]
-            html_lines.append(f"{indent}</div>")
+            if callout_stack:
+                callout_stack.pop()
+                if len(indent) >= 2:
+                    indent = indent[:-2]
+                html_lines.append(f"{indent}</div>")
             i += 1
             continue
 
@@ -327,8 +353,9 @@ def convert_markdown_to_html(md_text: str, drop_leading_h1: bool = False) -> str
             html_lines.append(f"{indent}<p>{full_math}</p>")
             continue
 
-        # Code block ```
+        # Code block ``` (supports ```mermaid visual intuition blocks)
         if stripped.startswith("```"):
+            fence_lang = stripped[3:].strip().lower()
             code_lines = []
             i += 1
             while i < n and not lines[i].strip().startswith("```"):
@@ -337,12 +364,20 @@ def convert_markdown_to_html(md_text: str, drop_leading_h1: bool = False) -> str
             if i < n:
                 i += 1  # skip closing ```
             code_content = "\n".join(code_lines)
-            code_content = (
-                code_content.replace("&", "&amp;")
-                .replace("<", "&lt;")
-                .replace(">", "&gt;")
-            )
-            html_lines.append(f"{indent}<pre><code>{code_content}</code></pre>")
+            if fence_lang == "mermaid":
+                html_lines.append(f'{indent}<figure class="visual-intuition">')
+                html_lines.append(f'{indent}  <pre class="mermaid">')
+                for mline in code_lines:
+                    html_lines.append(f"{indent}{mline.rstrip()}")
+                html_lines.append(f"{indent}  </pre>")
+                html_lines.append(f"{indent}</figure>")
+            else:
+                code_content = (
+                    code_content.replace("&", "&amp;")
+                    .replace("<", "&lt;")
+                    .replace(">", "&gt;")
+                )
+                html_lines.append(f"{indent}<pre><code>{code_content}</code></pre>")
             continue
 
         # Blockquote >
@@ -388,11 +423,7 @@ def convert_markdown_to_html(md_text: str, drop_leading_h1: bool = False) -> str
 
         # Bullet list - or *
         if re.match(r"^[-*]\s+", stripped):
-            items = []
-            while i < n and re.match(r"^[-*]\s+", lines[i].strip()):
-                item_text = re.sub(r"^[-*]\s+", "", lines[i].strip())
-                items.append(item_text)
-                i += 1
+            items, i = _collect_list_items(lines, i, re.compile(r"^[-*]\s+"))
             html_lines.append(f"{indent}<ul>")
             for it in items:
                 html_lines.append(f"{indent}  <li>{process_inline(it)}</li>")
@@ -401,11 +432,7 @@ def convert_markdown_to_html(md_text: str, drop_leading_h1: bool = False) -> str
 
         # Numbered list 1.
         if re.match(r"^\d+\.\s+", stripped):
-            items = []
-            while i < n and re.match(r"^\d+\.\s+", lines[i].strip()):
-                item_text = re.sub(r"^\d+\.\s+", "", lines[i].strip())
-                items.append(item_text)
-                i += 1
+            items, i = _collect_list_items(lines, i, re.compile(r"^\d+\.\s+"))
             html_lines.append(f"{indent}<ol>")
             for it in items:
                 html_lines.append(f"{indent}  <li>{process_inline(it)}</li>")

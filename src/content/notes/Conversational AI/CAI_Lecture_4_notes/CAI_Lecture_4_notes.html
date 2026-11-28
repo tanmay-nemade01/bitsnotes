@@ -216,9 +216,6 @@
 </div>
 <p>Earlier discussion used a small medical use case as an anchor. A patient takes help from a conversational system to book an appointment with a specialist based on the patient's condition. That use case carried the full architectural view: the software layers in a conversational system, what a prompt is, what context engineering is, what states are, and how states are realized through long-term memory and short-term memory. The same discussion covered how to design memory use when resources are tight, so memory designs stay within budget.</p>
 <p>The material falls into two parts. The first part completes the earlier architecture discussion. It covers how the language model at the heart of the system shapes performance. The model is not the only factor, but it is a key one. What it needs for optimization, and how to optimize it, is the subject of that part. One point of scope matters here. The optimization of machine learning systems is an entire dedicated course of its own, so this material gives only the application-level perspective needed for the system being built.</p>
-<div class="key-takeaway">
-  <p><strong>Exam note:</strong> Only this application-level overview of ML system optimization is needed here; the full optimization course is a separate track, so study this part for application-level decisions rather than deep systems detail. <strong>Recap:</strong> This session first finishes the architecture story at the model layer, then opens the tool-integration module. <strong>Bridge:</strong> Model choice is the first decision in that story.</p>
-</div>
 <p>The second part starts a new module on tool integration and function calling. The anchor for it is a banking use case: a customer asks for help sorting out a lost card through a conversational system. That example showed natural language understanding, a dialogue processor, and the rest of the chain up to measuring system performance. Inside that chain sits one component that the new module zooms into: the tool. A <em>tool</em> is an integration point through which the system talks to the outside party. It can be an external logic block, a simple function call, or another agent. Through tools the system asks for missing facts, validates facts it already holds, or gets a whole task done by an agent. The new module covers five steps: what tools are, how tools are defined, how a tool is selected, how it is called, and how its output is processed. The demo at the end previews those steps.</p>
 <p>Hospitals show why the split matters. A booking helper that books the wrong specialist fails even with a strong model when no store holds the department slot, while a bank helper that cannot reach the card-blocking service fails when it has no tool to call. In both cases the fix sits in the surrounding system: running the model well and connecting it to tools.</p>
 
@@ -284,9 +281,6 @@
 </div>
 <p>The correction above matters because on-device sounds safer than it is useful. Privacy demands that patient details stay inside the organization, and a self-hosted model on local premises meets that demand. Shrinking the same model onto each phone adds nothing for nurses at desk machines, yet it pays the full price of edge deployment. Match the constraint to the real user: premises for the hospital, on-device only where the user truly leaves the building.</p>
 <p>Medicine questions add a second thread. When a patient asks which medicine fits a condition, deep reasoning helps, and a frontier API can serve that turn through the same small router. Fine-tuning enters only where it pays. A hospital does not manufacture medicines, so an open model trained on general medical and pharmaceutical facts can answer general drug questions with no tuning spend. Tuning becomes worth it where the knowledge is tied to one organization, for example internal policies and guidelines that no public model holds. In that corner, a tuned model over the organization's own material is the right call.</p>
-<div class="important-note">
-  <p><strong>Q:</strong> When a patient asks which medicine fits a condition, does answering need deep reasoning, and must the model be fine-tuned? <strong>A:</strong> Deep reasoning helps on such turns, and a frontier API can serve them through the same small router. Fine-tuning is only worth it where the knowledge belongs to one organization, such as internal policies and guidelines that no public model holds. A hospital does not manufacture medicines, so general drug questions can use an open model trained on general medical facts with no tuning spend.</p>
-</div>
 <div class="warning-box">
   <p><strong>Pitfalls:</strong> Treating scale as the only input picks a cheap model for a delay-sensitive medical flow that cannot absorb it. Treating privacy as an edge-device mandate pays for phones nobody needs. Treating fine-tuning as a default spends training budget on public drug facts the open model already holds: tune only the organization's own policies and guidelines.</p>
 </div>
@@ -412,6 +406,41 @@
 </div>
 <p>Transformers power large language models, and self-attention powers transformers. Queries arrive as a sequence. Each word becomes a token, each token becomes a vector embedding, and those embeddings flow into the system in order. Take the current token of interest and call it the query. The machine compares that query against the tokens before it and scores how relevant each earlier token is to the current one. Those relevance scores act like probability values: each earlier token gets a weight, and the weights decide how much each token contributes.</p>
 <p>Think of a student revising with old notes spread on a desk. A new question arrives, the student glances over every earlier note, scores each one for relevance to the new question, then blends the useful notes into one answer weighted by those scores. Irrelevant notes get near-zero weight and fade out. The analogy breaks where order lives: unlike loose notes, token positions carry meaning, so the real mechanism also folds position signals into the embeddings before any comparison.</p>
+
+<div class="key-concept">
+  <p><strong>Formal Definition — Positional Encoding:</strong> Self-attention alone is permutation-equivariant: with no position signal, the query-key comparisons cannot tell where a token sat. The transformer therefore injects a position vector of the same width as the token embedding before the first attention layer. With learned <em>absolute</em> positions, a matrix \(E_{pos} \in \mathbb{R}^{N \times d_{model}}\) holds one learned vector per position, and the input row for token \(i\) is \(x_i = E[\text{id}(i)] + E_{pos}[i]\), a sum of two \([1 \times d_{model}]\) vectors that stays \([1 \times d_{model}]\).</p>
+  <p><strong>Fixed sinusoidal alternative:</strong> The original transformer uses sine and cosine functions of differing frequencies instead of learned vectors:</p>
+  <p>\[PE_{(pos,\,2i)} = \sin\!\left(\frac{pos}{10000^{2i/d_{model}}}\right), \qquad PE_{(pos,\,2i+1)} = \cos\!\left(\frac{pos}{10000^{2i/d_{model}}}\right)\]</p>
+  <p>Each dimension is a sinusoid whose wavelength forms a geometric progression from \(2\pi\) to \(10000 \cdot 2\pi\). For a fixed offset \(k\), \(PE_{pos+k}\) can be written as a linear function of \(PE_{pos}\), which is why the model can learn to attend by relative position and can extrapolate past the longest position seen in training.</p>
+  <p><strong>Worked check:</strong> with \(d_{model}=128\) and \(pos=5\), the slot for \(i=0\) is \(\sin(5) \approx -0.959\) and \(\cos(5) \approx 0.284\). Position \(6\) gives \(\sin(6) \approx -0.279\) and \(\cos(6) \approx 0.960\). Advancing one position rotates this pair by a fixed angle, so the one-step offset leaves a linear relation between the two vectors — the relative-position property in miniature.</p>
+  <p><strong>Relative / rotary form:</strong> Learned absolute embeddings for the outermost positions are poorly trained because few examples reach them, so relative methods place position inside each attention layer rather than once at the input. Rotary Position Embedding (RoPE) encodes absolute position with a rotation matrix while making the score depend only on the gap \(i-j\): in 2D, \((R(m)q)^\top (R(n)k) = q^\top R(n-m) k\), so the absolute rotations cancel and only the relative offset survives.</p>
+</div>
+<table>
+  <thead>
+    <tr>
+      <th>Scheme</th>
+      <th>Where position enters</th>
+      <th>Long-context behaviour</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td>Learned absolute</td>
+      <td>Added once at input, \(E_{pos}[i]\)</td>
+      <td>Tail positions poorly trained; no extrapolation beyond max length</td>
+    </tr>
+    <tr>
+      <td>Sinusoidal fixed</td>
+      <td>Added once at input, \(PE_{pos}\)</td>
+      <td>Linear offset relation; may extrapolate past trained lengths</td>
+    </tr>
+    <tr>
+      <td>Relative / RoPE</td>
+      <td>Inside each attention layer via rotation</td>
+      <td>Score depends on \(i-j\); flexible length and distance decay</td>
+    </tr>
+  </tbody>
+</table>
 <p>Inside the mechanism, every earlier token carries three vectors rather than one: a query vector, a key vector, and a value vector. The current query is compared against the keys of the earlier tokens through a similarity score, and that score fixes each token's relevance. Each relevance score then multiplies the matching value vector, and the weighted values are summed. That sum is the attention score for the current query token.</p>
 <div class="key-concept">
   <p><strong>Core idea:</strong> A <em>query</em> vector asks what the current token needs. A <em>key</em> vector labels what each earlier token offers. A <em>value</em> vector carries the content each token contributes. Attention is query-key matching turned into weights, then weights times values.</p>
@@ -564,9 +593,6 @@
     </tr>
   </tbody>
 </table>
-<div class="key-takeaway">
-  <p><strong>Exam note:</strong> The attention family names and the paging idea are the durable points here; the papers behind each variant are outside this course's scope. <strong>Recap:</strong> Separate the window from the cache, page the cache when it overflows, and move only what the query needs. <strong>Bridge:</strong> Paging moves data, while the next section shrinks it.</p>
-</div>
 <p>Document summarization over full course decks is the canonical workload: the deck dwarfs fast memory, the summary query touches only slices of it, and paging is what makes the turn affordable at all.</p>
 
 <h2 id="4.9" class="section-title">4.9 Quantization</h2>
@@ -622,7 +648,21 @@
   <p><strong>Hook:</strong> A network with billions of links carries some links that barely whisper. What happens if you cut the whispers and keep the voices?</p>
 </div>
 <p>Pruning is a second way to save space, and it is not the same as dropout. Dropout switches random nodes off and on during training as a regularization trick. Pruning deletes links for good.</p>
-<p>Picture a fully connected feedforward network whose weights mostly sit between about \(-1.5\) and \(+5.5\), while a small subset of links carry tiny weights such as \(0.00056\). Signals through those faint links barely move the outcome. Since importance here is relative, not absolute, the architectural answer is to cut the weak links out of the network entirely rather than merely switching them off for a while.</p>
+<figure class="visual-intuition">
+  <svg viewBox="0 0 500 190" role="img" aria-label="Fully connected feedforward network with strong links and a faint 0.00056 link" xmlns="http://www.w3.org/2000/svg">
+    <circle cx="70" cy="65" r="14" fill="#eff6ff" stroke="#3b82f6" stroke-width="2" />
+    <circle cx="70" cy="135" r="14" fill="#eff6ff" stroke="#3b82f6" stroke-width="2" />
+    <circle cx="430" cy="65" r="14" fill="#faf5ff" stroke="#9333ea" stroke-width="2" />
+    <circle cx="430" cy="135" r="14" fill="#faf5ff" stroke="#9333ea" stroke-width="2" />
+    <line x1="84" y1="65" x2="416" y2="65" stroke="#334155" stroke-width="2.5" />
+    <line x1="84" y1="65" x2="416" y2="135" stroke="#334155" stroke-width="2.5" />
+    <line x1="84" y1="135" x2="416" y2="65" stroke="#334155" stroke-width="2.5" />
+    <line x1="84" y1="135" x2="416" y2="135" stroke="#94a3b8" stroke-width="0.6" stroke-dasharray="3" />
+    <text x="250" y="52" fill="#0f172a" font-size="12px" text-anchor="middle">most links: weights between about -1.5 and +5.5</text>
+    <text x="250" y="168" fill="#64748b" font-size="12px" text-anchor="middle">faint link: weight 0.00056 — barely moves the outcome</text>
+  </svg>
+  <figcaption><strong>Figure 4.10:</strong> In a fully connected feedforward network most links carry weights between about -1.5 and +5.5, while a tiny subset such as 0.00056 barely moves the outcome and is cut.</figcaption>
+</figure>
 <p>Think of pruning a fruit tree. A gardener cuts the thin twigs that bear no fruit so sunlight reaches the strong branches, and the tree keeps its shape with fewer limbs. Pruning cuts the weakest links so compute reaches the links that move the output, and the network keeps its skill with fewer weights. The analogy breaks where regrowth lives: unlike a tree, a pruned network does not regrow links on its own, so cut too deep and the skill is gone until retraining restores it.</p>
 <div class="key-concept">
   <p><strong>Core idea:</strong> <em>Pruning</em> permanently removes the lowest-magnitude or lowest-importance links from a trained network, while <em>dropout</em> only switches nodes off temporarily during training. One shrinks the model; the other regularizes it.</p>
@@ -635,6 +675,43 @@
   <p><strong>Q:</strong> With billions of weights, can the model itself find which parts to prune? <strong>A:</strong> Yes. The identification is not hand-coded link by link. A pruning routine or library observes the trained weights, cuts the weakest links, and returns the pruned model for use in prediction tasks.</p>
 </div>
 <p>The dropout contrast is the terminology correction to keep. Dropout switches nodes off and on across training batches so the network stops leaning on any single path; at inference every node returns. Pruning deletes links for good and the smaller network is what serves. One is a training habit, the other is a smaller model.</p>
+
+<div class="key-concept">
+  <p><strong>Formal Mechanism — Inverted Dropout:</strong> For a layer activation \(a\) and a keep probability \(q = 1-p\), training applies an independent Bernoulli mask \(m \sim \text{Bernoulli}(q)\) to every unit and rescales survivors by \(1/q\), giving \(a^{train} = \dfrac{m \odot a}{q}\). The rescaling keeps the expected activation unchanged, \(E[a^{train}] = a\), so the same weights serve at test time with no correction: \(a^{test} = a\), an identity function. With the common \(p = 0.5\) a survivor is doubled (\(1/0.5 = 2\)); with \(p = 0.1\) it is multiplied by about \(1.11\).</p>
+  <p><strong>Worked check:</strong> four activations \([2, 4, 6, 8]\) with \(p = 0.5\). One training draw masks the second and fourth units, so \(m = [1,0,1,0]\). After scaling by \(1/q = 2\), the layer emits \([4, 0, 12, 0]\), preserving the unmasked scale on the surviving slots. The next mini-batch draws a different thinned network; the original paper describes training as sampling from an exponential number of thinned networks, approximated at test time by a single unthinned network with smaller weights.</p>
+  <p><strong>Hyperparameter, not weight:</strong> \(p\) is chosen by the designer and tuned on a development set, while the weights \(W\) and biases \(b\) are learned by gradient descent. The transformer applies dropout to each sub-layer output before the residual add and normalization, and to the sum of token and positional embeddings, typically at \(P_{drop} = 0.1\).</p>
+</div>
+<table>
+  <thead>
+    <tr>
+      <th>Property</th>
+      <th>Dropout</th>
+      <th>Pruning</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td>When</td>
+      <td>Every training mini-batch, temporary mask</td>
+      <td>Once after training, permanent deletion</td>
+    </tr>
+    <tr>
+      <td>What changes</td>
+      <td>Survivor scale by \(1/(1-p)\); no weights removed</td>
+      <td>Low-magnitude links removed for good</td>
+    </tr>
+    <tr>
+      <td>At inference</td>
+      <td>Identity function; all units active</td>
+      <td>Smaller serving network</td>
+    </tr>
+    <tr>
+      <td>Goal</td>
+      <td>Regularization: stop co-adaptation</td>
+      <td>Compression: shrink memory and compute</td>
+    </tr>
+  </tbody>
+</table>
 <div class="warning-box">
   <p><strong>Pitfalls:</strong> Mistaking dropout masks for pruning deletes nothing and ships the full model. Cutting by absolute size without re-measuring removes small-but-critical links in sensitive layers. Pruning once and never re-checking lets later fine-tuning regrow dependence on links that no longer exist.</p>
 </div>
@@ -762,10 +839,6 @@
 <div class="example-box">
   <p><strong>Worked example: full footprint of 466 GB falls to 291 GB under one-byte weights.</strong> Weights: \(175 \times 10^9 \times 2 = 350\) GB. KV cache at batch 4: 77 GB. Activations: 39 GB. Total: \(350 + 77 + 39 = 466\) GB. Now quantize weights and activations to a 1-byte format such as INT8 or FP8 while keeping the KV cache at full accuracy for exact attention scores: weights halve from 350 GB to 175 GB, activations shrink the same way, and the total falls to \(175 + 77 + 39 = 291\) GB. Sense-check: halving the two compressible terms must cut \(175 + 39 = 214\) GB down to \(87.5 + 19.5 = 107\) GB only if activations halve exactly like weights, and the lecture's rounded 291 GB total reflects that halving on planning numbers. <strong>Result: 466 GB at full width, 291 GB with one-byte weights and activations.</strong></p>
 </div>
-<p>Now quantize the weights and activations to a 1-byte format such as INT8 or FP8 while keeping the KV cache at full accuracy for exact attention scores. The weight term halves from 350 GB to 175 GB, activations shrink the same way, and the total falls to \(175 + 77 + 39 = 291\) GB.</p>
-<div class="important-note">
-  <p><strong>Q:</strong> In that last sum, did only the weights and activations drop to one byte while the cache stayed full? <strong>A:</strong> Yes. Keeping the KV cache at full precision preserves exact attention scores, and shrinking just the weights and activations still cuts the total from 466 GB to 291 GB.</p>
-</div>
 <figure class="visual-intuition">
   <svg viewBox="0 0 500 220" role="img" aria-label="Full footprint stacked bar before and after quantization" xmlns="http://www.w3.org/2000/svg">
     <line x1="60" y1="180" x2="460" y2="180" stroke="#94a3b8" stroke-width="1.5" />
@@ -787,9 +860,6 @@
 </figure>
 <div class="warning-box">
   <p><strong>Scope:</strong> These are planning numbers for one stated configuration: 96 layers and heads, batch 4, 4,096-token sequences. <strong>Assumption:</strong> Halving precision halves the weight and activation bytes exactly; real formats add scale factors and padding, so treat 291 GB as a planning target, not a measured readout.</p>
-</div>
-<div class="key-takeaway">
-  <p><strong>Exam note:</strong> Expect numerical questions that ask for one term at a time, such as the KV term alone or the effect of halving precision on weights only, so practice each substitution separately. <strong>Recap:</strong> Weights 350 plus cache 77 plus activations 39 is 466 GB, and one-byte weights with a full-precision cache is 291 GB. <strong>Bridge:</strong> Memory sets what can run, and the next module decides what the running system can do: act through tools.</p>
 </div>
 <p>Cloud GPU planners price machines from this stack: the weights pick the card count, the cache picks the per-session headroom, and the activations pick the batch ceiling.</p>
 

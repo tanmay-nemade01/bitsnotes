@@ -77,8 +77,8 @@ python utils/clean_vtt.py Lecture01.vtt Lecture01.txt
 ### Agent 2 — Enricher
 
 1. Open a **new chat window**.
-2. Pass the Agent 1 output: `<LecturePrefix>_notes_dense.md`.
-3. Pass the entire `enriching_docs/<Subject>/` folder — the agent will extract the relevant files based on names.
+2. Pass the Agent 1 output: `<LecturePrefix>_notes_dense.md` and `<LecturePrefix>_extraction_manifest.json`.
+3. Point to `subjects.json`, `topic_mappings/<Subject>.yaml`, and the relevant companion chapters under `companion_docs/<ABBR>/` (or `enriching_docs/<Subject>/`) — the agent uses targeted grep/search on large chapter `.txt` files and runs `topic_mapping_utils.py collisions` before adding outside-the-spine depth.
 4. Attach the Agent 2 prompt: `SKILL_agent2_enricher.md`.
 5. Run the agent.
 

@@ -68,7 +68,7 @@ Before anything else, scan the enriched draft for intermediate/process metadata 
 - **The math verification queue / marker sweep lists** — Agent 2's internal R-step work lists. These are process artifacts.
 - **Any `*[verify]*` marker** — this is a blocking upstream defect. Stop conversion and return the section to Agent 2 or human review; do not remove it and continue.
 - **Any other process/verification metadata** — any section that reads like internal QA rather than educational material.
-- **Non-academic Q&A & rhetorical check-ins** — if any exchange with "no blocking doubt", "any questions before moving on", "available on Teams", or demo deferrals leaked into the markdown, prune it. Retain only substantive conceptual/academic doubts.
+- **Non-academic Q&A, rhetorical check-ins, and institutional/exam logistics** — if any exchange with "no blocking doubt", "any questions before moving on", "available on Teams", demo deferrals, `Exam Guidance Summary`, `Exam Notes`, `Exam Revision Notes`, `Quiz *` sections, or `Exam note:` callouts leaked into the markdown, purge them completely. Retain only substantive conceptual/academic doubts.
 - **Process-only placeholder tasks** — treat any TODO, placeholder, or task delegation as a blocking Agent 2 defect. Do not strip it and continue, because that would silently remove expected content.
 
 **How to identify:** Look for sections whose heading contains words like "checklist", "self-check", "verification", or sections that are just long bulleted/ticked lists of concept names with `[x]` markers. Also search for keywords like "TODO", "placeholder", and instructions such as "Define [Concept]". These have zero educational value for the end reader.
@@ -131,7 +131,7 @@ This batch-converts all `section_XX.md` files (and `section_00_preamble.md` if p
 | `.important-note` | violet | Intuition, mental models, plain-language restatements, **student Q&A** (labeled `**Q:**`/`**A:**`) |
 | `.example-box` | green | Fully worked examples with real numbers, procedure traces |
 | `.warning-box` | red | Pitfalls, traps, cautions, common mistakes, **assumptions & scope** (labeled `**Scope:**`/`**Assumption:**`) |
-| `.key-takeaway` | amber | One-line recap, bridge to next concept, **per-concept exam guidance** (labeled `**Exam note:**`) |
+| `.key-takeaway` | amber | Bridge to next concept (`**Bridge:**`), synthesis of key trade-offs |
 
 Plus structural classes: `.lecture-title` (h1), `.section-title` (h2), `.subsection-title` (h3).
 
@@ -344,6 +344,7 @@ The lint checks: HTML tag balance & callout nesting, template hygiene, viewport 
 - **Course codes in audience or visible text** (e.g., "S1-25_AIMLCZG565")
 - **Metadata contains extraneous fields** — unexpected or deprecated fields present in the metadata JSON
 - **Leftover placeholder tasks or TODOs** — any leftover placeholder text, TODOs, or task instructions (e.g., 'Define ...') in the visible HTML or metadata JSON
+- **Institutional/exam logistics or duplicate/broken structures** — any `Exam Guidance Summary`, `Exam Revision Notes`, `Quiz *` section, `Exam note:` callout, split single-item `<ol>` runs, prose-only `Visual intuition:` blocks, or D1/D2/D4 duplicated prose/callouts/Q&As
 
 ---
 

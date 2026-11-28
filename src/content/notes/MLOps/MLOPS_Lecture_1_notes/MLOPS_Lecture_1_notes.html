@@ -362,6 +362,15 @@ def predict():
 <h3 id="1.3.2" class="subsection-title">1.3.2 Where models run: private cloud, public cloud, and the edge</h3>
 <p>Deployment targets divide into private clouds, public clouds, and constrained devices. A private cloud such as OpenStack or OpenNebula keeps data and control inside the organization. Public clouds offer ready-made flavors — managed training, managed endpoints, and managed pipelines — at a price. Beyond the data center, models ship compressed into mobile devices, run on edge hardware, and even plug into a browser. The course keeps the open-source path prominent throughout: open tools give total control of the stack, the deepest customization, and no vendor toll, at the cost of owning every operational burden.</p>
 <p>The decision comes down to four pressures pulling in different directions: <strong>cost</strong> (managed endpoints bill per hour and per request; self-hosted bills in engineer time), <strong>control</strong> (regulated data may never leave the building), <strong>latency</strong> (a face-unlock model cannot round-trip to a distant region), and <strong>data gravity</strong> (moving terabytes to the model is costlier than moving the model to the terabytes). A hospital network under strict data rules leans private; a startup validating an idea leans managed; a smart-glasses team has no choice but the edge.</p>
+<div class="key-concept">
+  <p><strong>Formal Definition:</strong> A randomized mechanism \(M\) satisfies \((\varepsilon, \delta)\)-differential privacy if for any two datasets \(D, D'\) differing in one individual's record and any output set \(S\):</p>
+  \[
+  \Pr[M(D) \in S] \;\le\; e^{\varepsilon}\,\Pr[M(D') \in S] \;+\; \delta
+  \]
+  <p>Removing any one person changes the output distribution by at most a factor \(e^{\varepsilon}\), apart from a rare failure probability \(\delta\). Smaller \(\varepsilon\) means stronger privacy but lower utility (the privacy–utility tradeoff); \(\delta\) is kept tiny — typically below \(1/n^2\) — so the catastrophic-failure branch is negligible.</p>
+  <p><strong>Where the randomness lands:</strong> in <em>local DP</em> each user randomizes their own record before collection (randomized response: answer truthfully on heads, answer with a second coin flip on tails), so the collector never sees raw data but must add more noise. In <em>global DP</em> a trusted curator adds noise to an aggregate transformation or to the training update (TensorFlow Privacy perturbs the optimizer), buying accuracy at the cost of trusting the curator.</p>
+  <p><strong>Composition:</strong> privacy loss adds up — ten analyses each at \(\varepsilon = 0.1\) spend a total budget of \(\varepsilon = 1\). A team retraining nightly on the same sensitive table must budget every release, or its advertised guarantee silently evaporates. This is the formal mechanism behind the "regulated data may never leave the building" constraint: a DP-trained model can be exported where the raw records cannot.</p>
+</div>
 <h3 id="1.3.3" class="subsection-title">1.3.3 Serving patterns: batch versus online</h3>
 <p><em>Batch prediction</em> scores a settled pile of inputs on a schedule — nightly scoring of every customer, for example. <em>Online prediction</em> answers single requests immediately as they arrive. Use batch when answers can wait hours and the input set is known up front; use online when each request needs its own fresh answer in milliseconds.</p>
 <table>
@@ -448,6 +457,21 @@ def predict():
   <p><strong>Intuition — a smoke detector, not a fire extinguisher:</strong> Monitoring does not fix the model; it tells you there is smoke while the fire is still small. Metrics are the beeping alarm (prediction distributions shifting, error rates climbing), logs are the security footage (which requests, which features, which version). You still need the extinguisher — retraining — but without the detector you only discover the fire when users smell it. The analogy breaks in one place: a smoke detector watches one house, while model monitoring must separate three moving causes — the world changed, the pipeline broke, or the model itself decayed.</p>
 </div>
 <p>Drift comes in flavors worth naming. <em>Data drift</em> means the inputs changed (customers skew younger; a sensor recalibrates). <em>Concept drift</em> means the right answer for the same inputs changed (fraudsters invent new tricks; fashion moves on). <em>Label drift</em> means the outcome mix shifted even where the model is right. All three look identical in one dashboard — falling business numbers — which is why teams monitor inputs, predictions, and ground truth separately instead of watching accuracy alone.</p>
+<div class="key-concept">
+  <p><strong>Formal Definition:</strong> A deployed model's <em>group fairness</em> constrains how its decisions and errors distribute across a protected group \(A \in \{0,1\}\) and outcome \(Y \in \{0,1\}\). Three standard criteria: <em>statistical parity</em> \(P(\hat Y = 1 \mid A = 0) = P(\hat Y = 1 \mid A = 1)\) — equal selection rates; <em>equalized odds</em> — \(P(\hat Y = 1 \mid A = a, Y = y)\) constant in \(a\) for each \(y\), so true- and false-positive rates match across groups; and <em>calibration within groups</em> — \(P(Y = 1 \mid s = v, A = a) = v\) for every group \(a\), so a score of \(v\) means the same thing for everyone. Group parity judges outcomes across groups; calibration judges the meaning of an individual score.</p>
+  <p><strong>Incompatibility theorem:</strong> For a non-perfect predictor with unequal base rates \(P(Y=1 \mid A=0) \ne P(Y=1 \mid A=1)\), calibration within groups and equalized odds <em>cannot both hold</em> — they coexist only under perfect prediction or equal base rates. The COMPAS recidivism tool was calibrated across racial groups yet produced higher false-positive rates for Black defendants and higher false-negative rates for white defendants; the contradiction is mathematical, not a coding bug. A team must therefore <em>choose</em> its fairness criterion and monitor it per group — aggregate accuracy cannot certify it.</p>
+  <table>
+    <thead>
+      <tr><th>Intervention stage</th><th>Where it acts</th><th>Representative method</th><th>Access assumed</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>Pre-processing</td><td>Training data before fitting</td><td>Relabel biased points; learn a representation hiding \(A\)</td><td>Owns raw data; model-agnostic</td></tr>
+      <tr><td>In-processing</td><td>The training objective</td><td>Fairness penalty in the loss; adversarial debiasing</td><td>Controls the training loop</td></tr>
+      <tr><td>Post-processing</td><td>Outputs after scoring</td><td>Group-specific thresholds; randomized decisions</td><td>Only scores, not data or training</td></tr>
+    </tbody>
+  </table>
+  <p><strong>Operational consequence:</strong> when monitored fairness drifts beyond the chosen threshold, the model needs a fallback — human review or a constant output — rather than continuing to serve unfair decisions.</p>
+</div>
 <h3 id="1.4.2" class="subsection-title">1.4.2 Manual versus automated retraining</h3>
 <p><em>Manual retraining</em> starts from a gut feeling: somebody senses the model looks off and orders a retrain. That approach depends on human vigilance and arrives late. <em>Automated retraining</em> wires drift signals directly to the pipeline: when monitored metrics cross a threshold, a fresh training run starts, the new candidate is evaluated, and redeployment follows with no human in the loop. The goal is sustained model quality — a model that stays trustworthy across months of shifting data rather than shining once at launch and fading quietly.</p>
 <p>Retraining itself comes in two flavors. <em>Stateless retraining</em> trains from scratch on the accumulated data and replaces the old model wholesale. <em>Stateful retraining</em> continues from the existing model, updating it incrementally. Each suits different data volumes, training costs, and stability needs.</p>
@@ -488,6 +512,21 @@ def predict():
 <p>The ordering logic: shadow first (zero user risk, real traffic proof), canary next (small user risk, real outcome proof), A/B when the question is comparative (which version wins on the business metric). A mirror cluster sits underneath all three as the rehearsal room — load tests, config checks, and rollback drills happen there, never on live users.</p>
 <h3 id="1.4.4" class="subsection-title">1.4.4 The observability toolbox</h3>
 <p>Good monitoring needs tooling. Prometheus collects time-series metrics, Grafana turns those metrics into dashboards and alerts, and the ELK stack — Elasticsearch for search and storage, Logstash for log processing, and Kibana for visualization — handles the log side. Together they form the observability backbone: metrics show what is happening, logs show why, and dashboards put both in front of the humans responsible.</p>
+<div class="important-note">
+  <p><strong>System Detail — from alert to incident:</strong> Monitoring raises the signal; incident management decides what to do about it. An incident has a life of its own: <em>pre-incident</em> (architecture that set the conditions) → <em>trigger</em> (user-facing impact begins) → <em>detection</em> (monitoring or users reveal it) → <em>troubleshooting</em> → <em>mitigation</em> (the fastest, least risky step that stops the worst of it, even if that means disabling the service) → <em>resolution</em> → <em>follow-up</em> (retrospective and action items). Declaring an incident explicitly is what turns a lone engineer troubleshooting in silence into a managed response.</p>
+  <table>
+    <thead>
+      <tr><th>Incident role</th><th>Responsibility</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>Incident commander</td><td>Owns the high-level picture, declares the incident, assigns and monitors the other roles</td></tr>
+      <tr><td>Communications lead</td><td>Inbound and outbound updates to stakeholders and other teams</td></tr>
+      <tr><td>Operations lead</td><td>Approves, schedules, and records production changes; drives mitigation</td></tr>
+      <tr><td>Planning lead</td><td>Tracks longer-term follow-ups, preserves logs, schedules the retrospective</td></tr>
+    </tbody>
+  </table>
+  <p>This structure derives from the FEMA National Incident Management System and underlies Google's IMAG, whose "three Cs" are command, control, and communication. ML incidents differ from ordinary outages in three ways: non-deterministic models make complete detection rules impossible, resolution pulls in product and business stakeholders beyond engineering, and a quality metric that already fluctuates makes the incident's start and end hard to pin down. Rollback — the registry rewind from 1.1.4 — is the most common mitigation precisely because it is fast and reversible.</p>
+</div>
 <div class="example-box">
   <p><strong>Worked example — catching drift on a grocery forecaster:</strong> A demand model trained on 2023 sales predicts 500 units of a perishable line per week. By mid-2024 Prometheus shows the prediction mean drifting from 500 to 640 while actual sales sit at 480 — a 33% over-forecast that spoils stock. The Grafana alert fires when the gap crosses 15% for two straight weeks; ELK logs reveal the cause — a new discount code changed buying patterns, a textbook data drift. The team triggers stateless retraining on the last six months, the candidate scores within 4% on holdout, and promotion restores the waste rate. <strong>Sense-check:</strong> a persistent one-directional gap (always over, never under) points at drift rather than noise — noise would scatter both ways.</p>
 </div>
@@ -572,117 +611,7 @@ def predict():
 <div class="warning-box">
   <p><strong>Pitfalls:</strong> (1) Unversioned prompts — same model, different wording, irreproducible behavior. (2) Retrieval skipped to save cost — ungrounded generation hallucinates with confidence. (3) Token bills unread — per-request tracing exists precisely because costs hide in aggregate. (4) Agents without traces — a failed multi-step workflow cannot be debugged from its final answer.</p>
 </div>
-<div class="key-takeaway">
-  <p><strong>Bridge:</strong> These topics are not electives — they are modules six and seven of the course map laid out next in 1.6.</p>
-</div>
 <p>OpenSearch and FAISS index the vectors, LangChain assembles the pipelines, Langfuse with LangSmith and Arize Phoenix watch cost and drift, Ollama keeps experiments local and free, and the same CI/CD discipline from 1.1 now versions prompts as code.</p>
-
-<h2 id="1.6" class="section-title">1.6 Course Modules, Case Studies, Textbooks, and Outcomes</h2>
-<h3 id="1.6.1" class="subsection-title">1.6.1 The seven modules</h3>
-<div class="important-note">
-  <p><strong>Hook:</strong> Seven modules, eight labs, three textbooks — and a map that tells you exactly which piece of the production puzzle each week solves.</p>
-</div>
-<p>The course runs through seven modules in order. The first module sets motivation and maturity: the three levels of MLOps, the ML lifecycle with its processes and capabilities, maturity models, the people and agile practices around them, the landscape of MLflow, Kubeflow, Airflow, and SageMaker, and case studies of platforms built by practitioners at scale — Uber built Michelangelo for its own in-house productivity, and Netflix and Spotify each run their own internal ML platforms. The second module covers experimentation and the model registry: experiment workflows, model versioning with metadata, the registry itself, and serialization formats from pickle and joblib through PMML, ONNX, and H5. The third module packs and ships: containers fusing data, model, and application; deployment patterns; serving with batch versus online predictions; orchestration with Airflow and Kubeflow; integrated ML platforms; and model-as-a-service offerings. The fourth module watches and heals: why models fail, drift detection, the Prometheus-Grafana-ELK observability toolbox, stateless versus stateful retraining, and testing in production through shadow, canary, and A/B strategies. The fifth module targets clouds and constrained devices: public-cloud managed deployment, edge, mobile, and browser targets. The sixth module introduces LLMOps: how operating large language models differs from conventional MLOps, the LLM lifecycle, cost-latency-token challenges, prompt versioning, RAG architecture, vector databases, evaluation with guardrails and faithfulness checks, GPU serving, quantization, and LLM observability. The final module takes on AgentOps: planning, tools, memory, tracking, observability, and evaluation of agentic workflows, with a hands-on tracing lab.</p>
-<p>The industry cases are load-bearing, not decorative. Michelangelo shows what a ride-hailing giant builds when notebooks stop scaling: standardized training, serving, and monitoring for hundreds of teams. Netflix and Spotify show the same lesson from recommendations — internal platforms that let product teams ship models without each team reinventing deployment. When the course later asks participants to design for their own vertical, these are the reference architectures to argue against or borrow from.</p>
-<h3 id="1.6.2" class="subsection-title">1.6.2 Textbooks and references</h3>
-<p>Three textbooks anchor the reading, because no single book covers every topic. Introduction to MLOps and Designing Machine Learning Systems by Chip Huyen come from O'Reilly, and the LLM Engineer's Handbook covers the language-model half of the course. One additional reference book rounds out the shelf.</p>
-<div class="key-takeaway">
-  <p><strong>Exam note:</strong> Reading follows the modules, so match chapters to the module in progress rather than reading cover to cover.</p>
-</div>
-<p>The mapping rule is practical: when the course sits in module four (monitoring), read the monitoring chapters; when it moves to module six (LLMOps), switch to the language-model material. Reading ahead cover-to-cover mixes vocabularies — classical metrics one week, token economics the next — and the exam tests module-grounded understanding.</p>
-<h3 id="1.6.3" class="subsection-title">1.6.3 Learning outcomes</h3>
-<p>By the end, each participant should be able to explain the infrastructure, tooling, and process maturity that production ML demands; carry a real-time use case from their own vertical — whether mainstream software, banking, insurance, retail, telecom, or healthcare — from experiment to deployed endpoint; build, containerize, and deploy an end-to-end pipeline with open-source tools under full personal control; monitor a deployed model, detect drift, and apply the right retraining; rehearse testing-in-production strategies without risking live traffic; compare serving approaches across cloud, edge, mobile, and browser targets as smart devices multiply — Meta is working with Ray-Ban on smart glasses that run models on the face itself; evaluate and operate production-grade RAG pipelines; and trace and evaluate an agentic workflow with AgentOps tooling.</p>
-<p>Note the shape of that list: every outcome is a verb attached to an artifact — explain the maturity, carry a use case, build a pipeline, monitor a model, rehearse a strategy, compare targets, evaluate RAG, trace an agent. The exam and assignments test the same shape: show the working system and defend its choices, not recite definitions.</p>
-<div class="warning-box">
-  <p><strong>Scope:</strong> The seven-module sequence is cumulative — monitoring assumes packaging, LLMOps assumes serving, AgentOps assumes everything. Skipping ahead to agents without the deployment base leaves no foundation to trace against.</p>
-</div>
-<div class="key-takeaway">
-  <p><strong>Bridge:</strong> Outcomes are proven in labs, not lectures — the eight hands-on exercises in 1.7 are where the verbs above get practiced.</p>
-</div>
-<p>A wealth-management engineer carrying a fraud use case, a telecom engineer migrating scoring, and a pharma engineer validating quality systems all graduate through the same gate: a containerized, monitored, retrainable endpoint they built and can defend.</p>
-
-<h2 id="1.7" class="section-title">1.7 Laboratory Exercises, the Lab Portal, and the Practice Method</h2>
-<h3 id="1.7.1" class="subsection-title">1.7.1 Eight labs mapped to the modules</h3>
-<div class="important-note">
-  <p><strong>Hook:</strong> Nobody learns deployment by watching slides. Eight labs — each tied to the module it proves — turn every concept in this lecture into something your hands have done.</p>
-</div>
-<p>Eight lab exercises carry the experiential half of the course, each mapped to the modules it exercises. The opening labs are warm-ups: MLflow experiment tracking with a Docker-backed registry, packaging, and orchestration pipelines. Model file formats get practiced through serialization tasks. Model deployment arrives via containerizing with Docker and serving through an Airflow pipeline. The next lab deploys and serves an ML model as a microservice with full serving patterns. Then comes monitoring and observability over deployed models with failure and drift analysis, followed by continual learning with A/B testing in production. A later lab puts a real-time predictive model onto a cloud service — SageMaker, Vertex AI, or an Azure equivalent. The LLM sequence covers API access with local-versus-cloud cost comparison, experiment tracking with RAG pipelines, vector databases with evaluation practice, LLM deployment with benchmarking and cost-latency trade-off analysis, and CI/CD with observability. The closing lab traces and evaluates an agentic workflow.</p>
-<div class="key-takeaway">
-  <p><strong>Exam note:</strong> The labs are warm-ups with real weight — assignment questions grow directly out of lab experience, so every lab finished is assignment preparation banked early.</p>
-</div>
-<h3 id="1.7.2" class="subsection-title">1.7.2 Worked walkthrough: the first lab on experimentation and packaging</h3>
-<p>The first lab makes the pattern concrete. It is self-paced and offline, needs a laptop or desktop with full administrative credentials, and budgets about three hours. The storyline uses Cartoon Star, a fictional online retail store, with a three-person team sharing data science duties. The objective: set up MLflow, run experiments, and register models through the MLflow tracking UI.</p>
-<p>The steps run in order. First create the environment for the operating system at hand — Linux and Windows paths are both documented step by step. Then launch the tracking server, run the provided code base, and watch autologging capture parameters, metrics, and artifacts without manual bookkeeping. Each run records who authored it, so teammates can compare configurations side by side: one member's data split against another's, one hyperparameter set against the next. The team compares runs, picks a winner, and registers it as the champion model. A <em>champion-challenger</em> setup then governs updates: the champion serves production while a challenger trains on new data or settings, and only a challenger that beats the champion earns promotion to the new champion. Small prescribed modifications — changed tags, changed parameters, a new data footprint — let each participant produce distinct results, and the timestamp, data footprint, and tags must be unique to each submission. The lab closes with a deliverable checklist confirming the run, the registered champion, and the comparison notes.</p>
-<div class="example-box">
-  <p><strong>Worked example — the Cartoon Star champion round:</strong> The three teammates each log one run on the retail data. Teammate A logs a run tagged <code>split=80-20, lr=0.05</code>, scoring 0.82 accuracy; teammate B logs <code>split=70-30, lr=0.05</code> at 0.80; teammate C logs <code>split=80-20, lr=0.1</code> at 0.84. The tracking UI ranks all three side by side, and C's run becomes the champion and is registered as <code>cartoon-star-v1</code>. Next week a challenger trains on fresh transactions and scores 0.86 — it beats 0.84, so it is promoted to <code>cartoon-star-v2</code> and the old champion stays in the registry for instant rollback. <strong>Sense-check:</strong> three runs, three distinct tag sets, one winner by number — exactly the comparison the deliverable checklist asks for, and no ties to argue about.</p>
-</div>
-<p>A side project need not be ML at all — containerizing any small app and pushing it to a personal repository teaches the Docker and Git moves the labs assume. Arriving with those moves fluent saves the three-hour budget for MLflow itself rather than for installation fights.</p>
-<h3 id="1.7.3" class="subsection-title">1.7.3 The lab portal and its rules</h3>
-<p>Lab work for graded submissions runs on a hosted lab portal reached through an institutional login ID. The machines are ephemeral virtual machines: everything outside the workspace disappears when the session shuts down, so all work must be saved under the workspace path at /home/username/workspace, which lives on persistent network storage and survives across boots. Sessions drop after fifteen idle minutes because the remote-desktop link resets, and a virtual machine terminates itself after sixty stopped minutes — so keep the browser tab open for its heartbeat and never walk away from a running machine. Each participant receives twenty hours of machine time for assignments, and every idle minute burns that balance, so stop the virtual machine as soon as the work ends. The base image runs Rocky Linux with the full stack preinstalled: Python, Jupyter, Keras, Matplotlib, Scikit-learn, SciPy, TensorFlow, Pandas, PyTorch, NumPy, plus a browser, VS Code, a terminal, MLflow run tracking, and MinIO object storage. First boots are cold and take one to three minutes. Source control has one hard rule: create Git and GitHub repositories under the institutional ID only — never use a personal or employer repository for lab or assignment work.</p>
-<p>Three rules prevent most disasters: save under the workspace path or lose it, stop the machine when done or burn the twenty-hour budget idle, and keep coursework in institutional repositories so grading sees it and employers never do. The fifteen-minute idle drop and sixty-minute stopped termination are not annoyances — they are the cost controls that make hosted machines affordable.</p>
-<h3 id="1.7.4" class="subsection-title">1.7.4 The practice method: run everything twice</h3>
-<p>The strongest recommendation in the session is to run every lab twice: once on a personal laptop with full admin control, and once on the hosted portal. The first run is for learning — mistakes welcome, stumbles expected, half-finished state forgiven. The second run applies the lessons: the participant knows the tricky steps, avoids the earlier errors, and produces a clean reflected result on the graded environment. A story drives the point home: a famous stage magician, asked on his deathbed whether any secret remained untaught, told his successor son that the whole secret was practice — practice it, practice it, practice it. The analogy maps directly: lab fluency comes from repetition, not from watching.</p>
-<figure class="visual-intuition">
-  <svg viewBox="0 0 500 220" role="img" aria-label="Run twice practice loop from laptop to portal" xmlns="http://www.w3.org/2000/svg">
-    <defs>
-      <marker id="fig17-loop" viewBox="0 0 10 10" refX="5" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
-        <path d="M 0 1.5 L 8 5 L 0 8.5 z" fill="#2563eb" />
-      </marker>
-    </defs>
-    <rect x="40" y="70" width="150" height="70" rx="8" fill="#eff6ff" stroke="#2563eb" stroke-width="2" />
-    <text x="115" y="95" fill="#1e3a8a" font-size="13px" font-weight="bold" text-anchor="middle">Run 1: laptop</text>
-    <text x="115" y="113" fill="#64748b" font-size="11px" text-anchor="middle">learn, stumble freely</text>
-    <text x="115" y="128" fill="#64748b" font-size="11px" text-anchor="middle">full admin control</text>
-    <rect x="310" y="70" width="150" height="70" rx="8" fill="#f0fdf4" stroke="#16a34a" stroke-width="2" />
-    <text x="385" y="95" fill="#14532d" font-size="13px" font-weight="bold" text-anchor="middle">Run 2: portal</text>
-    <text x="385" y="113" fill="#64748b" font-size="11px" text-anchor="middle">clean reflected result</text>
-    <text x="385" y="128" fill="#64748b" font-size="11px" text-anchor="middle">graded environment</text>
-    <line x1="190" y1="95" x2="310" y2="95" stroke="#2563eb" stroke-width="2" marker-end="url(#fig17-loop)" />
-    <text x="250" y="85" fill="#2563eb" font-size="11px" text-anchor="middle">lessons carry over</text>
-    <line x1="385" y1="140" x2="385" y2="175" stroke="#16a34a" stroke-width="1.5" stroke-dasharray="4" />
-    <line x1="385" y1="175" x2="115" y2="175" stroke="#16a34a" stroke-width="1.5" stroke-dasharray="4" />
-    <line x1="115" y1="175" x2="115" y2="140" stroke="#16a34a" stroke-width="1.5" stroke-dasharray="4" marker-end="url(#fig17-loop)" />
-    <text x="250" y="192" fill="#16a34a" font-size="11px" text-anchor="middle">repeat for all eight labs</text>
-  </svg>
-  <figcaption><strong>Figure 1.7:</strong> Run each lab twice — learn through first-run mistakes on the laptop, then repeat cleanly on the portal where grading happens.</figcaption>
-</figure>
-<div class="warning-box">
-  <p><strong>Scope:</strong> The double-run method assumes a personal machine with admin rights for run one; portal-only participants should still redo each lab rather than submitting a first attempt. The twenty-hour portal budget covers redoing, not idling.</p>
-</div>
-<div class="warning-box">
-  <p><strong>Pitfalls:</strong> (1) Saving outside the workspace path — vanishes on shutdown. (2) Leaving the machine running — idle minutes burn the assignment budget. (3) Personal or employer repositories — grading cannot see them; use the institutional ID. (4) Submitting first-run work — the portal run should reflect lessons, not repeat mistakes.</p>
-</div>
-<div class="key-takeaway">
-  <p><strong>Bridge:</strong> Labs are practice; assignments are graded — and confusing the two costs marks, which is exactly what 1.8 clarifies.</p>
-</div>
-<p>Doing it twice — learning through first-run mistakes, then repeating cleanly — builds the most confidence in the least time, whether catching up late or preparing for the assignments that grow directly out of lab experience.</p>
-
-<h2 id="1.8" class="section-title">1.8 Evaluation: Lab Exercises Are Not Assignments</h2>
-<h3 id="1.8.1" class="subsection-title">1.8.1 The grading shape</h3>
-<div class="important-note">
-  <p><strong>Hook:</strong> No quizzes, no cushion — three evaluation windows carry the whole grade. Knowing their shape in week one is the difference between steady progress and a last-month scramble.</p>
-</div>
-<p>There are no quizzes in this course. Assignments carry the continuous-evaluation weight: the assignment component holds 30 percent, released in staggered windows of roughly seven to twenty-one days rather than on a fixed rhythm. A mid-semester component runs for 30 marks across two hours, and a comprehensive component carries 40 percent weightage.</p>
-<div class="key-takeaway">
-  <p><strong>Exam note:</strong> With no quizzes to cushion the grade, every assignment window matters — track release dates from the first week and never let a window slip.</p>
-</div>
-<p>The irregular windows are deliberate pressure: seven days for a short task, twenty-one for a long one, released when the matching labs land. A participant who finishes each lab as its module closes is always ready; one who defers labs meets every window unprepared.</p>
-<h3 id="1.8.2" class="subsection-title">1.8.2 Lab exercises versus assignments</h3>
-<p>The most repeated clarification in the session is vocabulary. <em>Lab exercises</em> are the eight practice tasks: self-explanatory, tutorial-style, done for fluency. <em>Assignments</em> are the separate graded evaluations built on top of that fluency. Calling a lab exercise a lab assignment muddles the two and costs grades through confusion, so the preferred term is always lab exercise for practice and assignment for graded work.</p>
-<p>The preparation policy is simple: practice in the labs individually and anywhere, then prove it in the assignments individually on the hosted lab. Developing outside then reflecting onto the portal is allowed and encouraged — what matters is that the graded artifact runs where graders run it.</p>
-<h3 id="1.8.3" class="subsection-title">1.8.3 Integrity and submission discipline</h3>
-<p>Academic integrity gets explicit treatment because the labs make copying easy and detection easier. Each submission must carry unique evidence of authorship: distinct timestamps, distinct data footprints, and distinct tags. Submissions sharing identical markers count as copied work and are treated accordingly. The rule is stated once, directly, with the expectation that working professionals hold themselves to it without further policing.</p>
-<p>The mechanism is worth understanding: prescribed small modifications (changed tags, changed parameters, a new data footprint) mean two honest submissions can never match exactly. Identical markers are therefore not a coincidence to explain but evidence of copying — the grading design makes authorship self-certifying.</p>
-<div class="warning-box">
-  <p><strong>Scope:</strong> Integrity here means demonstrable authorship, not just honest intent — timestamps, data footprints, and tags must differ because the work actually differed. Professional experience does not exempt anyone; it raises the bar.</p>
-</div>
-<div class="warning-box">
-  <p><strong>Pitfalls:</strong> (1) Calling labs "assignments" — muddles preparation and costs grades. (2) Notebook-service submissions — graders verify on the hosted lab only. (3) Group work habits from other courses — this course is individual throughout. (4) Identical submission markers — treated as copied work, no further warning.</p>
-</div>
-<div class="key-takeaway">
-  <p><strong>Bridge:</strong> With the map (1.6), the practice (1.7), and the rules (1.8) all laid out, the lecture closes — carry one use case from your own vertical through every stage above, and the outcomes take care of themselves.</p>
-</div>
-<p>Track every window from week one, keep lab exercises and assignments in separate mental boxes, and let each submission's unique markers speak for its authorship.</p>
 
 <h2 id="key-industry-applications" class="section-title">Key Industry Applications</h2>
 <p>Anaconda distributions and Docker Desktop standardize the course environment, with VS Code as the editor — the identical-stack rule that makes every participant's results reproduce. Solomon Hykes introduces Docker and Mirantis stewards it, while Podman, CRI-O, Rocket, and containerd supply engine alternatives for teams with different licensing or runtime needs. Google builds Kubernetes through a decade of internal use before community release, and OpenShift productizes enterprise Kubernetes for teams that want a hardened distribution. AWS Lambda, Azure Functions, and Google Cloud Functions implement functions-as-a-service across clouds for event-driven inference where always-warm servers waste money. Airflow and Kubeflow orchestrate production ML pipelines while MLflow tracks experiments and registries — scheduling, lineage, and memory as three separate tools doing three separate jobs. OpenStack and OpenNebula host private clouds where data must stay inside; AWS SageMaker, Google Vertex AI, and Azure ML sell managed deployment where speed matters more than control. Prometheus with Grafana dashboards metrics while Elasticsearch, Logstash, and Kibana form the ELK logging stack — numbers show what is happening, logs show why. AWS Kinesis streams events into online prediction where freshness beats schedule. OpenSearch and FAISS index embeddings for RAG retrieval, LangChain assembles pipelines, Langfuse with LangSmith and Arize Phoenix observe LLM cost, latency, and drift, Ollama serves models locally for free experimentation, and vLLM-class servers benchmark high-throughput inference. Uber runs Michelangelo, Netflix and Spotify run in-house ML platforms, and Meta with Ray-Ban pushes models into smart glasses — proof that every scale ends at the same discipline: versioned, monitored, retrainable systems. PMML, ONNX, joblib, pickle, and H5 serialize models for shipment across frameworks, each trading portability against fidelity.</p>

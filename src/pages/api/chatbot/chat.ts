@@ -84,6 +84,21 @@ function tokenCount(value: unknown): number | null {
   return typeof value === 'number' && Number.isFinite(value) && value >= 0 ? Math.trunc(value) : null;
 }
 
+/**
+ * Strip the longest exact suffix of `base` that reappears at the start of
+ * `continuation`. Models occasionally repeat the tail of their previous
+ * output when asked to continue; this keeps the stitched answer seamless.
+ */
+function stripLeadingOverlap(base: string, continuation: string): string {
+  const maxCheck = Math.min(120, base.length, continuation.length);
+  for (let len = maxCheck; len >= 8; len--) {
+    if (base.slice(base.length - len) === continuation.slice(0, len)) {
+      return continuation.slice(len);
+    }
+  }
+  return continuation;
+}
+
 export const POST: APIRoute = async ({ locals, request }) => {
   const user = (locals as any).user;
   const isAdmin = Boolean((locals as any).isAdmin);
@@ -480,30 +495,37 @@ export const POST: APIRoute = async ({ locals, request }) => {
   const modelConfig = await getChatbotModel(db);
 
   // ─── Proxy to OpenRouter ─────────────────────────────────────────────
+  // Completion ceiling: generous enough that real answers (worked quizzes,
+  // derivations, code walkthroughs — up to ~4500 words) finish naturally.
+  // No user should ever see an answer cut mid-sentence: if a length wall
+  // is hit (ours or the model's own output limit), the answer is continued
+  // seamlessly before being served.
+  const MAX_COMPLETION_TOKENS = 6000;
+  const MAX_CONTINUATIONS = 2;
+
+  const openrouterHeaders = {
+    'Content-Type': 'application/json',
+    'Authorization': `Bearer ${openrouterKey}`,
+    'HTTP-Referer': 'https://bitsnotes.com',
+    'X-Title': 'BitsNotes AI Study Assistant',
+  };
+  const openrouterBody = (msgs: Array<{ role: string; content: string }>) =>
+    JSON.stringify({
+      models: modelConfig.models,
+      messages: msgs,
+      // 0.6 keeps grounding solid while letting the tutor persona sound
+      // like a person, not a spec sheet (0.3 read as stiff and clipped).
+      temperature: 0.6,
+      max_tokens: MAX_COMPLETION_TOKENS,
+      // Include token usage so per-request cost data lands in admin analytics.
+      usage: { include: true },
+    });
+
   try {
     const orResponse = await fetch(OPENROUTER_CHAT_URL, {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${openrouterKey}`,
-        'HTTP-Referer': 'https://bitsnotes.com',
-        'X-Title': 'BitsNotes AI Study Assistant',
-      },
-      body: JSON.stringify({
-        models: modelConfig.models,
-        messages: upstreamMessages,
-        // 0.6 keeps grounding solid while letting the tutor persona sound
-        // like a person, not a spec sheet (0.3 read as stiff and clipped).
-        temperature: 0.6,
-        // Cost guardrail: legit answers are 150–400 words (~1K tokens);
-        // quiz and code answers fit inside 2000. Without this, an abuser
-        // on a programming-subject page could harvest multi-thousand-token
-        // completions ("write lengthy code") from each daily-quantum slot.
-        max_tokens: 2000,
-        // Ask OpenRouter to include token usage in the response so we can
-        // store per-request cost data for admin analytics.
-        usage: { include: true },
-      }),
+      headers: openrouterHeaders,
+      body: openrouterBody(upstreamMessages),
     });
 
     if (!orResponse.ok) {
@@ -533,33 +555,80 @@ export const POST: APIRoute = async ({ locals, request }) => {
       return jsonResponse({ error: 'Chatbot is under heavy use, please try again later.' }, 503);
     }
 
-    let assistantContent = '';
-    if (data.choices && data.choices[0] && data.choices[0].message) {
-      const rawContent = typeof data.choices[0].message.content === 'string' ? data.choices[0].message.content : '';
-      const cleaned = normalizeAssistantReply(rawContent);
-      assistantContent = cleaned || rawContent.trim();
+    const firstChoice = data?.choices?.[0];
+    let rawContent = firstChoice && typeof firstChoice.message?.content === 'string'
+      ? firstChoice.message.content
+      : '';
+    let finishReason: string = typeof firstChoice?.finish_reason === 'string' ? firstChoice.finish_reason : '';
+    const usedModel =
+      typeof data.model === 'string' && data.model.trim()
+        ? data.model.trim()
+        : modelConfig.models[0] || null;
+    let promptTokens = tokenCount(data?.usage?.prompt_tokens) || 0;
+    let completionTokens = tokenCount(data?.usage?.completion_tokens) || 0;
+
+    // Auto-continuation: a length-clipped answer looks unprofessional, so
+    // finish it before serving. Bounded so an abuser engineering long
+    // outputs still gets a per-slot ceiling (3 segments max); the combined
+    // token totals land in admin analytics either way.
+    for (let i = 0; finishReason === 'length' && rawContent.trim() && i < MAX_CONTINUATIONS; i++) {
+      try {
+        const contResponse = await fetch(OPENROUTER_CHAT_URL, {
+          method: 'POST',
+          headers: openrouterHeaders,
+          body: openrouterBody([
+            ...upstreamMessages,
+            { role: 'assistant', content: rawContent },
+            {
+              role: 'user',
+              content:
+                'Your previous message was cut off mid-output by a length limit. Continue the answer seamlessly from exactly where it stopped — do not repeat any text, do not apologize, do not start over. Finish the thought, then stop.',
+            },
+          ]),
+        });
+        if (!contResponse.ok) break;
+        const contData = (await contResponse.json()) as Record<string, any>;
+        if (contData?.error) break;
+
+        promptTokens += tokenCount(contData?.usage?.prompt_tokens) || 0;
+        completionTokens += tokenCount(contData?.usage?.completion_tokens) || 0;
+
+        const piece =
+          contData?.choices?.[0]?.message &&
+          typeof contData.choices[0].message.content === 'string'
+            ? contData.choices[0].message.content
+            : '';
+        if (!piece.trim()) break;
+
+        rawContent += stripLeadingOverlap(rawContent, piece);
+        finishReason =
+          typeof contData?.choices?.[0]?.finish_reason === 'string'
+            ? contData.choices[0].finish_reason
+            : '';
+      } catch (err) {
+        console.error('[chatbot/chat] Continuation failed (serving what we have):', err);
+        break;
+      }
     }
+
+    const cleaned = normalizeAssistantReply(rawContent);
+    const assistantContent = cleaned || rawContent.trim();
 
     if (!assistantContent) {
       await markRequestError(db, requestId, {
         errorCode: 'empty_response',
         httpStatus: 502,
-        model: modelConfig.models[0] || null,
+        model: usedModel,
         latencyMs: Date.now() - startedAt,
         refund: reserved,
       });
       return jsonResponse({ error: 'Chatbot is under heavy use, please try again later.' }, 503);
     }
 
-    const usedModel =
-      typeof data.model === 'string' && data.model.trim()
-        ? data.model.trim()
-        : modelConfig.models[0] || null;
-
     await markRequestSuccess(db, requestId, {
       model: usedModel,
-      promptTokens: tokenCount(data?.usage?.prompt_tokens),
-      completionTokens: tokenCount(data?.usage?.completion_tokens),
+      promptTokens: promptTokens || null,
+      completionTokens: completionTokens || null,
       latencyMs: Date.now() - startedAt,
     });
 

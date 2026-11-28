@@ -686,6 +686,34 @@
   <p>\[ \text{extra reviews} = 2 \times \text{old reviews} \]</p>
   <p>so the fraud desk drowns in false alarms and real fraud slips through. Retraining on fresh labels restores precision to \(0.94\). <strong>Answer: top test marks decayed into missed fraud and doubled reviews.</strong> Sense-check: patterns that move need models that move — a frozen model on shifting data must decay.</p>
 </div>
+<div class="key-concept">
+  <p><strong>Formalize — two distinct drifts:</strong> A deployed model assumes training and live samples follow the same distribution. When that assumption breaks, the shift is called <em>drift</em>, and its kind depends on <em>what</em> changed:</p>
+  <table>
+    <thead>
+      <tr>
+        <th>Drift type</th>
+        <th>What changes</th>
+        <th>Visible before labels arrive?</th>
+        <th>Typical root cause</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>Data (feature) drift</td>
+        <td>Distribution of input fields, \(P(X)\)</td>
+        <td>Yes — compare live features to the training baseline</td>
+        <td>Sample-selection bias, or a non-stationary environment such as seasonality or a new channel</td>
+      </tr>
+      <tr>
+        <td>Concept drift</td>
+        <td>The input-to-outcome link, \(P(y \mid X)\)</td>
+        <td>No — needs ground truth on the changed relationship</td>
+        <td>Customer habits or fraud tactics change while the inputs still look the same</td>
+      </tr>
+    </tbody>
+  </table>
+  <p><strong>Detection without waiting for ground truth:</strong> watch the feature distributions themselves. For a continuous field, a two-sample Kolmogorov–Smirnov test compares the live empirical distribution \(F_n\) with the baseline \(G_m\) through the statistic \(D = \sup_x |F_n(x) - G_m(x)|\); a small \(p\)-value rejects the null hypothesis that both samples come from the same distribution. For a categorical field, a chi-squared test checks whether observed live frequencies still match the expected baseline frequencies. Both raise a warning on a significant result, but on very large samples they flag changes too small to matter, so pair the \(p\)-value with a business-sized threshold before triggering retraining.</p>
+</div>
 <p>A rejected shortcut helps here. A tempting view says debt means only messy code. The fix that replaces it says debt also means fragile data links, unlogged settings, chained models, unwatched scores, and brittle pipes. Code review alone cannot catch those.</p>
 <figure class="visual-intuition">
   <svg viewBox="0 0 500 220" role="img" aria-label="Small model surrounded by large debt" xmlns="http://www.w3.org/2000/svg">
@@ -772,9 +800,6 @@
   <p><strong>Worked example — bank fraud through CRISP-DM:</strong> The goal is to catch bad payments. First study covers amount, place, time, and past behavior. Shaping drops repeat rows and sets one time form. Training might use a random forest to label each payment as fraud or fair. Take a test set of <strong>\(1000\)</strong> payments with \(50\) real frauds: the model flags \(48\) frauds and \(30\) fair payments. Precision and recall are:</p>
   <p>\[ \text{precision} = \frac{48}{48 + 30} \approx 0.62, \quad \text{recall} = \frac{48}{50} = 0.96 \]</p>
   <p>where \(48\) is caught frauds, \(30\) is false alarms, and \(50\) is total frauds. The shipped screen then watches live payments and flags suspects. <strong>Answer: high recall catches almost all fraud at the cost of false alarms.</strong> Sense-check: \(48\) of \(50\) caught is strong recall, while \(30\) false alarms per \(48\) hits explains why desks still need review staff.</p>
-</div>
-<div class="key-takeaway">
-  <p><strong>Exam note:</strong> Classification models are checked with precision, recall, accuracy, and F1 score.</p>
 </div>
 <div class="warning-box">
   <p><strong>Scope:</strong> CRISP-DM fits mining and modeling projects with a clear business goal. <strong>Assumption:</strong> the goal stays stable long enough to walk all six stages. It strains on pure streaming work where data never sits still long enough for a tidy "understanding" phase.</p>
@@ -932,9 +957,6 @@
   <p>\[ \text{recall} = \frac{21}{24} = 0.875 \]</p>
   <p>so the forest catches <strong>\(87.5\) percent</strong> of deaths. The ward picks the forest, then checks that its nightly scoring finishes before rounds. Model checks use accuracy, precision, recall, and F1 score. An exact model that arrives too late helps no one, so scoring speed and fit to ward work matter beside raw marks. <strong>Answer: the forest leads on recall and ships only if it scores on time.</strong> Sense-check: \(21\) of \(24\) beaten by neither rival makes the forest the ward pick, provided speed holds.</p>
 </div>
-<div class="key-takeaway">
-  <p><strong>Exam note:</strong> Model checks use accuracy, precision, recall, and F1 score, alongside scoring speed and fit to ward work.</p>
-</div>
 <h3 id="4.13.4" class="subsection-title">4.13.4 Goals, stakeholders and roles</h3>
 <p>The business goal is better care with fewer deaths after surgery. Two key aims track it: lower post-surgery death rate and better care for high-risk patients. Stakeholders include heart doctors, surgeons, and hospital managers. The craft goal is a well-tested risk model. Suppose a team trains on records without first agreeing the goal. It might produce a model that predicts a side complication well but never answers the survival question. Early agreement on goal, measures, and expected gain stops that waste. Builders include clinical staff who read the scores, engineers who guard the pipes, data architects and data scientists who shape and train, machine learning engineers who ship and tend the model, and IT staff who keep systems steady. Gains arrive only when scores reach real rounds and real plans.</p>
 <figure class="visual-intuition">
@@ -1070,6 +1092,41 @@
   <p><strong>Recap:</strong> DataOps is safe data delivery by a full team — automated, checked, watched, and always learning — because code that passes tests can still fail on live data. <strong>Bridge:</strong> That discipline closes the lecture: from deluge to workflow, from Vs to science, from craft to case, and finally to pipes that hold every morning.</p>
 </div>
 <p>GitHub versions the pipe, Gartner and DataKitchen name the habit, and Power BI and Tableau carry the result — but the morning board that is fresh at 8 a.m. is the only proof that counts.</p>
+<h3 id="4.14.8" class="subsection-title">4.14.8 Online Model Validation Before Promotion</h3>
+<div class="key-concept">
+  <p><strong>Formalize:</strong> Offline scores cannot prove that a replacement model behaves correctly on live traffic. <em>Online evaluation</em> compares the candidate with the deployed model on real requests before promotion. The modes differ in who actually receives the candidate's prediction:</p>
+  <table>
+    <thead>
+      <tr>
+        <th>Mode</th>
+        <th>Who sees the candidate's output</th>
+        <th>Comparison basis</th>
+        <th>When to use</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>Shadow test (champion/challenger)</td>
+        <td>No one — the challenger scores the same live requests, but only the champion replies</td>
+        <td>Paired: identical requests, so differences are easy to attribute</td>
+        <td>Default first choice; simpler and quicker to a conclusion</td>
+      </tr>
+      <tr>
+        <td>A/B test</td>
+        <td>A split of live users — variant B's prediction is actually returned to those users</td>
+        <td>Unpaired: different requests per variant, so a larger sample is needed</td>
+        <td>Only when ground truth cannot be observed for both models, as in recommendations or ad click-through</td>
+      </tr>
+      <tr>
+        <td>Canary rollout</td>
+        <td>A small, growing share of live traffic receives the new model</td>
+        <td>Live business metrics on the exposed slice</td>
+        <td>After shadow validation, to limit the blast radius of a release</td>
+      </tr>
+    </tbody>
+  </table>
+  <p><strong>Procedure and pitfall:</strong> log the same inputs, outputs, and latency for both models, then wait until metric fluctuations settle — under shadow testing the comparison is paired because both models scored the same rows. With A/B testing, fix the sample size and test duration in advance: stopping the moment a test first turns significant is p-hacking and biases the result. A shadow challenger must never drive actions — if it were wired into the system by mistake, a fraud screen could charge one transaction twice.</p>
+</div>
 
 <h2 id="key-industry-applications" class="section-title">Key Industry Applications</h2>
 <p>Social feeds, photos, and video posts from Instagram and Facebook show high-volume mixed media. Online orders from Amazon and Flipkart show purchase and browsing streams. Work profiles and messages from LinkedIn and WhatsApp show network and chat data. Fitness bands such as Fitbit show wearable sensor streams. Smart factory sensors show ten-thousand-point machine telemetry, the same arithmetic the deluge section worked. Bank card and transfer feeds show fraud-screening flows that must score in milliseconds. Stock market ticks show prices that stream without pause. Hospital record systems, scans, and notes show mixed table, image, and text holdings. Air readings by neighborhood show how hourly averages turn a flood of samples into street-level choices. Telecom usage records show churn models that target retention offers. Retail sales histories show seasonal demand plans that set stock before peaks. Python with Pandas, NumPy, scikit-learn, Matplotlib, TensorFlow, and PyTorch shows the open stack from tables to deep nets. GPT-4 and BERT show transformer models with attention links for language tasks. AWS, Azure, and GCP show rented compute and storage that grows with load. Object stores, relational tables, warehouses, and distributed systems show the storage mix behind large sets. Power BI and Tableau show boards that carry results to decision makers. SAS-linked SEMMA and CRISP-DM show named process plans teams follow. GitHub shows version control for code, settings, and field plans.</p>

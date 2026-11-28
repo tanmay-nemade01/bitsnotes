@@ -185,11 +185,6 @@
   </tbody>
 </table>
 <p>A personal way to hold the split: model skill set against system building care. When a reply goes wrong, the model course asks which weight or prompt failed, while this course asks which pipeline part failed — the wording read, the memory hold, the tool call, the check, or the reply shape.</p>
-<h3 id="1.1.3" class="subsection-title">1.1.3 How Marks and Lab Readiness Look</h3>
-<div class="key-takeaway">
-  <p><strong>Exam note:</strong> EC-2 carries 30 marks. EC-1 has two code tasks in Python and two quizzes, with one quiz before mid-term and one after mid-term. Rules on best-of or mean scores come from the lead faculty about a week later. No late-date moves and no extra make-up tasks are given for these parts.</p>
-</div>
-<p>Lab readiness needs only a small base: some Python, base ideas of machine learning and deep nets, what an API is, how JSON key-value shape looks, what REST calls do, and base scores from machine learning such as precision, recall, and chance-based scores such as perplexity. Each meet includes a demo code run. A lab setup with needed tools opens in about two weeks, with a separate lab meet to set it up.</p>
 
 <h2 id="1.2" class="section-title">1.2 Capabilities of a Conversational System</h2>
 <h3 id="1.2.1" class="subsection-title">1.2.1 Plain Definition</h3>
@@ -286,6 +281,17 @@
 <p>For this job no text maker is needed. An encoder alone is enough. The encoder builds joint forms and a plain feed-forward head picks the next act. The wording in the room was to "take the three words, build their setting forms, push them through a feed-forward net that picks a class, and let that class steer the next follow-up".</p>
 <div class="example-box">
   <p>A demo score row over three acts — reply-only, route-to-staff, and check-identity — came out as reply-only low, route-to-staff at \(P(\text{route} \mid x) = 0.1\), and check-identity at \(P(\text{check-identity} \mid x) = 0.9\). Here \(x\) is the three-word input and each \(P\) is a number in \([0,1]\) adding to 1 across acts. <strong>The top act is check-identity at 0.9, so the chat path moves to identity checks first.</strong> Sense-check: a lost-card cry should rank a safety check above a plain reply, which matches this row.</p>
+</div>
+<div class="key-concept">
+  <p><strong>Formal Definition — Multinomial Logistic Regression (the Choice Head):</strong> The act-picking head of Section 1.4.3 is formally a <em>multinomial logistic regression</em> (softmax) classifier. For \(K\) acts it keeps a weight row \(w_k \in \mathbb{R}^{d}\) and a bias \(b_k\) for each act, and forms a score \(z_k = w_k \cdot x + b_k\), called a <em>logit</em>. The act probabilities are the softmax of the logit vector:</p>
+  \[
+  P(y = k \mid x) = \frac{\exp(z_k)}{\sum_{j=1}^{K} \exp(z_j)} = \frac{\exp(w_k \cdot x + b_k)}{\sum_{j=1}^{K} \exp(w_j \cdot x + b_j)}, \qquad \hat{y} = \mathrm{softmax}(Wx + b)
+  \]
+  <p>Here \(W \in \mathbb{R}^{K \times d}\) stacks the \(K\) weight rows, so one matrix product yields all act probabilities at once. The exponential denominator normalises them into \([0,1]\) with total 1 — the same constraint stated informally in Section 1.3.2. Training minimises the <em>cross-entropy loss</em> \(L = -\sum_{i=1}^{N} \log P(y_i = c_i \mid x_i)\) over \(N\) labelled chats with correct act \(c_i\); gradient descent nudges each \(w_k\) so the correct act's logit rises relative to the others.</p>
+</div>
+<div class="example-box">
+  <p><strong>Worked Loss Calculation:</strong> Reuse the Section 1.4.3 score row, where the correct act is check-identity at \(P = 0.9\). Its contribution to the loss is \(-\log(0.9) \approx 0.105\). If the same head assigned only \(P = 0.2\) to the correct act, the contribution would be \(-\log(0.2) \approx 1.609\); if it confidently but wrongly put \(0.9\) on reply-only, leaving check-identity at \(0.1\), the contribution would be \(-\log(0.1) \approx 2.303\). <strong>Being confidently wrong costs about 22 times more than being confidently right (2.303 vs 0.105), which is what drives the head toward high probability on the correct act.</strong></p>
+  <p><strong>Prototype reading:</strong> row \(w_k\) acts as a template for act \(k\); because a larger dot product means greater similarity, an input vector is assigned to the act whose weight row it most resembles — a lost-card vector lands on the check-identity template.</p>
 </div>
 <div class="important-note">
   <p><strong>Q:</strong> Which model shape can weigh each word and pick a next act?</p>
@@ -567,6 +573,46 @@
 <div class="example-box">
   <p>Take a week of lost-card chats. Say the picker flags 80 chats as check-identity, and 60 of those truly needed it, while 20 more true check-identity chats were missed. Then \(TP = 60\), \(FP = 20\), and \(FN = 20\), giving \(Pr = 60/(60+20) = 0.75\) and \(Re = 60/(60+20) = 0.75\). <strong>Both scores are 0.75, so one in four flags is wrong and one in four true cases is missed.</strong> Sense-check: equal misses on both sides is the classic drift hint, not a one-off slip.</p>
 </div>
+<div class="key-concept">
+  <p><strong>Formal Definition — F1 Score:</strong> A single balanced score for the intent picker is the <em>F1 score</em>, the harmonic mean of precision and recall:</p>
+  \[
+  F_1 = \frac{2\,Pr \cdot Re}{Pr + Re} = \frac{2\,TP}{2\,TP + FP + FN}
+  \]
+  <p>The harmonic mean punishes imbalance: with \(Pr = Re = 0.75\) the F1 is \(0.75\), but a head with \(Pr = 0.99\) and \(Re = 0.10\) scores only \(F_1 \approx 0.18\), not the arithmetic midpoint \(0.55\). A picker that flags almost nothing can therefore look highly precise yet score poorly.</p>
+</div>
+<table>
+  <thead>
+    <tr>
+      <th>Averaging scheme</th>
+      <th>How acts are combined</th>
+      <th>Behaviour on a rare act</th>
+      <th>Fit for the bank bot</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td>Macro</td>
+      <td>Unweighted mean of each act's F1</td>
+      <td>Rare act counts as much as a common one</td>
+      <td>Use when a missed check-identity act is costly even if rare</td>
+    </tr>
+    <tr>
+      <td>Micro</td>
+      <td>Global TP, FP, FN pooled before computing F1</td>
+      <td>Common acts dominate the pool</td>
+      <td>In single-label multiclass it equals accuracy; use for overall load</td>
+    </tr>
+    <tr>
+      <td>Weighted</td>
+      <td>Per-act F1 averaged by support (true count)</td>
+      <td>Rare act gets a small weight</td>
+      <td>Use when the act mix is skewed and must be reflected</td>
+    </tr>
+  </tbody>
+</table>
+<div class="key-takeaway">
+  <p><strong>Takeaway:</strong> Keep precision and recall for diagnosis, but track F1 — and state which averaging scheme was used — before calling a drop in the intent picker drift.</p>
+</div>
 <p>The wording in the room was to "test the intent picker with precision and recall, and if scores fall for many users over days, look for data drift or an old model". A long fall hints the model needs fresh facts and a re-train talk with the model team.</p>
 <h3 id="1.10.3" class="subsection-title">1.10.3 Logs That Explain Acts</h3>
 <div class="key-concept">
@@ -638,9 +684,6 @@
   </tbody>
 </table>
 <div class="key-takeaway">
-  <p><strong>Exam note:</strong> Expect a small-number task on token bills. Show turns, in-tokens, out-tokens, rates, per-turn sum, task sum, and day sum step by step in a neat table.</p>
-</div>
-<div class="key-takeaway">
   <p><strong>Takeaway:</strong> Tokens in plus tokens out, times turns, times chats, sets the bill. Trim the setting per turn and the day sums fall with it.</p>
 </div>
 
@@ -683,6 +726,43 @@
   </svg>
   <figcaption><strong>Figure 1.12:</strong> Three BPE rounds join UG, then PU, then UN, growing the store one pair token per round.</figcaption>
 </figure>
+<div class="important-note">
+  <p><strong>Architecture Detail — Beyond BPE:</strong> Section 1.12.2 taught byte pair encoding, which merges the <em>most frequent</em> adjacent pair each round. Two sibling subword algorithms appear in the same tokenizers and differ only in how a merge is chosen or how the store is built:</p>
+</div>
+<table>
+  <thead>
+    <tr>
+      <th>Algorithm</th>
+      <th>Vocabulary construction</th>
+      <th>Merge / selection rule</th>
+      <th>Typical users</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td>BPE</td>
+      <td>Start from characters, add one merged pair per round until a merge count is reached</td>
+      <td>Highest-frequency adjacent pair</td>
+      <td>GPT-style decoders, Llama, Gemma</td>
+    </tr>
+    <tr>
+      <td>WordPiece</td>
+      <td>Start from characters, fix a target vocabulary size \(V\)</td>
+      <td>Merge the pair that most increases corpus language-model likelihood; continuation pieces carry a prefix marker</td>
+      <td>BERT-family encoders</td>
+    </tr>
+    <tr>
+      <td>Unigram</td>
+      <td>Start from a huge candidate set, iteratively prune low-value tokens down to \(V\)</td>
+      <td>Keep the segmentation with the highest token-probability product; not a fixed merge sequence</td>
+      <td>T5, mBART, ALBERT via SentencePiece</td>
+    </tr>
+  </tbody>
+</table>
+<div class="example-box">
+  <p><strong>Worked Contrast:</strong> On the word <code>corrupted</code>, BPE yields <code>cor rupted</code> while unigram yields <code>corrupt ed</code> — the latter keeps the meaningful stem <code>corrupt</code> intact. The unigram scorer picks a split by multiplying token probabilities: for <code>pug</code>, <code>["p","ug"]</code> scores about \(0.00227\) against about \(0.00039\) for <code>["p","u","g"]</code>, so the two-piece split wins. BPE reaches a split only by replaying its fixed merge order, with no probability comparison.</p>
+  <p><strong>Implication for this lecture:</strong> the merge-count try-it in Section 1.12.3 is a BPE-specific knob. With WordPiece the knob is \(V\), and with unigram it is the pruning target — so token cost and unknown-token rates change with the chosen algorithm, not just with the number of rounds.</p>
+</div>
 <h3 id="1.12.4" class="subsection-title">1.12.4 Unknown Tokens and Open Stores</h3>
 <div class="key-concept">
   <p>An <em>open store</em> (a ready-made token list shipped with a tool, such as an English word list) cuts fresh rows by look-up, not by fresh rules. If a fresh row holds a sign run never seen in train time, the coder marks it as not known. The wording in the room was that "fresh runs never seen in train time are marked UNK for not known". The rebuilt map is \(t = \text{code}(s)\), where \(s\) is the fresh sign run and \(t\) is UNK when \(s\) misses the store.</p>
@@ -691,9 +771,6 @@
 <div class="important-note">
   <p><strong>Q:</strong> How does UG reach a count of 20 in the room example?</p>
   <p><strong>A:</strong> UG sits next to each other in HUG 10 times, in PUG 5 times, and in HUGS 5 times. The sum is 10 plus 5 plus 5, which is 20. So UG is the top pair and joins first.</p>
-</div>
-<div class="key-takeaway">
-  <p><strong>Exam note:</strong> Rework this five-word corpus by hand. List single signs, count each pair, join the top pair, and show round one, two, and three in order.</p>
 </div>
 <div class="key-takeaway">
   <p><strong>Takeaway:</strong> Count pairs, join the top one, repeat to cap — then cut fresh rows by store look-up. That loop is the full BPE trick.</p>
@@ -748,7 +825,6 @@
 </table>
 <p>The same ladder stress holds here as in the bank case. Do not add heavy makers, recall loops, and checks where a fixed board would do. Add them where live facts, tool picks, and past talk truly shape the task. A small Qwen chat-tuned row showed the same bare-maker invent-and-miss shape when no tool was wired in, which pins the lesson: the miss came from missing tools, not from model size.</p>
 <h3 id="1.13.3" class="subsection-title">1.13.3 Pace Check Before Next Module</h3>
-<p>A quick pace check closed the meet. The reply was to slow down a bit and to keep break-ins welcome by hand raise or voice. The next meet picks up the code run if needed and then moves to the next module.</p>
 <div class="key-takeaway">
   <p><strong>Takeaway:</strong> Stores drive splits, and tools drive truth — wire the tool shape, the pick, and the run before trusting a sky or bank reply.</p>
 </div>
